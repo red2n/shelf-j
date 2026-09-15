@@ -76,10 +76,54 @@ public final class PaymentRuns {
   public record View(
       PaymentRun run,
       PaymentProposal.Result proposal,
-      java.util.Map<UUID, Domain.Supplier> suppliers) {
+      java.util.Map<UUID, Domain.Supplier> suppliers,
+      java.util.Map<UUID, PayeeCheck> checks) {
 
     public View {
       suppliers = java.util.Map.copyOf(suppliers);
+      checks = java.util.Map.copyOf(checks);
+    }
+
+    /** A run the bank has not answered on. */
+    public View(
+        PaymentRun run,
+        PaymentProposal.Result proposal,
+        java.util.Map<UUID, Domain.Supplier> suppliers) {
+      this(run, proposal, suppliers, java.util.Map.of());
+    }
+  }
+
+  /**
+   * What the bank's latest status report said about one supplier's payment in a run (17.12), and
+   * whether a manager released it.
+   *
+   * @param held whether the bank's answer stops the payment: rejected, or a payee not matched
+   * @param releasedAt when a manager released a checked close match, or null
+   */
+  public record PayeeCheck(
+      UUID supplierId,
+      String endToEndId,
+      String status,
+      String reasonCode,
+      String payeeMatch,
+      String matchedName,
+      boolean held,
+      UUID reportId,
+      String reportMessageId,
+      UUID releasedBy,
+      Instant releasedAt,
+      String releaseReason) {
+
+    /** Still stopping payment: held, and not released. */
+    public boolean blocking() {
+      return held && releasedAt == null;
+    }
+
+    /** A close match the bank did not reject is a person's call; nothing else held is. */
+    public boolean releasable() {
+      return blocking()
+          && !Pain002.REJECTED.equals(status)
+          && Pain002.CLOSE_MATCH.equals(payeeMatch);
     }
   }
 }

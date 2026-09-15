@@ -77,7 +77,10 @@ public class TenantService {
             req.country().toUpperCase(Locale.ROOT),
             req.currency().toUpperCase(Locale.ROOT),
             nowTenant,
-            nowTenant);
+            nowTenant,
+            null,
+            null,
+            null);
     var event =
         new OutboxRow(
             "TenantCreated",
@@ -672,11 +675,40 @@ public class TenantService {
    * @throws ApiException {@code TENANT_NOT_FOUND} (404) when no such tenant exists
    */
   public Tenant updateTenant(UUID tenantId, UpdateTenantRequest req) {
-    getTenant(tenantId);
+    Tenant existing = getTenant(tenantId);
+    // The e-invoicing identity (07.13, 18.9): omitted is unchanged, empty removes it.
+    String vatNumber;
+    try {
+      vatNumber =
+          req.vatNumber() == null
+              ? existing.vatNumber()
+              // India's e-invoices name a business by its GSTIN, which carries a state code where
+              // a VAT identifier carries a country prefix.
+              : "IN".equals(existing.country())
+                  ? com.shelfj.einvoice.Gstin.parse(req.vatNumber())
+                  : com.shelfj.einvoice.VatIdentifier.parse(req.vatNumber());
+    } catch (IllegalArgumentException e) {
+      throw new ApiException(400, "TENANT_VAT_NUMBER_INVALID", e.getMessage(), List.of(), e);
+    }
+    com.shelfj.einvoice.ElectronicAddress address;
+    try {
+      address =
+          req.einvoiceScheme() != null || req.einvoiceId() != null
+              ? com.shelfj.einvoice.ElectronicAddress.parse(req.einvoiceScheme(), req.einvoiceId())
+              : existing.einvoiceId() == null
+                  ? null
+                  : new com.shelfj.einvoice.ElectronicAddress(
+                      existing.einvoiceScheme(), existing.einvoiceId());
+    } catch (IllegalArgumentException e) {
+      throw new ApiException(400, "TENANT_EINVOICE_ADDRESS_INVALID", e.getMessage(), List.of(), e);
+    }
     return repo.updateTenant(
         tenantId,
         req.businessName().trim(),
-        req.legalName() == null ? null : req.legalName().trim());
+        req.legalName() == null ? null : req.legalName().trim(),
+        vatNumber,
+        address == null ? null : address.scheme(),
+        address == null ? null : address.id());
   }
 
   /**

@@ -6,7 +6,6 @@ import static com.shelfj.purchase.domain.PaymentRuns.PAID;
 import static com.shelfj.purchase.domain.PaymentRuns.PROPOSED;
 
 import com.shelfj.ids.Ids;
-import com.shelfj.purchase.domain.BankFile;
 import com.shelfj.purchase.domain.Domain;
 import com.shelfj.purchase.domain.Domain.NominalLedgerEntry;
 import com.shelfj.purchase.domain.Domain.Supplier;
@@ -16,10 +15,12 @@ import com.shelfj.purchase.domain.PaymentProposal;
 import com.shelfj.purchase.domain.PaymentProposal.Document;
 import com.shelfj.purchase.domain.PaymentProposal.Payee;
 import com.shelfj.purchase.domain.PaymentRuns.Item;
+import com.shelfj.purchase.domain.PaymentRuns.PayeeCheck;
 import com.shelfj.purchase.domain.PaymentRuns.PaymentRun;
 import com.shelfj.purchase.domain.PaymentRuns.View;
 import com.shelfj.purchase.dto.Dtos.CancelPaymentRunRequest;
 import com.shelfj.purchase.dto.Dtos.ProposePaymentRunRequest;
+import com.shelfj.purchase.repo.BankFileRepository;
 import com.shelfj.purchase.repo.PaymentRunRepository;
 import com.shelfj.service.OutboxRow;
 import com.shelfj.web.ApiException;
@@ -66,9 +67,7 @@ public class PaymentRunService {
 
   @Inject PaymentRunRepository runs;
   @Inject PurchaseService purchases;
-
-  /** The bank file: its download name and its content. */
-  public record Export(String fileName, String csv) {}
+  @Inject BankFileRepository files;
 
   /**
    * Proposes a run: every payable invoice due by {@code payUpTo} in the currency, less each
@@ -176,8 +175,16 @@ public class PaymentRunService {
     List<Item> items = runs.findItems(tenantId, found.stream().map(PaymentRun::id).toList());
     Map<UUID, Supplier> suppliers = supplierMap(tenantId, supplierIds(items));
     Map<UUID, List<Item>> byRun = items.stream().collect(Collectors.groupingBy(Item::runId));
+    Map<UUID, Map<UUID, PayeeCheck>> checks =
+        files.findChecks(tenantId, found.stream().map(PaymentRun::id).toList());
     return found.stream()
-        .map(r -> view(r, byRun.getOrDefault(r.id(), List.of()), suppliers))
+        .map(
+            r ->
+                view(
+                    r,
+                    byRun.getOrDefault(r.id(), List.of()),
+                    suppliers,
+                    checks.getOrDefault(r.id(), Map.of())))
         .toList();
   }
 
@@ -226,8 +233,9 @@ public class PaymentRunService {
     List<Item> items = runs.findItems(tenantId, List.of(id));
     Map<UUID, Supplier> suppliers = supplierMap(tenantId, supplierIds(items));
     requireBankDetailsUnchangedSinceApproval(run, suppliers.values());
-    View view = view(run, items, suppliers);
+    View view = view(run, items, suppliers, checksOf(tenantId, id));
     requireAllPayable(view);
+    requireNothingHeld(view);
 
     List<NominalLedgerEntry> posting = new ArrayList<>();
     List<OutboxRow> events = new ArrayList<>();
@@ -274,14 +282,15 @@ public class PaymentRunService {
   }
 
   /**
-   * The bank file for an approved or paid run: one payment per supplier, with the account details
-   * as they stand — refused when any changed after approval.
+   * An approved or paid run as its bank file is written from, with the checks 17.10 makes before
+   * any file: refused when a supplier's bank details changed after approval or a supplier can no
+   * longer be paid.
    *
    * @throws ApiException 409 {@code PURCHASE_PAYMENT_RUN_NOT_APPROVED}, {@code
    *     PURCHASE_PAYMENT_RUN_CANCELLED}, {@code PURCHASE_PAYMENT_RUN_BANK_DETAILS_CHANGED} or
    *     {@code PURCHASE_PAYMENT_RUN_STALE}
    */
-  public Export bankFile(TenantContext ctx, UUID id) {
+  public View viewForBankFile(TenantContext ctx, UUID id) {
     UUID tenantId = requireFinance(ctx);
     PaymentRun run = requireRun(tenantId, id);
     if (!APPROVED.equals(run.status()) && !PAID.equals(run.status())) {
@@ -290,30 +299,14 @@ public class PaymentRunService {
     List<Item> items = runs.findItems(tenantId, List.of(id));
     Map<UUID, Supplier> suppliers = supplierMap(tenantId, supplierIds(items));
     requireBankDetailsUnchangedSinceApproval(run, suppliers.values());
-    View view = view(run, items, suppliers);
+    View view = view(run, items, suppliers, checksOf(tenantId, id));
     requireAllPayable(view);
-    List<BankFile.Payment> rows =
-        view.proposal().payments().stream()
-            .map(
-                p -> {
-                  Supplier s = suppliers.get(p.supplierId());
-                  return new BankFile.Payment(
-                      s.bankAccountName(),
-                      s.bankSortCode(),
-                      s.bankAccountNumber(),
-                      s.bankIban(),
-                      s.bankBic(),
-                      p.net(),
-                      run.currency(),
-                      run.reference());
-                })
-            .toList();
-    return new Export(BankFile.fileName(run.reference()), BankFile.csv(rows));
+    return view;
   }
 
   // ── helpers ─────────────────────────────────────────────────────────────────
 
-  private static UUID requireFinance(TenantContext ctx) {
+  static UUID requireFinance(TenantContext ctx) {
     ctx.requireAnyRole("PLATFORM_ADMIN", "OWNER", "MANAGER");
     ctx.requirePermission(Permissions.FINANCE_PAYMENTS);
     return ctx.requireTenantId();
@@ -327,7 +320,50 @@ public class PaymentRunService {
 
   private View viewOf(UUID tenantId, PaymentRun run) {
     List<Item> items = runs.findItems(tenantId, List.of(run.id()));
-    return view(run, items, supplierMap(tenantId, supplierIds(items)));
+    return view(
+        run, items, supplierMap(tenantId, supplierIds(items)), checksOf(tenantId, run.id()));
+  }
+
+  private Map<UUID, PayeeCheck> checksOf(UUID tenantId, UUID runId) {
+    return files.findChecks(tenantId, List.of(runId)).getOrDefault(runId, Map.of());
+  }
+
+  /**
+   * A payment the bank rejected, or a payee it could not match or matched only closely, stops the
+   * run until a manager releases a checked close match, or the run is cancelled (17.12).
+   */
+  private static void requireNothingHeld(View view) {
+    List<String> held =
+        view.checks().values().stream()
+            .filter(PayeeCheck::blocking)
+            .map(c -> supplierName(view, c.supplierId()) + ": " + heldReason(c))
+            .sorted()
+            .toList();
+    if (!held.isEmpty()) {
+      throw new ApiException(
+          409,
+          "PURCHASE_PAYMENT_RUN_PAYEE_HELD",
+          "the bank held a payment in this run; release a checked close match, or cancel the run"
+              + " and propose again",
+          held);
+    }
+  }
+
+  private static String supplierName(View view, UUID supplierId) {
+    Supplier s = view.suppliers().get(supplierId);
+    return s == null ? supplierId.toString() : s.name();
+  }
+
+  /** Why the bank held a payment, in words a manager can act on. */
+  static String heldReason(PayeeCheck c) {
+    if (com.shelfj.purchase.domain.Pain002.REJECTED.equals(c.status())) {
+      return "REJECTED" + (c.reasonCode() == null ? "" : " " + c.reasonCode());
+    }
+    if (com.shelfj.purchase.domain.Pain002.CLOSE_MATCH.equals(c.payeeMatch())) {
+      return "CLOSE_MATCH"
+          + (c.matchedName() == null ? "" : " (the bank holds \"" + c.matchedName() + "\")");
+    }
+    return "NO_MATCH";
   }
 
   /**
@@ -335,7 +371,11 @@ public class PaymentRunService {
    * stand, so one that can no longer be paid shows as excluded; a paid or cancelled run is shown as
    * it was.
    */
-  private static View view(PaymentRun run, List<Item> items, Map<UUID, Supplier> suppliers) {
+  private static View view(
+      PaymentRun run,
+      List<Item> items,
+      Map<UUID, Supplier> suppliers,
+      Map<UUID, PayeeCheck> checks) {
     boolean open = PROPOSED.equals(run.status()) || APPROVED.equals(run.status());
     List<Document> docs =
         items.stream()
@@ -356,7 +396,8 @@ public class PaymentRunService {
       Supplier s = suppliers.get(i.supplierId());
       if (s != null) mine.put(s.id(), s);
     }
-    return new View(run, PaymentProposal.build(docs, payees(mine, !open), Instant.now()), mine);
+    return new View(
+        run, PaymentProposal.build(docs, payees(mine, !open), Instant.now()), mine, checks);
   }
 
   private static Map<UUID, Payee> payees(Map<UUID, Supplier> suppliers, boolean asPaid) {

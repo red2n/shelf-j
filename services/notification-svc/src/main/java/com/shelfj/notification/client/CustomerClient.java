@@ -87,6 +87,23 @@ public class CustomerClient {
     return read(tenantId, customerId, "email");
   }
 
+  /**
+   * The phone number on a customer record, for a recall notice by text when there is no email
+   * (05.10). Empty when the record has none or customer-svc cannot be reached.
+   */
+  @Retry(maxRetries = 2, delay = 200)
+  @CircuitBreaker(requestVolumeThreshold = 5, failureRatio = 0.6, delay = 5000)
+  @Fallback(fallbackMethod = "phoneUnavailable")
+  public Optional<String> phoneOf(UUID tenantId, UUID customerId) {
+    return read(tenantId, customerId, "phone");
+  }
+
+  @SuppressWarnings({"PMD.UnusedFormalParameter", "PMD.UnusedPrivateMethod"})
+  private Optional<String> phoneUnavailable(UUID tenantId, UUID customerId) {
+    LOG.log(Level.WARNING, "customer-svc unreachable — no phone for customer {0}", customerId);
+    return Optional.empty();
+  }
+
   /** One string field of the customer record, empty when absent, null or blank. */
   private Optional<String> read(UUID tenantId, UUID customerId, String field) {
     ServiceInstance instance = registry.resolve(CUSTOMER_SERVICE).orElse(null);

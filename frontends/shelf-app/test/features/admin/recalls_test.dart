@@ -45,8 +45,12 @@ class _Adapter implements HttpClientAdapter {
       posts.add(o);
       if (path.endsWith('/close')) return _json(closeReply.$2, closeReply.$1);
       if (path.endsWith('/admin/recalls')) return _json(detail, 201);
+      if (path.endsWith('/returns')) return _json('{"data":{"id":"ret-1"}}', 201);
+      if (path.contains('/orders/recall-notices/')) return _json('{"data":$_noticeTwo}', 200);
       return _json('{"data":{}}', 200);
     }
+    if (path.endsWith('/orders/recall-notices/progress')) return _json(_progress, 200);
+    if (path.endsWith('/orders/recall-notices')) return _json(_notices, 200);
     if (path.endsWith('/admin/inventory/recalls')) return _json(list.$2, list.$1);
     if (path.contains('/admin/inventory/recalls/')) return _json(detail, 200);
     if (path.contains('/admin/stores')) {
@@ -88,9 +92,31 @@ const _summary = '''
 {"data":[{"id":"r-1","reference":"FSA-PRIN-42","kind":"RECALL","hazard":"ALLERGEN","status":"OPEN",
  "openedAt":"2026-09-11T08:00:00Z","scopeLines":1,"storesAffected":2,"storesOutstanding":2,"qtyHeld":13}]}''';
 
+const _noticeTwo =
+    '{"id":"n-2","recallId":"r-1","reference":"FSA-PRIN-42","hazard":"ALLERGEN","reason":"Undeclared peanut",'
+    '"customerNotice":"Do not eat.","remedies":["REFUND","REPLACEMENT"],"contactPhone":"0800 100 200",'
+    '"orderId":"o-2","storeId":"store-2","channel":"POS","buyerIdentified":false,"soldAt":"2026-09-10T09:00:00Z",'
+    '"status":"RESOLVED","remedy":"REPLACEMENT","resolution":"REPLACED","lines":[{"variantId":"v-1","productName":"Crunchy peanut butter","batchNo":"L1","qty":1}]}';
+const _notices = '''
+{"data":[
+ {"id":"n-1","recallId":"r-1","reference":"FSA-PRIN-42","hazard":"ALLERGEN","reason":"Undeclared peanut",
+  "customerNotice":"Do not eat.","remedies":["REFUND","REPLACEMENT"],"contactPhone":"0800 100 200",
+  "orderId":"o-1","storeId":"store-1","channel":"ONLINE","buyerIdentified":true,"soldAt":"2026-09-10T09:00:00Z",
+  "status":"REMEDY_CHOSEN","remedy":"REFUND","remedyChosenVia":"SHOPPER",
+  "lines":[{"variantId":"v-1","productName":"Crunchy peanut butter","sku":"PB-340","batchNo":"L1","expiryDate":"2026-10-01","qty":2}]},
+ $_noticeTwo,
+ {"id":"n-3","recallId":"r-1","reference":"FSA-PRIN-42","hazard":"ALLERGEN","reason":"Undeclared peanut",
+  "customerNotice":"Do not eat.","remedies":["REFUND","REPLACEMENT"],"contactPhone":"0800 100 200",
+  "orderId":"o-3","storeId":"store-1","channel":"POS","buyerIdentified":false,"soldAt":"2026-09-10T09:00:00Z",
+  "status":"UNIDENTIFIED","lines":[{"variantId":"v-1","batchNo":"L1","qty":1}]}]}''';
+const _progress = '''
+{"data":{"recallId":"r-1","notices":3,"identified":1,"unidentified":2,"remedyChosen":2,"resolved":1,
+ "chosen":{"REFUND":1,"REPLACEMENT":1,"REPAIR":0}}}''';
+
 const _detail = '''
 {"data":{"id":"r-1","reference":"FSA-PRIN-42","kind":"RECALL","hazard":"ALLERGEN",
  "reason":"Undeclared peanut","customerNotice":"Do not eat. Return it for a full refund.",
+ "remedies":["REFUND","REPLACEMENT"],"contactPhone":"0800 100 200","ordersAffected":3,"qtySold":4,
  "source":"FSA","status":"OPEN","openedAt":"2026-09-11T08:00:00Z",
  "items":[{"id":"i-1","variantId":"v-1","batchNo":"L1","coversEveryPack":false}],
  "batches":[
@@ -116,6 +142,12 @@ Future<_Adapter> _pump(WidgetTester tester, {String role = 'MANAGER', List<Strin
   ));
   await tester.pumpAndSettle();
   return adapter;
+}
+
+/// The detail dialog's list builds lazily: scroll its list until the widget exists.
+Future<void> _scrollTo(WidgetTester tester, Finder finder) async {
+  await tester.scrollUntilVisible(finder, 200, scrollable: find.byType(Scrollable).last);
+  await tester.pumpAndSettle();
 }
 
 Map<String, dynamic> _body(RequestOptions o) =>
@@ -152,6 +184,22 @@ void main() {
     expect(adapter.posts, isEmpty);
 
     await tester.enterText(find.byKey(const Key('recall-notice')), 'Do not eat. Return it for a full refund.');
+    // Buyers are told and offered a remedy: none ticked, nothing sent; a remedy but nowhere to
+    // turn, nothing sent.
+    await tester.tap(find.byKey(const Key('recall-open-save')));
+    await tester.pumpAndSettle();
+    expect(find.textContaining('Tick at least one'), findsOneWidget);
+    await tester.ensureVisible(find.byKey(const Key('recall-remedy-REFUND')));
+    await tester.tap(find.byKey(const Key('recall-remedy-REFUND')));
+    await tester.pumpAndSettle();
+    await tester.tap(find.byKey(const Key('recall-open-save')));
+    await tester.pumpAndSettle();
+    expect(find.textContaining('names a free number'), findsOneWidget);
+    expect(adapter.posts, isEmpty);
+    await tester.enterText(find.byKey(const Key('recall-single-remedy-reason')), 'Opened food cannot be replaced');
+    await tester.enterText(find.byKey(const Key('recall-contact-phone')), '0800 100 200');
+    await tester.enterText(find.byKey(const Key('recall-sold-from')), '2026-08-01');
+    await tester.ensureVisible(find.text('Product *'));
     await tester.tap(find.text('Product *'));
     await tester.pumpAndSettle();
     await tester.tap(find.text('Crunchy peanut butter').last);
@@ -162,11 +210,13 @@ void main() {
     await tester.pumpAndSettle();
     await tester.enterText(find.byKey(const Key('recall-lot')), 'L1');
     await tester.enterText(find.byKey(const Key('recall-from')), '1 Oct');
+    await tester.ensureVisible(find.byKey(const Key('recall-add-item')));
     await tester.tap(find.byKey(const Key('recall-add-item')));
     await tester.pumpAndSettle();
     expect(find.text('Dates are written YYYY-MM-DD.'), findsOneWidget);
 
     await tester.enterText(find.byKey(const Key('recall-from')), '2026-10-01');
+    await tester.ensureVisible(find.byKey(const Key('recall-add-item')));
     await tester.tap(find.byKey(const Key('recall-add-item')));
     await tester.pumpAndSettle();
     expect(find.text('Lot L1, dated 2026-10-01 or later'), findsOneWidget);
@@ -182,6 +232,54 @@ void main() {
     expect(body['items'], [
       {'variantId': 'v-1', 'batchNo': 'L1', 'expiryFrom': '2026-10-01'}
     ]);
+    expect(body['remedies'], ['REFUND']);
+    expect(body['singleRemedyReason'], 'Opened food cannot be replaced');
+    expect(body['contactPhone'], '0800 100 200');
+    expect(body.containsKey('contactUrl'), isFalse);
+    expect(body['soldFrom'], '2026-08-01');
+  });
+
+  testWidgets('the buyers: how far the recall reached, each notice, and settling one', (tester) async {
+    final adapter = await _pump(tester);
+    await tester.tap(find.text('FSA-PRIN-42'));
+    await tester.pumpAndSettle();
+    expect(find.byKey(const Key('recall-offer')), findsOneWidget);
+    expect(find.textContaining('Buyers may choose a refund or a replacement'), findsOneWidget);
+    await _scrollTo(tester, find.byKey(const Key('recall-buyers-progress')));
+    expect(
+        find.textContaining('3 orders drew on the packs in scope · 1 told · 2 till sales with no buyer known · 2 chose a remedy · 1 settled'),
+        findsOneWidget);
+    expect(find.textContaining('Crunchy peanut butter, lot L1, best before 2026-10-01 · Chose a refund'), findsOneWidget);
+    expect(find.textContaining('Replacement given'), findsOneWidget);
+    expect(find.textContaining('Buyer not known'), findsOneWidget);
+    // A settled notice offers nothing more; an open one settles by a return or by hand.
+    expect(find.byKey(const Key('recall-notice-settle-n-2')), findsNothing);
+    await _scrollTo(tester, find.byKey(const Key('recall-notice-settle-n-1')));
+    await tester.tap(find.byKey(const Key('recall-notice-settle-n-1')));
+    await tester.pumpAndSettle();
+    expect(find.text('Buyer chose a refund'), findsNothing); // already chosen
+    await tester.tap(find.text('Refund — take the goods back'));
+    await tester.pumpAndSettle();
+    final refund = adapter.posts.singleWhere((p) => p.path.endsWith('/orders/o-1/returns'));
+    final body = _body(refund);
+    expect(body['recallNoticeId'], 'n-1');
+    expect(body['items'], [
+      {'variantId': 'v-1', 'qty': 2.0}
+    ]);
+    await _scrollTo(tester, find.byKey(const Key('recall-notice-settle-n-3')));
+    await tester.tap(find.byKey(const Key('recall-notice-settle-n-3')));
+    await tester.pumpAndSettle();
+    await tester.tap(find.text('Buyer chose a replacement'));
+    await tester.pumpAndSettle();
+    final chose = adapter.posts.singleWhere((p) => p.path.endsWith('/orders/recall-notices/n-3/remedy'));
+    expect(_body(chose)['remedy'], 'REPLACEMENT');
+    await _scrollTo(tester, find.byKey(const Key('recall-notice-settle-n-3')));
+    await tester.tap(find.byKey(const Key('recall-notice-settle-n-3')));
+    await tester.pumpAndSettle();
+    await tester.tap(find.text('Buyer wanted nothing'));
+    await tester.pumpAndSettle();
+    final declined = adapter.posts.singleWhere((p) => p.path.endsWith('/orders/recall-notices/n-3/resolve'));
+    expect(_body(declined)['resolution'], 'DECLINED');
   });
 
   testWidgets('a storekeeper cannot open one, records what their store found, and checks a pack',

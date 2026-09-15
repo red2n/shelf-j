@@ -42,6 +42,8 @@
         <testcontainers.version>1.21.4</testcontainers.version>
         <junit.version>5.11.3</junit.version>
         <lettuce.version>6.5.1.RELEASE</lettuce.version>
+        <pdfbox.version>3.0.5</pdfbox.version>
+        <verapdf.version>1.28.1</verapdf.version>
         <shelfj.version>0.1.0-SNAPSHOT</shelfj.version>
 
         <!-- Quality tooling versions -->
@@ -64,6 +66,7 @@
         <module>shared/common-test</module>
         <module>platform/discovery</module>
         <module>shared/common-service</module>
+        <module>shared/einvoice</module>
         <module>services/iam-svc</module>
         <module>services/tenant-svc</module>
         <module>services/product-svc</module>
@@ -107,6 +110,23 @@
                 <groupId>com.shelfj</groupId>
                 <artifactId>common-service</artifactId>
                 <version>${shelfj.version}</version>
+            </dependency>
+            <dependency>
+                <groupId>com.shelfj</groupId>
+                <artifactId>einvoice</artifactId>
+                <version>${shelfj.version}</version>
+            </dependency>
+
+            <!-- E-invoices: Factur-X PDF/A-3 (pdfbox), and the reference PDF/A validator for its tests -->
+            <dependency>
+                <groupId>org.apache.pdfbox</groupId>
+                <artifactId>pdfbox</artifactId>
+                <version>${pdfbox.version}</version>
+            </dependency>
+            <dependency>
+                <groupId>org.verapdf</groupId>
+                <artifactId>validation-model-jakarta</artifactId>
+                <version>${verapdf.version}</version>
             </dependency>
 
             <!-- Persistence / migrations (not in Helidon BOM) -->

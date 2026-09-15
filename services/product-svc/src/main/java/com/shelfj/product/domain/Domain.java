@@ -155,6 +155,7 @@ public final class Domain {
       String restrictionCategory,
       String allergenStatus,
       String ingredients,
+      String hsnCode,
       String soldBy,
       java.math.BigDecimal netContent,
       String netContentUom,

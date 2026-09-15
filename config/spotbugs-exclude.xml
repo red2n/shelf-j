@@ -45,6 +45,17 @@
     </Match>
 
     <!--
+      The EN 16931 model (07.13/18.9) is a tree of records in shared/einvoice, outside the
+      dto/domain/service packages matched above. Every List component is replaced in the record's
+      compact constructor by List.copyOf(...) (or List.of() when absent), so an accessor returns an
+      immutable list; SpotBugs cannot see through the constructor's helper to prove it.
+    -->
+    <Match>
+        <Bug pattern="EI_EXPOSE_REP,EI_EXPOSE_REP2"/>
+        <Class name="~com\.shelfj\.einvoice\.Invoice(\$.*)?"/>
+    </Match>
+
+    <!--
       aggregateDemand builds a PreparedStatement SQL string dynamically to embed a
       date_trunc literal (day/week/month). The literal is validated upstream against
       an allow-list (DAY|WEEK|MONTH) before reaching this method, so there is no SQL
@@ -53,6 +64,18 @@
     <Match>
         <Bug pattern="SQL_PREPARED_STATEMENT_GENERATED_FROM_NONCONSTANT_STRING"/>
         <Class name="com.shelfj.inventory.repo.DemandHistoryRepository"/>
+    </Match>
+    <Match>
+        <!--
+          TenantDataRepository (21.14) exports, imports and erases every table of a service's own
+          schema, so its statements are built per table. Every identifier comes from the database's
+          own catalog (information_schema and pg_catalog for current_schema()), is checked by
+          TenantDataCatalog to be a plain identifier, and is quoted; the tenant predicates are code
+          constants in each service's TenantDataSpec. Nothing a caller sends becomes SQL: table
+          names are looked up in the catalog, and row values are bound as one jsonb parameter.
+        -->
+        <Bug pattern="SQL_PREPARED_STATEMENT_GENERATED_FROM_NONCONSTANT_STRING,SQL_NONCONSTANT_STRING_PASSED_TO_EXECUTE"/>
+        <Class name="com.shelfj.service.TenantDataRepository"/>
         <Method name="aggregateDemand"/>
     </Match>
 

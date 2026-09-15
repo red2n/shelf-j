@@ -813,6 +813,129 @@ final serverOrdersProvider = FutureProvider<List<ServerOrderSummary>?>((ref) asy
       .toList();
 });
 
+// ── Product safety recalls (05.10) ───────────────────────────────────────────
+
+/// One line of an order a recall reached.
+class RecallNoticeLine {
+  final String variantId;
+  final String? productName;
+  final String? batchNo;
+  final String? expiryDate;
+  final double qty;
+
+  const RecallNoticeLine({
+    required this.variantId,
+    this.productName,
+    this.batchNo,
+    this.expiryDate,
+    required this.qty,
+  });
+
+  factory RecallNoticeLine.fromJson(Map<String, dynamic> j) => RecallNoticeLine(
+        variantId: j['variantId'] as String? ?? '',
+        productName: j['productName'] as String?,
+        batchNo: j['batchNo'] as String?,
+        expiryDate: j['expiryDate'] as String?,
+        qty: (j['qty'] as num?)?.toDouble() ?? 0,
+      );
+
+  String describe() => [
+        productName ?? 'the product',
+        if (batchNo != null) 'lot $batchNo',
+        if (expiryDate != null) 'best before $expiryDate',
+      ].join(', ');
+}
+
+/// A recall's notice to this shopper about one of their orders: the notice
+/// as the shop wrote it, the remedies it offers, and where they got to.
+class MyRecallNotice {
+  final String id;
+  final String reference;
+  final String hazard;
+  final String reason;
+  final String customerNotice;
+  final List<String> remedies;
+  final String? singleRemedyReason;
+  final String? contactPhone;
+  final String? contactUrl;
+  final String orderId;
+  final DateTime? soldAt;
+  final String status;
+  final String? remedy;
+  final String? resolution;
+  final List<RecallNoticeLine> lines;
+
+  const MyRecallNotice({
+    required this.id,
+    required this.reference,
+    required this.hazard,
+    required this.reason,
+    required this.customerNotice,
+    this.remedies = const [],
+    this.singleRemedyReason,
+    this.contactPhone,
+    this.contactUrl,
+    required this.orderId,
+    this.soldAt,
+    required this.status,
+    this.remedy,
+    this.resolution,
+    this.lines = const [],
+  });
+
+  bool get isResolved => status == 'RESOLVED';
+  bool get canChoose => !isResolved && remedy == null;
+
+  factory MyRecallNotice.fromJson(Map<String, dynamic> j) => MyRecallNotice(
+        id: j['id'] as String? ?? '',
+        reference: j['reference'] as String? ?? '-',
+        hazard: j['hazard'] as String? ?? 'OTHER',
+        reason: j['reason'] as String? ?? '',
+        customerNotice: j['customerNotice'] as String? ?? '',
+        remedies: [for (final r in (j['remedies'] as List?) ?? const []) '$r'],
+        singleRemedyReason: j['singleRemedyReason'] as String?,
+        contactPhone: j['contactPhone'] as String?,
+        contactUrl: j['contactUrl'] as String?,
+        orderId: j['orderId'] as String? ?? '',
+        soldAt: DateTime.tryParse(j['soldAt'] as String? ?? '')?.toLocal(),
+        status: j['status'] as String? ?? 'ISSUED',
+        remedy: j['remedy'] as String?,
+        resolution: j['resolution'] as String?,
+        lines: [
+          for (final l in (j['lines'] as List?) ?? const [])
+            if (l is Map) RecallNoticeLine.fromJson(l.cast<String, dynamic>()),
+        ],
+      );
+}
+
+/// The signed-in shopper's recall notices at this shop; null when signed out.
+final myRecallNoticesProvider =
+    FutureProvider<List<MyRecallNotice>?>((ref) async {
+  final auth = ref.watch(storefrontAuthProvider);
+  if (!auth.isSignedIn) return null;
+  final dio = ref.watch(storefrontDioProvider);
+  final resp = await dio.get('/${ApiConstants.order}/orders/recall-notices/mine');
+  final data = (resp.data['data'] as List?) ?? [];
+  return [
+    for (final e in data)
+      if (e is Map) MyRecallNotice.fromJson(e.cast<String, dynamic>()),
+  ];
+});
+
+/// The shopper chooses their remedy, once.
+Future<MyRecallNotice> chooseMyRecallRemedy(
+  Dio dio, {
+  required String noticeId,
+  required String remedy,
+}) async {
+  final resp = await dio.post(
+    '/${ApiConstants.order}/orders/recall-notices/$noticeId/remedy',
+    data: {'remedy': remedy},
+  );
+  return MyRecallNotice.fromJson(
+      (resp.data['data'] as Map).cast<String, dynamic>());
+}
+
 // ── Customer preferences & data collection ───────────────────────────────────
 
 enum CustomerGender { male, female, other, preferNotToSay }
@@ -950,8 +1073,13 @@ class CustomerPreferencesState {
 class CustomerPreferencesNotifier
     extends StateNotifier<CustomerPreferencesState> {
   CustomerPreferencesNotifier() : super(const CustomerPreferencesState()) {
-    _load();
+    ready = _load();
   }
+
+  /// Completes once the stored answers are read. Until then every flag reads as "not asked", so
+  /// whatever decides whether to ask must wait for it: reading straight after the provider was
+  /// created asked a shopper who had already answered, on every visit (SJ-D62).
+  late final Future<void> ready;
 
   static const _storage = AppStorage();
 

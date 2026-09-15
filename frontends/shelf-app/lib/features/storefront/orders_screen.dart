@@ -1,6 +1,7 @@
 import 'package:flutter/material.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:go_router/go_router.dart';
+import 'recall_notice_card.dart';
 import 'storefront_providers.dart';
 import 'storefront_shell.dart' show StorefrontAuthDialog;
 import '../../shared/util/short_ref.dart';
@@ -22,7 +23,10 @@ class StorefrontOrdersScreen extends ConsumerWidget {
           s.id: s.name,
       };
       return RefreshIndicator(
-        onRefresh: () async => ref.invalidate(serverOrdersProvider),
+        onRefresh: () async {
+          ref.invalidate(serverOrdersProvider);
+          ref.invalidate(myRecallNoticesProvider);
+        },
         child: async.when(
           loading: () => const Center(child: CircularProgressIndicator()),
           error: (e, _) => _ErrorState(
@@ -31,15 +35,28 @@ class StorefrontOrdersScreen extends ConsumerWidget {
           ),
           data: (orders) {
             final list = orders ?? const [];
-            if (list.isEmpty) return const _EmptyState();
+            // A product safety recall on something they bought comes before
+            // the orders themselves (05.10).
             return ListView.separated(
-              padding: const EdgeInsets.all(16),
-              itemCount: list.length,
+              padding: const EdgeInsets.only(bottom: 16),
+              itemCount: list.length + 2,
               separatorBuilder: (_, _) => const SizedBox(height: 4),
-              itemBuilder: (_, i) => _ServerOrderTile(
-                  order: list[i],
-                  storeName: storeNames[list[i].storeId] ?? list[i].storeId,
-                  showPrices: showPrices),
+              itemBuilder: (_, i) {
+                if (i == 0) return const RecallNoticesSection();
+                if (i == 1) {
+                  return list.isEmpty
+                      ? const _EmptyState()
+                      : const SizedBox(height: 12);
+                }
+                final order = list[i - 2];
+                return Padding(
+                  padding: const EdgeInsets.symmetric(horizontal: 16),
+                  child: _ServerOrderTile(
+                      order: order,
+                      storeName: storeNames[order.storeId] ?? order.storeId,
+                      showPrices: showPrices),
+                );
+              },
             );
           },
         ),

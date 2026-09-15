@@ -267,6 +267,12 @@ public class JwtAuthFilter implements ContainerRequestFilter {
     if ("GET".equals(method) && isOrderSelfRead(path)) {
       return true;
     }
+    // The shopper's recall notices and their choice of remedy (05.10): keyed on the login in
+    // order-svc like /orders/mine, with the storefront header naming the shop. Two shapes and no
+    // more — the recall's list and its settlement are staff work through the normal door.
+    if (isStorefrontRecallNotice(path, method)) {
+      return true;
+    }
     if ("POST".equals(method) && "api/payment-svc/payments/online".equals(path)) {
       return true;
     }
@@ -412,6 +418,30 @@ public class JwtAuthFilter implements ContainerRequestFilter {
    * @param path the normalized request path
    * @return whether it is a shopper's id-addressed read of one order
    */
+  /**
+   * {@code GET .../orders/recall-notices/mine} and {@code POST
+   * .../orders/recall-notices/{id}/remedy}.
+   *
+   * @param path the normalized request path
+   * @param method the HTTP method
+   * @return {@code true} for exactly those two shapes
+   */
+  private static boolean isStorefrontRecallNotice(String path, String method) {
+    String prefix = "api/order-svc/orders/recall-notices/";
+    if (!path.startsWith(prefix)) {
+      return false;
+    }
+    String rest = path.substring(prefix.length());
+    if ("GET".equals(method)) {
+      return "mine".equals(rest);
+    }
+    int slash = rest.indexOf('/');
+    return "POST".equals(method)
+        && slash > 0
+        && looksLikeUuid(rest.substring(0, slash))
+        && "remedy".equals(rest.substring(slash + 1));
+  }
+
   private static boolean isOrderSelfRead(String path) {
     String prefix = "api/order-svc/orders/";
     if (!path.startsWith(prefix)) {

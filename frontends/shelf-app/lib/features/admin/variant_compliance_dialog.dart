@@ -52,6 +52,7 @@ class _VariantComplianceDialogState extends ConsumerState<VariantComplianceDialo
   bool _declarationChecked = false;
 
   final _ingredients = TextEditingController();
+  final _hsn = TextEditingController();
   final _origin = TextEditingController();
   final _originDetail = TextEditingController();
   final _netContent = TextEditingController();
@@ -71,7 +72,7 @@ class _VariantComplianceDialogState extends ConsumerState<VariantComplianceDialo
 
   @override
   void dispose() {
-    for (final c in [_ingredients, _origin, _originDetail, _netContent, _netContentUom, _tare]) {
+    for (final c in [_ingredients, _hsn, _origin, _originDetail, _netContent, _netContentUom, _tare]) {
       c.dispose();
     }
     super.dispose();
@@ -104,6 +105,7 @@ class _VariantComplianceDialogState extends ConsumerState<VariantComplianceDialo
               : AllergenPresence.mayContain;
         }
         _ingredients.text = c['ingredients'] as String? ?? '';
+        _hsn.text = c['hsnCode'] as String? ?? '';
         _origin.text = c['countryOfOrigin'] as String? ?? '';
         _originDetail.text = c['originDetail'] as String? ?? '';
         _restriction = c['restrictionCategory'] as String?;
@@ -142,6 +144,7 @@ class _VariantComplianceDialogState extends ConsumerState<VariantComplianceDialo
         'originDetail': _blankToNull(_originDetail.text),
         'restrictionCategory': _restriction,
         'ingredients': _blankToNull(_ingredients.text),
+        'hsnCode': _blankToNull(_hsn.text),
         'soldBy': _soldBy,
         'netContent': num.tryParse(_netContent.text.trim()),
         'netContentUom': _blankToNull(_netContentUom.text),
@@ -252,6 +255,18 @@ class _VariantComplianceDialogState extends ConsumerState<VariantComplianceDialo
                       ),
                     ],
                     const SizedBox(height: 16),
+                    Text('Tax classification', style: text.titleSmall),
+                    TextField(
+                      key: const Key('compliance-hsn'),
+                      controller: _hsn,
+                      keyboardType: TextInputType.number,
+                      maxLength: 8,
+                      decoration: const InputDecoration(
+                        labelText: 'HSN or SAC code',
+                        helperText: '4, 6 or 8 digits. An Indian e-invoice names every line by it.',
+                      ),
+                    ),
+                    const SizedBox(height: 8),
                     Text('Origin', style: text.titleSmall),
                     Row(
                       children: [

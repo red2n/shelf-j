@@ -36,6 +36,7 @@ import com.shelfj.order.dto.Dtos.RedeemGiftCardRequest;
 import com.shelfj.order.dto.Dtos.ReloadGiftCardRequest;
 import com.shelfj.order.dto.Dtos.VoidRequest;
 import com.shelfj.order.repo.OrderRepository;
+import com.shelfj.order.repo.RecallNoticeRepository;
 import com.shelfj.service.StoreStatusRepository;
 import com.shelfj.service.TenantStatusRepository;
 import com.shelfj.web.ApiException;
@@ -239,9 +240,15 @@ public class OrderService {
     // and the shop's record of that person is resolved from customer-svc, which creates one the
     // first time. If that call fails the order still stands with its login id: a sale is never
     // lost over a link, and the next order makes it.
+    //
+    // SJ-D59: only an ONLINE order is the caller's own. Every staff login carries CUSTOMER too, so
+    // linking on the role alone filed a cashier's anonymous till sales under the cashier's own
+    // record, loyalty and all. A till sale names its customer only when the cashier says who.
     UUID loginId = null;
     UUID customerId;
-    if (ctx.hasRole("CUSTOMER") && ctx.userId() != null) {
+    if (Order.CHANNEL_ONLINE.equals(req.channel())
+        && ctx.hasRole("CUSTOMER")
+        && ctx.userId() != null) {
       loginId = ctx.userId();
       customerId = customerLink.customerIdFor(tenantId, loginId, ctx.email()).orElse(null);
     } else {
@@ -1335,6 +1342,12 @@ public class OrderService {
             // The audit trail (20.11) names who took the goods back; a return never used to.
             ctx.userId());
 
+    // A refund that settles a recall notice (05.10) settles it in this transaction: the goods, the
+    // money and the notice agree, or none of them is recorded.
+    UUID noticeId =
+        req.recallNoticeId() == null || req.recallNoticeId().isBlank()
+            ? null
+            : Parsing.uuid(req.recallNoticeId(), "recallNoticeId");
     return repo.createReturn(
         ret,
         returnItems,
@@ -1346,7 +1359,12 @@ public class OrderService {
             returnItems,
             totalRefund,
             method,
-            order.currency()));
+            order.currency()),
+        noticeId == null
+            ? null
+            : c ->
+                RecallNoticeRepository.resolveByReturnTx(
+                    c, tenantId, noticeId, orderId, returnId, ctx.userId()));
   }
 
   /**
@@ -1600,6 +1618,7 @@ public class OrderService {
     // requireTenantId (not the nullable tenantId()) so issuing a gift card without a tenant in
     // context fails 401 rather than minting stored value against a null-tenant row.
     UUID tenantId = ctx.requireTenantId();
+    String paidBy = giftCardPaidBy(req.paidBy());
     UUID storeId = Parsing.uuid(req.storeId(), "storeId");
     ctx.requireStoreAccess(storeId);
     UUID gcId = Ids.newId();
@@ -1634,7 +1653,7 @@ public class OrderService {
             null,
             Instant.now());
 
-    return repo.issueGiftCard(gc, tx);
+    return repo.issueGiftCard(gc, tx, Events.giftCardLoaded(gc, tx, paidBy));
   }
 
   /**
@@ -1661,7 +1680,33 @@ public class OrderService {
    *     when the card is not active
    */
   public GiftCard reloadGiftCard(UUID tenantId, String code, ReloadGiftCardRequest req) {
-    return repo.reloadGiftCard(tenantId, code, req.amount(), req.reference());
+    String paidBy = giftCardPaidBy(req.paidBy());
+    return repo.reloadGiftCard(
+        tenantId,
+        code,
+        req.amount(),
+        req.reference(),
+        (card, tx) -> Events.giftCardLoaded(card, tx, paidBy));
+  }
+
+  /** What gift card value may be paid for with, and PROMOTIONAL for value given away (17.11). */
+  static final java.util.Set<String> GIFT_CARD_PAID_BY =
+      java.util.Set.of("CASH", "CARD", "UPI", "WALLET", "PROMOTIONAL");
+
+  /**
+   * How gift card value was paid for, normalised. Stored value bought with another gift card, a
+   * voucher or store credit would only move a liability from one account to another, so those are
+   * refused with everything else that is not a tender.
+   *
+   * @throws ApiException {@code GIFT_CARD_PAID_BY_INVALID} (400)
+   */
+  static String giftCardPaidBy(String paidBy) {
+    String p = paidBy == null ? "" : paidBy.trim().toUpperCase(java.util.Locale.ROOT);
+    if (!GIFT_CARD_PAID_BY.contains(p)) {
+      throw ApiException.badRequest(
+          "GIFT_CARD_PAID_BY_INVALID", "paidBy must be CASH, CARD, UPI, WALLET or PROMOTIONAL");
+    }
+    return p;
   }
 
   /**

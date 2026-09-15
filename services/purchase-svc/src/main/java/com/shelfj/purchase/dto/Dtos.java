@@ -49,7 +49,16 @@ public final class Dtos {
       @Schema(description = "IBAN for an international payment; its check digits are verified.")
           @Size(max = 42)
           String bankIban,
-      @Schema(description = "BIC (SWIFT code), with an IBAN.") @Size(max = 14) String bankBic) {}
+      @Schema(description = "BIC (SWIFT code), with an IBAN.") @Size(max = 14) String bankBic,
+      @Schema(
+              description =
+                  "Where the supplier's e-invoices come from: the Peppol electronic address scheme"
+                      + " (EAS), e.g. 0088 for a GLN or 9930 for a German VAT number. Given with"
+                      + " einvoiceId or not at all.")
+          @Size(max = 8)
+          String einvoiceScheme,
+      @Schema(description = "The supplier's identifier within that scheme.") @Size(max = 128)
+          String einvoiceId) {}
 
   @Schema(
       name = "UpdateSupplierRequest",
@@ -80,7 +89,15 @@ public final class Dtos {
       @Size(max = 42) String bankIban,
       @Size(max = 14) String bankBic,
       @Schema(description = "True to remove the bank details. Needs finance.payments.")
-          Boolean clearBankDetails) {}
+          Boolean clearBankDetails,
+      @Schema(
+              description =
+                  "The supplier's e-invoicing address scheme (EAS); unchanged when it and einvoiceId"
+                      + " are both omitted, removed when both are empty.")
+          @Size(max = 8)
+          String einvoiceScheme,
+      @Schema(description = "The supplier's identifier within that scheme.") @Size(max = 128)
+          String einvoiceId) {}
 
   @Schema(name = "SupplierResponse")
   public record SupplierResponse(
@@ -105,7 +122,9 @@ public final class Dtos {
       String bankBic,
       @Schema(description = "Whether a payment run can pay this supplier.") boolean hasBankDetails,
       @Schema(description = "When the bank details last changed; a run flags a recent change.")
-          Instant bankDetailsChangedAt) {}
+          Instant bankDetailsChangedAt,
+      @Schema(description = "The e-invoicing address scheme (EAS), or null.") String einvoiceScheme,
+      @Schema(description = "The identifier within that scheme, or null.") String einvoiceId) {}
 
   // ── Purchase Order ────────────────────────────────────────────────────────────
   @Schema(name = "CreatePurchaseOrderRequest", description = "Create a DRAFT purchase order.")
@@ -674,7 +693,12 @@ public final class Dtos {
           boolean remittanceEmailOnFile,
       @Schema(description = "BANK_DETAILS_CHANGED_RECENTLY when they changed in the last 14 days.")
           List<String> warnings,
-      List<PaymentRunDocumentResponse> documents) {}
+      List<PaymentRunDocumentResponse> documents,
+      @Schema(
+              description =
+                  "What the bank's latest status report said about this payment; absent until one"
+                      + " is read (17.12).")
+          PayeeCheckResponse bankCheck) {}
 
   @Schema(name = "PaymentRunDocumentResponse")
   public record PaymentRunDocumentResponse(
@@ -705,4 +729,113 @@ public final class Dtos {
           BigDecimal balance,
       LocalDate firstPosted,
       LocalDate lastPosted) {}
+
+  @Schema(
+      name = "DeferredRevenueSettingsRequest",
+      description =
+          "The tenant accountant's estimates for deferring loyalty and gift card revenue.")
+  public record DeferredRevenueSettingsRequest(
+      @Schema(
+              description =
+                  "What one loyalty point is worth to the shopper, in the tenant's currency: above"
+                      + " 0, at most 1000, to four decimal places.")
+          @NotNull
+          BigDecimal pointValue,
+      @Schema(description = "The percentage of points expected never to be spent, 0 to 95.")
+          @NotNull
+          BigDecimal pointsBreakagePct,
+      @Schema(
+              description =
+                  "The percentage of gift card value expected never to be claimed, 0 to 95.")
+          @NotNull
+          BigDecimal giftCardBreakagePct,
+      @Schema(description = "What the estimates rest on.") @NotBlank @Size(max = 500)
+          String reason) {}
+
+  @Schema(name = "DeferredRevenueSettingsResponse")
+  public record DeferredRevenueSettingsResponse(
+      String currency,
+      BigDecimal pointValue,
+      BigDecimal pointsBreakagePct,
+      BigDecimal giftCardBreakagePct,
+      String reason,
+      UUID setBy,
+      Instant setAt) {}
+
+  @Schema(name = "DeferredRevenueResponse", description = "Where deferred revenue stands.")
+  public record DeferredRevenueResponse(
+      @Schema(description = "The estimates in force; absent until the first are set.")
+          DeferredRevenueSettingsResponse settings,
+      List<DeferredRevenueSettingsResponse> history,
+      BigDecimal pointsOutstanding,
+      @Schema(description = "Income deferred against the points outstanding (2330).")
+          BigDecimal deferredIncome,
+      @Schema(description = "Points spent before their earning reached the ledger.")
+          BigDecimal pointsUnmatched,
+      @Schema(description = "Loyalty events that arrived before any estimates were set.")
+          long eventsAwaitingEstimates,
+      BigDecimal giftCardsLoaded,
+      BigDecimal giftCardsRedeemed,
+      @Schema(description = "Gift card breakage recognised (4031).") BigDecimal giftCardBreakage,
+      BigDecimal giftCardLiability) {}
+
+  // ── Bank-standard payment files (17.12) ─────────────────────────────────────
+
+  @Schema(
+      name = "PayingAccountRequest",
+      description = "The account supplier payments are made from.")
+  public record PayingAccountRequest(
+      @Schema(description = "The account holder's name as the bank holds it.")
+          @NotBlank
+          @Size(max = 140)
+          String accountName,
+      @Schema(description = "A UK sort code, six digits.") String sortCode,
+      @Schema(description = "A UK account number, eight digits.") String accountNumber,
+      @Schema(description = "An IBAN; required for a euro account.") String iban,
+      String bic,
+      @Schema(
+              description =
+                  "The six-digit Bacs service user number, for a sterling account that sends Bacs"
+                      + " Standard 18 files.")
+          String serviceUserNumber) {}
+
+  @Schema(name = "PayingAccountResponse")
+  public record PayingAccountResponse(
+      String currency,
+      String accountName,
+      String sortCode,
+      @Schema(description = "The last four digits only.") String accountNumberMasked,
+      @Schema(description = "The last four characters only.") String ibanMasked,
+      String bic,
+      String serviceUserNumber,
+      @Schema(description = "Whether a Bacs Standard 18 file can be sent from it.")
+          boolean sendsBacs,
+      @Schema(description = "Whether a pain.001 SEPA file can be sent from it.") boolean sendsSepa,
+      UUID setBy,
+      Instant setAt) {}
+
+  @Schema(name = "ReleasePayeeRequest")
+  public record ReleasePayeeRequest(
+      @Schema(
+              description =
+                  "What was checked, e.g. the supplier confirmed the name the bank holds is theirs.")
+          @NotBlank
+          @Size(max = 500)
+          String reason) {}
+
+  @Schema(name = "PayeeCheckResponse", description = "The bank's answer on one payment.")
+  public record PayeeCheckResponse(
+      @Schema(description = "The end-to-end id the file gave the payment.") String endToEndId,
+      @Schema(description = "ISO status: ACCP, ACSP, ACSC, PDNG, RJCT and so on.") String status,
+      @Schema(description = "The bank's reason code, e.g. AC04 for a closed account.")
+          String reasonCode,
+      @Schema(description = "Verification of Payee: MTCH, CMTC, NMTC or NOAP.") String payeeMatch,
+      @Schema(description = "On a close match, the name the bank holds for the account.")
+          String matchedName,
+      @Schema(description = "Whether the bank's answer stops the payment.") boolean held,
+      @Schema(description = "Whether a manager may release it: a close match not rejected.")
+          boolean releasable,
+      UUID releasedBy,
+      Instant releasedAt,
+      String releaseReason) {}
 }

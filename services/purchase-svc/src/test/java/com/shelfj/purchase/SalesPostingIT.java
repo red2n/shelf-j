@@ -52,12 +52,6 @@ class SalesPostingIT {
   @BeforeEach
   void truncateTables() throws Exception {
     PurchaseFixtures.truncateAll(PG);
-    try (var conn =
-            java.sql.DriverManager.getConnection(PG.jdbcUrl(), PG.username(), PG.password());
-        var st = conn.createStatement()) {
-      st.execute(
-          "TRUNCATE TABLE purchase.sales_orders, purchase.sales_tenders, purchase.processed_events");
-    }
   }
 
   // ── payloads as the producers write them ────────────────────────────────────

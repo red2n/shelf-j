@@ -171,7 +171,8 @@ shelf-j/
 │   ├── events-contract/          # BaseEvent/DomainEvent/OutboxRecord
 │   ├── common-web/               # response envelope, error mapper, tenant context
 │   ├── common-service/           # DataSource/Flyway/Consul/health/outbox/Kafka base classes
-│   └── common-test/               # Testcontainers + ArchUnit rule helpers
+│   ├── common-test/               # Testcontainers + ArchUnit rule helpers
+│   └── einvoice/                  # EN 16931 as a format: UBL, CII, Factur-X, CEN + Peppol rules
 │
 ├── frontends/shelf-app/         # one Flutter app: storefront + POS + admin + platform
 ├── docs/                        # ARCHITECTURE.md, API-GUIDE.md, UI-GUIDE.md, onboarding-and-locations.md, coding-standards.md
@@ -270,6 +271,7 @@ For a service named `<service>` (e.g. `iam-svc`) and a profile `<profile>` (defa
 | `common-web` | `ApiResponse`/`ErrorBody`/`ErrorCodes`, exception mappers (generic + UUID-parse), `TenantContext`/`TenantContextFilter`, `AdminAuthorizationFilter`, `Cursor` (pagination), `Validations`. |
 | `common-service` | Reusable infra: `DataSourceProducer`, `FlywayRunner`, `ConsulRegistrar`, `HealthChecks`, `BaseJdbcRepository`, the outbox pattern (`BaseOutboxRepository`/`OutboxPublisher`/`OutboxStore`), `BaseKafkaConsumer`/`KafkaConsumerRegistry`, `RedisClientProducer`, shared tenant/store status-change projection consumers, and `db/migration/afterMigrate.sql` — run after every service's migrations, it fails `flyway migrate` if a column generates its own uuid (`FlywayRunner` logs that as a warning). |
 | `common-test` | Testcontainers helpers (`PostgresSupport`, `RedisSupport`) and `ShelfJArchRules` (ArchUnit rules enforcing the layering above). `PostgresSupport.stop()` fails the test class if any column defaults to a uuid generator or any table's `id` holds a row that is not UUIDv7. |
+| `einvoice` | EN 16931 e-invoices as a format, with no service state and no business decisions: one model (`Invoice`, every field named by its business term) read from and written to UBL 2.1 and UN/CEFACT CII D16B (`EInvoices.read`/`toUbl`/`toCii`), Factur-X PDF/A-3 with the CII inside (`toFacturX`; hybrids read back through their `factur-x.xml`, `zugferd-invoice.xml` or `xrechnung.xml`), and CEN's and Peppol BIS Billing 3.0's business rules and code lists as their schematron tests them (`Rules`, `EInvoices.validate`). A received document is hostile until read: DTDs refused, size, depth, element and attribute counts capped, an encrypted PDF refused and an embedded XML read no further than its cap. purchase-svc reads suppliers' invoices with it and order-svc writes its own. |
 
 ---
 
@@ -287,8 +289,8 @@ Staff/customer auth, JWT issuance, and POS cashier session lifecycle.
 ### tenant-svc — Tenants, Stores, Zones, Staff
 Owns the Tenant→Store→Zone hierarchy and tenant onboarding (see §1).
 - **API:** `/onboarding` self-serve signup + tenant/store creation + status checklist; `/admin` tenant/store/zone CRUD + status, staff assign/list/remove, inventory-config; `/platform` cross-tenant list + suspend/reactivate; `/storefront` public config/store lookup.
-- **Tables:** `tenants`, `stores`, `zones`, `staff_assignments`, `tenant_inventory_config`.
-- **Events:** publishes `TenantCreated`, `TenantStatusChanged`, `StoreCreated`, `StoreStatusChanged`, `ZoneCreated`, `StaffAssigned`, `UserRoleGranted`.
+- **Tables:** `tenants`, `stores`, `zones`, `staff_assignments`, `tenant_inventory_config`, `tenant_switches` and `tenant_erasure_evidence` (21.14: a business's notice to leave and what each service erased, both kept at erasure).
+- **Events:** publishes `TenantCreated`, `TenantStatusChanged`, `StoreCreated`, `StoreStatusChanged`, `ZoneCreated`, `StaffAssigned`, `UserRoleGranted`; consumes `RetentionRunCompleted` from order-svc, customer-svc and notification-svc (21.16: the one register of every purge, keyed by event id).
 - **Notable:** source of truth for store/zone data every other service projects locally.
 
 ### product-svc — Product Catalog (PIM)
@@ -302,7 +304,7 @@ Product/variant master data and storefront catalog browsing.
 Single source of truth for stock: levels, reservations, batches/lots, serials, and advanced planning.
 - **API:** `/admin/inventory` receive, adjust, levels, batches, movements, thresholds, planning run/suggestions, serials, transfers, move-orders, ABC analysis, safety-stock, lot-genealogy, cycle-counts, physical-inventories, costing-methods, accounting-periods, kanban-cards, reorder-point plans, picking-rules; `/admin/inventory/food-safety` (staff: points, records, corrective actions) and `/admin/food-safety` (management: points setup, check types, reviews); `/admin/inventory/recalls` (staff: list, active list for the till, store actions, releasing a checked pack) and `/admin/recalls` (management: open, close, cancel); `/inventory/reservations` hold/consume/release; `/inventory/availability` (storefront read).
 - **Tables:** `inventory_batches`, `stock_movements` (append-only), `reservations`, `serial_numbers`, `transfer_orders`, `move_orders`, `safety_stock_params`, `abc_assignments`, `lot_genealogy`, `cycle_count_headers`, `physical_inventories`, `costing_methods`, `accounting_periods`, `kanban_cards`, `reorder_point_plans`, `picking_rules`, `fs_check_types`, `fs_monitoring_points`, `fs_check_records` / `fs_corrective_actions` / `fs_reviews` / `fs_point_status_changes` (append-only), `fs_overdue_alerts`, `recalls`, `recall_items` / `recall_batches` / `recall_batch_releases` / `recall_store_actions` (append-only), and more.
-- **Events:** publishes `StockReceived`, `StockReserved`, `StockReleased`, `StockDeducted`, `StockAdjusted`, `StockBelowThreshold`, `ReplenishmentSuggested`, `TransferOrderShipped/Received`, `CycleCountAdjusted`, `KanbanTriggered`, `FoodSafetyCheckFailed`, `FoodSafetyCheckOverdue`, `RecallOpened`, and more; consumes `GoodsReceived` (purchase-svc), `OrderFulfilled`/`OrderReturned`/`OrderCancelled` (order-svc).
+- **Events:** publishes `StockReceived`, `StockReserved`, `StockReleased`, `StockDeducted`, `StockAdjusted`, `StockBelowThreshold`, `ReplenishmentSuggested`, `TransferOrderShipped/Received`, `CycleCountAdjusted`, `KanbanTriggered`, `FoodSafetyCheckFailed`, `FoodSafetyCheckOverdue`, `RecallOpened`, `RecallSaleAffected` (05.10: one per order a recall reached, found from the sale movements that drew on the recalled batches), and more; consumes `GoodsReceived` (purchase-svc), `OrderFulfilled`/`OrderReturned`/`OrderCancelled` (order-svc).
 - **Notable:** FIFO/expiry-ordered deduction with row locking; costing methods & accounting-period close; lot genealogy; serial tracking; kanban/ROP replenishment; cycle counts & physical inventory; ABC analysis; zone-based picking with GL account mapping.
 
 ### pricing-svc — Prices, Promotions, VAT
@@ -315,14 +317,14 @@ Price resolution, promotions, and UK-style VAT computation/reporting.
 ### cart-svc — Storefront Cart
 Server-side shopping cart for the online channel: session-scoped and customer carts, with merge-on-login. Every call requires a verified token (cart paths are **not** on the gateway's public storefront whitelist); the current Flutter storefront keeps its pre-checkout cart on-device and does not call this service.
 - **API:** `/cart` create/get, `/cart/items` add/update/remove, `/cart/merge`.
-- **Tables:** `carts`, `cart_items`, local `tenant_status`/`store_status` projections.
+- **Tables:** `carts`, `cart_items`, local `tenant_status`/`store_status` projections, `outbox` (21.14: the evidence of a departed business's erasure).
 - **Events:** consumes `OrderPlaced` (close cart), `TenantStatusChanged`/`StoreStatusChanged` (**flow-guard**: rejects cart mutations early if the tenant/store is suspended).
 
 ### order-svc — Orders & Checkout (saga coordinator)
 The transaction/sales-journal service for **both** channels: online orders/returns and POS parked sales, layaway, gift cards, special orders, receipts.
 - **API:** `/orders` create/confirm/cancel/fulfil/void/returns; `/layaways` create/deposit/complete/cancel; `/gift-cards` issue/reload/redeem/transactions; `/pos/parked-sales`, `/pos/no-sale`; `/admin/special-orders`; `/admin/pos-log`; `/admin/pos/stock-positions`; `/admin/orders/{id}/receipts` (e-journal, print/email).
 - **Tables:** `orders`, `order_items`, `order_status_history` (append-only), `returns`, `layaways`, `gift_cards`, `gift_card_transactions`, `parked_sales`, `special_orders`, `pos_log_entries`, `order_receipts`, `idempotency_keys`, `receipt_series`, `fiscal_receipts` (append-only, hash-chained, stamped by the store's fiscal regime), `fiscal_store_settings`, `tse_devices`, `age_verifications` (append-only), `customer_erasures`.
-- **Events:** publishes `OrderPlaced`, `OrderConfirmed`, `OrderCancelled`, `OrderFulfilled`, `OrderReturned`, `OrderVoided`, `LayawayCreated/Completed/Cancelled`; consumes `StockReceived`/`StockDeducted`/`StockAdjusted` (POS stock-position projection), `PaymentCaptured`/`PaymentFailed`/`PaymentRefunded`, tenant/store status.
+- **Events:** publishes `OrderPlaced`, `OrderConfirmed`, `OrderCancelled`, `OrderFulfilled`, `OrderReturned`, `OrderVoided`, `LayawayCreated/Completed/Cancelled`, `RecallNoticeIssued` (05.10: a recall's notice to a buyer the order identifies), `GiftCardLoaded` (17.11: a gift card issued or reloaded, and how it was paid for); consumes `StockReceived`/`StockDeducted`/`StockAdjusted` (POS stock-position projection), `PaymentCaptured`/`PaymentFailed`/`PaymentRefunded`, `RecallSaleAffected` (issues the notice), tenant/store status.
 - **Notable:** POS and online share the **same endpoints** — only `channel`/`fulfilment_type` differ. Idempotency-Key on checkout. See [§12 checkout saga](#12-key-workflows).
 
 ### payment-svc — Payments & Cash Management
@@ -334,16 +336,16 @@ Payment capture/refund plus till sessions, cash drawer movements, and end-of-day
 
 ### purchase-svc — Procurement
 Suppliers, purchase orders, goods receipts, and finance-adjacent intercompany invoicing.
-- **API:** `/suppliers`; `/purchase-orders` create/submit/lines; `/goods-receipts`; `/intercompany-invoices` (+settle); `/nominal-ledger` (read-only double-entry view).
-- **Tables:** `suppliers`, `purchase_orders`, `purchase_order_lines`, `purchase_order_approvals` (append-only), `goods_receipts`, `goods_receipt_lines`, `supplier_invoices`, `supplier_invoice_lines`, `vendor_returns`, `vendor_return_lines`, `debit_note_series` (07.8), `intercompany_invoices`, `nominal_ledger_entries`.
-- **Events:** publishes `PurchaseOrderCreated`, `GoodsReceived`, `IntercompanyInvoiceRaised`, `SupplierInvoiceCaptured`.
+- **API:** `/suppliers`; `/purchase-orders` create/submit/lines; `/goods-receipts`; `/intercompany-invoices` (+settle); `/nominal-ledger` (read-only double-entry view); `/e-invoices` (07.13: suppliers' EN 16931 invoices received, matched and captured through the three-way match, with match and refuse for what waits).
+- **Tables:** `suppliers`, `purchase_orders`, `purchase_order_lines`, `purchase_order_approvals` (append-only), `goods_receipts`, `goods_receipt_lines`, `supplier_invoices`, `supplier_invoice_lines`, `vendor_returns`, `vendor_return_lines`, `debit_note_series` (07.8), `intercompany_invoices`, `nominal_ledger_entries`, `paying_accounts` (append-only: the latest per currency is in force), `payment_status_reports`, `payment_statuses` and `payment_hold_releases` (17.12: the bank's pain.002 per run and supplier, and the close matches a manager released), `supplier_einvoices`, `supplier_einvoice_lines` and `supplier_item_codes` (07.13: each received document byte for byte with what it was matched to, and the item codes a person taught).
+- **Events:** publishes `PurchaseOrderCreated`, `GoodsReceived`, `IntercompanyInvoiceRaised`, `SupplierInvoiceCaptured`; consumes `OrderConfirmed`, `PaymentCaptured` and `PaymentRefunded` (17.7: the sale, its tenders and refunds on the nominal ledger) and `LoyaltyEarned/Redeemed/Adjusted` and `GiftCardLoaded` (17.11: deferred revenue for loyalty points and gift card breakage), each posted once.
 - **Notable:** FRS 102/UK GAAP-style double-entry nominal ledger; intercompany AR/AP invoicing for inter-org transfers.
 
 ### customer-svc — Customers, Loyalty, Store Credit
 Customer profiles, addresses, and two append-only ledgers.
 - **API:** `/customers` CRUD (+anonymize-on-delete), addresses CRUD; `/{id}/loyalty` earn/redeem/adjust/ledger; `/{id}/store-credit` issue/redeem.
 - **Tables:** `customers`, `customer_addresses`, `loyalty_accounts`, `loyalty_ledger` (append-only), `store_credit_accounts`, `store_credit_ledger` (append-only).
-- **Events:** publishes `CustomerRegistered`, `LoyaltyEarned/Redeemed/Adjusted`, `StoreCreditIssued/Redeemed`; consumes `OrderConfirmed` (auto-accrues loyalty points, deduped by event id).
+- **Events:** publishes `CustomerRegistered`, `LoyaltyEarned/Redeemed/Adjusted` (each with its own `eventId`; an accrual carries the sale's `orderTotal` and `orderTaxAmount`, which purchase-svc defers the points' share of, 17.11), `StoreCreditIssued/Redeemed`; consumes `OrderConfirmed` (auto-accrues loyalty points, deduped by event id).
 - **Notable:** GDPR-style anonymize-on-delete; both ledgers are auditable balances, never mutable counters.
 
 ### notification-svc — Alerting
@@ -352,12 +354,12 @@ Thin fan-in service: consumes events, records notifications, and exposes read fe
 **MQTT broker (EMQX, not Mosquitto):** every client — a tenant's own device *and* notification-svc's own publisher connection — authenticates with a shelfj platform JWT (same HS256 secret/issuer iam-svc signs with) as the MQTT password; the broker's `verify_claims` config ties the connecting username to that JWT's `tenant` claim so it can't be spoofed, and file-based ACL then scopes a tenant client's subscribe to exactly its own topic subtree (`infra/emqx.conf`, `infra/emqx-acl.conf`). A device already holding a login session reuses that JWT directly — no separate credential-issuing endpoint. Logout force-disconnects that session rather than waiting for the JWT to expire — see iam-svc's `MqttSessionRevoker` above. **This auth/ACL config was authored without a broker available to test against; `MqttAclIT` (Testcontainers) is the actual verification of it — run it before relying on this in anything beyond local dev.**
 - **API:** `/admin/notifications/shortage-alerts` (filter by store/variant, paginated); `/admin/notifications` (in-app notification feed, newest first).
 - **Tables:** `shortage_alerts`, `notification_log`.
-- **Events:** consumes `StockBelowThreshold` (shortage alert), `OrderConfirmed` (order-confirmation notice), `UserRegistered` (welcome notice); publishes nothing.
+- **Events:** consumes `StockBelowThreshold` (shortage alert), `OrderConfirmed` (order-confirmation notice), `UserRegistered` (welcome notice), `RecallOpened` (store alerts), `RecallNoticeIssued` (the written recall notice to the buyer, by email, text or push); publishes nothing.
 
 ### reporting-svc — Cross-Store Analytics (CQRS read model)
 Pure projection service built by consuming inventory and sales events.
 - **API:** inventory — `/admin/reports/inventory/on-hand`, `/supply-demand` (nets against open in-transit supply), `/movement-stats` (bucketed daily/weekly/monthly); sales — `/admin/reports/sales/summary` (gross/refunded/net revenue + order count per currency), `/admin/reports/sales/by-day` (daily revenue buckets).
-- **Tables:** `inventory_projection`, `movement_events`, `open_supply_lines`, `sales_facts`.
+- **Tables:** `inventory_projection`, `movement_events`, `open_supply_lines`, `sales_facts`, `outbox` (21.14: the evidence of a departed business's erasure).
 - **Events:** consumes `StockReceived`, `StockDeducted`, `StockAdjusted`, `TransferOrderShipped/Received` (stock projections) and `OrderConfirmed`, `PaymentRefunded` (sales projection, net of refunds); publishes nothing.
 - **Notable:** no writes of its own beyond reacting to other services' Kafka streams.
 
@@ -391,6 +393,9 @@ tenant-svc   ──REST──►  iam-svc         (verify user on staff assignme
 | `OrderCancelled` / `OrderReturned` | order-svc | inventory-svc, payment-svc, reporting-svc |
 | `PaymentCaptured` / `PaymentFailed` / `PaymentRefunded` | payment-svc | order-svc, reporting-svc (refunds net against sales) |
 | `UserRegistered` | iam-svc | notification-svc (welcome notice) |
+| `RecallOpened` / `RecallSaleAffected` | inventory-svc | notification-svc (store alerts); order-svc (a notice per order the recall reached, 05.10) |
+| `RecallNoticeIssued` | order-svc | notification-svc (the written notice to the buyer: email, else text, and a push) |
+| `RetentionRunCompleted` | order-svc, customer-svc, notification-svc | tenant-svc (the register of purges, 21.16) |
 
 **Reliability requirements on every call:** REST calls carry a timeout, retries with backoff, and a circuit breaker (Helidon MP Fault Tolerance). Events are at-least-once with idempotent consumers, published via the outbox, and tracked via `processed_events` dedupe tables.
 
@@ -492,6 +497,17 @@ For the full screen-by-screen, persona-by-persona tour of what's actually on eac
 - **Tests:** unit for `service/` logic + Testcontainers integration for the core flow. Not done without it.
 
 ---
+
+
+### Tenant data: export, import and erasure (21.14)
+
+A business can take all its data out, bring it into a fresh business, and have it erased when it leaves (EU Data Act ch.VI). The machinery is shared, in common-service, so no service writes its own:
+
+- **`TenantDataSpec`**: each service declares what it holds for a business in one bean (`config/ExportableData`): its schema, and only what is *not* exported (tables and columns, each with the reason), how a table without `tenant_id` is tied to its business (`user_roles` through `users`), what an import does not load, what is kept at erasure, and which tables are derived projections. Everything else in the schema is exported.
+- **`TenantDataCatalog`**: built from the schema's own catalog (`information_schema`, primary keys and foreign keys for `current_schema()`) and the spec; pure, and unit-tested. It orders tables after the tables they refer to (an import loads front to back, an erasure deletes back to front) and reports as a problem, never a silent omission, a table it cannot tie to a business, one with no primary key, a key column excluded, a cycle of references, or an exclusion naming something the schema no longer has.
+- **`TenantDataRepository` and `TenantDataResource`**: the manifest with counts and checksums, key-ordered pages, and the all-or-nothing import that gives rows the importing business's id, behind `/admin/tenant-data` for the owner. Identifiers come only from the catalog and are quoted; values travel as one `jsonb` parameter. An incomplete catalog refuses every export.
+- **Erasure**: `BaseTenantDataErasureConsumer` in every service reads tenant-svc's `TenantDataErasureDue`; `TenantDataErasureHandler` erases every table the business's rows sit in, exported or not, and writes `TenantDataErased` with the counts in the same transaction. An append-only table enforced by trigger (pricing-svc's price history) lets through only a delete of the business named in `shelfj.erasing_tenant` for that transaction.
+- **Proof**: `TenantDataChecks.assertExportable` runs in one integration test per service, so a migration that adds a table without deciding how it leaves fails that service's build; pricing-svc's `TenantDataIT` exports a business, erases it and imports it into another that reads back every table's checksum; `scripts/restore-rehearsal.sh` rehearses a whole-database restore, timed ([RESTORE-REHEARSAL.md](RESTORE-REHEARSAL.md)).
 
 ## 15. Local development
 

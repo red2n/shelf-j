@@ -1,4 +1,7 @@
+import 'dart:convert';
+
 import 'package:dio/dio.dart';
+import 'package:file_picker/file_picker.dart';
 import 'package:flutter/material.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 import '../../core/auth/auth_notifier.dart';
@@ -10,7 +13,9 @@ import '../../core/network/api_error.dart';
 import '../../shared/util/file_download.dart';
 import '../../shared/widgets/error_view.dart';
 import '../../shared/widgets/loading_view.dart';
+import 'bank_details_validators.dart';
 import 'procurement_providers.dart';
+import 'providers/admin_providers.dart' show tenantInfoProvider;
 
 /// Whether the signed-in user may run supplier payments (17.10): a manager
 /// holding finance.payments. The server refuses anyone else with 403, so the
@@ -33,6 +38,52 @@ String paymentExcludedText(String code) => switch (code) {
   'NET_NOT_POSITIVE' => 'Credit notes cover the invoices',
   _ => code,
 };
+
+/// What the bank's status report said about a supplier's payment, in words.
+String payeeCheckText(PayeeCheck c) {
+  if (c.status == 'RJCT') {
+    return 'The bank rejected this payment'
+        '${c.reasonCode != null ? ' (${c.reasonCode})' : ''}';
+  }
+  return switch (c.payeeMatch) {
+    'MTCH' => 'The bank matched the name on the account',
+    'CMTC' =>
+      c.matchedName != null
+          ? 'Close match: the bank holds the account as "${c.matchedName}"'
+          : 'Close match: the name on the account differs',
+    'NMTC' =>
+      'The bank could not match the name to the account: check the details with the supplier',
+    'NOAP' => 'The bank could not check the name on this account',
+    _ => 'The bank reports ${c.status}',
+  };
+}
+
+/// Picks the bank's status report and reads it as text; null when dismissed.
+/// A provider so widget tests hand a file in.
+final statusReportPickerProvider = Provider<Future<String?> Function()>(
+  (ref) => () async {
+    final r = await FilePicker.pickFiles(
+      type: FileType.custom,
+      allowedExtensions: const ['xml'],
+      withData: true,
+    );
+    final bytes = r == null || r.files.isEmpty ? null : r.files.first.bytes;
+    return bytes == null ? null : utf8.decode(bytes);
+  },
+);
+
+/// The largest status report sent; purchase-svc refuses anything bigger.
+const maxStatusReportChars = 2000000;
+
+/// A real calendar date as YYYY-MM-DD: 2026-02-30 is refused, not rolled into
+/// March.
+String? validIsoDate(String? v) {
+  final t = v?.trim() ?? '';
+  if (!RegExp(r'^\d{4}-\d{2}-\d{2}$').hasMatch(t)) return 'Use YYYY-MM-DD';
+  final parsed = DateTime.tryParse(t);
+  if (parsed == null || _isoDate(parsed) != t) return 'Not a date';
+  return null;
+}
 
 String _isoDate(DateTime d) =>
     '${d.year.toString().padLeft(4, '0')}-${d.month.toString().padLeft(2, '0')}-${d.day.toString().padLeft(2, '0')}';
@@ -72,35 +123,53 @@ class PaymentRunsTab extends ConsumerWidget {
             message: friendlyError(e, fallback: 'Could not load payment runs.'),
             onRetry: () => ref.invalidate(paymentRunsProvider),
           ),
-          data: (runs) {
-            if (runs.isEmpty) {
-              return Center(
-                child: Column(
-                  mainAxisSize: MainAxisSize.min,
-                  children: [
-                    Icon(
-                      Icons.payments_outlined,
-                      size: 64,
-                      color: cs.outlineVariant,
+          data: (runs) => Column(
+            children: [
+              Padding(
+                padding: const EdgeInsets.fromLTRB(16, 8, 16, 0),
+                child: Align(
+                  alignment: Alignment.centerRight,
+                  child: TextButton.icon(
+                    onPressed: () => showDialog<void>(
+                      context: context,
+                      builder: (_) => const PayingAccountsDialog(),
                     ),
-                    const SizedBox(height: 12),
-                    const Text('No payment runs yet'),
-                    const SizedBox(height: 4),
-                    Text(
-                      'Propose one to pay the invoices falling due.',
-                      style: TextStyle(color: cs.onSurfaceVariant),
-                    ),
-                  ],
+                    icon: const Icon(Icons.account_balance_outlined),
+                    label: const Text('Paying accounts'),
+                  ),
                 ),
-              );
-            }
-            return ListView.separated(
-              padding: const EdgeInsets.all(16),
-              itemCount: runs.length,
-              separatorBuilder: (_, _) => const SizedBox(height: 8),
-              itemBuilder: (_, i) => PaymentRunCard(run: runs[i], me: me),
-            );
-          },
+              ),
+              Expanded(
+                child: runs.isEmpty
+                    ? Center(
+                        child: Column(
+                          mainAxisSize: MainAxisSize.min,
+                          children: [
+                            Icon(
+                              Icons.payments_outlined,
+                              size: 64,
+                              color: cs.outlineVariant,
+                            ),
+                            const SizedBox(height: 12),
+                            const Text('No payment runs yet'),
+                            const SizedBox(height: 4),
+                            Text(
+                              'Propose one to pay the invoices falling due.',
+                              style: TextStyle(color: cs.onSurfaceVariant),
+                            ),
+                          ],
+                        ),
+                      )
+                    : ListView.separated(
+                        padding: const EdgeInsets.all(16),
+                        itemCount: runs.length,
+                        separatorBuilder: (_, _) => const SizedBox(height: 8),
+                        itemBuilder: (_, i) =>
+                            PaymentRunCard(run: runs[i], me: me),
+                      ),
+              ),
+            ],
+          ),
         );
   }
 }
@@ -124,10 +193,17 @@ class _PaymentRunCardState extends ConsumerState<PaymentRunCard> {
   bool get _ownRun =>
       run.proposedBy == widget.me.userId && !widget.me.roles.contains('OWNER');
 
+  static void _tell(ScaffoldMessengerState messenger, String message) {
+    messenger
+      ..hideCurrentSnackBar()
+      ..showSnackBar(SnackBar(content: Text(message)));
+  }
+
   Future<void> _act(
     String action, {
     Map<String, dynamic>? data,
     required String done,
+    String? failed,
   }) async {
     setState(() => _busy = true);
     final messenger = ScaffoldMessenger.of(context);
@@ -141,19 +217,15 @@ class _PaymentRunCardState extends ConsumerState<PaymentRunCard> {
           );
       ref.invalidate(paymentRunsProvider);
       if (action == 'pay') ref.invalidate(supplierInvoicesProvider);
-      messenger
-        ..hideCurrentSnackBar()
-        ..showSnackBar(SnackBar(content: Text(done)));
+      _tell(messenger, done);
     } catch (e) {
-      messenger
-        ..hideCurrentSnackBar()
-        ..showSnackBar(
-          SnackBar(
-            content: Text(
-              friendlyError(e, fallback: 'Could not $action the payment run.'),
-            ),
-          ),
-        );
+      _tell(
+        messenger,
+        friendlyError(
+          e,
+          fallback: failed ?? 'Could not $action the payment run.',
+        ),
+      );
     } finally {
       if (mounted) setState(() => _busy = false);
     }
@@ -190,7 +262,11 @@ class _PaymentRunCardState extends ConsumerState<PaymentRunCard> {
   Future<void> _cancel() async {
     final reason = await showDialog<String>(
       context: context,
-      builder: (_) => const CancelPaymentRunDialog(),
+      builder: (_) => const PaymentRunReasonDialog(
+        title: 'Cancel payment run',
+        confirm: 'Cancel run',
+        keep: 'Keep it',
+      ),
     );
     if (reason != null) {
       await _act(
@@ -201,7 +277,33 @@ class _PaymentRunCardState extends ConsumerState<PaymentRunCard> {
     }
   }
 
-  Future<void> _bankFile() async {
+  /// Releases a close match once the supplier has confirmed the account.
+  Future<void> _release(PaymentRunSupplier s) async {
+    final held = s.bankCheck?.matchedName;
+    final reason = await showDialog<String>(
+      context: context,
+      builder: (_) => PaymentRunReasonDialog(
+        title: 'Release the payment to ${s.name}?',
+        intro:
+            '${held != null ? 'The bank holds this account as "$held". ' : ''}'
+            'Release it only once the supplier has confirmed the account is '
+            'theirs, and say how.',
+        label: 'What you checked *',
+        confirm: 'Release',
+        keep: 'Keep held',
+      ),
+    );
+    if (reason != null) {
+      await _act(
+        'payments/${s.supplierId}/release',
+        data: {'reason': reason},
+        done: 'Payment to ${s.name} released.',
+        failed: 'Could not release the payment.',
+      );
+    }
+  }
+
+  Future<void> _bankFile(BankFileFormat format) async {
     setState(() => _busy = true);
     final messenger = ScaffoldMessenger.of(context);
     try {
@@ -210,28 +312,71 @@ class _PaymentRunCardState extends ConsumerState<PaymentRunCard> {
           .dio
           .get<String>(
             '/${ApiConstants.purchase}/payment-runs/${run.id}/bank-file',
+            queryParameters: {'format': format.code},
             options: Options(responseType: ResponseType.plain),
           );
+      final named = RegExp(
+        r'filename="([^"/\\]+)"',
+      ).firstMatch(resp.headers.value('content-disposition') ?? '')?.group(1);
       downloadTextFile(
-        '${run.reference.toLowerCase()}.csv',
+        named ?? '${run.reference.toLowerCase()}.${format.extension}',
         resp.data ?? '',
-        mimeType: 'text/csv;charset=utf-8',
+        mimeType: format.mimeType,
       );
-      messenger
-        ..hideCurrentSnackBar()
-        ..showSnackBar(
-          SnackBar(content: Text('Bank file for ${run.reference} downloaded.')),
-        );
+      _tell(messenger, 'Bank file for ${run.reference} downloaded.');
     } catch (e) {
-      messenger
-        ..hideCurrentSnackBar()
-        ..showSnackBar(
-          SnackBar(
-            content: Text(
-              friendlyError(e, fallback: 'Could not download the bank file.'),
-            ),
-          ),
-        );
+      _tell(
+        messenger,
+        friendlyError(e, fallback: 'Could not download the bank file.'),
+      );
+    } finally {
+      if (mounted) setState(() => _busy = false);
+    }
+  }
+
+  /// Reads the bank's pain.002 status report on the run's file.
+  Future<void> _statusReport() async {
+    final messenger = ScaffoldMessenger.of(context);
+    String? xml;
+    try {
+      xml = await ref.read(statusReportPickerProvider)();
+    } on FormatException {
+      _tell(
+        messenger,
+        'That file is not text: choose the XML status report from the bank.',
+      );
+      return;
+    }
+    if (xml == null || !mounted) return;
+    if (xml.length > maxStatusReportChars) {
+      _tell(messenger, 'That file is too large to be a status report.');
+      return;
+    }
+    setState(() => _busy = true);
+    try {
+      final resp = await ref
+          .read(apiClientProvider)
+          .dio
+          .post(
+            '/${ApiConstants.purchase}/payment-runs/${run.id}/status-report',
+            data: xml,
+            options: Options(contentType: 'application/xml'),
+          );
+      ref.invalidate(paymentRunsProvider);
+      final held = PaymentRun.fromJson(
+        (resp.data['data'] as Map).cast<String, dynamic>(),
+      ).heldPayments;
+      _tell(
+        messenger,
+        held == 0
+            ? 'Status report read: the bank holds nothing in ${run.reference}.'
+            : 'Status report read: the bank holds $held payment(s) in ${run.reference}.',
+      );
+    } catch (e) {
+      _tell(
+        messenger,
+        friendlyError(e, fallback: 'Could not read the status report.'),
+      );
     } finally {
       if (mounted) setState(() => _busy = false);
     }
@@ -247,6 +392,11 @@ class _PaymentRunCardState extends ConsumerState<PaymentRunCard> {
           : () =>
                 _act('approve', done: 'Payment run ${run.reference} approved.'),
       child: const Text('Approve'),
+    );
+    final markPaid = FilledButton.icon(
+      onPressed: _busy || run.heldPayments > 0 ? null : _pay,
+      icon: const Icon(Icons.payments_outlined),
+      label: const Text('Mark paid'),
     );
     return Card(
       child: ExpansionTile(
@@ -271,12 +421,17 @@ class _PaymentRunCardState extends ConsumerState<PaymentRunCard> {
             'due by ${run.payUpTo}',
             '${run.suppliers.length} supplier(s)',
             if (toCheck > 0) '$toCheck to check',
+            if (run.heldPayments > 0) '${run.heldPayments} held by the bank',
           ].join(' · '),
         ),
         childrenPadding: const EdgeInsets.fromLTRB(16, 0, 16, 12),
         children: [
           for (final s in run.suppliers)
-            _SupplierBlock(supplier: s, currency: run.currency),
+            _SupplierBlock(
+              supplier: s,
+              currency: run.currency,
+              onRelease: run.approved && !_busy ? () => _release(s) : null,
+            ),
           if (run.excluded.isNotEmpty) ...[
             const Divider(),
             Align(
@@ -315,10 +470,27 @@ class _PaymentRunCardState extends ConsumerState<PaymentRunCard> {
                   child: const Text('Cancel run'),
                 ),
               if (run.approved || run.paid)
+                MenuAnchor(
+                  menuChildren: [
+                    for (final f in BankFileFormat.forCurrency(run.currency))
+                      MenuItemButton(
+                        onPressed: () => _bankFile(f),
+                        child: Text(f.label),
+                      ),
+                  ],
+                  builder: (context, menu, _) => OutlinedButton.icon(
+                    onPressed: _busy
+                        ? null
+                        : () => menu.isOpen ? menu.close() : menu.open(),
+                    icon: const Icon(Icons.download_outlined),
+                    label: const Text('Bank file'),
+                  ),
+                ),
+              if (run.approved)
                 OutlinedButton.icon(
-                  onPressed: _busy ? null : _bankFile,
-                  icon: const Icon(Icons.download_outlined),
-                  label: const Text('Bank file'),
+                  onPressed: _busy ? null : _statusReport,
+                  icon: const Icon(Icons.upload_file_outlined),
+                  label: const Text("Bank's answer"),
                 ),
               if (run.proposed)
                 _ownRun
@@ -328,11 +500,14 @@ class _PaymentRunCardState extends ConsumerState<PaymentRunCard> {
                       )
                     : approve,
               if (run.approved)
-                FilledButton.icon(
-                  onPressed: _busy ? null : _pay,
-                  icon: const Icon(Icons.payments_outlined),
-                  label: const Text('Mark paid'),
-                ),
+                run.heldPayments > 0
+                    ? Tooltip(
+                        message:
+                            'The bank holds ${run.heldPayments} payment(s): '
+                            'release a close match, or cancel the run',
+                        child: markPaid,
+                      )
+                    : markPaid,
             ],
           ),
         ],
@@ -342,9 +517,14 @@ class _PaymentRunCardState extends ConsumerState<PaymentRunCard> {
 }
 
 class _SupplierBlock extends StatelessWidget {
-  const _SupplierBlock({required this.supplier, required this.currency});
+  const _SupplierBlock({
+    required this.supplier,
+    required this.currency,
+    this.onRelease,
+  });
   final PaymentRunSupplier supplier;
   final String currency;
+  final VoidCallback? onRelease;
 
   @override
   Widget build(BuildContext context) {
@@ -370,20 +550,28 @@ class _SupplierBlock extends StatelessWidget {
               style: TextStyle(color: cs.onSurfaceVariant, fontSize: 12),
             ),
           for (final w in supplier.warnings)
-            Padding(
-              padding: const EdgeInsets.symmetric(vertical: 4),
-              child: Row(
-                children: [
-                  Icon(Icons.warning_amber_rounded, color: cs.error, size: 18),
-                  const SizedBox(width: 6),
-                  Expanded(
-                    child: Text(
-                      paymentWarningText(w),
-                      style: TextStyle(color: cs.error),
-                    ),
-                  ),
-                ],
-              ),
+            _Flag(
+              icon: Icons.warning_amber_rounded,
+              color: cs.error,
+              text: paymentWarningText(w),
+            ),
+          if (supplier.bankCheck case final check?)
+            _Flag(
+              icon: check.blocking
+                  ? Icons.pan_tool_outlined
+                  : check.released
+                  ? Icons.lock_open_outlined
+                  : Icons.verified_outlined,
+              color: check.blocking ? cs.error : cs.onSurfaceVariant,
+              text: check.released
+                  ? '${payeeCheckText(check)}. Released: ${check.releaseReason ?? ''}'
+                  : payeeCheckText(check),
+              action: check.blocking && check.releasable && onRelease != null
+                  ? TextButton(
+                      onPressed: onRelease,
+                      child: const Text('Release'),
+                    )
+                  : null,
             ),
           for (final d in supplier.documents)
             Row(
@@ -401,6 +589,54 @@ class _SupplierBlock extends StatelessWidget {
             ),
         ],
       ),
+    );
+  }
+}
+
+/// A line under a supplier that needs the reviewer's eye.
+class _Flag extends StatelessWidget {
+  const _Flag({
+    required this.icon,
+    required this.color,
+    required this.text,
+    this.action,
+  });
+  final IconData icon;
+  final Color color;
+  final String text;
+  final Widget? action;
+
+  @override
+  Widget build(BuildContext context) => Padding(
+    padding: const EdgeInsets.symmetric(vertical: 4),
+    child: Row(
+      children: [
+        Icon(icon, color: color, size: 18),
+        const SizedBox(width: 6),
+        Expanded(
+          child: Text(text, style: TextStyle(color: color)),
+        ),
+        ?action,
+      ],
+    ),
+  );
+}
+
+/// A form's refusal, in words, above its fields.
+class _ErrorBanner extends StatelessWidget {
+  const _ErrorBanner(this.message);
+  final String message;
+
+  @override
+  Widget build(BuildContext context) {
+    final cs = Theme.of(context).colorScheme;
+    return Container(
+      padding: const EdgeInsets.all(12),
+      decoration: BoxDecoration(
+        color: cs.errorContainer,
+        borderRadius: BorderRadius.circular(8),
+      ),
+      child: Text(message, style: TextStyle(color: cs.onErrorContainer)),
     );
   }
 }
@@ -437,16 +673,6 @@ class _ProposePaymentRunDialogState
     _payUpTo.dispose();
     _paymentDate.dispose();
     super.dispose();
-  }
-
-  /// A real calendar date as YYYY-MM-DD: 2026-02-30 is refused, not rolled
-  /// into March.
-  static String? validDate(String? v) {
-    final t = v?.trim() ?? '';
-    if (!RegExp(r'^\d{4}-\d{2}-\d{2}$').hasMatch(t)) return 'Use YYYY-MM-DD';
-    final parsed = DateTime.tryParse(t);
-    if (parsed == null || _isoDate(parsed) != t) return 'Not a date';
-    return null;
   }
 
   Future<void> _submit() async {
@@ -493,7 +719,6 @@ class _ProposePaymentRunDialogState
 
   @override
   Widget build(BuildContext context) {
-    final cs = Theme.of(context).colorScheme;
     return AlertDialog(
       title: const Text('Propose payment run'),
       content: SizedBox(
@@ -505,17 +730,7 @@ class _ProposePaymentRunDialogState
             crossAxisAlignment: CrossAxisAlignment.stretch,
             children: [
               if (_error != null) ...[
-                Container(
-                  padding: const EdgeInsets.all(12),
-                  decoration: BoxDecoration(
-                    color: cs.errorContainer,
-                    borderRadius: BorderRadius.circular(8),
-                  ),
-                  child: Text(
-                    _error!,
-                    style: TextStyle(color: cs.onErrorContainer),
-                  ),
-                ),
+                _ErrorBanner(_error!),
                 const SizedBox(height: 12),
               ],
               const Text(
@@ -530,7 +745,7 @@ class _ProposePaymentRunDialogState
                   helperText: 'YYYY-MM-DD',
                   prefixIcon: Icon(Icons.event_outlined),
                 ),
-                validator: validDate,
+                validator: validIsoDate,
               ),
               const SizedBox(height: 12),
               TextFormField(
@@ -540,7 +755,7 @@ class _ProposePaymentRunDialogState
                   helperText: 'Today or later',
                   prefixIcon: Icon(Icons.today_outlined),
                 ),
-                validator: validDate,
+                validator: validIsoDate,
               ),
             ],
           ),
@@ -560,15 +775,28 @@ class _ProposePaymentRunDialogState
   }
 }
 
-/// Asks why a run is abandoned; returns the reason, or null when dismissed.
-class CancelPaymentRunDialog extends StatefulWidget {
-  const CancelPaymentRunDialog({super.key});
+/// Asks for a reason — why a run is abandoned, what was checked before a held
+/// payment is released — and returns it, or null when dismissed.
+class PaymentRunReasonDialog extends StatefulWidget {
+  const PaymentRunReasonDialog({
+    super.key,
+    required this.title,
+    required this.confirm,
+    required this.keep,
+    this.intro,
+    this.label = 'Reason *',
+  });
+  final String title;
+  final String confirm;
+  final String keep;
+  final String? intro;
+  final String label;
 
   @override
-  State<CancelPaymentRunDialog> createState() => _CancelPaymentRunDialogState();
+  State<PaymentRunReasonDialog> createState() => _PaymentRunReasonDialogState();
 }
 
-class _CancelPaymentRunDialogState extends State<CancelPaymentRunDialog> {
+class _PaymentRunReasonDialogState extends State<PaymentRunReasonDialog> {
   final _formKey = GlobalKey<FormState>();
   final _reason = TextEditingController();
 
@@ -581,20 +809,31 @@ class _CancelPaymentRunDialogState extends State<CancelPaymentRunDialog> {
   @override
   Widget build(BuildContext context) {
     return AlertDialog(
-      title: const Text('Cancel payment run'),
+      title: Text(widget.title),
       content: Form(
         key: _formKey,
-        child: TextFormField(
-          controller: _reason,
-          maxLength: 500,
-          decoration: const InputDecoration(labelText: 'Reason *'),
-          validator: (v) => v == null || v.trim().isEmpty ? 'Required' : null,
+        child: Column(
+          mainAxisSize: MainAxisSize.min,
+          crossAxisAlignment: CrossAxisAlignment.stretch,
+          children: [
+            if (widget.intro != null) ...[
+              Text(widget.intro!),
+              const SizedBox(height: 12),
+            ],
+            TextFormField(
+              controller: _reason,
+              maxLength: 500,
+              decoration: InputDecoration(labelText: widget.label),
+              validator: (v) =>
+                  v == null || v.trim().isEmpty ? 'Required' : null,
+            ),
+          ],
         ),
       ),
       actions: [
         TextButton(
           onPressed: () => Navigator.pop(context),
-          child: const Text('Keep it'),
+          child: Text(widget.keep),
         ),
         FilledButton(
           onPressed: () {
@@ -602,7 +841,263 @@ class _CancelPaymentRunDialogState extends State<CancelPaymentRunDialog> {
               Navigator.pop(context, _reason.text.trim());
             }
           },
-          child: const Text('Cancel run'),
+          child: Text(widget.confirm),
+        ),
+      ],
+    );
+  }
+}
+
+/// The accounts supplier payments are made from, one per currency, and a form
+/// to set one (17.12). A Bacs or SEPA file needs one; a change made after a run
+/// was approved stops that run's file.
+class PayingAccountsDialog extends ConsumerStatefulWidget {
+  const PayingAccountsDialog({super.key});
+
+  @override
+  ConsumerState<PayingAccountsDialog> createState() =>
+      _PayingAccountsDialogState();
+}
+
+class _PayingAccountsDialogState extends ConsumerState<PayingAccountsDialog> {
+  final _formKey = GlobalKey<FormState>();
+  final _currency = TextEditingController();
+  final _name = TextEditingController();
+  final _sortCode = TextEditingController();
+  final _account = TextEditingController();
+  final _serviceUser = TextEditingController();
+  final _iban = TextEditingController();
+  final _bic = TextEditingController();
+  bool _loading = false;
+  String? _error;
+
+  @override
+  void initState() {
+    super.initState();
+    // Starts from the tenant's own currency (SJ-D53).
+    ref.listenManual(tenantInfoProvider, (_, next) {
+      final currency = next.value?.currency;
+      if (currency != null && _currency.text.isEmpty) {
+        _currency.text = currency;
+      }
+    }, fireImmediately: true);
+  }
+
+  @override
+  void dispose() {
+    for (final c in [
+      _currency,
+      _name,
+      _sortCode,
+      _account,
+      _serviceUser,
+      _iban,
+      _bic,
+    ]) {
+      c.dispose();
+    }
+    super.dispose();
+  }
+
+  static String? _text(TextEditingController c) =>
+      c.text.trim().isEmpty ? null : c.text.trim();
+
+  String? _validServiceUser(String? v) {
+    final t = v?.trim() ?? '';
+    if (t.isEmpty) return null;
+    if (!RegExp(r'^\d{6}$').hasMatch(t)) return 'Six digits';
+    return _text(_sortCode) == null ? 'Goes with a UK sort code' : null;
+  }
+
+  static String _describe(PayingAccount a) => [
+    if (a.sortCode != null) 'sort code ${a.sortCode}',
+    if (a.accountNumberMasked != null) a.accountNumberMasked!,
+    if (a.ibanMasked != null) a.ibanMasked!,
+    if (a.serviceUserNumber != null) 'service user ${a.serviceUserNumber}',
+    if (a.sendsBacs) 'Bacs',
+    if (a.sendsSepa) 'SEPA',
+  ].join(' · ');
+
+  Future<void> _save() async {
+    if (!_formKey.currentState!.validate()) return;
+    if (_text(_iban) == null && _text(_sortCode) == null) {
+      setState(
+        () => _error = 'Give a sort code and account number, or an IBAN.',
+      );
+      return;
+    }
+    final currency = _currency.text.trim().toUpperCase();
+    final name = _name.text.trim();
+    setState(() {
+      _loading = true;
+      _error = null;
+    });
+    try {
+      await ref
+          .read(apiClientProvider)
+          .dio
+          .put(
+            '/${ApiConstants.purchase}/payment-runs/paying-accounts/$currency',
+            data: {
+              'accountName': name,
+              'sortCode': _text(_sortCode),
+              'accountNumber': _text(_account),
+              'serviceUserNumber': _text(_serviceUser),
+              'iban': _text(_iban),
+              'bic': _text(_bic),
+            },
+          );
+      if (!mounted) return;
+      ref.invalidate(payingAccountsProvider);
+      Navigator.pop(context);
+      ScaffoldMessenger.of(context).showSnackBar(
+        SnackBar(content: Text('$currency payments are now made from $name.')),
+      );
+    } catch (e) {
+      setState(() {
+        _loading = false;
+        _error = friendlyError(
+          e,
+          fallback: 'Could not set the paying account.',
+        );
+      });
+    }
+  }
+
+  @override
+  Widget build(BuildContext context) {
+    final cs = Theme.of(context).colorScheme;
+    final muted = TextStyle(color: cs.onSurfaceVariant);
+    return AlertDialog(
+      title: const Text('Paying accounts'),
+      content: SizedBox(
+        width: 440,
+        child: SingleChildScrollView(
+          child: Form(
+            key: _formKey,
+            child: Column(
+              mainAxisSize: MainAxisSize.min,
+              crossAxisAlignment: CrossAxisAlignment.stretch,
+              children: [
+                ref
+                    .watch(payingAccountsProvider)
+                    .when(
+                      loading: () => const LinearProgressIndicator(),
+                      error: (e, _) => Text(
+                        friendlyError(
+                          e,
+                          fallback: 'Could not load the paying accounts.',
+                        ),
+                      ),
+                      data: (accounts) => accounts.isEmpty
+                          ? Text(
+                              'No paying account set: a Bacs or SEPA file needs one.',
+                              style: muted,
+                            )
+                          : Column(
+                              children: [
+                                for (final a in accounts)
+                                  ListTile(
+                                    dense: true,
+                                    contentPadding: EdgeInsets.zero,
+                                    leading: const Icon(
+                                      Icons.account_balance_outlined,
+                                    ),
+                                    title: Text(
+                                      '${a.currency} · ${a.accountName}',
+                                    ),
+                                    subtitle: Text(_describe(a)),
+                                  ),
+                              ],
+                            ),
+                    ),
+                const Divider(height: 24),
+                Text(
+                  'Set the account for a currency',
+                  style: Theme.of(context).textTheme.titleSmall,
+                ),
+                const SizedBox(height: 4),
+                Text(
+                  'It replaces that currency\'s account. A run approved before '
+                  'the change gets no bank file: cancel it and propose again.',
+                  style: muted,
+                ),
+                const SizedBox(height: 12),
+                if (_error != null) ...[
+                  _ErrorBanner(_error!),
+                  const SizedBox(height: 12),
+                ],
+                TextFormField(
+                  controller: _currency,
+                  textCapitalization: TextCapitalization.characters,
+                  decoration: const InputDecoration(
+                    labelText: 'Currency *',
+                    helperText: 'ISO 4217 code',
+                  ),
+                  validator: (v) =>
+                      RegExp(r'^[A-Za-z]{3}$').hasMatch(v?.trim() ?? '')
+                      ? null
+                      : 'Three letters',
+                ),
+                TextFormField(
+                  controller: _name,
+                  maxLength: 140,
+                  decoration: const InputDecoration(
+                    labelText: 'Account holder name *',
+                  ),
+                  validator: (v) =>
+                      v == null || v.trim().isEmpty ? 'Required' : null,
+                ),
+                TextFormField(
+                  controller: _sortCode,
+                  decoration: const InputDecoration(labelText: 'Sort code'),
+                  validator: (v) =>
+                      validSortCode(v, accountKeyed: _text(_account) != null),
+                ),
+                TextFormField(
+                  controller: _account,
+                  decoration: const InputDecoration(
+                    labelText: 'Account number',
+                  ),
+                  validator: (v) => validAccountNumber(
+                    v,
+                    sortCodeKeyed: _text(_sortCode) != null,
+                  ),
+                ),
+                TextFormField(
+                  controller: _serviceUser,
+                  decoration: const InputDecoration(
+                    labelText: 'Bacs service user number',
+                    helperText: 'Six digits, for a Bacs file',
+                  ),
+                  validator: _validServiceUser,
+                ),
+                TextFormField(
+                  controller: _iban,
+                  decoration: const InputDecoration(
+                    labelText: 'IBAN',
+                    helperText: 'Needed for a SEPA file',
+                  ),
+                  validator: (v) => validIban(v, bicKeyed: _text(_bic) != null),
+                ),
+                TextFormField(
+                  controller: _bic,
+                  decoration: const InputDecoration(labelText: 'BIC'),
+                  validator: validBic,
+                ),
+              ],
+            ),
+          ),
+        ),
+      ),
+      actions: [
+        TextButton(
+          onPressed: _loading ? null : () => Navigator.pop(context),
+          child: const Text('Close'),
+        ),
+        FilledButton(
+          onPressed: _loading ? null : _save,
+          child: const Text('Save account'),
         ),
       ],
     );

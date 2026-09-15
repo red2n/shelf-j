@@ -6,7 +6,6 @@ import static org.hamcrest.Matchers.containsString;
 import static org.hamcrest.Matchers.is;
 import static org.hamcrest.Matchers.not;
 
-import com.shelfj.ids.Ids;
 import com.shelfj.test.PostgresSupport;
 import io.helidon.microprofile.testing.junit5.HelidonTest;
 import jakarta.inject.Inject;
@@ -48,27 +47,7 @@ class ObligationIT {
   }
 
   private String onboard(String country, String currency) {
-    Response r =
-        target
-            .path("/onboarding/tenants")
-            .request(MediaType.APPLICATION_JSON)
-            .header("X-User-Id", Ids.newId().toString())
-            .post(
-                Entity.entity(
-                    "{\"businessName\":\"Obligations "
-                        + country
-                        + " "
-                        + Ids.newId()
-                        + "\",\"country\":\""
-                        + country
-                        + "\",\"currency\":\""
-                        + currency
-                        + "\"}",
-                    MediaType.APPLICATION_JSON));
-    String body = r.readEntity(String.class);
-    assertThat(body, r.getStatus(), is(201));
-    int i = body.indexOf("\"id\":\"") + 6;
-    return body.substring(i, body.indexOf('"', i));
+    return TenantOnboarding.onboard(target, "Obligations " + country, country, currency);
   }
 
   private Response read(String tenant, String roles, String country, String on) {
@@ -203,5 +182,13 @@ class ObligationIT {
     } finally {
       pool.shutdownNow();
     }
+  }
+
+  @org.junit.jupiter.api.Test
+  @org.junit.jupiter.api.DisplayName(
+      "The owner's tenant data manifest is complete: every table is exported or left out by name")
+  void tenantDataIsExportable() {
+    com.shelfj.test.TenantDataChecks.assertExportable(
+        target, "01a090ae-611e-702c-a97b-d1b8025478e1");
   }
 }

@@ -479,4 +479,49 @@ class AdminAuthorizationFilterTest {
     ctx.set(null, null, Set.of("CASHIER"), null, null);
     assertNotAborted(invoke("GET", "/orders/export"));
   }
+
+  // ── 21.16: the retention schedule ────────────────────────────────────────────
+
+  @Test
+  void retentionSheetIsStaffReadableAndTheRestIsManagement() throws Exception {
+    ctx.set(null, null, Set.of("STOREKEEPER"), null, null);
+    assertNotAborted(invoke("GET", "/admin/tenant/retention"));
+    assertAborted(invoke("GET", "/admin/tenant/retention/holds"), 403);
+    assertAborted(invoke("GET", "/admin/tenant/retention/runs"), 403);
+    assertAborted(invoke("PUT", "/admin/tenant/retention/CUSTOMER_RECORDS"), 403);
+    assertAborted(invoke("POST", "/admin/tenant/retention/holds"), 403);
+    ctx.set(null, null, Set.of("CUSTOMER"), null, null);
+    assertAborted(invoke("GET", "/admin/tenant/retention"), 403);
+    ctx.set(null, null, Set.of("MANAGER"), null, null);
+    assertNotAborted(invoke("PUT", "/admin/tenant/retention/CUSTOMER_RECORDS"));
+    assertNotAborted(invoke("GET", "/admin/tenant/retention/runs"));
+  }
+
+  // ── 05.10: a recall's notices to buyers ──────────────────────────────────────
+
+  @Test
+  void recallNoticesOpenOnlyTheShoppersOwnShapes() throws Exception {
+    ctx.set(null, null, Set.of("CUSTOMER"), null, null);
+    // Their own notices, and their choice of remedy on one — object-level checks in order-svc.
+    assertNotAborted(invoke("GET", "/orders/recall-notices/mine"));
+    assertNotAborted(
+        invoke("POST", "/orders/recall-notices/01a09509-72ec-72e9-9f08-94a93df26a36/remedy"));
+    // A recall's whole list, its progress, and settling a notice are staff work.
+    assertAborted(invoke("GET", "/orders/recall-notices"), 403);
+    assertAborted(invoke("GET", "/orders/recall-notices/progress"), 403);
+    assertAborted(
+        invoke("POST", "/orders/recall-notices/01a09509-72ec-72e9-9f08-94a93df26a36/resolve"), 403);
+    // Matched by shape: a literal where the id goes, or a deeper child, is not the shape.
+    assertAborted(invoke("POST", "/orders/recall-notices/mine/remedy"), 403);
+    assertAborted(invoke("GET", "/orders/recall-notices/mine/all"), 403);
+    assertAborted(
+        invoke("POST", "/orders/recall-notices/01a09509-72ec-72e9-9f08-94a93df26a36/remedy/x"),
+        403);
+    assertAborted(invoke("GET", "/orders/recall-noticesX/mine"), 403);
+    ctx.set(null, null, Set.of("CASHIER"), null, null);
+    assertNotAborted(invoke("GET", "/orders/recall-notices"));
+    assertNotAborted(invoke("GET", "/orders/recall-notices/progress"));
+    assertNotAborted(
+        invoke("POST", "/orders/recall-notices/01a09509-72ec-72e9-9f08-94a93df26a36/resolve"));
+  }
 }

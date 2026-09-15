@@ -640,6 +640,17 @@ public class ProductService {
     return repo.findVariantsByIds(tenantId, ids);
   }
 
+  /**
+   * The HSN or SAC codes recorded for a set of variants (18.9).
+   *
+   * @param tenantId owning tenant
+   * @param ids the variants
+   * @return codes by variant; unclassified variants are absent
+   */
+  public java.util.Map<UUID, String> hsnCodes(UUID tenantId, java.util.List<UUID> ids) {
+    return complianceRepo.hsnCodes(tenantId, ids);
+  }
+
   // ──────────────────────────────────────────────────────────────── variants
 
   /**
@@ -950,6 +961,17 @@ public class ProductService {
       throw ApiException.badRequest("PRODUCT_INVALID_TARE", "tareWeight cannot be negative");
     }
 
+    // 18.9: the HSN or SAC code India's e-invoices name each line by, as it is printed with
+    // spaces or dots between the groups of digits.
+    String hsn =
+        req.hsnCode() == null || req.hsnCode().isBlank()
+            ? null
+            : req.hsnCode().replaceAll("[\\s.]", "");
+    if (hsn != null && !hsn.matches("[0-9]{4}|[0-9]{6}|[0-9]{8}")) {
+      throw ApiException.badRequest(
+          "PRODUCT_INVALID_HSN_CODE", "An HSN or SAC code is 4, 6 or 8 digits");
+    }
+
     var current = complianceRepo.findCompliance(tenantId, variantId);
     var updated =
         new Domain.VariantCompliance(
@@ -959,6 +981,7 @@ public class ProductService {
             trimUpperToNull(req.restrictionCategory()),
             current == null ? Domain.VariantCompliance.NOT_APPLICABLE : current.allergenStatus(),
             trimToNull(req.ingredients()),
+            hsn,
             soldBy,
             req.netContent(),
             uom,

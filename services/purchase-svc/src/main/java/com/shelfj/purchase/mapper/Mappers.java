@@ -50,7 +50,9 @@ public final class Mappers {
         com.shelfj.purchase.domain.BankAccount.masked(s.bankIban()),
         s.bankBic(),
         s.hasBankDetails(),
-        s.bankDetailsChangedAt());
+        s.bankDetailsChangedAt(),
+        s.einvoiceScheme(),
+        s.einvoiceId());
   }
 
   /**
@@ -411,7 +413,8 @@ public final class Mappers {
                                       d.documentDate(),
                                       d.dueDate(),
                                       d.amount()))
-                          .toList());
+                          .toList(),
+                      toDto(v.checks().get(p.supplierId())));
                 })
             .toList(),
         v.proposal().excluded().stream()
@@ -426,5 +429,64 @@ public final class Mappers {
   public static Dtos.SalesClearingResponse toDto(Domain.OpenClearing o) {
     return new Dtos.SalesClearingResponse(
         o.orderId(), o.storeId(), o.balance(), o.firstPosted(), o.lastPosted());
+  }
+
+  public static Dtos.DeferredRevenueResponse toDto(Domain.DeferredRevenueView v) {
+    return new Dtos.DeferredRevenueResponse(
+        toDto(v.current()),
+        v.history().stream().map(s -> toDto(s)).toList(),
+        v.points().outstanding(),
+        v.points().deferred(),
+        v.points().unmatched(),
+        v.waiting(),
+        v.giftCards().loaded(),
+        v.giftCards().redeemed(),
+        v.giftCards().breakage(),
+        v.giftCards().liability());
+  }
+
+  public static Dtos.DeferredRevenueSettingsResponse toDto(Domain.DeferredRevenueSettings s) {
+    return s == null
+        ? null
+        : new Dtos.DeferredRevenueSettingsResponse(
+            s.currency(),
+            s.pointValue(),
+            s.pointsBreakagePct(),
+            s.giftCardBreakagePct(),
+            s.reason(),
+            s.setBy(),
+            s.setAt());
+  }
+
+  public static Dtos.PayeeCheckResponse toDto(com.shelfj.purchase.domain.PaymentRuns.PayeeCheck c) {
+    return c == null
+        ? null
+        : new Dtos.PayeeCheckResponse(
+            c.endToEndId(),
+            c.status(),
+            c.reasonCode(),
+            c.payeeMatch(),
+            c.matchedName(),
+            c.held(),
+            c.releasable(),
+            c.releasedBy(),
+            c.releasedAt(),
+            c.releaseReason());
+  }
+
+  public static Dtos.PayingAccountResponse toDto(
+      com.shelfj.purchase.domain.PayingAccounts.PayingAccount a) {
+    return new Dtos.PayingAccountResponse(
+        a.currency(),
+        a.accountName(),
+        a.sortCode(),
+        com.shelfj.purchase.domain.BankAccount.masked(a.accountNumber()),
+        com.shelfj.purchase.domain.BankAccount.masked(a.iban()),
+        a.bic(),
+        a.serviceUserNumber(),
+        a.sendsBacs(),
+        a.sendsSepa(),
+        a.setBy(),
+        a.setAt());
   }
 }

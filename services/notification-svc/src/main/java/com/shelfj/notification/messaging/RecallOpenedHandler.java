@@ -11,7 +11,6 @@ import java.io.StringReader;
 import java.lang.System.Logger;
 import java.lang.System.Logger.Level;
 import java.util.List;
-import java.util.Map;
 import java.util.UUID;
 
 /**
@@ -28,15 +27,6 @@ class RecallOpenedHandler {
   private static final Logger LOG = System.getLogger(RecallOpenedHandler.class.getName());
   static final String NOTIFICATION_TYPE = "RECALL_OPENED";
 
-  private static final Map<String, String> HAZARD_TEXT =
-      Map.of(
-          "MICROBIOLOGICAL", "microbiological contamination",
-          "ALLERGEN", "undeclared allergen",
-          "FOREIGN_BODY", "foreign body",
-          "CHEMICAL", "chemical contamination",
-          "LABELLING", "labelling error",
-          "QUALITY", "quality defect");
-
   @Inject Notifier notifier;
 
   void handle(String json) {
@@ -52,7 +42,7 @@ class RecallOpenedHandler {
       tenantId = UUID.fromString(obj.getString("tenantId"));
       reference = obj.getString("reference");
       recall = "RECALL".equals(obj.getString("kind"));
-      hazard = hazardText(obj.getString("hazard"));
+      hazard = RecallText.hazard(obj.getString("hazard"));
       stores =
           obj.getJsonArray("storeIds").getValuesAs(JsonString.class).stream()
               .map(s -> UUID.fromString(s.getString()))
@@ -83,9 +73,5 @@ class RecallOpenedHandler {
 
   static UUID perStore(UUID eventId, UUID storeId) {
     return Ids.derived(eventId, "store:" + storeId);
-  }
-
-  private static String hazardText(String hazard) {
-    return HAZARD_TEXT.getOrDefault(hazard, "safety issue");
   }
 }

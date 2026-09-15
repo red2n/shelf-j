@@ -350,6 +350,16 @@ class _RecallDetailDialog extends ConsumerWidget {
                   ),
                 ),
               ],
+              if (r.isRecall && r.remedies.isNotEmpty) ...[
+                const SizedBox(height: AppSpacing.sm),
+                Text(
+                  'Buyers may choose ${remediesLabel(r.remedies)}'
+                  '${r.singleRemedyReason == null ? '' : ' — ${r.singleRemedyReason}'}'
+                  '. Contact: ${[r.contactPhone, r.contactUrl].whereType<String>().join(' · ')}'
+                  '${r.soldFrom == null ? '' : ' · sales from ${r.soldFrom}'}',
+                  key: const Key('recall-offer'),
+                ),
+              ],
               if (r.endNotes != null) ...[
                 const SizedBox(height: AppSpacing.sm),
                 Text(
@@ -385,6 +395,15 @@ class _RecallDetailDialog extends ConsumerWidget {
                   canAct: canActAt(store.storeId),
                   onChanged: () => _refresh(ref),
                 ),
+              if (r.isRecall) ...[
+                const SizedBox(height: AppSpacing.lg),
+                _BuyersSection(
+                  recall: r,
+                  storeName: storeName,
+                  canAct: r.isOpen,
+                  onChanged: () => _refresh(ref),
+                ),
+              ],
               if (r.storeActions.isNotEmpty) ...[
                 const SizedBox(height: AppSpacing.lg),
                 Text('What stores recorded', style: text.titleMedium),
@@ -504,6 +523,152 @@ void _snack(BuildContext context, String message) {
       backgroundColor: Theme.of(context).colorScheme.error,
     ),
   );
+}
+
+/// The people who bought the recalled packs (05.10): how many the recall
+/// reached, how many it could write to, and each buyer's remedy as it is
+/// chosen and settled. A refund settles through a return of the order, so the
+/// goods and the money are on one record.
+class _BuyersSection extends ConsumerWidget {
+  final RecallDetail recall;
+  final String Function(String) storeName;
+  final bool canAct;
+  final VoidCallback onChanged;
+
+  const _BuyersSection({
+    required this.recall,
+    required this.storeName,
+    required this.canAct,
+    required this.onChanged,
+  });
+
+  void _refresh(WidgetRef ref) {
+    ref.invalidate(recallNoticesProvider(recall.id));
+    ref.invalidate(recallBuyersProgressProvider(recall.id));
+    onChanged();
+  }
+
+  @override
+  Widget build(BuildContext context, WidgetRef ref) {
+    final text = Theme.of(context).textTheme;
+    final cs = Theme.of(context).colorScheme;
+    final progress = ref.watch(recallBuyersProgressProvider(recall.id));
+    final notices = ref.watch(recallNoticesProvider(recall.id));
+    return Column(
+      key: const Key('recall-buyers'),
+      crossAxisAlignment: CrossAxisAlignment.start,
+      children: [
+        Text('Buyers', style: text.titleMedium),
+        if (progress.hasError || notices.hasError)
+          Padding(
+            padding: const EdgeInsets.symmetric(vertical: AppSpacing.sm),
+            child: Text(
+              friendlyError(
+                progress.error ?? notices.error!,
+                fallback: "The buyers couldn't be loaded.",
+              ),
+              style: TextStyle(color: cs.error),
+            ),
+          )
+        else if (!progress.hasValue || !notices.hasValue)
+          const Padding(
+            padding: EdgeInsets.symmetric(vertical: AppSpacing.sm),
+            child: Text('Loading buyers…'),
+          )
+        else ...[
+          Text(
+            '${recall.ordersAffected} ${recall.ordersAffected == 1 ? 'order' : 'orders'} '
+            'drew on the packs in scope · '
+            '${progress.value!.identified} told · '
+            '${progress.value!.unidentified} till sales with no buyer known · '
+            '${progress.value!.remedyChosen} chose a remedy · '
+            '${progress.value!.resolved} settled',
+            key: const Key('recall-buyers-progress'),
+            style: TextStyle(color: cs.outline),
+          ),
+          if (notices.value!.isEmpty)
+            const Padding(
+              padding: EdgeInsets.symmetric(vertical: AppSpacing.sm),
+              child: Text(
+                'No buyer notices yet. They are issued as the sales the recall '
+                'found reach the order service.',
+              ),
+            ),
+          for (final n in notices.value!)
+            ListTile(
+              key: Key('recall-notice-${n.id}'),
+              dense: true,
+              contentPadding: EdgeInsets.zero,
+              title: Text(
+                'Order …${shortRef(n.orderId)} · ${storeName(n.storeId)}'
+                '${n.soldAt == null ? '' : ' · ${_day.format(n.soldAt!)}'}',
+              ),
+              subtitle: Text(
+                '${n.lines.map((l) => l.describe()).join('; ')} · '
+                '${noticeProgressLabel(n)}',
+              ),
+              trailing: canAct && !n.isResolved
+                  ? PopupMenuButton<String>(
+                      key: Key('recall-notice-settle-${n.id}'),
+                      tooltip: 'Settle',
+                      icon: const Icon(Icons.more_horiz),
+                      onSelected: (action) => _act(context, ref, n, action),
+                      itemBuilder: (_) => [
+                        if (n.remedy == null)
+                          for (final r in n.remedies)
+                            PopupMenuItem(
+                              value: 'CHOOSE_$r',
+                              child: Text('Buyer chose ${remedyLabel(r)}'),
+                            ),
+                        const PopupMenuItem(
+                          value: 'REFUND',
+                          child: Text('Refund — take the goods back'),
+                        ),
+                        const PopupMenuItem(
+                          value: 'REPLACED',
+                          child: Text('Replacement handed over'),
+                        ),
+                        const PopupMenuItem(
+                          value: 'REPAIRED',
+                          child: Text('Repaired'),
+                        ),
+                        const PopupMenuItem(
+                          value: 'DECLINED',
+                          child: Text('Buyer wanted nothing'),
+                        ),
+                      ],
+                    )
+                  : null,
+            ),
+        ],
+      ],
+    );
+  }
+
+  Future<void> _act(
+    BuildContext context,
+    WidgetRef ref,
+    RecallNotice n,
+    String action,
+  ) async {
+    final dio = ref.read(apiClientProvider).dio;
+    try {
+      if (action.startsWith('CHOOSE_')) {
+        await chooseRecallRemedy(
+          dio,
+          noticeId: n.id,
+          remedy: action.substring('CHOOSE_'.length),
+        );
+      } else if (action == 'REFUND') {
+        await refundRecallNotice(dio, notice: n);
+      } else {
+        await resolveRecallNotice(dio, noticeId: n.id, resolution: action);
+      }
+      _refresh(ref);
+    } catch (e) {
+      if (context.mounted) _snack(context, friendlyError(e));
+    }
+  }
 }
 
 class _StoreSection extends ConsumerWidget {
@@ -872,6 +1037,11 @@ class _OpenRecallDialogState extends ConsumerState<_OpenRecallDialog> {
   final _lot = TextEditingController();
   final _from = TextEditingController();
   final _to = TextEditingController();
+  final _singleRemedyReason = TextEditingController();
+  final _contactPhone = TextEditingController();
+  final _contactUrl = TextEditingController();
+  final _soldFrom = TextEditingController();
+  final Set<String> _remedies = {};
   String _kind = 'RECALL';
   String _hazard = 'ALLERGEN';
   String _source = 'SUPPLIER';
@@ -908,6 +1078,10 @@ class _OpenRecallDialogState extends ConsumerState<_OpenRecallDialog> {
       _lot,
       _from,
       _to,
+      _singleRemedyReason,
+      _contactPhone,
+      _contactUrl,
+      _soldFrom,
     ]) {
       c.dispose();
     }
@@ -951,6 +1125,16 @@ class _OpenRecallDialogState extends ConsumerState<_OpenRecallDialog> {
     } else if (_kind == 'RECALL' && _notice.text.trim().isEmpty) {
       problem =
           'A recall tells customers what to do. Enter the notice for the tills.';
+    } else if (_kind == 'RECALL' && _remedies.isEmpty) {
+      problem = 'A recall offers buyers a remedy. Tick at least one.';
+    } else if (_kind == 'RECALL' &&
+        _contactPhone.text.trim().isEmpty &&
+        _contactUrl.text.trim().isEmpty) {
+      problem =
+          'A recall notice names a free number or a web page buyers can turn to.';
+    } else if (_soldFrom.text.trim().isNotEmpty &&
+        !_isoDate.hasMatch(_soldFrom.text.trim())) {
+      problem = 'Dates are written YYYY-MM-DD.';
     } else if (_items.isEmpty) {
       problem = 'Add at least one affected item.';
     }
@@ -973,6 +1157,11 @@ class _OpenRecallDialogState extends ConsumerState<_OpenRecallDialog> {
         source: _source,
         sourceReference: _sourceRef.text,
         items: _items,
+        remedies: _kind == 'RECALL' ? (_remedies.toList()..sort()) : const [],
+        singleRemedyReason: _kind == 'RECALL' ? _singleRemedyReason.text : null,
+        contactPhone: _kind == 'RECALL' ? _contactPhone.text : null,
+        contactUrl: _kind == 'RECALL' ? _contactUrl.text : null,
+        soldFrom: _soldFrom.text,
       );
       if (mounted) Navigator.pop(context, opened);
     } catch (e) {
@@ -1080,16 +1269,84 @@ class _OpenRecallDialogState extends ConsumerState<_OpenRecallDialog> {
                 maxLines: 2,
                 decoration: const InputDecoration(labelText: "What's wrong *"),
               ),
-              if (_kind == 'RECALL')
+              if (_kind == 'RECALL') ...[
                 TextField(
                   key: const Key('recall-notice'),
                   controller: _notice,
                   maxLines: 3,
                   decoration: const InputDecoration(
                     labelText: 'Notice for customers *',
-                    hintText: 'What to do if they bought it',
+                    hintText:
+                        'Name the product as printed on the pack and what to do. '
+                        'Plain words: no "precautionary", no "voluntary".',
                   ),
                 ),
+                const SizedBox(height: AppSpacing.md),
+                Text(
+                  'Buyers are told and choose a remedy',
+                  style: Theme.of(context).textTheme.titleMedium,
+                ),
+                Text(
+                  'Every sale of the packs in scope is found and its buyer written to. '
+                  'In the EU a recall offers at least two of these, or says why only one.',
+                  style: TextStyle(color: cs.outline),
+                ),
+                Wrap(
+                  spacing: AppSpacing.sm,
+                  children: [
+                    for (final r in const ['REFUND', 'REPLACEMENT', 'REPAIR'])
+                      FilterChip(
+                        key: Key('recall-remedy-$r'),
+                        label: Text(remedyLabel(r)),
+                        selected: _remedies.contains(r),
+                        onSelected: (on) => setState(
+                          () => on ? _remedies.add(r) : _remedies.remove(r),
+                        ),
+                      ),
+                  ],
+                ),
+                if (_remedies.length == 1)
+                  TextField(
+                    key: const Key('recall-single-remedy-reason'),
+                    controller: _singleRemedyReason,
+                    decoration: const InputDecoration(
+                      labelText: 'Why only one remedy',
+                      hintText: 'e.g. food cannot be repaired or replaced once opened',
+                    ),
+                  ),
+                Row(
+                  children: [
+                    Expanded(
+                      child: TextField(
+                        key: const Key('recall-contact-phone'),
+                        controller: _contactPhone,
+                        decoration: const InputDecoration(
+                          labelText: 'Free phone number',
+                        ),
+                      ),
+                    ),
+                    const SizedBox(width: AppSpacing.md),
+                    Expanded(
+                      child: TextField(
+                        key: const Key('recall-contact-url'),
+                        controller: _contactUrl,
+                        decoration: const InputDecoration(
+                          labelText: 'Web page',
+                          hintText: 'https://…',
+                        ),
+                      ),
+                    ),
+                  ],
+                ),
+              ],
+              TextField(
+                key: const Key('recall-sold-from'),
+                controller: _soldFrom,
+                decoration: const InputDecoration(
+                  labelText: 'Sales from',
+                  hintText: 'YYYY-MM-DD — blank for every sale of the packs in scope',
+                ),
+              ),
               const SizedBox(height: AppSpacing.lg),
               Text(
                 'Affected items',

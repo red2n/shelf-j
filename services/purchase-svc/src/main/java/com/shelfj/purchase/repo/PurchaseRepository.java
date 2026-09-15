@@ -48,8 +48,9 @@ public class PurchaseRepository extends BaseOutboxRepository {
                   "INSERT INTO suppliers"
                       + " (id,tenant_id,name,vat_number,vat_registered,country_code,currency,payment_terms_days,"
                       + "  remittance_email,bank_account_name,bank_sort_code,bank_account_number,bank_iban,"
-                      + "  bank_bic,bank_details_changed_at,bank_details_changed_by)"
-                      + " VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)")) {
+                      + "  bank_bic,bank_details_changed_at,bank_details_changed_by,einvoice_scheme,"
+                      + "  einvoice_id)"
+                      + " VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)")) {
             ps.setObject(1, s.id());
             ps.setObject(2, s.tenantId());
             ps.setString(3, s.name());
@@ -59,20 +60,36 @@ public class PurchaseRepository extends BaseOutboxRepository {
             ps.setString(7, s.currency());
             ps.setInt(8, s.paymentTermsDays());
             bindPaymentFields(ps, 9, s);
+            ps.setString(17, s.einvoiceScheme());
+            ps.setString(18, s.einvoiceId());
             ps.executeUpdate();
           } catch (java.sql.SQLException sqle) {
-            if (UNIQUE_VIOLATION.equals(sqle.getSQLState()))
-              throw new ApiException(
-                  409,
-                  "PURCHASE_SUPPLIER_DUPLICATE",
-                  "Supplier with that name already exists for this tenant",
-                  List.of(),
-                  sqle);
-            throw sqle;
+            throw supplierConflict(sqle);
           }
           return s;
         },
         "create supplier");
+  }
+
+  /**
+   * What a failed supplier write means: the name or the e-invoicing address belongs to another
+   * supplier, or anything else as it was.
+   */
+  private static java.sql.SQLException supplierConflict(java.sql.SQLException sqle) {
+    if (!UNIQUE_VIOLATION.equals(sqle.getSQLState())) return sqle;
+    if (String.valueOf(sqle.getMessage()).contains("uq_suppliers_einvoice_address"))
+      throw new ApiException(
+          409,
+          "PURCHASE_SUPPLIER_EINVOICE_ADDRESS_TAKEN",
+          "another supplier already sends e-invoices from that electronic address",
+          List.of(),
+          sqle);
+    throw new ApiException(
+        409,
+        "PURCHASE_SUPPLIER_DUPLICATE",
+        "Supplier with that name already exists for this tenant",
+        List.of(),
+        sqle);
   }
 
   /**
@@ -128,7 +145,8 @@ public class PurchaseRepository extends BaseOutboxRepository {
                   "UPDATE suppliers SET name=?, vat_number=?, vat_registered=?, country_code=?,"
                       + " currency=?, payment_terms_days=?, remittance_email=?, bank_account_name=?,"
                       + " bank_sort_code=?, bank_account_number=?, bank_iban=?, bank_bic=?,"
-                      + " bank_details_changed_at=?, bank_details_changed_by=?, updated_at=now()"
+                      + " bank_details_changed_at=?, bank_details_changed_by=?, einvoice_scheme=?,"
+                      + " einvoice_id=?, updated_at=now()"
                       + " WHERE tenant_id=? AND id=?")) {
             ps.setString(1, s.name());
             ps.setString(2, s.vatNumber());
@@ -137,18 +155,13 @@ public class PurchaseRepository extends BaseOutboxRepository {
             ps.setString(5, s.currency());
             ps.setInt(6, s.paymentTermsDays());
             bindPaymentFields(ps, 7, s);
-            ps.setObject(15, s.tenantId());
-            ps.setObject(16, s.id());
+            ps.setString(15, s.einvoiceScheme());
+            ps.setString(16, s.einvoiceId());
+            ps.setObject(17, s.tenantId());
+            ps.setObject(18, s.id());
             return ps.executeUpdate() > 0;
           } catch (java.sql.SQLException sqle) {
-            if (UNIQUE_VIOLATION.equals(sqle.getSQLState()))
-              throw new ApiException(
-                  409,
-                  "PURCHASE_SUPPLIER_DUPLICATE",
-                  "Supplier with that name already exists for this tenant",
-                  List.of(),
-                  sqle);
-            throw sqle;
+            throw supplierConflict(sqle);
           }
         },
         "update supplier");
@@ -179,7 +192,8 @@ public class PurchaseRepository extends BaseOutboxRepository {
   static final String SUPPLIER_COLUMNS =
       "id,tenant_id,name,vat_number,vat_registered,country_code,currency,payment_terms_days,"
           + "created_at,updated_at,remittance_email,bank_account_name,bank_sort_code,"
-          + "bank_account_number,bank_iban,bank_bic,bank_details_changed_at,bank_details_changed_by";
+          + "bank_account_number,bank_iban,bank_bic,bank_details_changed_at,bank_details_changed_by,"
+          + "einvoice_scheme,einvoice_id";
 
   /**
    * Binds the eight payment fields — remittance email, bank details, the change stamp — from {@code
@@ -217,7 +231,9 @@ public class PurchaseRepository extends BaseOutboxRepository {
         rs.getString("bank_iban"),
         rs.getString("bank_bic"),
         changed == null ? null : changed.toInstant(),
-        rs.getObject("bank_details_changed_by", UUID.class));
+        rs.getObject("bank_details_changed_by", UUID.class),
+        rs.getString("einvoice_scheme"),
+        rs.getString("einvoice_id"));
   }
 
   // ── Purchase Orders ───────────────────────────────────────────────────────────

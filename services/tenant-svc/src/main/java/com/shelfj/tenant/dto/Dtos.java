@@ -27,7 +27,25 @@ public final class Dtos {
           String currency) {}
 
   @Schema(name = "UpdateTenantRequest")
-  public record UpdateTenantRequest(@NotBlank String businessName, String legalName) {}
+  public record UpdateTenantRequest(
+      @NotBlank String businessName,
+      String legalName,
+      @Schema(
+              description =
+                  "The business's VAT identifier with its country prefix, e.g. GB123456789, as its"
+                      + " e-invoices name it. Unchanged when omitted; removed when empty.")
+          @jakarta.validation.constraints.Size(max = 32)
+          String vatNumber,
+      @Schema(
+              description =
+                  "Where the business receives e-invoices: the Peppol electronic address scheme"
+                      + " (EAS), e.g. 0088 for a GLN. With einvoiceId; unchanged when both are"
+                      + " omitted, removed when both are empty.")
+          @jakarta.validation.constraints.Size(max = 8)
+          String einvoiceScheme,
+      @Schema(description = "The business's identifier within that scheme.")
+          @jakarta.validation.constraints.Size(max = 128)
+          String einvoiceId) {}
 
   @Schema(name = "CreateStoreRequest", description = "Create a store (STORE or WAREHOUSE).")
   public record CreateStoreRequest(
@@ -153,7 +171,10 @@ public final class Dtos {
       String country,
       String currency,
       String createdAt,
-      String updatedAt) {}
+      String updatedAt,
+      @Schema(description = "VAT identifier with its country prefix, or null.") String vatNumber,
+      @Schema(description = "E-invoicing address scheme (EAS), or null.") String einvoiceScheme,
+      @Schema(description = "Identifier within that scheme, or null.") String einvoiceId) {}
 
   @Schema(name = "StoreResponse")
   public record StoreResponse(

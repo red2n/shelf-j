@@ -722,16 +722,9 @@ public class CustomerService {
   public LoyaltyAccount earnPoints(UUID tenantId, UUID customerId, EarnPointsRequest req) {
     get(tenantId, customerId);
     UUID orderId = req.orderId() == null ? null : UUID.fromString(req.orderId());
-    String payload =
-        Json.createObjectBuilder()
-            .add("customerId", customerId.toString())
-            .add("tenantId", tenantId.toString())
-            .add("points", req.points())
-            .build()
-            .toString();
     var event =
-        new OutboxRow(
-            "LoyaltyEarned", "shelfj.customer.loyalty-earned", tenantId, customerId, payload);
+        loyaltyEvent(
+            LOYALTY_EARNED, TOPIC_EARNED, tenantId, customerId, req.points(), orderId, null, null);
     return repo.earnPoints(tenantId, customerId, req.points(), orderId, req.reason(), event);
   }
 
@@ -746,24 +739,23 @@ public class CustomerService {
    * @param customerId the customer to credit
    * @param orderId the order the points are earned against
    * @param total the order total the award is derived from
+   * @param taxAmount the VAT inside that total, carried on so the ledger can defer the points'
+   *     share of the sale's net revenue (17.11)
    */
   public void accrueLoyaltyFromOrder(
-      UUID eventId, UUID tenantId, UUID customerId, UUID orderId, BigDecimal total) {
+      UUID eventId,
+      UUID tenantId,
+      UUID customerId,
+      UUID orderId,
+      BigDecimal total,
+      BigDecimal taxAmount) {
     BigDecimal points = total.multiply(pointsPerUnit()).setScale(2, RoundingMode.DOWN);
     if (points.signum() <= 0) {
       return; // nothing to award
     }
-    String payload =
-        Json.createObjectBuilder()
-            .add("customerId", customerId.toString())
-            .add("tenantId", tenantId.toString())
-            .add("orderId", orderId.toString())
-            .add("points", points)
-            .build()
-            .toString();
     var event =
-        new OutboxRow(
-            "LoyaltyEarned", "shelfj.customer.loyalty-earned", tenantId, customerId, payload);
+        loyaltyEvent(
+            LOYALTY_EARNED, TOPIC_EARNED, tenantId, customerId, points, orderId, total, taxAmount);
     repo.accrueFromOrderOnce(
         eventId,
         ORDER_CONFIRMED_CONSUMER,
@@ -773,6 +765,38 @@ public class CustomerService {
         points,
         "Loyalty for order " + orderId,
         event);
+  }
+
+  private static final String LOYALTY_EARNED = "LoyaltyEarned";
+  private static final String TOPIC_EARNED = "shelfj.customer.loyalty-earned";
+
+  /**
+   * A loyalty event. Each carries its own id, so the ledger that consumes them (purchase-svc,
+   * 17.11) posts each once; an accrual carries the sale's total and the VAT inside it, from which
+   * the points' share of the revenue is worked out.
+   */
+  private static OutboxRow loyaltyEvent(
+      String eventType,
+      String topic,
+      UUID tenantId,
+      UUID customerId,
+      BigDecimal points,
+      UUID orderId,
+      BigDecimal orderTotal,
+      BigDecimal orderTax) {
+    var b =
+        Json.createObjectBuilder()
+            .add("eventId", Ids.newId().toString())
+            .add("eventType", eventType)
+            .add("customerId", customerId.toString())
+            .add("tenantId", tenantId.toString())
+            .add("points", points);
+    if (orderId != null) b.add("orderId", orderId.toString());
+    if (orderTotal != null) {
+      b.add("orderTotal", orderTotal)
+          .add("orderTaxAmount", orderTax == null ? BigDecimal.ZERO : orderTax);
+    }
+    return new OutboxRow(eventType, topic, tenantId, customerId, b.build().toString());
   }
 
   private BigDecimal pointsPerUnit() {
@@ -799,16 +823,16 @@ public class CustomerService {
   public LoyaltyAccount redeemPoints(UUID tenantId, UUID customerId, RedeemPointsRequest req) {
     get(tenantId, customerId);
     UUID orderId = req.orderId() == null ? null : UUID.fromString(req.orderId());
-    String payload =
-        Json.createObjectBuilder()
-            .add("customerId", customerId.toString())
-            .add("tenantId", tenantId.toString())
-            .add("points", req.points())
-            .build()
-            .toString();
     var event =
-        new OutboxRow(
-            "LoyaltyRedeemed", "shelfj.customer.loyalty-redeemed", tenantId, customerId, payload);
+        loyaltyEvent(
+            "LoyaltyRedeemed",
+            "shelfj.customer.loyalty-redeemed",
+            tenantId,
+            customerId,
+            req.points(),
+            orderId,
+            null,
+            null);
     return repo.redeemPoints(tenantId, customerId, req.points(), orderId, req.reason(), event);
   }
 
@@ -827,16 +851,16 @@ public class CustomerService {
    */
   public LoyaltyAccount adjustPoints(UUID tenantId, UUID customerId, AdjustPointsRequest req) {
     get(tenantId, customerId);
-    String payload =
-        Json.createObjectBuilder()
-            .add("customerId", customerId.toString())
-            .add("tenantId", tenantId.toString())
-            .add("points", req.points())
-            .build()
-            .toString();
     var event =
-        new OutboxRow(
-            "LoyaltyAdjusted", "shelfj.customer.loyalty-adjusted", tenantId, customerId, payload);
+        loyaltyEvent(
+            "LoyaltyAdjusted",
+            "shelfj.customer.loyalty-adjusted",
+            tenantId,
+            customerId,
+            req.points(),
+            null,
+            null,
+            null);
     return repo.adjustPoints(tenantId, customerId, req.points(), req.reason(), event);
   }
 

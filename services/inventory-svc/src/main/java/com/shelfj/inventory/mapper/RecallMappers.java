@@ -47,7 +47,9 @@ public final class RecallMappers {
         s.scopeLines(),
         s.storesAffected(),
         s.storesOutstanding(),
-        s.qtyHeld());
+        s.qtyHeld(),
+        s.reach().ordersAffected(),
+        s.reach().qtySold());
   }
 
   /**
@@ -76,7 +78,14 @@ public final class RecallMappers {
         d.scope().stream().map(RecallMappers::toScopeLine).toList(),
         d.batches().stream().map(RecallMappers::toHeldBatch).toList(),
         d.actions().stream().map(RecallMappers::toStoreAction).toList(),
-        stores(d));
+        stores(d),
+        h.remedies().stream().map(Enum::name).sorted().toList(),
+        h.singleRemedyReason(),
+        h.contactPhone(),
+        h.contactUrl(),
+        str(h.soldFrom()),
+        d.reach().ordersAffected(),
+        d.reach().qtySold());
   }
 
   /**

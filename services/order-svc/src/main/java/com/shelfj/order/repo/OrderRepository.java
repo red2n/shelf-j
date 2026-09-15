@@ -21,6 +21,7 @@ import com.shelfj.order.domain.Domain.SpecialOrder;
 import com.shelfj.order.domain.Domain.SpecialOrderItem;
 import com.shelfj.service.BaseOutboxRepository;
 import com.shelfj.service.OutboxRow;
+import com.shelfj.service.Retention;
 import com.shelfj.web.ApiException;
 import jakarta.enterprise.context.ApplicationScoped;
 import java.math.BigDecimal;
@@ -30,9 +31,11 @@ import java.sql.ResultSet;
 import java.sql.SQLException;
 import java.time.Instant;
 import java.time.OffsetDateTime;
+import java.util.ArrayList;
 import java.util.List;
 import java.util.Map;
 import java.util.Optional;
+import java.util.Set;
 import java.util.UUID;
 
 /** Order persistence (JDBC). Every query filters tenant_id first. */
@@ -394,6 +397,7 @@ public class OrderRepository extends BaseOutboxRepository {
 
   private static void redactCustomerInTx(Connection c, UUID tenantId, UUID customerId, UUID loginId)
       throws SQLException {
+    RecallNoticeRepository.redactBuyerTx(c, tenantId, customerId, loginId);
     // Settled orders only: an open delivery still needs its address to arrive.
     try (PreparedStatement ps =
         c.prepareStatement(
@@ -450,6 +454,95 @@ public class OrderRepository extends BaseOutboxRepository {
       ps.setObject(2, customerId);
       ps.executeUpdate();
     }
+  }
+
+  /**
+   * Redacts the personal details on settled orders older than the cutoff (21.16), except those a
+   * hold keeps, and announces the run in the same transaction. Rows are counted first under lock,
+   * so the run's figures are the figures of the rows it changed.
+   *
+   * @param classHeld whether a hold stops the whole class; then nothing is changed and every
+   *     candidate is counted as held
+   * @param runEvent builds the run's announcement from (rows redacted, rows held)
+   */
+  public Retention.Counts purgePersonalData(
+      UUID tenantId,
+      Instant cutoff,
+      boolean classHeld,
+      Set<UUID> heldOrders,
+      Set<UUID> heldCustomers,
+      java.util.function.Function<Retention.Counts, OutboxRow> runEvent) {
+    return inTx(
+        c -> {
+          List<UUID> due = new ArrayList<>();
+          int held = 0;
+          try (PreparedStatement ps =
+              c.prepareStatement(
+                  "SELECT o.id, o.customer_id FROM orders o WHERE o.tenant_id = ?"
+                      + " AND o.status IN "
+                      + SETTLED_ORDER
+                      + " AND o.updated_at < ? AND"
+                      + ORDER_STILL_IDENTIFIES
+                      + " ORDER BY o.id FOR UPDATE")) {
+            ps.setObject(1, tenantId);
+            ps.setObject(2, cutoff.atOffset(java.time.ZoneOffset.UTC));
+            try (ResultSet rs = ps.executeQuery()) {
+              while (rs.next()) {
+                UUID id = rs.getObject("id", UUID.class);
+                UUID customer = rs.getObject("customer_id", UUID.class);
+                if (classHeld
+                    || heldOrders.contains(id)
+                    || (customer != null && heldCustomers.contains(customer))) {
+                  held++;
+                } else {
+                  due.add(id);
+                }
+              }
+            }
+          }
+          int rows = 0;
+          if (!due.isEmpty()) {
+            var ids = c.createArrayOf("uuid", due.toArray());
+            try (PreparedStatement ps =
+                c.prepareStatement(
+                    "UPDATE orders o"
+                        + REDACT_ORDER
+                        + " WHERE o.tenant_id = ? AND o.id = ANY (?)")) {
+              ps.setObject(1, tenantId);
+              ps.setArray(2, ids);
+              rows = ps.executeUpdate();
+            }
+            try (PreparedStatement ps =
+                c.prepareStatement(
+                    "UPDATE order_receipts r SET emailed_to = NULL WHERE r.tenant_id = ?"
+                        + " AND r.order_id = ANY (?) AND r.emailed_to IS NOT NULL")) {
+              ps.setObject(1, tenantId);
+              ps.setArray(2, ids);
+              ps.executeUpdate();
+            }
+            try (PreparedStatement ps =
+                c.prepareStatement(
+                    "UPDATE recall_notices n SET buyer_phone = NULL WHERE n.tenant_id = ?"
+                        + " AND n.order_id = ANY (?) AND n.buyer_phone IS NOT NULL")) {
+              ps.setObject(1, tenantId);
+              ps.setArray(2, ids);
+              ps.executeUpdate();
+            }
+          }
+          Retention.Counts counts = new Retention.Counts(rows, held);
+          insertOutbox(c, runEvent.apply(counts));
+          return counts;
+        },
+        "purge personal data on settled orders");
+  }
+
+  /** Every tenant with an order: the tenants a retention sweep visits. */
+  public List<UUID> tenantsWithOrders() {
+    return query(
+        "SELECT DISTINCT o.tenant_id FROM orders o ORDER BY o.tenant_id",
+        ps -> {},
+        rs -> rs.getObject("tenant_id", UUID.class),
+        "tenants with orders");
   }
 
   /**
@@ -1119,6 +1212,23 @@ public class OrderRepository extends BaseOutboxRepository {
    * @return the return as stored
    */
   public Return createReturn(Return ret, List<ReturnItem> items, OutboxRow event) {
+    return createReturn(ret, items, event, null);
+  }
+
+  /** A step that runs inside the return's transaction, after the return is written. */
+  @FunctionalInterface
+  public interface ReturnStep {
+    void run(Connection c) throws SQLException;
+  }
+
+  /**
+   * {@link #createReturn(Return, List, OutboxRow)} with a step that commits with the return or not
+   * at all — the recall notice a refund settles (05.10).
+   *
+   * @param afterReturn the step, or null for none
+   */
+  public Return createReturn(
+      Return ret, List<ReturnItem> items, OutboxRow event, ReturnStep afterReturn) {
     return inTx(
         c -> {
           // Lock each purchased line and re-check the cumulative returned quantity inside this
@@ -1167,6 +1277,9 @@ public class OrderRepository extends BaseOutboxRepository {
               ps.setString(7, item.condition());
               ps.executeUpdate();
             }
+          }
+          if (afterReturn != null) {
+            afterReturn.run(c);
           }
           insertOutbox(c, event);
           return ret;
@@ -1568,9 +1681,10 @@ public class OrderRepository extends BaseOutboxRepository {
    *
    * @param gc the card to persist, with its code and opening balance
    * @param tx the {@code ISSUE} transaction recording that balance
+   * @param loaded the {@code GiftCardLoaded} event, written in the same transaction (17.11)
    * @return the card as stored
    */
-  public GiftCard issueGiftCard(GiftCard gc, GiftCardTransaction tx) {
+  public GiftCard issueGiftCard(GiftCard gc, GiftCardTransaction tx, OutboxRow loaded) {
     return inTx(
         c -> {
           try (PreparedStatement ps =
@@ -1601,6 +1715,7 @@ public class OrderRepository extends BaseOutboxRepository {
             throw sqle;
           }
           insertGiftCardTx(c, tx);
+          insertOutbox(c, loaded);
           return gc;
         },
         "issue gift card");
@@ -1635,10 +1750,17 @@ public class OrderRepository extends BaseOutboxRepository {
    * @param code the card's code
    * @param amount the amount to add
    * @param reference free-text reference recorded on the transaction
+   * @param loaded builds the {@code GiftCardLoaded} event from the card and the transaction,
+   *     written in the same transaction (17.11)
    * @return the card with its new balance
    * @throws com.shelfj.web.ApiException when the card does not exist or is not active
    */
-  public GiftCard reloadGiftCard(UUID tenantId, String code, BigDecimal amount, String reference) {
+  public GiftCard reloadGiftCard(
+      UUID tenantId,
+      String code,
+      BigDecimal amount,
+      String reference,
+      java.util.function.BiFunction<GiftCard, GiftCardTransaction, OutboxRow> loaded) {
     return inTx(
         c -> {
           GiftCard gc = findGiftCardByCodeInTx(c, tenantId, code);
@@ -1656,8 +1778,7 @@ public class OrderRepository extends BaseOutboxRepository {
             ps.setString(3, code);
             ps.executeUpdate();
           }
-          insertGiftCardTx(
-              c,
+          GiftCardTransaction tx =
               new GiftCardTransaction(
                   Ids.newId(),
                   tenantId,
@@ -1668,7 +1789,9 @@ public class OrderRepository extends BaseOutboxRepository {
                   after,
                   null,
                   reference,
-                  Instant.now()));
+                  Instant.now());
+          insertGiftCardTx(c, tx);
+          insertOutbox(c, loaded.apply(gc, tx));
           return findGiftCardByCodeInTx(c, tenantId, code);
         },
         "reload gift card");

@@ -133,7 +133,7 @@ public class TenantRepository extends BaseOutboxRepository {
   public Optional<Tenant> findTenant(UUID tenantId) {
     return one(
         "SELECT id, name, legal_name, status, plan_id, owner_user_id, country, currency,"
-            + " created_at, updated_at FROM tenants WHERE id = ?",
+            + " created_at, updated_at, vat_number, einvoice_scheme, einvoice_id FROM tenants WHERE id = ?",
         tenantId,
         TenantRepository::mapTenant);
   }
@@ -229,15 +229,25 @@ public class TenantRepository extends BaseOutboxRepository {
    * @param legalName the new registered name, or {@code null} to clear it
    * @return the tenant as stored
    */
-  public Tenant updateTenant(UUID tenantId, String businessName, String legalName) {
+  public Tenant updateTenant(
+      UUID tenantId,
+      String businessName,
+      String legalName,
+      String vatNumber,
+      String einvoiceScheme,
+      String einvoiceId) {
     Instant now = Instant.now();
     exec(
-        "UPDATE tenants SET name = ?, legal_name = ?, updated_at = ? WHERE id = ?",
+        "UPDATE tenants SET name = ?, legal_name = ?, vat_number = ?, einvoice_scheme = ?,"
+            + " einvoice_id = ?, updated_at = ? WHERE id = ?",
         ps -> {
           ps.setString(1, businessName);
           ps.setString(2, legalName);
-          ps.setObject(3, now.atOffset(ZoneOffset.UTC));
-          ps.setObject(4, tenantId);
+          ps.setString(3, vatNumber);
+          ps.setString(4, einvoiceScheme);
+          ps.setString(5, einvoiceId);
+          ps.setObject(6, now.atOffset(ZoneOffset.UTC));
+          ps.setObject(7, tenantId);
         },
         "update tenant");
     return findTenant(tenantId)
@@ -963,7 +973,10 @@ public class TenantRepository extends BaseOutboxRepository {
         rs.getString("country"),
         rs.getString("currency"),
         rs.getObject("created_at", OffsetDateTime.class).toInstant(),
-        rs.getObject("updated_at", OffsetDateTime.class).toInstant());
+        rs.getObject("updated_at", OffsetDateTime.class).toInstant(),
+        rs.getString("vat_number"),
+        rs.getString("einvoice_scheme"),
+        rs.getString("einvoice_id"));
   }
 
   private static Store mapStore(ResultSet rs) throws SQLException {
@@ -1119,7 +1132,7 @@ public class TenantRepository extends BaseOutboxRepository {
     StringBuilder sql =
         new StringBuilder(
             "SELECT id, name, legal_name, status, plan_id, owner_user_id, country, currency,"
-                + " created_at, updated_at FROM tenants");
+                + " created_at, updated_at, vat_number, einvoice_scheme, einvoice_id FROM tenants");
     if (afterCreatedAt != null && afterId != null) sql.append(" WHERE (created_at, id) > (?, ?)");
     sql.append(" ORDER BY created_at, id LIMIT ?");
     return query(

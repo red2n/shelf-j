@@ -46,7 +46,10 @@ public final class Mappers {
         t.country(),
         t.currency(),
         ts(t.createdAt()),
-        ts(t.updatedAt()));
+        ts(t.updatedAt()),
+        t.vatNumber(),
+        t.einvoiceScheme(),
+        t.einvoiceId());
   }
 
   /**

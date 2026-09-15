@@ -221,7 +221,12 @@ public final class Dtos {
       @NotBlank String reason,
       @Schema(description = "Defaults to refunding via the order's original payment method.")
           String refundMethod,
-      @NotNull @Valid List<ReturnItemRequest> items) {}
+      @NotNull @Valid List<ReturnItemRequest> items,
+      @Schema(
+              description =
+                  "The recall notice this refund settles (05.10): the notice is marked refunded"
+                      + " in the same transaction. Must be a notice about this order.")
+          String recallNoticeId) {}
 
   @Schema(name = "ReturnItemResponse")
   public record ReturnItemResponse(
@@ -335,10 +340,19 @@ public final class Dtos {
               description =
                   "ISO 4217 currency code. Defaults to the tenant's own currency; a value that contradicts it is rejected with ORDER_CURRENCY_MISMATCH.")
           String currency,
-      String expiresAt) {}
+      String expiresAt,
+      @Schema(description = PAID_BY_DESCRIPTION) @NotBlank String paidBy) {}
 
   @Schema(name = "ReloadGiftCardRequest")
-  public record ReloadGiftCardRequest(@NotNull @Positive BigDecimal amount, String reference) {}
+  public record ReloadGiftCardRequest(
+      @NotNull @Positive BigDecimal amount,
+      String reference,
+      @Schema(description = PAID_BY_DESCRIPTION) @NotBlank String paidBy) {}
+
+  static final String PAID_BY_DESCRIPTION =
+      "How the value was paid for: CASH, CARD, UPI or WALLET, or PROMOTIONAL for value given away."
+          + " A gift card sold is a liability against the money taken (17.11); another gift card,"
+          + " a voucher or store credit is refused with GIFT_CARD_PAID_BY_INVALID.";
 
   @Schema(name = "RedeemGiftCardRequest")
   public record RedeemGiftCardRequest(

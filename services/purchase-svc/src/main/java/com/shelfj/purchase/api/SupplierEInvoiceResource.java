@@ -1,0 +1,167 @@
+package com.shelfj.purchase.api;
+
+import com.shelfj.purchase.domain.SupplierEInvoices.Original;
+import com.shelfj.purchase.dto.EInvoiceDtos.MatchSupplierEInvoiceRequest;
+import com.shelfj.purchase.dto.EInvoiceDtos.RefuseSupplierEInvoiceRequest;
+import com.shelfj.purchase.mapper.EInvoiceMappers;
+import com.shelfj.purchase.service.SupplierEInvoiceService;
+import com.shelfj.purchase.service.SupplierEInvoiceService.Receipt;
+import com.shelfj.web.ApiResponse;
+import com.shelfj.web.TenantContext;
+import com.shelfj.web.Validations;
+import jakarta.enterprise.context.RequestScoped;
+import jakarta.inject.Inject;
+import jakarta.ws.rs.Consumes;
+import jakarta.ws.rs.DefaultValue;
+import jakarta.ws.rs.GET;
+import jakarta.ws.rs.HeaderParam;
+import jakarta.ws.rs.POST;
+import jakarta.ws.rs.Path;
+import jakarta.ws.rs.PathParam;
+import jakarta.ws.rs.Produces;
+import jakarta.ws.rs.QueryParam;
+import jakarta.ws.rs.core.HttpHeaders;
+import jakarta.ws.rs.core.MediaType;
+import jakarta.ws.rs.core.Response;
+import java.util.List;
+import java.util.UUID;
+import org.eclipse.microprofile.openapi.annotations.Operation;
+import org.eclipse.microprofile.openapi.annotations.responses.APIResponse;
+import org.eclipse.microprofile.openapi.annotations.tags.Tag;
+
+/**
+ * Supplier e-invoices received (07.13): EN 16931 invoices and credit notes in UBL or CII, or inside
+ * a Factur-X or ZUGFeRD PDF, read, checked against CEN's and Peppol's rules, and captured through
+ * the three-way match — or kept waiting for a person, with the reason.
+ */
+@RequestScoped
+@Path("/e-invoices")
+@Produces(MediaType.APPLICATION_JSON)
+@Tag(name = "Supplier E-Invoices")
+public class SupplierEInvoiceResource {
+
+  @Inject SupplierEInvoiceService svc;
+  @Inject TenantContext ctx;
+
+  @Operation(
+      summary = "Receive a supplier e-invoice",
+      description =
+          "The body is the document itself: UBL or CII XML (application/xml), or a Factur-X or"
+              + " ZUGFeRD PDF (application/pdf). It is read with DTDs refused and its size capped,"
+              + " checked against EN 16931 and — when it says it is one — Peppol BIS Billing 3.0,"
+              + " and kept exactly as it arrived. It is then matched: the supplier by the electronic"
+              + " address it was sent from or the seller's VAT identifier; the purchase order by the"
+              + " id in its order reference; each line by the order line it references or an item"
+              + " code a person matched before. When all of that is found it is captured through the"
+              + " three-way match, as a keyed invoice is, and a credit note closes the return it"
+              + " credits. When something is not, it waits with the reason — NEEDS_SUPPLIER,"
+              + " NEEDS_ORDER, NEEDS_LINES, NEEDS_RETURN, NEEDS_DECISION — and a document that breaks"
+              + " a fatal rule, or is addressed to another business, is kept and not captured."
+              + " Sending the same bytes again answers 200 with the document already received.")
+  @APIResponse(responseCode = "201", description = "Received, and captured or waiting")
+  @APIResponse(responseCode = "200", description = "These exact bytes were received before")
+  @APIResponse(responseCode = "400", description = "Empty, or not an e-invoice that can be read")
+  @APIResponse(responseCode = "413", description = "Larger than an e-invoice may be")
+  @APIResponse(responseCode = "415", description = "Not XML or PDF")
+  @POST
+  @Consumes({"application/xml", "text/xml", "application/pdf", "application/octet-stream"})
+  public Response receive(
+      byte[] document, @HeaderParam(HttpHeaders.CONTENT_TYPE) String contentType) {
+    Receipt r = svc.receive(ctx, document, contentType);
+    return Response.status(r.alreadyReceived() ? 200 : 201).entity(ApiResponse.ok(dto(r))).build();
+  }
+
+  @Operation(
+      summary = "List received supplier e-invoices",
+      description =
+          "Newest first; ?status= narrows to one status — NEEDS_LINES is the queue waiting for a"
+              + " person to match lines.")
+  @APIResponse(responseCode = "200", description = "The e-invoices")
+  @APIResponse(responseCode = "400", description = "A status that does not exist")
+  @GET
+  public Response list(
+      @QueryParam("status") String status, @QueryParam("limit") @DefaultValue("50") int limit) {
+    return Response.ok(
+            ApiResponse.ok(
+                svc.list(ctx, status, Math.min(Math.max(limit, 1), 100)).stream()
+                    .map(d -> EInvoiceMappers.toDto(d, List.of(), false))
+                    .toList()))
+        .build();
+  }
+
+  @Operation(summary = "One received supplier e-invoice, with its lines and the rules it broke")
+  @APIResponse(responseCode = "200", description = "The e-invoice")
+  @APIResponse(responseCode = "404", description = "No such e-invoice")
+  @GET
+  @Path("/{id}")
+  public Response get(@PathParam("id") UUID id) {
+    return Response.ok(ApiResponse.ok(dto(svc.get(ctx, id)))).build();
+  }
+
+  @Operation(
+      summary = "The document as it arrived",
+      description =
+          "The XML or PDF exactly as the supplier sent it: for an e-invoice the file is the invoice,"
+              + " and it is kept unaltered.")
+  @APIResponse(responseCode = "200", description = "The original document")
+  @APIResponse(responseCode = "404", description = "No such e-invoice")
+  @GET
+  @Path("/{id}/document")
+  @Produces({"application/xml", "text/xml", "application/pdf", "application/octet-stream"})
+  public Response document(@PathParam("id") UUID id) {
+    Original o = svc.original(ctx, id);
+    String extension = "PDF".equals(o.container()) ? "pdf" : "xml";
+    String name =
+        o.invoiceNumber() == null
+            ? id.toString()
+            : o.invoiceNumber().replaceAll("[^A-Za-z0-9._-]", "_");
+    return Response.ok(o.bytes(), o.contentType())
+        .header("Content-Disposition", "attachment; filename=\"" + name + "." + extension + "\"")
+        .header("X-Content-Type-Options", "nosniff")
+        .build();
+  }
+
+  @Operation(
+      summary = "Match a waiting supplier e-invoice",
+      description =
+          "Gives what intake could not find: the supplier that sent it, the order it bills, the return"
+              + " a credit note closes, the order line of any unmatched line. Anything left out is"
+              + " found again as on arrival, and when that is enough the invoice is captured."
+              + " remember keeps the choices — the supplier's electronic address, what its item codes"
+              + " are — so its next invoice matches by itself.")
+  @APIResponse(responseCode = "200", description = "Captured, or still waiting with the reason")
+  @APIResponse(responseCode = "400", description = "A choice that does not fit the invoice")
+  @APIResponse(responseCode = "404", description = "No such e-invoice, supplier or order")
+  @APIResponse(
+      responseCode = "409",
+      description =
+          "Already settled (PURCHASE_EINVOICE_SETTLED), not compliant, addressed elsewhere, or being"
+              + " matched by another request (PURCHASE_EINVOICE_BUSY)")
+  @POST
+  @Path("/{id}/match")
+  @Consumes(MediaType.APPLICATION_JSON)
+  public Response match(@PathParam("id") UUID id, MatchSupplierEInvoiceRequest req) {
+    Validations.validate(req);
+    return Response.ok(ApiResponse.ok(dto(svc.match(ctx, id, req)))).build();
+  }
+
+  @Operation(
+      summary = "Refuse a waiting supplier e-invoice",
+      description =
+          "Needs purchasing.invoices.decide; the reason is what the supplier is to be told.")
+  @APIResponse(responseCode = "200", description = "Refused")
+  @APIResponse(responseCode = "400", description = "No reason")
+  @APIResponse(responseCode = "403", description = "Without purchasing.invoices.decide")
+  @APIResponse(responseCode = "409", description = "Already settled, or busy")
+  @POST
+  @Path("/{id}/refuse")
+  @Consumes(MediaType.APPLICATION_JSON)
+  public Response refuse(@PathParam("id") UUID id, RefuseSupplierEInvoiceRequest req) {
+    Validations.validate(req);
+    return Response.ok(ApiResponse.ok(dto(svc.refuse(ctx, id, req)))).build();
+  }
+
+  private static Object dto(Receipt r) {
+    return EInvoiceMappers.toDto(r.document(), r.lines(), r.alreadyReceived());
+  }
+}

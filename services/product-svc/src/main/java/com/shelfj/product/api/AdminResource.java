@@ -510,9 +510,11 @@ public class AdminResource {
             .limit(200)
             .map(s -> com.shelfj.web.Parsing.uuid(s, "ids"))
             .toList();
+    java.util.Map<UUID, String> hsn = service.hsnCodes(tenantId, idList);
     return ApiResponse.ok(
         service.resolveVariants(tenantId, idList).stream()
-            .map(vp -> Mappers.toVariantScan(vp.variant(), vp.product()))
+            .map(
+                vp -> Mappers.toVariantScan(vp.variant(), vp.product(), hsn.get(vp.variant().id())))
             .toList());
   }
 

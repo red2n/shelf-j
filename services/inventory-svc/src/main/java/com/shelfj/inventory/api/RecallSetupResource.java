@@ -2,6 +2,7 @@ package com.shelfj.inventory.api;
 
 import com.shelfj.inventory.domain.Recall.Hazard;
 import com.shelfj.inventory.domain.Recall.Kind;
+import com.shelfj.inventory.domain.Recall.Remedy;
 import com.shelfj.inventory.domain.Recall.Source;
 import com.shelfj.inventory.dto.RecallDtos.CloseRequest;
 import com.shelfj.inventory.dto.RecallDtos.OpenRecallRequest;
@@ -26,6 +27,9 @@ import jakarta.ws.rs.Produces;
 import jakarta.ws.rs.core.MediaType;
 import jakarta.ws.rs.core.Response;
 import java.time.LocalDate;
+import java.util.List;
+import java.util.Set;
+import java.util.stream.Collectors;
 import org.eclipse.microprofile.openapi.annotations.Operation;
 import org.eclipse.microprofile.openapi.annotations.responses.APIResponse;
 import org.eclipse.microprofile.openapi.annotations.tags.Tag;
@@ -67,8 +71,15 @@ public class RecallSetupResource {
           "Every batch in scope, at every store, is taken off sale in the same transaction."
               + " A batch whose lot or date is not known is held too, as possibly affected. Stock"
               + " that arrives later under an open recall is held as it arrives. The reference is"
-              + " unique, so a retried open is refused rather than opening a second recall.")
+              + " unique, so a retried open is refused rather than opening a second recall. A"
+              + " RECALL also finds every sale that drew on the packs in scope and announces each"
+              + " order to order-svc, which tells the buyer and offers the remedies named here.")
   @APIResponse(responseCode = "201", description = "Opened")
+  @APIResponse(
+      responseCode = "400",
+      description =
+          "A RECALL with no remedy or contact; where GPSR binds, fewer than two remedies with no"
+              + " reason, or a notice that plays the risk down")
   @APIResponse(responseCode = "409", description = "A recall with that reference exists")
   @POST
   public Response open(OpenRecallRequest req) {
@@ -85,7 +96,12 @@ public class RecallSetupResource {
                 req.customerNotice(),
                 Source.valueOf(req.source()),
                 req.sourceReference(),
-                req.items().stream().map(RecallSetupResource::toScopeLine).toList()));
+                req.items().stream().map(RecallSetupResource::toScopeLine).toList(),
+                remedies(req.remedies()),
+                req.singleRemedyReason(),
+                req.contactPhone(),
+                req.contactUrl(),
+                optionalDate(req.soldFrom(), "soldFrom")));
     return Response.status(Response.Status.CREATED)
         .entity(
             ApiResponse.ok(RecallMappers.toRecall(detail), ApiResponse.Meta.of(ctx.requestId())))
@@ -155,6 +171,12 @@ public class RecallSetupResource {
         line.batchNo(),
         optionalDate(line.expiryFrom(), "expiryFrom"),
         optionalDate(line.expiryTo(), "expiryTo"));
+  }
+
+  private static Set<Remedy> remedies(List<String> names) {
+    return names == null
+        ? Set.of()
+        : names.stream().map(Remedy::valueOf).collect(Collectors.toUnmodifiableSet());
   }
 
   private static LocalDate optionalDate(String value, String field) {

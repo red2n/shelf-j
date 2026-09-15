@@ -18,7 +18,10 @@ public final class Domain {
       String country,
       String currency,
       Instant createdAt,
-      Instant updatedAt) {
+      Instant updatedAt,
+      String vatNumber,
+      String einvoiceScheme,
+      String einvoiceId) {
     public static final String STATUS_PENDING = "PENDING";
     public static final String STATUS_ACTIVE = "ACTIVE";
     public static final String STATUS_INACTIVE = "INACTIVE";

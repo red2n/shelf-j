@@ -268,13 +268,16 @@ public class PricingRepository extends BaseOutboxRepository {
               c.prepareStatement(
                   "INSERT INTO customer_vat_status"
                       + " (id,tenant_id,customer_id,vat_number,vat_registered,"
-                      + "  reverse_charge_eligible,country_code)"
-                      + " VALUES (?,?,?,?,?,?,?)"
+                      + "  reverse_charge_eligible,country_code,legal_name,einvoice_scheme,einvoice_id)"
+                      + " VALUES (?,?,?,?,?,?,?,?,?,?)"
                       + " ON CONFLICT (tenant_id,customer_id)"
                       + " DO UPDATE SET vat_number=EXCLUDED.vat_number,"
                       + "  vat_registered=EXCLUDED.vat_registered,"
                       + "  reverse_charge_eligible=EXCLUDED.reverse_charge_eligible,"
                       + "  country_code=EXCLUDED.country_code,"
+                      + "  legal_name=EXCLUDED.legal_name,"
+                      + "  einvoice_scheme=EXCLUDED.einvoice_scheme,"
+                      + "  einvoice_id=EXCLUDED.einvoice_id,"
                       + "  updated_at=now()")) {
             ps.setObject(1, cvs.id());
             ps.setObject(2, cvs.tenantId());
@@ -283,6 +286,9 @@ public class PricingRepository extends BaseOutboxRepository {
             ps.setBoolean(5, cvs.vatRegistered());
             ps.setBoolean(6, cvs.reverseChargeEligible());
             ps.setString(7, cvs.countryCode());
+            ps.setString(8, cvs.legalName());
+            ps.setString(9, cvs.einvoiceScheme());
+            ps.setString(10, cvs.einvoiceId());
             ps.executeUpdate();
           }
           return cvs;
@@ -301,7 +307,8 @@ public class PricingRepository extends BaseOutboxRepository {
     var list =
         query(
             "SELECT id,tenant_id,customer_id,vat_number,vat_registered,"
-                + "  reverse_charge_eligible,country_code,created_at,updated_at"
+                + "  reverse_charge_eligible,country_code,legal_name,einvoice_scheme,einvoice_id,"
+                + "  created_at,updated_at"
                 + " FROM customer_vat_status WHERE tenant_id=? AND customer_id=?",
             ps -> {
               ps.setObject(1, tenantId);
@@ -316,6 +323,9 @@ public class PricingRepository extends BaseOutboxRepository {
                     rs.getBoolean("vat_registered"),
                     rs.getBoolean("reverse_charge_eligible"),
                     rs.getString("country_code"),
+                    rs.getString("legal_name"),
+                    rs.getString("einvoice_scheme"),
+                    rs.getString("einvoice_id"),
                     rs.getObject("created_at", OffsetDateTime.class).toInstant(),
                     rs.getObject("updated_at", OffsetDateTime.class).toInstant()),
             "find customer vat status");

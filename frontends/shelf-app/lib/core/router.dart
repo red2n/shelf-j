@@ -172,6 +172,20 @@ final routerProvider = Provider<GoRouter>((ref) {
             ),
           ),
           GoRoute(
+            path: '/admin/retention',
+            builder: (_, _) => DeferredWidget(
+              libraryLoader: admin_lib.loadLibrary,
+              builder: (_) => admin_lib.RetentionScreen(),
+            ),
+          ),
+          GoRoute(
+            path: '/admin/tenant-data',
+            builder: (_, _) => DeferredWidget(
+              libraryLoader: admin_lib.loadLibrary,
+              builder: (_) => admin_lib.TenantDataScreen(),
+            ),
+          ),
+          GoRoute(
             path: '/admin/security-notices',
             builder: (_, _) => DeferredWidget(
               libraryLoader: admin_lib.loadLibrary,
@@ -329,6 +343,13 @@ final routerProvider = Provider<GoRouter>((ref) {
             builder: (_, _) => DeferredWidget(
               libraryLoader: storefront_lib.loadLibrary,
               builder: (_) => storefront_lib.StorefrontAccountScreen(),
+            ),
+          ),
+          GoRoute(
+            path: '/store/accessibility',
+            builder: (_, _) => DeferredWidget(
+              libraryLoader: storefront_lib.loadLibrary,
+              builder: (_) => storefront_lib.StorefrontAccessibilityScreen(),
             ),
           ),
         ],

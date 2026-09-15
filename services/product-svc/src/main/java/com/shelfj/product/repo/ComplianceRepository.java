@@ -181,7 +181,8 @@ public class ComplianceRepository extends BaseOutboxRepository {
     var rows =
         query(
             "SELECT id, country_of_origin, origin_detail, restriction_category, allergen_status,"
-                + " ingredients, sold_by, net_content, net_content_uom, tare_weight, catch_weight"
+                + " ingredients, hsn_code, sold_by, net_content, net_content_uom, tare_weight,"
+                + " catch_weight"
                 + " FROM product_variants WHERE tenant_id = ? AND id = ?",
             ps -> {
               ps.setObject(1, tenantId);
@@ -205,7 +206,7 @@ public class ComplianceRepository extends BaseOutboxRepository {
           try (var st =
               c.prepareStatement(
                   "UPDATE product_variants SET country_of_origin = ?, origin_detail = ?,"
-                      + " restriction_category = ?, ingredients = ?, sold_by = ?,"
+                      + " restriction_category = ?, ingredients = ?, hsn_code = ?, sold_by = ?,"
                       + " net_content = ?, net_content_uom = ?, tare_weight = ?,"
                       + " catch_weight = ?, measure_version = measure_version + 1,"
                       + " updated_at = now()"
@@ -214,13 +215,14 @@ public class ComplianceRepository extends BaseOutboxRepository {
             st.setString(2, v.originDetail());
             st.setString(3, v.restrictionCategory());
             st.setString(4, v.ingredients());
-            st.setString(5, v.soldBy());
-            st.setBigDecimal(6, v.netContent());
-            st.setString(7, v.netContentUom());
-            st.setBigDecimal(8, v.tareWeight());
-            st.setBoolean(9, v.catchWeight());
-            st.setObject(10, tenantId);
-            st.setObject(11, v.variantId());
+            st.setString(5, v.hsnCode());
+            st.setString(6, v.soldBy());
+            st.setBigDecimal(7, v.netContent());
+            st.setString(8, v.netContentUom());
+            st.setBigDecimal(9, v.tareWeight());
+            st.setBoolean(10, v.catchWeight());
+            st.setObject(11, tenantId);
+            st.setObject(12, v.variantId());
             try (ResultSet rs = st.executeQuery()) {
               if (!rs.next()) return false;
               insertOutbox(c, eventFor.apply(rs.getLong(1)));
@@ -429,9 +431,35 @@ public class ComplianceRepository extends BaseOutboxRepository {
         rs.getString(5),
         rs.getString(6),
         rs.getString(7),
-        rs.getBigDecimal(8),
-        rs.getString(9),
-        rs.getBigDecimal(10),
-        rs.getBoolean(11));
+        rs.getString(8),
+        rs.getBigDecimal(9),
+        rs.getString(10),
+        rs.getBigDecimal(11),
+        rs.getBoolean(12));
+  }
+
+  /**
+   * The HSN or SAC codes recorded for a set of variants, for naming invoice lines (18.9).
+   *
+   * @param tenantId owning tenant; the first condition of the query
+   * @param variantIds the variants to look up
+   * @return codes by variant; a variant with none recorded is absent
+   */
+  public java.util.Map<UUID, String> hsnCodes(
+      UUID tenantId, java.util.Collection<UUID> variantIds) {
+    if (variantIds.isEmpty()) return java.util.Map.of();
+    var rows =
+        query(
+            "SELECT id, hsn_code FROM product_variants"
+                + " WHERE tenant_id = ? AND id = ANY (?) AND hsn_code IS NOT NULL",
+            ps -> {
+              ps.setObject(1, tenantId);
+              ps.setArray(2, ps.getConnection().createArrayOf("uuid", variantIds.toArray()));
+            },
+            rs -> java.util.Map.entry((UUID) rs.getObject(1), rs.getString(2)),
+            "find variant hsn codes");
+    java.util.Map<UUID, String> out = new java.util.HashMap<>();
+    for (var e : rows) out.put(e.getKey(), e.getValue());
+    return out;
   }
 }

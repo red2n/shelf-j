@@ -141,6 +141,10 @@ else
 
   # ── 3b. Rebuild the web UI bundle ────────────────────────────────────────
   UI_API_BASE="${UI_API_BASE:-http://localhost:8090/api}"
+  # The web app's Content-Security-Policy allows the gateway origin the bundle calls (compose
+  # reads UI_API_ORIGIN); a relative /api build calls its own origin and needs none.
+  export UI_API_ORIGIN="${UI_API_BASE%/api}"
+  case "$UI_API_ORIGIN" in /*) UI_API_ORIGIN="" ;; esac
   if $NO_BUILD; then
     cyan "Skipping web build (--no-build); reusing frontends/shelf-app/build/web."
   elif command -v flutter >/dev/null 2>&1; then
@@ -148,7 +152,7 @@ else
     (
       cd frontends/shelf-app
       flutter pub get
-      flutter build web --release --dart-define=SHELFJ_API_BASE="$UI_API_BASE"
+      flutter build web --release --no-web-resources-cdn --dart-define=SHELFJ_API_BASE="$UI_API_BASE"
     )
   else
     # No local Flutter SDK — a fresh machine shouldn't need one installed by hand.
@@ -164,7 +168,7 @@ else
       -v "$PUB_CACHE_DIR:/tmp/.pub-cache" \
       -w /app \
       ghcr.io/cirruslabs/flutter:stable \
-      bash -lc "flutter pub get && flutter build web --release --dart-define=SHELFJ_API_BASE='$UI_API_BASE'"
+      bash -lc "flutter pub get && flutter build web --release --no-web-resources-cdn --dart-define=SHELFJ_API_BASE='$UI_API_BASE'"
   fi
 fi
 

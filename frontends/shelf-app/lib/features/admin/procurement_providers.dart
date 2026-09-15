@@ -26,6 +26,11 @@ class Supplier {
   final bool hasBankDetails;
   final String? bankDetailsChangedAt;
 
+  /// Where the supplier's e-invoices come from (07.13): a Peppol electronic
+  /// address scheme and the identifier within it.
+  final String? einvoiceScheme;
+  final String? einvoiceId;
+
   const Supplier({
     required this.id,
     required this.name,
@@ -42,6 +47,8 @@ class Supplier {
     this.bankBic,
     this.hasBankDetails = false,
     this.bankDetailsChangedAt,
+    this.einvoiceScheme,
+    this.einvoiceId,
   });
 
   factory Supplier.fromJson(Map<String, dynamic> j) => Supplier(
@@ -60,6 +67,8 @@ class Supplier {
     bankBic: j['bankBic'] as String?,
     hasBankDetails: j['hasBankDetails'] == true,
     bankDetailsChangedAt: j['bankDetailsChangedAt'] as String?,
+    einvoiceScheme: j['einvoiceScheme'] as String?,
+    einvoiceId: j['einvoiceId'] as String?,
   );
 }
 
@@ -496,6 +505,49 @@ class PaymentRunDocument {
       );
 }
 
+/// What the bank's status report said about a supplier's payment (17.12): its
+/// status, and the Verification of Payee result on the payee's name.
+class PayeeCheck {
+  final String endToEndId;
+  final String status;
+  final String? reasonCode;
+  final String? payeeMatch;
+  final String? matchedName;
+  final bool held;
+  final bool releasable;
+  final String? releasedAt;
+  final String? releaseReason;
+
+  const PayeeCheck({
+    required this.endToEndId,
+    required this.status,
+    this.reasonCode,
+    this.payeeMatch,
+    this.matchedName,
+    required this.held,
+    required this.releasable,
+    this.releasedAt,
+    this.releaseReason,
+  });
+
+  bool get released => releasedAt != null;
+
+  /// Held and not released: the run cannot be paid while it is.
+  bool get blocking => held && !released;
+
+  factory PayeeCheck.fromJson(Map<String, dynamic> j) => PayeeCheck(
+    endToEndId: j['endToEndId'] as String? ?? '',
+    status: j['status'] as String? ?? '',
+    reasonCode: j['reasonCode'] as String?,
+    payeeMatch: j['payeeMatch'] as String?,
+    matchedName: j['matchedName'] as String?,
+    held: j['held'] == true,
+    releasable: j['releasable'] == true,
+    releasedAt: j['releasedAt'] as String?,
+    releaseReason: j['releaseReason'] as String?,
+  );
+}
+
 /// What a run pays one supplier, and anything a reviewer should check first.
 class PaymentRunSupplier {
   final String supplierId;
@@ -504,6 +556,7 @@ class PaymentRunSupplier {
   final bool remittanceEmailOnFile;
   final List<String> warnings;
   final List<PaymentRunDocument> documents;
+  final PayeeCheck? bankCheck;
 
   const PaymentRunSupplier({
     required this.supplierId,
@@ -512,6 +565,7 @@ class PaymentRunSupplier {
     required this.remittanceEmailOnFile,
     this.warnings = const [],
     this.documents = const [],
+    this.bankCheck,
   });
 
   factory PaymentRunSupplier.fromJson(Map<String, dynamic> j) =>
@@ -526,6 +580,11 @@ class PaymentRunSupplier {
         documents: ((j['documents'] as List?) ?? const [])
             .map((e) => PaymentRunDocument.fromJson(e as Map<String, dynamic>))
             .toList(),
+        bankCheck: j['bankCheck'] is Map
+            ? PayeeCheck.fromJson(
+                (j['bankCheck'] as Map).cast<String, dynamic>(),
+              )
+            : null,
       );
 }
 
@@ -585,6 +644,10 @@ class PaymentRun {
   bool get paid => status == 'PAID';
   bool get cancelled => status == 'CANCELLED';
 
+  /// Payments the bank holds that no manager has released.
+  int get heldPayments =>
+      suppliers.where((s) => s.bankCheck?.blocking == true).length;
+
   factory PaymentRun.fromJson(Map<String, dynamic> j) => PaymentRun(
     id: j['id'] as String? ?? '',
     reference: j['reference'] as String? ?? '-',
@@ -614,5 +677,97 @@ final paymentRunsProvider = FutureProvider.autoDispose<List<PaymentRun>>((
   final data = (resp.data['data'] as List?) ?? [];
   return data
       .map((e) => PaymentRun.fromJson(e as Map<String, dynamic>))
+      .toList();
+});
+
+// ── Bank-standard payment files (17.12) ──────────────────────────────────────
+
+/// A file a bank takes for a run.
+class BankFileFormat {
+  final String code;
+  final String label;
+  final String extension;
+  final String mimeType;
+
+  const BankFileFormat(this.code, this.label, this.extension, this.mimeType);
+
+  static const csv = BankFileFormat(
+    'CSV',
+    'CSV for bulk upload',
+    'csv',
+    'text/csv;charset=utf-8',
+  );
+  static const pain001 = BankFileFormat(
+    'PAIN001',
+    'SEPA credit transfer (pain.001)',
+    'xml',
+    'application/xml',
+  );
+  static const bacs18 = BankFileFormat(
+    'BACS18',
+    'Bacs Standard 18',
+    'txt',
+    'text/plain;charset=utf-8',
+  );
+
+  /// The formats that can pay a run in this currency, the bank standard first.
+  static List<BankFileFormat> forCurrency(String currency) =>
+      switch (currency) {
+        'EUR' => const [pain001, csv],
+        'GBP' => const [bacs18, csv],
+        _ => const [csv],
+      };
+}
+
+/// The account a currency's supplier payments are made from.
+class PayingAccount {
+  final String currency;
+  final String accountName;
+  final String? sortCode;
+  final String? accountNumberMasked;
+  final String? ibanMasked;
+  final String? bic;
+  final String? serviceUserNumber;
+  final bool sendsBacs;
+  final bool sendsSepa;
+  final String? setAt;
+
+  const PayingAccount({
+    required this.currency,
+    required this.accountName,
+    this.sortCode,
+    this.accountNumberMasked,
+    this.ibanMasked,
+    this.bic,
+    this.serviceUserNumber,
+    this.sendsBacs = false,
+    this.sendsSepa = false,
+    this.setAt,
+  });
+
+  factory PayingAccount.fromJson(Map<String, dynamic> j) => PayingAccount(
+    currency: j['currency'] as String? ?? '',
+    accountName: j['accountName'] as String? ?? '-',
+    sortCode: j['sortCode'] as String?,
+    accountNumberMasked: j['accountNumberMasked'] as String?,
+    ibanMasked: j['ibanMasked'] as String?,
+    bic: j['bic'] as String?,
+    serviceUserNumber: j['serviceUserNumber'] as String?,
+    sendsBacs: j['sendsBacs'] == true,
+    sendsSepa: j['sendsSepa'] == true,
+    setAt: j['setAt'] as String?,
+  );
+}
+
+final payingAccountsProvider = FutureProvider.autoDispose<List<PayingAccount>>((
+  ref,
+) async {
+  final resp = await ref
+      .read(apiClientProvider)
+      .dio
+      .get('/${ApiConstants.purchase}/payment-runs/paying-accounts');
+  final data = (resp.data['data'] as List?) ?? [];
+  return data
+      .map((e) => PayingAccount.fromJson(e as Map<String, dynamic>))
       .toList();
 });

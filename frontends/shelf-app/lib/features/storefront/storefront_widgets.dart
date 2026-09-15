@@ -54,7 +54,10 @@ class ProductThumb extends StatelessWidget {
       child: Text(
         _initials(label),
         style: TextStyle(
-            color: _fg[i], fontWeight: FontWeight.bold, fontSize: fontSize),
+          color: _fg[i],
+          fontWeight: FontWeight.bold,
+          fontSize: fontSize,
+        ),
       ),
     );
   }
@@ -92,7 +95,10 @@ const double _coverAspectAllowance = 1.35;
 /// at [kProductImageMaxBytes], but a 1280x960 photo is ~4.9 MB of RGBA once decoded,
 /// regardless of how well it compressed. Flutter's default ImageCache is 100 MB, so
 /// roughly twenty full-size product photos would fill it and start thrashing.
-int? productImageDecodeWidth(BoxConstraints constraints, double devicePixelRatio) {
+int? productImageDecodeWidth(
+  BoxConstraints constraints,
+  double devicePixelRatio,
+) {
   final bounded = <double>[
     if (constraints.hasBoundedWidth) constraints.maxWidth,
     if (constraints.hasBoundedHeight) constraints.maxHeight,
@@ -122,11 +128,15 @@ class ProductImageThumb extends ConsumerWidget {
 
   @override
   Widget build(BuildContext context, WidgetRef ref) {
-    final fallback = ProductThumb(
-      seed: productId,
-      label: label,
-      fontSize: fontSize,
-      borderRadius: borderRadius,
+    // Decorative wherever it appears: the product's name is always beside it, and the fallback's
+    // initials would otherwise be read out as a word (12.11).
+    final fallback = ExcludeSemantics(
+      child: ProductThumb(
+        seed: productId,
+        label: label,
+        fontSize: fontSize,
+        borderRadius: borderRadius,
+      ),
     );
     final bytes = ref.watch(productImageProvider(productId)).value;
     if (bytes == null) return fallback;
@@ -139,10 +149,13 @@ class ProductImageThumb extends ConsumerWidget {
         builder: (context, constraints) => Image.memory(
           bytes,
           fit: BoxFit.cover,
+          excludeFromSemantics: true,
           width: double.infinity,
           height: double.infinity,
           cacheWidth: productImageDecodeWidth(
-              constraints, MediaQuery.devicePixelRatioOf(context)),
+            constraints,
+            MediaQuery.devicePixelRatioOf(context),
+          ),
           errorBuilder: (_, _, _) => fallback,
         ),
       ),
@@ -195,21 +208,15 @@ class OfferPriceAdd extends ConsumerWidget {
         }
         // .select() so this tile only rebuilds when *its own* variant's availability changes,
         // not on every store switch's whole-map refetch.
-        final (inStock, hasAvailData) =
-            ref.watch(storefrontAvailabilityProvider.select((async) {
-          final map = async.value;
-          return (map == null ? true : (map[offer.variant.id] ?? false), map != null);
-        }));
-
-        final cart = ref.watch(cartProvider);
-        final notifier = ref.read(cartProvider.notifier);
-        int qty = 0;
-        for (final l in cart) {
-          if (l.variantId == offer.variant.id) {
-            qty = l.qty;
-            break;
-          }
-        }
+        final (inStock, hasAvailData) = ref.watch(
+          storefrontAvailabilityProvider.select((async) {
+            final map = async.value;
+            return (
+              map == null ? true : (map[offer.variant.id] ?? false),
+              map != null,
+            );
+          }),
+        );
 
         final Widget info = Column(
           crossAxisAlignment: CrossAxisAlignment.start,
@@ -220,7 +227,10 @@ class OfferPriceAdd extends ConsumerWidget {
               maxLines: 1,
               overflow: TextOverflow.ellipsis,
               style: TextStyle(
-                  color: cs.primary, fontWeight: FontWeight.bold, fontSize: 15),
+                color: cs.primary,
+                fontWeight: FontWeight.bold,
+                fontSize: 15,
+              ),
             ),
             WasPriceText(price: offer.price),
             UnitPriceText(price: offer.price),
@@ -228,39 +238,22 @@ class OfferPriceAdd extends ConsumerWidget {
           ],
         );
 
-        Widget control;
-        if (!inStock) {
-          control = const SizedBox.shrink();
-        } else if (qty == 0) {
-          control = IconButton.filledTonal(
-            visualDensity: VisualDensity.compact,
-            tooltip: 'Add to cart',
-            icon: const Icon(Icons.add_shopping_cart, size: 18),
-            onPressed: () {
-              notifier.add(CartLine(
+        return Row(
+          children: [
+            Expanded(child: info),
+            _CartControl(
+              productName: product.name,
+              inStock: inStock,
+              line: CartLine(
                 variantId: offer.variant.id,
                 productName: product.name,
                 sku: offer.variant.sku,
                 unitPrice: offer.price.totalWithVat,
                 currency: offer.price.currency,
-              ));
-              ScaffoldMessenger.of(context)
-                ..clearSnackBars()
-                ..showSnackBar(SnackBar(
-                  content: Text('Added ${product.name}'),
-                  duration: const Duration(milliseconds: 900),
-                ));
-            },
-          );
-        } else {
-          control = _Stepper(
-            qty: qty,
-            onDec: () => notifier.setQty(offer.variant.id, qty - 1),
-            onInc: () => notifier.setQty(offer.variant.id, qty + 1),
-          );
-        }
-
-        return Row(children: [Expanded(child: info), control]);
+              ),
+            ),
+          ],
+        );
       },
     );
   }
@@ -284,56 +277,85 @@ class _CatalogAdd extends ConsumerWidget {
         }
         // .select() so this tile only rebuilds when *its own* variant's availability changes,
         // not on every store switch's whole-map refetch.
-        final inStock = ref.watch(storefrontAvailabilityProvider.select((async) {
-          final map = async.value;
-          return map == null ? true : (map[variant.id] ?? false);
-        }));
-        final cart = ref.watch(cartProvider);
-        final notifier = ref.read(cartProvider.notifier);
-        int qty = 0;
-        for (final l in cart) {
-          if (l.variantId == variant.id) {
-            qty = l.qty;
-            break;
-          }
-        }
-
-        Widget control;
-        if (!inStock) {
-          control = const SizedBox.shrink();
-        } else if (qty == 0) {
-          control = IconButton.filledTonal(
-            visualDensity: VisualDensity.compact,
-            tooltip: 'Add to cart',
-            icon: const Icon(Icons.add_shopping_cart, size: 18),
-            onPressed: () {
-              // Catalog mode: no price — the server prices the order (when
-              // pricing enforcement is on) or it's a quote.
-              notifier.add(CartLine(
+        final inStock = ref.watch(
+          storefrontAvailabilityProvider.select((async) {
+            final map = async.value;
+            return map == null ? true : (map[variant.id] ?? false);
+          }),
+        );
+        // Catalog mode: no price — the server prices the order (when pricing enforcement is on) or
+        // it's a quote.
+        return Row(
+          children: [
+            Expanded(child: StockBadge(inStock: inStock)),
+            _CartControl(
+              productName: product.name,
+              inStock: inStock,
+              line: CartLine(
                 variantId: variant.id,
                 productName: product.name,
                 sku: variant.sku,
                 unitPrice: 0,
                 currency: '',
-              ));
-              ScaffoldMessenger.of(context)
-                ..clearSnackBars()
-                ..showSnackBar(SnackBar(
-                  content: Text('Added ${product.name}'),
-                  duration: const Duration(milliseconds: 900),
-                ));
-            },
-          );
-        } else {
-          control = _Stepper(
-            qty: qty,
-            onDec: () => notifier.setQty(variant.id, qty - 1),
-            onInc: () => notifier.setQty(variant.id, qty + 1),
-          );
-        }
-        return Row(
-            children: [Expanded(child: StockBadge(inStock: inStock)), control]);
+              ),
+            ),
+          ],
+        );
       },
+    );
+  }
+}
+
+/// A listing card's add-to-cart control, priced or catalogue: nothing while the item is out of
+/// stock, an add button, or a quantity stepper once it is in the cart. Watches only its own line of
+/// the cart, so a card rebuilds when its own quantity changes and no other.
+class _CartControl extends ConsumerWidget {
+  final String productName;
+  final bool inStock;
+
+  /// What the add button puts in the cart.
+  final CartLine line;
+
+  const _CartControl({
+    required this.productName,
+    required this.inStock,
+    required this.line,
+  });
+
+  @override
+  Widget build(BuildContext context, WidgetRef ref) {
+    if (!inStock) return const SizedBox.shrink();
+    final qty = ref.watch(
+      cartProvider.select((cart) {
+        for (final l in cart) {
+          if (l.variantId == line.variantId) return l.qty;
+        }
+        return 0;
+      }),
+    );
+    final notifier = ref.read(cartProvider.notifier);
+    if (qty == 0) {
+      return IconButton.filledTonal(
+        visualDensity: VisualDensity.compact,
+        tooltip: 'Add to cart',
+        icon: const Icon(Icons.add_shopping_cart, size: 18),
+        onPressed: () {
+          notifier.add(line);
+          ScaffoldMessenger.of(context)
+            ..clearSnackBars()
+            ..showSnackBar(
+              SnackBar(
+                content: Text('Added $productName'),
+                duration: const Duration(milliseconds: 900),
+              ),
+            );
+        },
+      );
+    }
+    return _Stepper(
+      qty: qty,
+      onDec: () => notifier.setQty(line.variantId, qty - 1),
+      onInc: () => notifier.setQty(line.variantId, qty + 1),
     );
   }
 }
@@ -351,12 +373,22 @@ class StockBadge extends StatelessWidget {
     return Row(
       mainAxisSize: MainAxisSize.min,
       children: [
-        Icon(inStock ? Icons.check_circle : Icons.remove_circle_outline,
-            size: 15, color: color),
+        Icon(
+          inStock ? Icons.check_circle : Icons.remove_circle_outline,
+          size: 15,
+          color: color,
+        ),
         const SizedBox(width: 4),
-        Text(inStock ? 'In stock' : 'Out of stock',
+        Flexible(
+          child: Text(
+            inStock ? 'In stock' : 'Out of stock',
             style: TextStyle(
-                color: color, fontWeight: FontWeight.w600, fontSize: 13)),
+              color: color,
+              fontWeight: FontWeight.w600,
+              fontSize: 13,
+            ),
+          ),
+        ),
       ],
     );
   }
@@ -379,27 +411,49 @@ class _Stepper extends StatelessWidget {
       child: Row(
         mainAxisSize: MainAxisSize.min,
         children: [
-          _btn(context, Icons.remove, onDec),
+          _btn(context, Icons.remove, onDec, 'Remove one'),
           Padding(
             padding: const EdgeInsets.symmetric(horizontal: 4),
-            child: Text('$qty',
+            // Its own node: a live region merged into the card would re-read the whole card on every step.
+            child: Semantics(
+              container: true,
+              label: '$qty in cart',
+              liveRegion: true,
+              excludeSemantics: true,
+              child: Text(
+                '$qty',
                 style: TextStyle(
-                    color: cs.onPrimaryContainer, fontWeight: FontWeight.bold)),
+                  color: cs.onPrimaryContainer,
+                  fontWeight: FontWeight.bold,
+                ),
+              ),
+            ),
           ),
-          _btn(context, Icons.add, onInc),
+          _btn(context, Icons.add, onInc, 'Add one'),
         ],
       ),
     );
   }
 
-  Widget _btn(BuildContext context, IconData icon, VoidCallback onTap) {
+  // An icon alone names nothing to a screen reader; the label does. 30 px across, past WCAG 2.2's
+  // 24 px minimum target (2.5.8).
+  Widget _btn(
+    BuildContext context,
+    IconData icon,
+    VoidCallback onTap,
+    String label,
+  ) {
     final cs = Theme.of(context).colorScheme;
-    return InkWell(
-      onTap: onTap,
-      customBorder: const CircleBorder(),
-      child: Padding(
-        padding: const EdgeInsets.all(6),
-        child: Icon(icon, size: 18, color: cs.onPrimaryContainer),
+    return Semantics(
+      button: true,
+      label: label,
+      child: InkWell(
+        onTap: onTap,
+        customBorder: const CircleBorder(),
+        child: Padding(
+          padding: const EdgeInsets.all(6),
+          child: Icon(icon, size: 18, color: cs.onPrimaryContainer),
+        ),
       ),
     );
   }

@@ -1,18 +1,21 @@
 package com.shelfj.inventory.service;
 
 import com.shelfj.ids.Ids;
+import com.shelfj.inventory.domain.Recall;
 import com.shelfj.inventory.domain.Recall.ActiveItem;
 import com.shelfj.inventory.domain.Recall.Detail;
 import com.shelfj.inventory.domain.Recall.Disposition;
 import com.shelfj.inventory.domain.Recall.Hazard;
 import com.shelfj.inventory.domain.Recall.Header;
 import com.shelfj.inventory.domain.Recall.Kind;
+import com.shelfj.inventory.domain.Recall.Remedy;
 import com.shelfj.inventory.domain.Recall.Scope;
 import com.shelfj.inventory.domain.Recall.Source;
 import com.shelfj.inventory.domain.Recall.Status;
 import com.shelfj.inventory.domain.Recall.StoreAction;
 import com.shelfj.inventory.domain.Recall.Summary;
 import com.shelfj.inventory.repo.RecallRepository;
+import com.shelfj.service.Jurisdictions;
 import com.shelfj.service.OutboxRow;
 import com.shelfj.web.ApiException;
 import com.shelfj.web.Cursor;
@@ -21,21 +24,31 @@ import jakarta.inject.Inject;
 import java.math.BigDecimal;
 import java.time.Instant;
 import java.time.LocalDate;
+import java.time.ZoneOffset;
 import java.util.List;
+import java.util.Set;
 import java.util.UUID;
 import java.util.function.Consumer;
+import java.util.regex.Pattern;
 
 /** Opening, working and closing product withdrawals and recalls. */
 @ApplicationScoped
 public class RecallService {
 
   static final String TOPIC_RECALL_OPENED = "shelfj.inventory.recall-opened";
+  static final String TOPIC_RECALL_SALE_AFFECTED = "shelfj.inventory.recall-sale-affected";
   static final String TOPIC_STOCK_ADJUSTED = "shelfj.inventory.stock-adjusted";
 
   /** A recall notice lists a handful of lines; a hundred is a mistake, not a notice. */
   static final int MAX_SCOPE_LINES = 100;
 
+  /** GPSR arts.35–37, as tenant-svc's jurisdiction rules name it. */
+  static final String GPSR_RECALL_NOTICE = "GPSR_RECALL_NOTICE";
+
+  private static final Pattern CONTACT_URL = Pattern.compile("^https?://\\S+$");
+
   @Inject RecallRepository repo;
+  @Inject Jurisdictions jurisdictions;
 
   public record OpenRecall(
       UUID tenantId,
@@ -47,7 +60,18 @@ public class RecallService {
       String customerNotice,
       Source source,
       String sourceReference,
-      List<ScopeLine> scope) {}
+      List<ScopeLine> scope,
+      Set<Remedy> remedies,
+      String singleRemedyReason,
+      String contactPhone,
+      String contactUrl,
+      LocalDate soldFrom) {}
+
+  /** What a recall offers the buyer and where a buyer turns; nothing for a withdrawal. */
+  private record Offer(
+      Set<Remedy> remedies, String singleRemedyReason, String contactPhone, String contactUrl) {
+    static final Offer NONE = new Offer(Set.of(), null, null, null);
+  }
 
   public record ScopeLine(
       UUID variantId, String batchNo, LocalDate expiryFrom, LocalDate expiryTo) {}
@@ -67,13 +91,21 @@ public class RecallService {
    *
    * <p>A batch whose lot or date cannot be ruled out is held rather than cleared: a pack nobody can
    * rule out comes off sale. A RECALL additionally requires a customer notice, because that is the
-   * difference between the two kinds.
+   * difference between the two kinds, and reaches the buyers: every sale that drew on a pack in
+   * scope is found as the recall opens, kept as the record of who was reached, and announced to
+   * order-svc one order at a time, with the notice, the remedies the buyer may choose from and
+   * where to turn (GPSR arts.35–37). A RECALL therefore needs at least one remedy and a contact;
+   * where the EU's rule binds any country the business trades in, it needs two remedies unless a
+   * reason is given for one, and a notice that does not play the risk down.
    *
-   * @param cmd the kind, hazard, scope lines and customer notice
-   * @return the opened recall with its scope, held batches and actions
+   * @param cmd the kind, hazard, scope lines, customer notice, remedies and contact
+   * @return the opened recall with its scope, held batches, actions and reach
    * @throws ApiException {@code RECALL_SCOPE_REQUIRED} (400) with no scope lines; {@code
-   *     RECALL_SCOPE_TOO_LARGE} (400) beyond the line cap; a 400 when a RECALL carries no customer
-   *     notice
+   *     RECALL_SCOPE_TOO_LARGE} (400) beyond the line cap; {@code RECALL_NOTICE_REQUIRED}, {@code
+   *     RECALL_REMEDIES_REQUIRED}, {@code RECALL_CONTACT_REQUIRED} or {@code
+   *     RECALL_CONTACT_URL_INVALID} (400) for a RECALL without them; {@code
+   *     RECALL_REMEDIES_INSUFFICIENT} or {@code RECALL_NOTICE_MINIMISES_RISK} (400) where GPSR
+   *     binds; 503 when the jurisdiction rules cannot be read
    */
   public Detail open(OpenRecall cmd) {
     if (cmd.scope().isEmpty()) {
@@ -90,6 +122,7 @@ public class RecallService {
           "A recall tells customers what to do, so it needs the notice displayed in store");
     }
     List<Scope> scope = cmd.scope().stream().map(RecallService::toScope).toList();
+    Offer offer = cmd.kind().tellsCustomers() ? offerFor(cmd, notice) : Offer.NONE;
     var header =
         new Header(
             Ids.newId(),
@@ -106,7 +139,12 @@ public class RecallService {
             Instant.now(),
             null,
             null,
-            null);
+            null,
+            offer.remedies(),
+            offer.singleRemedyReason(),
+            offer.contactPhone(),
+            offer.contactUrl(),
+            cmd.soldFrom());
     return repo.open(
         header,
         scope,
@@ -116,7 +154,60 @@ public class RecallService {
                 TOPIC_RECALL_OPENED,
                 cmd.tenantId(),
                 header.id(),
-                Events.recallOpened(header, stores)));
+                Events.recallOpened(header, stores)),
+        order ->
+            new OutboxRow(
+                "RecallSaleAffected",
+                TOPIC_RECALL_SALE_AFFECTED,
+                cmd.tenantId(),
+                order.orderId(),
+                Events.recallSaleAffected(header, order)));
+  }
+
+  /**
+   * What a RECALL offers its buyers, checked against what the law asks. The EU's rule is asked of
+   * every country the business trades in: a British business's German shop is bound.
+   */
+  private Offer offerFor(OpenRecall cmd, String notice) {
+    Set<Remedy> remedies = cmd.remedies() == null ? Set.of() : cmd.remedies();
+    if (remedies.isEmpty()) {
+      throw ApiException.badRequest(
+          "RECALL_REMEDIES_REQUIRED",
+          "A recall offers its buyers a remedy: repair, replacement or a refund");
+    }
+    String phone = blankToNull(cmd.contactPhone());
+    String url = blankToNull(cmd.contactUrl());
+    if (phone == null && url == null) {
+      throw ApiException.badRequest(
+          "RECALL_CONTACT_REQUIRED",
+          "A recall notice names a free number or an online service where a buyer gets more");
+    }
+    if (url != null && !CONTACT_URL.matcher(url).matches()) {
+      throw ApiException.badRequest(
+          "RECALL_CONTACT_URL_INVALID", "contactUrl must be an http or https address");
+    }
+    String singleRemedyReason = blankToNull(cmd.singleRemedyReason());
+    if (jurisdictions.inForceWhereTrading(
+        cmd.tenantId(), null, GPSR_RECALL_NOTICE, LocalDate.now(ZoneOffset.UTC))) {
+      if (!Recall.remediesSufficient(remedies, singleRemedyReason)) {
+        throw ApiException.badRequest(
+            "RECALL_REMEDIES_INSUFFICIENT",
+            "GPSR art.37 asks for at least two of repair, replacement and refund, or the reason"
+                + " only one can be offered");
+      }
+      Recall.minimisingPhrase(notice)
+          .ifPresent(
+              phrase -> {
+                throw new ApiException(
+                    400,
+                    "RECALL_NOTICE_MINIMISES_RISK",
+                    "GPSR art.36 forbids a recall notice to play the risk down; remove \""
+                        + phrase
+                        + "\"",
+                    List.of(phrase));
+              });
+    }
+    return new Offer(Set.copyOf(remedies), singleRemedyReason, phone, url);
   }
 
   /**

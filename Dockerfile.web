@@ -4,8 +4,11 @@
 # a minimal runtime image — here a NON-ROOT nginx (nginx-unprivileged, uid 101,
 # listens on 8080). Build the bundle first (redeploy.sh does this):
 #
-#   (cd frontends/shelf-app && flutter build web --release \
+#   (cd frontends/shelf-app && flutter build web --release --no-web-resources-cdn \
 #       --dart-define=SHELFJ_API_BASE=http://localhost:8090/api)
+#
+# --no-web-resources-cdn serves CanvasKit from this image rather than www.gstatic.com, which the
+# Content-Security-Policy in infra/nginx-spa.conf.template does not allow.
 #   docker build -f Dockerfile.web -t shelfj/web .
 FROM nginxinc/nginx-unprivileged:1.27-alpine
 
@@ -15,7 +18,10 @@ LABEL org.opencontainers.image.title="shelf-j-web" \
 
 # Static, content-hashed Flutter bundle (dart2js release → refresh-safe).
 COPY --chown=nginx:nginx frontends/shelf-app/build/web /usr/share/nginx/html
-COPY infra/nginx-spa.conf /etc/nginx/conf.d/default.conf
+# Rendered at start-up by the image's entrypoint (envsubst on /etc/nginx/templates).
+COPY infra/nginx-spa.conf.template /etc/nginx/templates/default.conf.template
+# The gateway origin for the CSP's connect-src; empty suits the relative /api build CI publishes.
+ENV SHELFJ_API_ORIGIN=""
 
 EXPOSE 8080
 HEALTHCHECK --interval=15s --timeout=4s --start-period=5s --retries=4 \

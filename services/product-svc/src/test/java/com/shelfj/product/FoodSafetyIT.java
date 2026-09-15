@@ -370,6 +370,51 @@ class FoodSafetyIT {
         containsString("\"status\":\"UNDECLARED\""));
   }
 
+  // ── the HSN or SAC code an Indian e-invoice names each line by (18.9) ───────
+
+  @Test
+  @DisplayName(
+      "An HSN code is kept as its digits, read back with the variant, and refused otherwise")
+  void anHsnCodeIsKeptAsDigitsAndResolvedWithTheVariant() {
+    String v = variant(T, "Paracetamol 500 mg", "PARA-500");
+    Response set =
+        put("/admin/products/variants/" + v + "/compliance", "{\"hsnCode\":\" 3004.90 99 \"}", T);
+    String setBody = set.readEntity(String.class);
+    assertThat(setBody, set.getStatus(), is(200));
+    assertThat(setBody, containsString("\"hsnCode\":\"30049099\""));
+    String resolved =
+        getWith("/admin/products/variants/resolve", "ids", v, T).readEntity(String.class);
+    assertThat(resolved, containsString("\"hsnCode\":\"30049099\""));
+
+    for (String bad : new String[] {"123", "30049O99", "3004909901", "12345", "';DROP"}) {
+      Response r =
+          put("/admin/products/variants/" + v + "/compliance", "{\"hsnCode\":\"" + bad + "\"}", T);
+      String body = r.readEntity(String.class);
+      assertThat(bad, r.getStatus(), is(400));
+      assertThat(body, containsString("PRODUCT_INVALID_HSN_CODE"));
+    }
+    assertThat(
+        "nothing refused was kept",
+        getWith("/admin/products/variants/resolve", "ids", v, T).readEntity(String.class),
+        containsString("\"hsnCode\":\"30049099\""));
+
+    assertThat(
+        "another business resolves nothing of ours",
+        getWith("/admin/products/variants/resolve", "ids", v, OTHER).readEntity(String.class),
+        not(containsString("30049099")));
+
+    // A service's SAC code is six digits; the update replaces every field, so leaving it out clears
+    // it.
+    assertThat(
+        put("/admin/products/variants/" + v + "/compliance", "{\"hsnCode\":\"998314\"}", T)
+            .readEntity(String.class),
+        containsString("\"hsnCode\":\"998314\""));
+    put("/admin/products/variants/" + v + "/compliance", "{\"countryOfOrigin\":\"IN\"}", T);
+    assertThat(
+        getWith("/admin/products/variants/resolve", "ids", v, T).readEntity(String.class),
+        not(containsString("998314")));
+  }
+
   // ── age restriction, across the five markets ───────────────────────────────
 
   @Test

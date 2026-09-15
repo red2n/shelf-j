@@ -56,6 +56,9 @@ public final class Domain {
       boolean vatRegistered,
       boolean reverseChargeEligible,
       String countryCode,
+      String legalName,
+      String einvoiceScheme,
+      String einvoiceId,
       Instant createdAt,
       Instant updatedAt) {}
 

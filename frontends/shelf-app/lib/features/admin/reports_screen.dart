@@ -9,6 +9,8 @@ import '../../shared/widgets/error_view.dart';
 import '../../shared/widgets/loading_view.dart';
 import 'providers/admin_providers.dart';
 import 'post_journal_dialog.dart';
+import '../../core/constants.dart';
+import '../../core/network/api_client.dart';
 import '../../shared/util/short_ref.dart';
 
 enum _ReportType {
@@ -29,6 +31,7 @@ enum _ReportType {
   grossMargin,
   deadStock,
   trialBalance,
+  deferredRevenue,
 }
 
 class ReportsScreen extends ConsumerStatefulWidget {
@@ -199,6 +202,8 @@ class _ReportContent extends ConsumerWidget {
         return _DeadStockReport();
       case _ReportType.trialBalance:
         return _TrialBalanceReport();
+      case _ReportType.deferredRevenue:
+        return _DeferredRevenueReport();
     }
   }
 }
@@ -786,6 +791,8 @@ String _reportLabel(_ReportType r) {
       return 'Dead Stock';
     case _ReportType.trialBalance:
       return 'Trial Balance';
+    case _ReportType.deferredRevenue:
+      return 'Deferred Revenue';
   }
 }
 
@@ -825,6 +832,8 @@ IconData _reportIcon(_ReportType r) {
       return Icons.hourglass_bottom_outlined;
     case _ReportType.trialBalance:
       return Icons.account_balance_outlined;
+    case _ReportType.deferredRevenue:
+      return Icons.card_giftcard_outlined;
   }
 }
 
@@ -2378,6 +2387,248 @@ class _TrialBalanceReport extends ConsumerWidget {
             ),
         ],
       ),
+    );
+  }
+}
+
+// ── Deferred revenue (17.11) ─────────────────────────────────────────────────
+
+/// Loyalty points and gift cards on the ledger (FRS 102 section 23): the
+/// estimates the deferral rests on, where the points and the gift card liability
+/// stand, and the way to set the estimates, without which loyalty events wait.
+class _DeferredRevenueReport extends ConsumerWidget {
+  @override
+  Widget build(BuildContext context, WidgetRef ref) {
+    final async = ref.watch(deferredRevenueProvider);
+    return async.when(
+      loading: () => const LoadingView(label: 'Loading deferred revenue…'),
+      error: (e, _) => ErrorView(
+        message: friendlyError(e, fallback: 'Could not load deferred revenue.'),
+        onRetry: () => ref.invalidate(deferredRevenueProvider),
+      ),
+      data: (d) {
+        final est = d.estimates;
+        String money(double v) =>
+            '${est?.currency ?? ''} ${v.toStringAsFixed(2)}'.trim();
+        return ListView(
+          padding: const EdgeInsets.only(bottom: 24),
+          children: [
+            _ReportHeader(
+              title: 'Deferred Revenue',
+              subtitle: 'Loyalty points and gift cards, under FRS 102 section 23',
+              onRefresh: () => ref.invalidate(deferredRevenueProvider),
+            ),
+            Padding(
+              padding: const EdgeInsets.symmetric(horizontal: 24),
+              child: Align(
+                alignment: Alignment.centerLeft,
+                child: FilledButton.tonalIcon(
+                  key: const Key('set-estimates'),
+                  onPressed: () => showDialog<bool>(
+                    context: context,
+                    builder: (_) => _EstimatesDialog(current: est),
+                  ).then((saved) {
+                    if (saved == true) ref.invalidate(deferredRevenueProvider);
+                  }),
+                  icon: const Icon(Icons.tune, size: 18),
+                  label: Text(est == null ? 'Set estimates' : 'Change estimates'),
+                ),
+              ),
+            ),
+            if (est == null)
+              _Caveat(
+                icon: Icons.hourglass_empty,
+                text: d.eventsAwaitingEstimates > 0
+                    ? '${d.eventsAwaitingEstimates} loyalty event(s) are waiting: nothing is deferred until a point\'s value and the breakage estimates are set.'
+                    : 'No estimates are set, so points earned will wait unposted until a point\'s value and the breakage estimates are set.',
+              )
+            else
+              _FigureCard(title: 'Estimates', rows: [
+                ('A point is worth', '${est.currency} ${est.pointValue}'),
+                ('Points never spent', '${est.pointsBreakagePct}%'),
+                ('Gift card value never claimed', '${est.giftCardBreakagePct}%'),
+                ('Why', est.reason),
+              ]),
+            _FigureCard(title: 'Loyalty points', rows: [
+              ('Points outstanding', d.pointsOutstanding.toStringAsFixed(2)),
+              ('Deferred income (2330)', money(d.deferredIncome)),
+              if (d.pointsUnmatched > 0)
+                ('Spent before their earning arrived', d.pointsUnmatched.toStringAsFixed(2)),
+            ]),
+            _FigureCard(title: 'Gift cards', rows: [
+              ('Loaded', money(d.giftCardsLoaded)),
+              ('Spent', money(d.giftCardsRedeemed)),
+              ('Breakage recognised (4031)', money(d.giftCardBreakage)),
+              ('Liability left', money(d.giftCardLiability)),
+            ]),
+          ],
+        );
+      },
+    );
+  }
+}
+
+class _FigureCard extends StatelessWidget {
+  final String title;
+  final List<(String, String)> rows;
+  const _FigureCard({required this.title, required this.rows});
+
+  @override
+  Widget build(BuildContext context) {
+    return Padding(
+      padding: const EdgeInsets.fromLTRB(24, 12, 24, 0),
+      child: Card(
+        child: Padding(
+          padding: const EdgeInsets.all(12),
+          child: Column(
+            crossAxisAlignment: CrossAxisAlignment.start,
+            children: [
+              Semantics(
+                header: true,
+                child: Text(title, style: Theme.of(context).textTheme.titleSmall),
+              ),
+              for (final (label, value) in rows)
+                Padding(
+                  padding: const EdgeInsets.symmetric(vertical: 4),
+                  child: Row(
+                    crossAxisAlignment: CrossAxisAlignment.start,
+                    children: [
+                      Expanded(child: Text(label)),
+                      const SizedBox(width: 12),
+                      Flexible(
+                        child: Text(value,
+                            textAlign: TextAlign.end,
+                            style: const TextStyle(fontFamily: 'monospace')),
+                      ),
+                    ],
+                  ),
+                ),
+            ],
+          ),
+        ),
+      ),
+    );
+  }
+}
+
+/// The tenant accountant's estimates. A change applies from now on; the server
+/// keeps every earlier set and posts the loyalty events that waited for these.
+class _EstimatesDialog extends ConsumerStatefulWidget {
+  final DeferredRevenueEstimates? current;
+  const _EstimatesDialog({this.current});
+
+  @override
+  ConsumerState<_EstimatesDialog> createState() => _EstimatesDialogState();
+}
+
+class _EstimatesDialogState extends ConsumerState<_EstimatesDialog> {
+  late final _value =
+      TextEditingController(text: widget.current?.pointValue.toString() ?? '');
+  late final _points = TextEditingController(
+      text: widget.current?.pointsBreakagePct.toString() ?? '');
+  late final _cards = TextEditingController(
+      text: widget.current?.giftCardBreakagePct.toString() ?? '');
+  final _reason = TextEditingController();
+  bool _saving = false;
+  String? _error;
+
+  @override
+  void dispose() {
+    for (final c in [_value, _points, _cards, _reason]) {
+      c.dispose();
+    }
+    super.dispose();
+  }
+
+  Future<void> _save() async {
+    final value = double.tryParse(_value.text.trim());
+    final points = double.tryParse(_points.text.trim());
+    final cards = double.tryParse(_cards.text.trim());
+    if (value == null || points == null || cards == null || _reason.text.trim().isEmpty) {
+      setState(() => _error =
+          'Enter a point value, both breakage estimates and the reason for them.');
+      return;
+    }
+    setState(() {
+      _saving = true;
+      _error = null;
+    });
+    try {
+      await ref.read(apiClientProvider).dio.put(
+        '/${ApiConstants.purchase}/nominal-ledger/deferred-revenue/settings',
+        data: {
+          'pointValue': value,
+          'pointsBreakagePct': points,
+          'giftCardBreakagePct': cards,
+          'reason': _reason.text.trim(),
+        },
+      );
+      if (mounted) Navigator.pop(context, true);
+    } catch (e) {
+      if (!mounted) return;
+      setState(() {
+        _saving = false;
+        _error = friendlyError(e, fallback: 'Could not save the estimates.');
+      });
+    }
+  }
+
+  @override
+  Widget build(BuildContext context) {
+    final cs = Theme.of(context).colorScheme;
+    TextField field(String key, TextEditingController c, String label, String help) =>
+        TextField(
+          key: Key(key),
+          controller: c,
+          keyboardType: const TextInputType.numberWithOptions(decimal: true),
+          decoration: InputDecoration(labelText: label, helperText: help),
+        );
+    return AlertDialog(
+      title: const Text('Deferred revenue estimates'),
+      content: SizedBox(
+        width: 380,
+        child: SingleChildScrollView(
+          child: Column(
+            mainAxisSize: MainAxisSize.min,
+            crossAxisAlignment: CrossAxisAlignment.stretch,
+            children: [
+              if (_error != null) ...[
+                Text(_error!, style: TextStyle(color: cs.error)),
+                const SizedBox(height: 8),
+              ],
+              field('estimate-point-value', _value, 'Value of one point',
+                  "What a point is worth to the shopper, in the tenant's currency"),
+              const SizedBox(height: 8),
+              field('estimate-points-breakage', _points, 'Points never spent (%)', '0 to 95'),
+              const SizedBox(height: 8),
+              field('estimate-gift-card-breakage', _cards,
+                  'Gift card value never claimed (%)', '0 to 95'),
+              const SizedBox(height: 8),
+              TextField(
+                key: const Key('estimate-reason'),
+                controller: _reason,
+                maxLines: 2,
+                decoration: const InputDecoration(
+                    labelText: 'Reason', helperText: 'What the estimates rest on'),
+              ),
+              const SizedBox(height: 12),
+              Text('A change applies from now on; earlier estimates are kept.',
+                  style: TextStyle(color: cs.outline, fontSize: 12)),
+            ],
+          ),
+        ),
+      ),
+      actions: [
+        TextButton(
+          onPressed: _saving ? null : () => Navigator.pop(context),
+          child: const Text('Cancel'),
+        ),
+        FilledButton(
+          key: const Key('save-estimates'),
+          onPressed: _saving ? null : _save,
+          child: const Text('Save'),
+        ),
+      ],
     );
   }
 }

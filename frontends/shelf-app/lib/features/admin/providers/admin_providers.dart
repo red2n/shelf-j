@@ -112,6 +112,13 @@ class TenantInfo {
   final String status;
   final String currency;
   final String country;
+  final String? legalName;
+
+  /// How the business's e-invoices name it (07.13): its VAT identifier, and
+  /// the Peppol electronic address suppliers send to.
+  final String? vatNumber;
+  final String? einvoiceScheme;
+  final String? einvoiceId;
 
   const TenantInfo({
     required this.id,
@@ -119,7 +126,14 @@ class TenantInfo {
     required this.status,
     required this.currency,
     required this.country,
+    this.legalName,
+    this.vatNumber,
+    this.einvoiceScheme,
+    this.einvoiceId,
   });
+
+  bool get hasElectronicAddress =>
+      (einvoiceScheme ?? '').isNotEmpty && (einvoiceId ?? '').isNotEmpty;
 
   factory TenantInfo.fromJson(Map<String, dynamic> j) => TenantInfo(
         id: j['id'] as String? ?? '',
@@ -127,6 +141,10 @@ class TenantInfo {
         status: j['status'] as String? ?? '-',
         currency: j['currency'] as String? ?? '',
         country: j['country'] as String? ?? '',
+        legalName: j['legalName'] as String?,
+        vatNumber: j['vatNumber'] as String?,
+        einvoiceScheme: j['einvoiceScheme'] as String?,
+        einvoiceId: j['einvoiceId'] as String?,
       );
 }
 
@@ -2169,4 +2187,96 @@ final trialBalanceProvider =
   final body = resp.data['data'];
   return TrialBalance.fromJson(
       body is Map ? Map<String, dynamic>.from(body) : const {});
+});
+
+// ── Deferred revenue (17.11): loyalty points and gift card breakage ─────────
+
+/// The tenant accountant's estimates the ledger defers loyalty and gift card
+/// revenue on: what a point is worth, and the shares of points and of gift card
+/// value expected never to be used.
+class DeferredRevenueEstimates {
+  final String currency;
+  final double pointValue;
+  final double pointsBreakagePct;
+  final double giftCardBreakagePct;
+  final String reason;
+  final String? setAt;
+
+  const DeferredRevenueEstimates({
+    required this.currency,
+    required this.pointValue,
+    required this.pointsBreakagePct,
+    required this.giftCardBreakagePct,
+    required this.reason,
+    this.setAt,
+  });
+
+  factory DeferredRevenueEstimates.fromJson(Map<String, dynamic> j) =>
+      DeferredRevenueEstimates(
+        currency: j['currency'] as String? ?? '',
+        pointValue: (j['pointValue'] as num?)?.toDouble() ?? 0,
+        pointsBreakagePct: (j['pointsBreakagePct'] as num?)?.toDouble() ?? 0,
+        giftCardBreakagePct: (j['giftCardBreakagePct'] as num?)?.toDouble() ?? 0,
+        reason: j['reason'] as String? ?? '',
+        setAt: j['setAt'] as String?,
+      );
+}
+
+/// Where deferred revenue stands. [estimates] is null until the accountant sets
+/// them; until then loyalty events wait unposted, [eventsAwaitingEstimates] of
+/// them.
+class DeferredRevenueState {
+  final DeferredRevenueEstimates? estimates;
+  final List<DeferredRevenueEstimates> history;
+  final double pointsOutstanding;
+  final double deferredIncome;
+  final double pointsUnmatched;
+  final int eventsAwaitingEstimates;
+  final double giftCardsLoaded;
+  final double giftCardsRedeemed;
+  final double giftCardBreakage;
+  final double giftCardLiability;
+
+  const DeferredRevenueState({
+    this.estimates,
+    this.history = const [],
+    this.pointsOutstanding = 0,
+    this.deferredIncome = 0,
+    this.pointsUnmatched = 0,
+    this.eventsAwaitingEstimates = 0,
+    this.giftCardsLoaded = 0,
+    this.giftCardsRedeemed = 0,
+    this.giftCardBreakage = 0,
+    this.giftCardLiability = 0,
+  });
+
+  factory DeferredRevenueState.fromJson(Map<String, dynamic> j) {
+    double n(String key) => (j[key] as num?)?.toDouble() ?? 0;
+    final settings = j['settings'];
+    return DeferredRevenueState(
+      estimates: settings is Map<String, dynamic>
+          ? DeferredRevenueEstimates.fromJson(settings)
+          : null,
+      history: ((j['history'] as List?) ?? [])
+          .map((e) => DeferredRevenueEstimates.fromJson(e as Map<String, dynamic>))
+          .toList(),
+      pointsOutstanding: n('pointsOutstanding'),
+      deferredIncome: n('deferredIncome'),
+      pointsUnmatched: n('pointsUnmatched'),
+      eventsAwaitingEstimates: (j['eventsAwaitingEstimates'] as num?)?.toInt() ?? 0,
+      giftCardsLoaded: n('giftCardsLoaded'),
+      giftCardsRedeemed: n('giftCardsRedeemed'),
+      giftCardBreakage: n('giftCardBreakage'),
+      giftCardLiability: n('giftCardLiability'),
+    );
+  }
+}
+
+final deferredRevenueProvider =
+    FutureProvider.autoDispose<DeferredRevenueState>((ref) async {
+  final resp = await ref
+      .read(apiClientProvider)
+      .dio
+      .get('/${ApiConstants.purchase}/nominal-ledger/deferred-revenue');
+  return DeferredRevenueState.fromJson(resp.data['data'] as Map<String, dynamic>);
 });

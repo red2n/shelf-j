@@ -1,10 +1,17 @@
 package com.shelfj.inventory.service;
 
 import com.shelfj.events.EventPayload;
+import com.shelfj.ids.Ids;
 import com.shelfj.inventory.domain.FoodSafety.CheckRecord;
 import com.shelfj.inventory.domain.FoodSafety.OverduePoint;
+import com.shelfj.inventory.domain.Recall.AffectedOrder;
+import com.shelfj.inventory.domain.Recall.AffectedSale;
 import com.shelfj.inventory.domain.Recall.Header;
+import jakarta.json.Json;
+import jakarta.json.JsonArrayBuilder;
+import jakarta.json.JsonObjectBuilder;
 import java.math.BigDecimal;
+import java.time.Instant;
 import java.util.Set;
 import java.util.UUID;
 import java.util.stream.Collectors;
@@ -312,6 +319,59 @@ public final class Events {
         + "\",\"storeIds\":["
         + storeIds.stream().map(id -> "\"" + id + "\"").collect(Collectors.joining(","))
         + "]}";
+  }
+
+  /**
+   * One order that drew on packs a recall covers, with everything order-svc needs to tell the buyer
+   * (GPSR arts.35–37): the notice, the remedies, where to turn, and the lines with their lot and
+   * date. Built with the JSON API rather than by hand because the notice is free text with line
+   * breaks in it, and keyed by the order so a buyer's notices stay in order.
+   */
+  static String recallSaleAffected(Header h, AffectedOrder order) {
+    JsonArrayBuilder remedies = Json.createArrayBuilder();
+    h.remedies().stream().map(Enum::name).sorted().forEach(remedies::add);
+    JsonArrayBuilder lines = Json.createArrayBuilder();
+    for (AffectedSale s : order.lines()) {
+      JsonObjectBuilder line =
+          Json.createObjectBuilder()
+              .add("variantId", s.variantId().toString())
+              .add("batchId", s.batchId().toString())
+              .add("qty", s.qty())
+              .add("match", s.match().name());
+      nullable(line, "batchNo", s.batchNo());
+      nullable(line, "expiryDate", s.expiryDate() == null ? null : s.expiryDate().toString());
+      lines.add(line);
+    }
+    JsonObjectBuilder b =
+        Json.createObjectBuilder()
+            .add("eventId", Ids.newId().toString())
+            .add("eventType", "RecallSaleAffected")
+            .add("tenantId", h.tenantId().toString())
+            .add("aggregateId", order.orderId().toString())
+            .add("occurredAt", Instant.now().toString())
+            .add("recallId", h.id().toString())
+            .add("reference", h.reference())
+            .add("kind", h.kind().name())
+            .add("hazard", h.hazard().name())
+            .add("reason", h.reason())
+            .add("customerNotice", h.customerNotice())
+            .add("remedies", remedies)
+            .add("orderId", order.orderId().toString())
+            .add("storeId", order.storeId().toString())
+            .add("soldAt", order.soldAt().toString())
+            .add("lines", lines);
+    nullable(b, "singleRemedyReason", h.singleRemedyReason());
+    nullable(b, "contactPhone", h.contactPhone());
+    nullable(b, "contactUrl", h.contactUrl());
+    return b.build().toString();
+  }
+
+  private static void nullable(JsonObjectBuilder b, String name, String value) {
+    if (value == null) {
+      b.addNull(name);
+    } else {
+      b.add(name, value);
+    }
   }
 
   private static String jsonNumber(BigDecimal value) {
