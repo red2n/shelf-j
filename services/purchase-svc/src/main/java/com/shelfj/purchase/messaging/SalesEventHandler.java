@@ -4,12 +4,11 @@ import com.shelfj.purchase.domain.SalesPosting;
 import com.shelfj.purchase.service.SalesPostingService;
 import jakarta.enterprise.context.ApplicationScoped;
 import jakarta.inject.Inject;
-import jakarta.json.Json;
 import jakarta.json.JsonObject;
 import jakarta.json.JsonValue;
-import java.io.StringReader;
 import java.lang.System.Logger;
 import java.lang.System.Logger.Level;
+import java.math.BigDecimal;
 import java.util.ArrayList;
 import java.util.List;
 import java.util.UUID;
@@ -25,17 +24,18 @@ public class SalesEventHandler {
   private static final Logger LOG = System.getLogger(SalesEventHandler.class.getName());
 
   @Inject SalesPostingService postings;
+  @Inject com.shelfj.purchase.service.DeferredRevenueService deferred;
 
   /** {@code OrderConfirmed}: the sale, with its total, the VAT inside it and its currency. */
   public void orderConfirmed(String json) {
     try {
-      JsonObject o = parse(json);
+      JsonObject o = EventJson.parse(json);
       if (!"OrderConfirmed".equals(o.getString("eventType", ""))) return;
       postings.postSale(
           UUID.fromString(o.getString("eventId")),
           UUID.fromString(o.getString("tenantId")),
           UUID.fromString(o.getString("orderId")),
-          optUuid(o, "storeId"),
+          EventJson.optUuid(o, "storeId"),
           o.getJsonNumber("total").bigDecimalValue(),
           o.getJsonNumber("taxAmount").bigDecimalValue(),
           o.getString("currency"));
@@ -47,15 +47,19 @@ public class SalesEventHandler {
   /** {@code PaymentCaptured}: one tender, keyed by its payment id. */
   public void paymentCaptured(String json) {
     try {
-      JsonObject o = parse(json);
+      JsonObject o = EventJson.parse(json);
       if (!"PaymentCaptured".equals(o.getString("eventType", ""))) return;
-      postings.postTender(
-          UUID.fromString(o.getString("paymentId")),
-          UUID.fromString(o.getString("tenantId")),
-          UUID.fromString(o.getString("orderId")),
-          optUuid(o, "storeId"),
-          o.getString("method", null),
-          o.getJsonNumber("amount").bigDecimalValue());
+      UUID paymentId = UUID.fromString(o.getString("paymentId"));
+      UUID tenantId = UUID.fromString(o.getString("tenantId"));
+      UUID orderId = UUID.fromString(o.getString("orderId"));
+      UUID storeId = EventJson.optUuid(o, "storeId");
+      String method = o.getString("method", null);
+      BigDecimal amount = o.getJsonNumber("amount").bigDecimalValue();
+      postings.postTender(paymentId, tenantId, orderId, storeId, method, amount);
+      // A gift card spent recognises the breakage that goes with it (17.11).
+      if ("GIFT_CARD".equalsIgnoreCase(method)) {
+        deferred.giftCardSpent(paymentId, tenantId, orderId, storeId, amount);
+      }
     } catch (RuntimeException e) {
       LOG.log(Level.WARNING, "PaymentCaptured not posted, malformed: " + e.getMessage());
     }
@@ -67,7 +71,7 @@ public class SalesEventHandler {
    */
   public void paymentRefunded(String json) {
     try {
-      JsonObject o = parse(json);
+      JsonObject o = EventJson.parse(json);
       if (!"PaymentRefunded".equals(o.getString("eventType", ""))) return;
       List<SalesPosting.Allocation> shares = new ArrayList<>();
       UUID store = null;
@@ -77,7 +81,7 @@ public class SalesEventHandler {
           shares.add(
               new SalesPosting.Allocation(
                   t.getString("method", null), t.getJsonNumber("amount").bigDecimalValue()));
-          if (store == null) store = optUuid(t, "storeId");
+          if (store == null) store = EventJson.optUuid(t, "storeId");
         }
       }
       if (shares.isEmpty()) {
@@ -92,17 +96,5 @@ public class SalesEventHandler {
     } catch (RuntimeException e) {
       LOG.log(Level.WARNING, "PaymentRefunded not posted, malformed: " + e.getMessage());
     }
-  }
-
-  private static JsonObject parse(String json) {
-    try (var reader = Json.createReader(new StringReader(json))) {
-      return reader.readObject();
-    }
-  }
-
-  private static UUID optUuid(JsonObject o, String key) {
-    if (!o.containsKey(key) || o.isNull(key)) return null;
-    String v = o.getString(key, "");
-    return v.isBlank() ? null : UUID.fromString(v);
   }
 }

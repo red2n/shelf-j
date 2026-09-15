@@ -3,6 +3,7 @@ package com.shelfj.purchase.domain;
 import java.math.BigDecimal;
 import java.time.Instant;
 import java.time.LocalDate;
+import java.util.List;
 import java.util.UUID;
 
 /** Domain records for purchase-svc. Never returned over HTTP — use DTOs. */
@@ -54,6 +55,11 @@ public final class Domain {
   public static final String SOURCE_SALE = "SALE";
   public static final String SOURCE_SALE_TENDER = "SALE_TENDER";
   public static final String SOURCE_SALE_REFUND = "SALE_REFUND";
+  // Deferred revenue for loyalty points and gift cards (17.11).
+  public static final String SOURCE_LOYALTY_DEFERRAL = "LOYALTY_DEFERRAL";
+  public static final String SOURCE_LOYALTY_RELEASE = "LOYALTY_RELEASE";
+  public static final String SOURCE_GIFT_CARD_LOAD = "GIFT_CARD_LOAD";
+  public static final String SOURCE_GIFT_CARD_BREAKAGE = "GIFT_CARD_BREAKAGE";
 
   // ── Sales and tender posting (17.7) ───────────────────────────────────────────
   public static final String CODE_SALES_CLEARING = "1105";
@@ -70,6 +76,18 @@ public final class Domain {
   public static final String NAME_STORE_CREDIT_LIABILITY = "Store Credit Liability";
   public static final String CODE_SALES = "4010";
   public static final String NAME_SALES = "Sales";
+  public static final String CODE_DEFERRED_LOYALTY = "2330";
+  public static final String NAME_DEFERRED_LOYALTY = "Deferred Income - Loyalty Points";
+  public static final String CODE_LOYALTY_REDEEMED = "4020";
+  public static final String NAME_LOYALTY_REDEEMED = "Sales - Loyalty Points Redeemed";
+  public static final String CODE_LOYALTY_BREAKAGE = "4030";
+  public static final String NAME_LOYALTY_BREAKAGE = "Loyalty Points Breakage";
+  public static final String CODE_GIFT_CARD_BREAKAGE = "4031";
+  public static final String NAME_GIFT_CARD_BREAKAGE = "Gift Card Breakage";
+  public static final String CODE_LOYALTY_AWARDED = "6410";
+  public static final String NAME_LOYALTY_AWARDED = "Loyalty Points Awarded";
+  public static final String CODE_GIFT_CARDS_GIVEN = "6420";
+  public static final String NAME_GIFT_CARDS_GIVEN = "Gift Cards Given Away";
 
   /** A confirmed sale as order-svc announced it. */
   public record SalesOrder(
@@ -458,6 +476,57 @@ public final class Domain {
       UUID journalId,
       String sourceType,
       UUID storeId) {}
+
+  /** One set of the tenant accountant's estimates for deferred revenue (17.11); append-only. */
+  public record DeferredRevenueSettings(
+      UUID id,
+      UUID tenantId,
+      String currency,
+      BigDecimal pointValue,
+      BigDecimal pointsBreakagePct,
+      BigDecimal giftCardBreakagePct,
+      String reason,
+      UUID setBy,
+      Instant setAt) {
+
+    public DeferredRevenue.Settings estimates() {
+      return new DeferredRevenue.Settings(pointValue, pointsBreakagePct, giftCardBreakagePct);
+    }
+  }
+
+  /** An announcement about loyalty points, as the ledger records it (17.11). */
+  public record LoyaltyEvent(
+      UUID tenantId,
+      UUID eventId,
+      String kind,
+      UUID customerId,
+      UUID orderId,
+      BigDecimal points,
+      BigDecimal orderTotal,
+      BigDecimal orderTax) {
+    public static final String EARNED = "EARNED";
+    public static final String REDEEMED = "REDEEMED";
+    public static final String ADJUSTED = "ADJUSTED";
+  }
+
+  /** A gift card issued or reloaded, as order-svc announced it (17.11). */
+  public record GiftCardLoad(
+      UUID tenantId,
+      UUID transactionId,
+      UUID giftCardId,
+      UUID storeId,
+      String kind,
+      String paidBy,
+      BigDecimal amount,
+      String currency) {}
+
+  /** Where deferred revenue stands for a tenant (17.11). */
+  public record DeferredRevenueView(
+      DeferredRevenueSettings current,
+      List<DeferredRevenueSettings> history,
+      DeferredRevenue.PointsPool points,
+      long waiting,
+      DeferredRevenue.GiftCardPool giftCards) {}
 
   /** One journal read back whole: its lines and the header they share. */
   public record Journal(

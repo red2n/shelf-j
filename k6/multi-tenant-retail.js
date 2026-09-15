@@ -2591,6 +2591,7 @@ export function giftCardManagement(d) {
     storeId,
     amount: '50.00',
     currency: tenant.currency,
+    paidBy: 'CASH',
   }, tenant.ownerToken);
   giftCardLatency.add(Date.now() - t0);
   if (!ok(issueRes, `${tag} issue gift card 201`)) { sleep(1); return; }
@@ -2604,7 +2605,7 @@ export function giftCardManagement(d) {
 
   // 3. Reload
   const reloadRes = post(`/api/order-svc/gift-cards/${code}/reload`,
-    { amount: '20.00', reference: `reload-${__VU}-${__ITER}` }, tenant.ownerToken);
+    { amount: '20.00', reference: `reload-${__VU}-${__ITER}`, paidBy: 'CARD' }, tenant.ownerToken);
   ok(reloadRes, `${tag} reload gift card 200`);
   check(reloadRes, {
     [`${tag} balance after reload is 70`]: r => {
@@ -3167,12 +3168,12 @@ export function negativeTests(d) {
 
   // Issue gift card missing storeId → 400
   neg(post('/api/order-svc/gift-cards',
-    { amount: '50.00' }, tenant.ownerToken),
+    { amount: '50.00', paidBy: 'CASH' }, tenant.ownerToken),
     'issue gift card missing storeId 400', 400);
 
   // Issue gift card zero amount → 400
   neg(post('/api/order-svc/gift-cards',
-    { storeId: store.storeId, amount: 0 }, tenant.ownerToken), 'issue gift card zero amount 400', 400);
+    { storeId: store.storeId, amount: 0, paidBy: 'CASH' }, tenant.ownerToken), 'issue gift card zero amount 400', 400);
 
   // GET non-existent gift card code → 404
   neg(get('/api/order-svc/gift-cards/XXXX-XXXX-XXXX-XXXX', tenant.ownerToken), 'get nonexistent gift card 404', 404);

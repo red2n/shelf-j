@@ -705,4 +705,53 @@ public final class Dtos {
           BigDecimal balance,
       LocalDate firstPosted,
       LocalDate lastPosted) {}
+
+  @Schema(
+      name = "DeferredRevenueSettingsRequest",
+      description =
+          "The tenant accountant's estimates for deferring loyalty and gift card revenue.")
+  public record DeferredRevenueSettingsRequest(
+      @Schema(
+              description =
+                  "What one loyalty point is worth to the shopper, in the tenant's currency: above"
+                      + " 0, at most 1000, to four decimal places.")
+          @NotNull
+          BigDecimal pointValue,
+      @Schema(description = "The percentage of points expected never to be spent, 0 to 95.")
+          @NotNull
+          BigDecimal pointsBreakagePct,
+      @Schema(
+              description =
+                  "The percentage of gift card value expected never to be claimed, 0 to 95.")
+          @NotNull
+          BigDecimal giftCardBreakagePct,
+      @Schema(description = "What the estimates rest on.") @NotBlank @Size(max = 500)
+          String reason) {}
+
+  @Schema(name = "DeferredRevenueSettingsResponse")
+  public record DeferredRevenueSettingsResponse(
+      String currency,
+      BigDecimal pointValue,
+      BigDecimal pointsBreakagePct,
+      BigDecimal giftCardBreakagePct,
+      String reason,
+      UUID setBy,
+      Instant setAt) {}
+
+  @Schema(name = "DeferredRevenueResponse", description = "Where deferred revenue stands.")
+  public record DeferredRevenueResponse(
+      @Schema(description = "The estimates in force; absent until the first are set.")
+          DeferredRevenueSettingsResponse settings,
+      List<DeferredRevenueSettingsResponse> history,
+      BigDecimal pointsOutstanding,
+      @Schema(description = "Income deferred against the points outstanding (2330).")
+          BigDecimal deferredIncome,
+      @Schema(description = "Points spent before their earning reached the ledger.")
+          BigDecimal pointsUnmatched,
+      @Schema(description = "Loyalty events that arrived before any estimates were set.")
+          long eventsAwaitingEstimates,
+      BigDecimal giftCardsLoaded,
+      BigDecimal giftCardsRedeemed,
+      @Schema(description = "Gift card breakage recognised (4031).") BigDecimal giftCardBreakage,
+      BigDecimal giftCardLiability) {}
 }

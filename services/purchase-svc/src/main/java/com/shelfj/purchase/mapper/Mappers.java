@@ -427,4 +427,31 @@ public final class Mappers {
     return new Dtos.SalesClearingResponse(
         o.orderId(), o.storeId(), o.balance(), o.firstPosted(), o.lastPosted());
   }
+
+  public static Dtos.DeferredRevenueResponse toDto(Domain.DeferredRevenueView v) {
+    return new Dtos.DeferredRevenueResponse(
+        toDto(v.current()),
+        v.history().stream().map(s -> toDto(s)).toList(),
+        v.points().outstanding(),
+        v.points().deferred(),
+        v.points().unmatched(),
+        v.waiting(),
+        v.giftCards().loaded(),
+        v.giftCards().redeemed(),
+        v.giftCards().breakage(),
+        v.giftCards().liability());
+  }
+
+  public static Dtos.DeferredRevenueSettingsResponse toDto(Domain.DeferredRevenueSettings s) {
+    return s == null
+        ? null
+        : new Dtos.DeferredRevenueSettingsResponse(
+            s.currency(),
+            s.pointValue(),
+            s.pointsBreakagePct(),
+            s.giftCardBreakagePct(),
+            s.reason(),
+            s.setBy(),
+            s.setAt());
+  }
 }
