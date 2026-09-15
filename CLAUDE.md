@@ -85,7 +85,7 @@ shelf-j/
 ├── docker-compose.yml       # postgres, kafka, consul, redis, zipkin, prometheus, grafana (with healthchecks)
 ├── platform/                # gateway, discovery, config
 ├── services/                # the 12 business microservices (one Maven module each)
-├── shared/                  # contracts + shared infra, NO business logic: common-ids (`Ids.newId()`), events-contract, common-web, common-service (DataSource/Flyway/Consul/outbox/health base — reuse it, never re-implement), common-test
+├── shared/                  # contracts + shared infra, NO business logic: common-ids (`Ids.newId()`), events-contract, common-web, common-service (DataSource/Flyway/Consul/outbox/health base — reuse it, never re-implement), common-test, einvoice (EN 16931 UBL/CII/Factur-X read, write and rules)
 ├── frontends/               # shelf-app: ONE Flutter app with four shells (storefront, admin, POS, platform console)
 ├── docs/                    # ARCHITECTURE.md, API-GUIDE.md, UI-GUIDE.md, onboarding-and-locations.md, coding-standards.md, …
 ├── PRD.md  README.md  CLAUDE.md

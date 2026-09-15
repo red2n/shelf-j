@@ -45,6 +45,17 @@
     </Match>
 
     <!--
+      The EN 16931 model (07.13/18.9) is a tree of records in shared/einvoice, outside the
+      dto/domain/service packages matched above. Every List component is replaced in the record's
+      compact constructor by List.copyOf(...) (or List.of() when absent), so an accessor returns an
+      immutable list; SpotBugs cannot see through the constructor's helper to prove it.
+    -->
+    <Match>
+        <Bug pattern="EI_EXPOSE_REP,EI_EXPOSE_REP2"/>
+        <Class name="~com\.shelfj\.einvoice\.Invoice(\$.*)?"/>
+    </Match>
+
+    <!--
       aggregateDemand builds a PreparedStatement SQL string dynamically to embed a
       date_trunc literal (day/week/month). The literal is validated upstream against
       an allow-list (DAY|WEEK|MONTH) before reaching this method, so there is no SQL
