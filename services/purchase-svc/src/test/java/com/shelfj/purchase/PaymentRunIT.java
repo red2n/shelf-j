@@ -29,12 +29,6 @@ import java.time.ZoneOffset;
 import java.util.ArrayList;
 import java.util.List;
 import java.util.Locale;
-import java.util.concurrent.Callable;
-import java.util.concurrent.CountDownLatch;
-import java.util.concurrent.ExecutorService;
-import java.util.concurrent.Executors;
-import java.util.concurrent.Future;
-import java.util.concurrent.TimeUnit;
 import org.junit.jupiter.api.AfterAll;
 import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.DisplayName;
@@ -274,7 +268,7 @@ class PaymentRunIT {
     String runId = proposedAndApproved();
 
     List<Integer> statuses =
-        inParallel(
+        PaymentRunSteps.inParallel(
             20,
             () -> {
               try (Response r = post("/payment-runs/" + runId + "/pay", "{}", "OWNER", USER)) {
@@ -301,7 +295,7 @@ class PaymentRunIT {
       payableInvoice(sup, "INV-R" + i, 2, "5.00", "0", TODAY.minusDays(40));
     }
     List<String> outcomes =
-        inParallel(
+        PaymentRunSteps.inParallel(
             10,
             () -> {
               try (Response r = propose(TODAY.toString(), TODAY.toString(), null, "OWNER", USER)) {
@@ -812,28 +806,6 @@ class PaymentRunIT {
         var rs = st.executeQuery(sql)) {
       rs.next();
       return rs.getLong(1);
-    }
-  }
-
-  private static <R> List<R> inParallel(int n, Callable<R> call) throws Exception {
-    ExecutorService pool = Executors.newFixedThreadPool(n);
-    try {
-      CountDownLatch start = new CountDownLatch(1);
-      List<Future<R>> futures = new ArrayList<>();
-      for (int i = 0; i < n; i++) {
-        futures.add(
-            pool.submit(
-                () -> {
-                  start.await();
-                  return call.call();
-                }));
-      }
-      start.countDown();
-      List<R> out = new ArrayList<>();
-      for (Future<R> f : futures) out.add(f.get(120, TimeUnit.SECONDS));
-      return out;
-    } finally {
-      pool.shutdownNow();
     }
   }
 }

@@ -411,7 +411,8 @@ public final class Mappers {
                                       d.documentDate(),
                                       d.dueDate(),
                                       d.amount()))
-                          .toList());
+                          .toList(),
+                      toDto(v.checks().get(p.supplierId())));
                 })
             .toList(),
         v.proposal().excluded().stream()
@@ -453,5 +454,37 @@ public final class Mappers {
             s.reason(),
             s.setBy(),
             s.setAt());
+  }
+
+  public static Dtos.PayeeCheckResponse toDto(com.shelfj.purchase.domain.PaymentRuns.PayeeCheck c) {
+    return c == null
+        ? null
+        : new Dtos.PayeeCheckResponse(
+            c.endToEndId(),
+            c.status(),
+            c.reasonCode(),
+            c.payeeMatch(),
+            c.matchedName(),
+            c.held(),
+            c.releasable(),
+            c.releasedBy(),
+            c.releasedAt(),
+            c.releaseReason());
+  }
+
+  public static Dtos.PayingAccountResponse toDto(
+      com.shelfj.purchase.domain.PayingAccounts.PayingAccount a) {
+    return new Dtos.PayingAccountResponse(
+        a.currency(),
+        a.accountName(),
+        a.sortCode(),
+        com.shelfj.purchase.domain.BankAccount.masked(a.accountNumber()),
+        com.shelfj.purchase.domain.BankAccount.masked(a.iban()),
+        a.bic(),
+        a.serviceUserNumber(),
+        a.sendsBacs(),
+        a.sendsSepa(),
+        a.setBy(),
+        a.setAt());
   }
 }

@@ -15,6 +15,7 @@ import 'payment_runs_tab.dart';
 import 'procurement_providers.dart';
 import 'resolve_invoice_dialog.dart';
 import 'widgets/variant_picker.dart';
+import 'bank_details_validators.dart';
 
 class ProcurementScreen extends ConsumerWidget {
   const ProcurementScreen({super.key});
@@ -641,9 +642,6 @@ class _SupplierDialogState extends ConsumerState<_SupplierDialog> {
     _bicCtrl,
   ].any((c) => c.text.trim().isNotEmpty);
 
-  static String _digits(String? v) =>
-      (v ?? '').replaceAll(RegExp(r'[\s-]'), '');
-
   static String? validEmail(String? v) {
     final t = v?.trim() ?? '';
     if (t.isEmpty) return null;
@@ -652,43 +650,14 @@ class _SupplierDialogState extends ConsumerState<_SupplierDialog> {
         : 'Not an email address';
   }
 
-  String? _validSortCode(String? v) {
-    final t = _digits(v);
-    if (t.isEmpty) {
-      return _accountCtrl.text.trim().isNotEmpty
-          ? 'Required with an account number'
-          : null;
-    }
-    return RegExp(r'^\d{6}$').hasMatch(t) ? null : 'Six digits';
-  }
+  String? _validSortCode(String? v) =>
+      validSortCode(v, accountKeyed: _accountCtrl.text.trim().isNotEmpty);
 
-  String? _validAccount(String? v) {
-    final t = _digits(v);
-    if (t.isEmpty) {
-      return _sortCtrl.text.trim().isNotEmpty
-          ? 'Required with a sort code'
-          : null;
-    }
-    return RegExp(r'^\d{8}$').hasMatch(t) ? null : 'Eight digits';
-  }
+  String? _validAccount(String? v) =>
+      validAccountNumber(v, sortCodeKeyed: _sortCtrl.text.trim().isNotEmpty);
 
-  String? _validIban(String? v) {
-    final t = (v ?? '').replaceAll(' ', '').toUpperCase();
-    if (t.isEmpty) {
-      return _bicCtrl.text.trim().isNotEmpty ? 'Required with a BIC' : null;
-    }
-    return RegExp(r'^[A-Z]{2}\d{2}[A-Z0-9]{11,30}$').hasMatch(t)
-        ? null
-        : 'Not an IBAN';
-  }
-
-  static String? _validBic(String? v) {
-    final t = v?.trim() ?? '';
-    if (t.isEmpty) return null;
-    return RegExp(r'^[A-Za-z]{6}[A-Za-z0-9]{2}([A-Za-z0-9]{3})?$').hasMatch(t)
-        ? null
-        : 'Eight or eleven characters';
-  }
+  String? _validIban(String? v) =>
+      validIban(v, bicKeyed: _bicCtrl.text.trim().isNotEmpty);
 
   Future<void> _submit() async {
     if (!_formKey.currentState!.validate()) return;
@@ -911,7 +880,7 @@ class _SupplierDialogState extends ConsumerState<_SupplierDialog> {
                         child: TextFormField(
                           controller: _bicCtrl,
                           decoration: const InputDecoration(labelText: 'BIC'),
-                          validator: _validBic,
+                          validator: validBic,
                         ),
                       ),
                     ],
