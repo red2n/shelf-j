@@ -61,6 +61,22 @@ public class GatewayConfig {
   @ConfigProperty(name = "shelfj.gateway.card-data-guard.max-scan-bytes", defaultValue = "8388608")
   int cardDataGuardMaxScanBytes;
 
+  /** The largest request body a route takes unless it is a named upload route. */
+  @Inject
+  @ConfigProperty(name = "shelfj.gateway.max-body-bytes", defaultValue = "1048576")
+  int maxBodyBytes;
+
+  /**
+   * Routes that take a document rather than JSON, each with its own cap, as {@code path=bytes}
+   * separated by commas: a supplier's e-invoice PDF may be 20 MB (07.13). {@code
+   * server.max-payload-size} must be at least the largest.
+   */
+  @Inject
+  @ConfigProperty(
+      name = "shelfj.gateway.upload-routes",
+      defaultValue = "/api/purchase-svc/e-invoices=21000000")
+  String uploadRoutes;
+
   @Inject
   @ConfigProperty(name = "shelfj.gateway.brute-force.enabled", defaultValue = "true")
   boolean bruteForceEnabled;
@@ -257,6 +273,14 @@ public class GatewayConfig {
 
   public int cardDataGuardMaxScanBytes() {
     return cardDataGuardMaxScanBytes;
+  }
+
+  public int maxBodyBytes() {
+    return maxBodyBytes;
+  }
+
+  public String uploadRoutes() {
+    return uploadRoutes;
   }
 
   public boolean bruteForceEnabled() {

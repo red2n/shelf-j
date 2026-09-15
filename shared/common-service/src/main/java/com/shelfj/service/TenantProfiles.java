@@ -235,6 +235,58 @@ public class TenantProfiles {
    * @return empty when tenant-svc cannot be reached, has no such tenant, or answers with a profile
    *     that does not carry a valid ISO 4217 currency and ISO 3166 country
    */
+  /**
+   * How the business names itself on an e-invoice: its registered name, its VAT identifier (BT-31
+   * or BT-48) and its Peppol participant identifier (BT-34 or BT-49). Each is null until the
+   * business sets it.
+   */
+  public record Identity(
+      UUID tenantId, String legalName, String vatNumber, String einvoiceScheme, String einvoiceId) {
+
+    /** Whether an access point could deliver to the business. */
+    public boolean hasElectronicAddress() {
+      return einvoiceScheme != null && einvoiceId != null;
+    }
+  }
+
+  /**
+   * The business's e-invoicing identity, read afresh on every call: it is asked for when an invoice
+   * arrives or is issued, which is rare, and one cached from before a correction would misdirect an
+   * invoice the moment the correction was made.
+   *
+   * @return the identity, or empty when tenant-svc could not be read
+   */
+  public Optional<Identity> identity(UUID tenantId) {
+    if (tenantId == null) return Optional.empty();
+    return fetch.apply(tenantId).flatMap(body -> parseIdentity(tenantId, body));
+  }
+
+  /** Reads the identity out of a {@code GET /admin/tenant} response. */
+  static Optional<Identity> parseIdentity(UUID tenantId, String body) {
+    try (JsonReader reader = Json.createReader(new StringReader(body))) {
+      JsonObject root = reader.readObject();
+      if (!root.containsKey("data") || root.isNull("data")) return Optional.empty();
+      JsonObject data = root.getJsonObject("data");
+      return Optional.of(
+          new Identity(
+              tenantId,
+              text(data, "legalName"),
+              text(data, "vatNumber"),
+              text(data, "einvoiceScheme"),
+              text(data, "einvoiceId")));
+    } catch (RuntimeException e) {
+      LOG.log(Level.WARNING, "malformed tenant identity for {0}: {1}", tenantId, e.getMessage());
+      return Optional.empty();
+    }
+  }
+
+  private static String text(JsonObject o, String key) {
+    if (!o.containsKey(key) || o.isNull(key)) return null;
+    if (o.get(key).getValueType() != jakarta.json.JsonValue.ValueType.STRING) return null;
+    String s = o.getString(key).strip();
+    return s.isEmpty() ? null : s;
+  }
+
   public Optional<Profile> find(UUID tenantId) {
     if (tenantId == null) return Optional.empty();
     Instant now = clock.instant();

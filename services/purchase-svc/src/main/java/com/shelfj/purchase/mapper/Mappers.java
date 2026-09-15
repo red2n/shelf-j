@@ -50,7 +50,9 @@ public final class Mappers {
         com.shelfj.purchase.domain.BankAccount.masked(s.bankIban()),
         s.bankBic(),
         s.hasBankDetails(),
-        s.bankDetailsChangedAt());
+        s.bankDetailsChangedAt(),
+        s.einvoiceScheme(),
+        s.einvoiceId());
   }
 
   /**

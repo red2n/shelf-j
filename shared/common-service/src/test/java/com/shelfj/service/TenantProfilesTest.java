@@ -33,6 +33,31 @@ class TenantProfilesTest {
   }
 
   @Test
+  @DisplayName("The e-invoicing identity is read as given, and a blank or non-text field is none")
+  void readsTheEInvoicingIdentity() {
+    var id =
+        TenantProfiles.parseIdentity(
+                TENANT,
+                "{\"data\":{\"currency\":\"EUR\",\"country\":\"DE\",\"legalName\":\" Muster GmbH \","
+                    + "\"vatNumber\":\"DE123456789\",\"einvoiceScheme\":\"9930\","
+                    + "\"einvoiceId\":\"DE123456789\"}}")
+            .orElseThrow();
+    assertEquals("Muster GmbH", id.legalName());
+    assertEquals("DE123456789", id.vatNumber());
+    assertTrue(id.hasElectronicAddress());
+    var none =
+        TenantProfiles.parseIdentity(
+                TENANT,
+                "{\"data\":{\"vatNumber\":\"  \",\"einvoiceScheme\":9930,\"einvoiceId\":null}}")
+            .orElseThrow();
+    assertEquals(null, none.vatNumber());
+    assertEquals(null, none.einvoiceScheme());
+    assertTrue(!none.hasElectronicAddress());
+    assertTrue(TenantProfiles.parseIdentity(TENANT, "{\"data\":null}").isEmpty());
+    assertTrue(TenantProfiles.parseIdentity(TENANT, "not json").isEmpty());
+  }
+
+  @Test
   @DisplayName("A tenant's own currency and country are read, trimmed and upper-cased")
   void readsTheTenantsOwnProfile() {
     var p = TenantProfiles.parse(TENANT, body(" jpy ", "jp")).orElseThrow();

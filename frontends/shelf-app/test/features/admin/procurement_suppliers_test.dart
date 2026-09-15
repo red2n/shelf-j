@@ -5,9 +5,10 @@ import 'package:flutter/material.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:flutter_test/flutter_test.dart';
 import 'package:shelf_app/core/auth/auth_notifier.dart';
-import 'package:shelf_app/core/auth/auth_state.dart';
 import 'package:shelf_app/core/network/api_client.dart';
 import 'package:shelf_app/features/admin/procurement_screen.dart';
+
+import '../../support/fake_api.dart';
 
 // ---------------------------------------------------------------------------
 // A supplier can be corrected after it is created (SJ-D34). The dialog opens
@@ -15,20 +16,6 @@ import 'package:shelf_app/features/admin/procurement_screen.dart';
 // not on the picker — and sends the correction to PUT /suppliers/{id}. The
 // server's refusal (an open order in the old currency) is shown in words.
 // ---------------------------------------------------------------------------
-
-class _FakeApiClient implements ApiClient {
-  @override
-  Dio dio;
-  _FakeApiClient(this.dio);
-}
-
-class _Auth extends AuthNotifier {
-  final String role;
-  _Auth(this.role);
-  @override
-  Future<AuthState> build() async => AuthAuthenticated(
-      accessToken: 'a', refreshToken: 'r', userId: 'u', tenantId: 't', roles: [role]);
-}
 
 class _Server implements HttpClientAdapter {
   final List<RequestOptions> requests = [];
@@ -63,8 +50,8 @@ Future<_Server> _pump(WidgetTester tester, {String role = 'MANAGER'}) async {
   final dio = Dio(BaseOptions(baseUrl: 'http://test'))..httpClientAdapter = server;
   await tester.pumpWidget(ProviderScope(
     overrides: [
-      apiClientProvider.overrideWithValue(_FakeApiClient(dio)),
-      authNotifierProvider.overrideWith(() => _Auth(role)),
+      apiClientProvider.overrideWithValue(FakeApiClient(dio)),
+      authNotifierProvider.overrideWith(() => RoleAuth(role)),
     ],
     child: const MaterialApp(home: ProcurementScreen()),
   ));
@@ -110,6 +97,30 @@ void main() {
     expect(find.textContaining('open purchase order'), findsOneWidget);
     expect(find.text('Edit supplier'), findsOneWidget, reason: 'the dialog stays open');
     expect(server.requests.where((r) => r.method == 'PUT'), hasLength(1));
+  });
+
+  testWidgets('a supplier\'s e-invoicing address needs both halves before it is sent',
+      (tester) async {
+    final server = await _pump(tester);
+    await tester.tap(find.byTooltip('Edit supplier'));
+    await tester.pumpAndSettle();
+    final scheme = find.byKey(const Key('supplier-einvoice-scheme'));
+    await tester.ensureVisible(scheme);
+    await tester.enterText(scheme, '0088');
+    await tester.tap(find.text('Save'));
+    await tester.pumpAndSettle();
+    expect(find.text('Give the identifier too'), findsOneWidget);
+    expect(server.requests.where((r) => r.method == 'PUT'), isEmpty);
+
+    final id = find.byKey(const Key('supplier-einvoice-id'));
+    await tester.ensureVisible(id);
+    await tester.enterText(id, '5790000435951');
+    await tester.tap(find.text('Save'));
+    await tester.pumpAndSettle();
+    final put = server.requests.singleWhere((r) => r.method == 'PUT');
+    final body = put.data is String ? jsonDecode(put.data as String) : put.data;
+    expect(body['einvoiceScheme'], '0088');
+    expect(body['einvoiceId'], '5790000435951');
   });
 
   testWidgets('a cashier is not offered the edit', (tester) async {

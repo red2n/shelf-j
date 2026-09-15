@@ -86,6 +86,11 @@
             <groupId>com.shelfj</groupId>
             <artifactId>common-service</artifactId>
         </dependency>
+        <!-- 07.13: suppliers' EN 16931 e-invoices — UBL, CII and Factur-X — read and checked -->
+        <dependency>
+            <groupId>com.shelfj</groupId>
+            <artifactId>einvoice</artifactId>
+        </dependency>
 
         <dependency>
             <groupId>org.postgresql</groupId>

@@ -49,7 +49,16 @@ public final class Dtos {
       @Schema(description = "IBAN for an international payment; its check digits are verified.")
           @Size(max = 42)
           String bankIban,
-      @Schema(description = "BIC (SWIFT code), with an IBAN.") @Size(max = 14) String bankBic) {}
+      @Schema(description = "BIC (SWIFT code), with an IBAN.") @Size(max = 14) String bankBic,
+      @Schema(
+              description =
+                  "Where the supplier's e-invoices come from: the Peppol electronic address scheme"
+                      + " (EAS), e.g. 0088 for a GLN or 9930 for a German VAT number. Given with"
+                      + " einvoiceId or not at all.")
+          @Size(max = 8)
+          String einvoiceScheme,
+      @Schema(description = "The supplier's identifier within that scheme.") @Size(max = 128)
+          String einvoiceId) {}
 
   @Schema(
       name = "UpdateSupplierRequest",
@@ -80,7 +89,15 @@ public final class Dtos {
       @Size(max = 42) String bankIban,
       @Size(max = 14) String bankBic,
       @Schema(description = "True to remove the bank details. Needs finance.payments.")
-          Boolean clearBankDetails) {}
+          Boolean clearBankDetails,
+      @Schema(
+              description =
+                  "The supplier's e-invoicing address scheme (EAS); unchanged when it and einvoiceId"
+                      + " are both omitted, removed when both are empty.")
+          @Size(max = 8)
+          String einvoiceScheme,
+      @Schema(description = "The supplier's identifier within that scheme.") @Size(max = 128)
+          String einvoiceId) {}
 
   @Schema(name = "SupplierResponse")
   public record SupplierResponse(
@@ -105,7 +122,9 @@ public final class Dtos {
       String bankBic,
       @Schema(description = "Whether a payment run can pay this supplier.") boolean hasBankDetails,
       @Schema(description = "When the bank details last changed; a run flags a recent change.")
-          Instant bankDetailsChangedAt) {}
+          Instant bankDetailsChangedAt,
+      @Schema(description = "The e-invoicing address scheme (EAS), or null.") String einvoiceScheme,
+      @Schema(description = "The identifier within that scheme, or null.") String einvoiceId) {}
 
   // ── Purchase Order ────────────────────────────────────────────────────────────
   @Schema(name = "CreatePurchaseOrderRequest", description = "Create a DRAFT purchase order.")
