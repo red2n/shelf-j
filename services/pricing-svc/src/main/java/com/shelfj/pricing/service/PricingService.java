@@ -222,15 +222,36 @@ public class PricingService {
    */
   public CustomerVatStatus upsertCustomerVatStatus(
       UpsertCustomerVatStatusRequest req, TenantContext ctx) {
+    String country = profiles.countryOr(ctx.tenantId(), req.countryCode());
+    // What an invoice to this customer will name it by (18.9): a VAT identifier with its country
+    // prefix, or for an Indian customer its GSTIN, and a Peppol address when it has one.
+    String vatNumber;
+    try {
+      vatNumber =
+          "IN".equals(country)
+              ? com.shelfj.einvoice.Gstin.parse(req.vatNumber())
+              : com.shelfj.einvoice.VatIdentifier.parse(req.vatNumber());
+    } catch (IllegalArgumentException e) {
+      throw new ApiException(400, "PRICING_VAT_NUMBER_INVALID", e.getMessage(), List.of(), e);
+    }
+    com.shelfj.einvoice.ElectronicAddress address;
+    try {
+      address = com.shelfj.einvoice.ElectronicAddress.parse(req.einvoiceScheme(), req.einvoiceId());
+    } catch (IllegalArgumentException e) {
+      throw new ApiException(400, "PRICING_EINVOICE_ADDRESS_INVALID", e.getMessage(), List.of(), e);
+    }
     CustomerVatStatus cvs =
         new CustomerVatStatus(
             Ids.newId(),
             ctx.tenantId(),
             UUID.fromString(req.customerId()),
-            req.vatNumber(),
+            vatNumber,
             req.vatRegistered(),
             req.reverseChargeEligible(),
-            profiles.countryOr(ctx.tenantId(), req.countryCode()),
+            country,
+            req.legalName() == null || req.legalName().isBlank() ? null : req.legalName().strip(),
+            address == null ? null : address.scheme(),
+            address == null ? null : address.id(),
             Instant.now(),
             Instant.now());
     return repo.upsertCustomerVatStatus(cvs);
@@ -1067,6 +1088,7 @@ public class PricingService {
               net,
               vat,
               vatCodes.get(i),
+              rate.exempt() ? BigDecimal.ZERO : rate.rate(),
               lineMarkdowns.get(i),
               com.shelfj.pricing.mapper.Mappers.toUnitPrice(unitPricing)));
     }

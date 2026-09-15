@@ -35,23 +35,11 @@ class TenantIdentityIT {
   }
 
   private String onboard(String name) {
-    Response r =
-        target
-            .path("/onboarding/tenants")
-            .request(MediaType.APPLICATION_JSON)
-            .header("X-User-Id", Ids.newId().toString())
-            .post(
-                Entity.entity(
-                    "{\"businessName\":\""
-                        + name
-                        + " "
-                        + Ids.newId()
-                        + "\",\"country\":\"GB\",\"currency\":\"GBP\"}",
-                    MediaType.APPLICATION_JSON));
-    String body = r.readEntity(String.class);
-    assertThat(body, r.getStatus(), is(201));
-    int i = body.indexOf("\"id\":\"") + 6;
-    return body.substring(i, body.indexOf('"', i));
+    return onboard(name, "GB", "GBP");
+  }
+
+  private String onboard(String name, String country, String currency) {
+    return TenantOnboarding.onboard(target, name, country, currency);
   }
 
   private Response put(String tenant, String role, String json) {
@@ -155,6 +143,33 @@ class TenantIdentityIT {
         containsString("einvoiceId"));
     String read = get(tenant);
     assertThat("nothing refused was kept", read, not(containsString("\"vatNumber\":\"")));
+  }
+
+  @Test
+  void anIndianBusinessIsNamedByItsGstinAndOnlyThere() {
+    String india = onboard("Mumbai Traders", "IN", "INR");
+    body(
+        put(
+            india,
+            "OWNER",
+            "{\"businessName\":\"Mumbai Traders\",\"vatNumber\":\"27aapfu0939f1zv\"}"),
+        200);
+    assertThat(get(india), containsString("\"vatNumber\":\"27AAPFU0939F1ZV\""));
+    assertThat(
+        "a GSTIN whose check character is wrong",
+        body(
+            put(india, "OWNER", "{\"businessName\":\"X\",\"vatNumber\":\"27AAPFU0939F1ZW\"}"), 400),
+        containsString("TENANT_VAT_NUMBER_INVALID"));
+    assertThat(
+        "a European VAT identifier is not an Indian business's",
+        body(put(india, "OWNER", "{\"businessName\":\"X\",\"vatNumber\":\"GB123456789\"}"), 400),
+        containsString("TENANT_VAT_NUMBER_INVALID"));
+    assertThat(get(india), containsString("27AAPFU0939F1ZV"));
+    String uk = onboard("Not India");
+    assertThat(
+        "nor is a GSTIN a British business's",
+        body(put(uk, "OWNER", "{\"businessName\":\"X\",\"vatNumber\":\"27AAPFU0939F1ZV\"}"), 400),
+        containsString("TENANT_VAT_NUMBER_INVALID"));
   }
 
   @Test

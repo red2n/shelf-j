@@ -161,6 +161,7 @@ public final class Mappers {
         c.restrictionCategory(),
         c.allergenStatus(),
         c.ingredients(),
+        c.hsnCode(),
         c.soldBy(),
         c.netContent(),
         c.netContentUom(),
@@ -193,6 +194,18 @@ public final class Mappers {
    * @return its API representation
    */
   public static VariantScanResponse toVariantScan(Variant v, Product p) {
+    return toVariantScan(v, p, null);
+  }
+
+  /**
+   * Converts a variant and its product to the scan form, with its HSN or SAC code.
+   *
+   * @param v the variant
+   * @param p its product
+   * @param hsnCode the code recorded for the variant, or null
+   * @return its API representation
+   */
+  public static VariantScanResponse toVariantScan(Variant v, Product p, String hsnCode) {
     return new VariantScanResponse(
         v.id().toString(),
         p.id().toString(),
@@ -204,7 +217,8 @@ public final class Mappers {
         v.unit(),
         v.status(),
         ts(v.createdAt()),
-        ts(v.updatedAt()));
+        ts(v.updatedAt()),
+        hsnCode);
   }
 
   /**

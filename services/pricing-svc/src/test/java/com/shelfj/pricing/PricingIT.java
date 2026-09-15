@@ -37,7 +37,8 @@ class PricingIT {
         TenantSvcStub.start()
             .with(PricingIT.T, "GBP", "GB")
             .with(PricingIT.YEN, "JPY", "JP")
-            .with(PricingIT.YEN_BUSY, "JPY", "JP");
+            .with(PricingIT.YEN_BUSY, "JPY", "JP")
+            .with(PricingIT.RUPEE, "INR", "IN");
     System.setProperty("shelfj.db.url", PG.jdbcUrl());
     System.setProperty("shelfj.db.migration-url", PG.jdbcUrl());
     System.setProperty("shelfj.db.user", PG.username());
@@ -51,6 +52,7 @@ class PricingIT {
   private static final String YEN = "01a090ae-611e-70f0-8a00-0000000000a1";
   private static final String YEN_BUSY = "01a090ae-611e-70f0-8a00-0000000000a2";
   private static final String NOBODY = "01a090ae-611e-70f0-8a00-0000000000a3";
+  private static final String RUPEE = "01a090ae-611e-70f0-8a00-0000000000a4";
   private static final String V = "01a090ae-611e-7037-a4b7-c854f0266ace";
   private static final String S = "01a090ae-611e-703c-a378-a4972ea461c8";
   private static final String ORDER_ID = "01a090ae-611e-7056-8f30-ecdbb48160eb";
@@ -1449,6 +1451,104 @@ class PricingIT {
             .get();
     assertThat(asStaff.getStatus(), is(200));
     assertThat(asStaff.readEntity(String.class), containsString("GB123456789"));
+  }
+
+  @Test
+  @org.junit.jupiter.api.DisplayName(
+      "A business buyer's VAT number, registered name and e-invoicing address are checked where"
+          + " they are typed, and nothing refused is kept (18.9)")
+  void aBusinessBuyersIdentityIsCheckedWhereItIsTyped() {
+    String customer = "01a090ae-611e-7070-9b99-4c0448c3b001";
+    String base =
+        "{\"customerId\":\""
+            + customer
+            + "\",\"vatRegistered\":true,\"reverseChargeEligible\":false,";
+    Response ok =
+        post(
+            "/customer-vat-status",
+            base
+                + "\"vatNumber\":\"gb 123 456 789\",\"legalName\":\" Acme Trading Ltd \","
+                + "\"einvoiceScheme\":\"0088\",\"einvoiceId\":\"5790000435975\"}",
+            T);
+    String okBody = ok.readEntity(String.class);
+    assertThat(okBody, ok.getStatus(), is(200));
+    assertThat(okBody, containsString("\"vatNumber\":\"GB123456789\""));
+    assertThat(okBody, containsString("\"legalName\":\"Acme Trading Ltd\""));
+    assertThat(okBody, containsString("\"einvoiceScheme\":\"0088\""));
+    assertThat(okBody, containsString("\"einvoiceId\":\"5790000435975\""));
+
+    String[][] refused = {
+      {"\"vatNumber\":\"123456789\"}", "PRICING_VAT_NUMBER_INVALID"},
+      {
+        "\"vatNumber\":\"GB123456789\",\"einvoiceScheme\":\"0088\"}",
+        "PRICING_EINVOICE_ADDRESS_INVALID"
+      },
+      {
+        "\"vatNumber\":\"GB123456789\",\"einvoiceScheme\":\"0088\",\"einvoiceId\":\"5790000435976\"}",
+        "PRICING_EINVOICE_ADDRESS_INVALID"
+      },
+      {
+        "\"vatNumber\":\"GB123456789\",\"legalName\":\"" + "x".repeat(201) + "\"}",
+        "VALIDATION_FAILED"
+      },
+    };
+    for (String[] r : refused) {
+      Response bad = post("/customer-vat-status", base + r[0], T);
+      String badBody = bad.readEntity(String.class);
+      assertThat(badBody, bad.getStatus(), is(400));
+      assertThat(badBody, containsString(r[1]));
+    }
+    Response staff =
+        target
+            .path("/customer-vat-status/" + customer)
+            .request()
+            .header("X-Tenant-Id", T)
+            .header("X-Roles", "CASHIER")
+            .get();
+    String kept = staff.readEntity(String.class);
+    assertThat(
+        "nothing refused was kept", kept, containsString("\"einvoiceId\":\"5790000435975\""));
+    assertThat(kept, containsString("\"legalName\":\"Acme Trading Ltd\""));
+
+    // Abuse: a name shaped like SQL is a name.
+    String hostile = "Robert'); DROP TABLE customer_vat_status;--";
+    Response named =
+        post(
+            "/customer-vat-status",
+            base + "\"vatNumber\":\"GB123456789\",\"legalName\":\"" + hostile + "\"}",
+            T);
+    assertThat(named.readEntity(String.class), named.getStatus(), is(200));
+    String read =
+        target
+            .path("/customer-vat-status/" + customer)
+            .request()
+            .header("X-Tenant-Id", T)
+            .header("X-Roles", "MANAGER")
+            .get()
+            .readEntity(String.class);
+    assertThat("stored as it was typed, not run", read, containsString(hostile));
+
+    // An Indian buyer is named by its GSTIN, and a European VAT number is not one.
+    String indian =
+        "{\"customerId\":\"01a090ae-611e-7070-9b99-4c0448c3b002\",\"vatRegistered\":true,\"reverseChargeEligible\":false,";
+    Response gstin =
+        post("/customer-vat-status", indian + "\"vatNumber\":\"29aagcb7383j1z4\"}", RUPEE);
+    String gstinBody = gstin.readEntity(String.class);
+    assertThat(gstinBody, gstin.getStatus(), is(200));
+    assertThat(gstinBody, containsString("\"vatNumber\":\"29AAGCB7383J1Z4\""));
+    assertThat(gstinBody, containsString("\"countryCode\":\"IN\""));
+    Response vat = post("/customer-vat-status", indian + "\"vatNumber\":\"GB123456789\"}", RUPEE);
+    assertThat(vat.readEntity(String.class), containsString("PRICING_VAT_NUMBER_INVALID"));
+  }
+
+  @Test
+  @org.junit.jupiter.api.DisplayName(
+      "A quote line carries the VAT rate it was taxed at, so an invoice need not work it back (18.9)")
+  void aQuoteLineCarriesItsVatRate() {
+    seedPricedVariant(V, "40.00");
+    String body = quote("{\"lines\":[{\"variantId\":\"" + V + "\",\"qty\":2}]}");
+    assertThat(body, containsString("\"vatCode\":\"T1\""));
+    assertThat(body, containsString("\"vatRate\":0.2"));
   }
 
   // ── helpers ───────────────────────────────────────────────────────────────

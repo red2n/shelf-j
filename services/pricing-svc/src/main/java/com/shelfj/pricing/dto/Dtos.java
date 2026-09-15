@@ -106,7 +106,22 @@ public final class Dtos {
       @Schema(description = "True if this customer is eligible for reverse-charge VAT.")
           boolean reverseChargeEligible,
       @Schema(description = "ISO 3166-1 alpha-2 country code. The tenant's own when omitted.")
-          String countryCode) {}
+          String countryCode,
+      @Schema(
+              description =
+                  "The name the customer is registered for VAT under: the buyer an invoice names"
+                      + " (BT-44).")
+          @jakarta.validation.constraints.Size(max = 200)
+          String legalName,
+      @Schema(
+              description =
+                  "Where the customer receives e-invoices: a Peppol electronic address scheme"
+                      + " (EAS), with einvoiceId; both or neither.")
+          @jakarta.validation.constraints.Size(max = 8)
+          String einvoiceScheme,
+      @Schema(description = "The customer's identifier within that scheme.")
+          @jakarta.validation.constraints.Size(max = 128)
+          String einvoiceId) {}
 
   @Schema(name = "CustomerVatStatusResponse")
   public record CustomerVatStatusResponse(
@@ -117,6 +132,9 @@ public final class Dtos {
       boolean vatRegistered,
       boolean reverseChargeEligible,
       String countryCode,
+      String legalName,
+      String einvoiceScheme,
+      String einvoiceId,
       String createdAt,
       String updatedAt) {}
 
@@ -490,6 +508,8 @@ public final class Dtos {
       @Schema(description = "lineTotal minus discount.") BigDecimal netTotal,
       @Schema(description = "VAT on netTotal, at this variant's rate.") BigDecimal vatAmount,
       @Schema(description = "The VAT code applied.") String vatCode,
+      @Schema(description = "The VAT rate applied, as a fraction: 0.20 for 20%; 0 when exempt.")
+          BigDecimal vatRate,
       @Schema(description = "The markdown the line was priced at, when a sticker was scanned.")
           UUID markdownId,
       @Schema(
