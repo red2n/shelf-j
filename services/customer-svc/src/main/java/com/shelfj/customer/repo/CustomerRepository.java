@@ -655,6 +655,52 @@ public class CustomerRepository extends BaseOutboxRepository {
    * @param erasedEvent the outbox row to commit alongside the erasure; carries ids only
    * @return the anonymized record, kept for audit
    */
+  /**
+   * The customers nothing has happened on since the cutoff (21.16): still active, not touched, no
+   * loyalty movement and no consent change since. Candidates for the retention purge, which erases
+   * each as the customer could have asked.
+   */
+  public List<UUID> inactiveSince(UUID tenantId, Instant cutoff) {
+    return query(
+        "SELECT c.id FROM customers c WHERE c.tenant_id = ? AND c.status = 'ACTIVE'"
+            + " AND c.updated_at < ?"
+            + " AND NOT EXISTS (SELECT 1 FROM loyalty_ledger l WHERE l.tenant_id = c.tenant_id"
+            + "   AND l.customer_id = c.id AND l.created_at >= ?)"
+            + " AND NOT EXISTS (SELECT 1 FROM marketing_consent_log m WHERE m.tenant_id = c.tenant_id"
+            + "   AND m.customer_id = c.id AND m.recorded_at >= ?)"
+            + " ORDER BY c.id",
+        ps -> {
+          var at = cutoff.atOffset(java.time.ZoneOffset.UTC);
+          ps.setObject(1, tenantId);
+          ps.setObject(2, at);
+          ps.setObject(3, at);
+          ps.setObject(4, at);
+        },
+        rs -> rs.getObject("id", UUID.class),
+        "inactive customers");
+  }
+
+  /** Every business with a customer: the tenants a retention sweep visits. */
+  public List<UUID> tenantsWithCustomers() {
+    return query(
+        "SELECT DISTINCT c.tenant_id FROM customers c ORDER BY c.tenant_id",
+        ps -> {},
+        rs -> rs.getObject("tenant_id", UUID.class),
+        "tenants with customers");
+  }
+
+  /**
+   * Writes a run's announcement (21.16) on its own: the erasures it counts each committed already.
+   */
+  public void recordRun(OutboxRow event) {
+    inTx(
+        c -> {
+          insertOutbox(c, event);
+          return null;
+        },
+        "record retention run");
+  }
+
   public Customer anonymize(UUID tenantId, UUID customerId, OutboxRow erasedEvent) {
     Instant now = Instant.now();
     inTx(

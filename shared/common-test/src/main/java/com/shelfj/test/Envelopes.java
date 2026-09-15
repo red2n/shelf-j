@@ -72,6 +72,20 @@ public final class Envelopes {
   }
 
   /**
+   * Runs one statement against the test database — to backdate a row, say, so a purge finds it.
+   *
+   * @return the rows affected
+   */
+  public static int exec(PostgresSupport pg, String sql) {
+    try (var c = DriverManager.getConnection(pg.jdbcUrl(), pg.username(), pg.password());
+        var st = c.createStatement()) {
+      return st.executeUpdate(sql);
+    } catch (SQLException e) {
+      throw new IllegalStateException(e);
+    }
+  }
+
+  /**
    * One value from the test database, as a string, or null when the query returns no row or a null.
    */
   public static String scalar(PostgresSupport pg, String sql) {

@@ -154,6 +154,10 @@ The register a licensing officer asks to see. Filters: one store or all, a date 
 
 The laws the business trades under, as the platform tracks them: **In force in <country>** and **Coming**, each with what it asks in a sentence, the instrument behind it, whether it is EU or national law, and its day — *Since 6 Apr 2026* or *From 1 Jan 2027*, with *until* when a window has closed (EU law stopped reaching a British business on 31 Jan 2020). The business's own country; every staff role can open it, because the till obeys these laws. Nothing is editable: the rules change with the law. An empty list says the platform tracks no obligations for that country yet, not that none apply, and the page says it is not legal advice.
 
+### 4.2f Data retention (management)
+
+How long each class of data is kept (UK GDPR art.5(1)(e), 21.16). *Trading in* names the countries the schedule answers to — the business's own and its stores'. One card per class: what it is; **the law** — *at least 8 years (DE) — Abgabenordnung §147(3)*, or *No statutory floor: the business decides*; and what is set — *Anonymised after 2 years, by order-svc*, *Deleted at once, by notification-svc*, *Kept 6 years; never deleted by the platform*, or, in red, *Not set — nothing is purged, and the record art.30 asks for is missing*. **Set** / **Change** asks for days; a number under the floor is refused on the screen with the floor and its instrument, and the server's own refusal is shown in its words. **Holds**: each hold in force (a customer, an order or everything; one class or every class) with its reason and when it was placed, **Release** asking why; **Place a hold** asks for the class, the subject and why. **Purges run**: *Run order-svc now* (and customer-svc, notification-svc) runs that service's purge for this business and says how many rows were purged and held; below, the register of every run. A storekeeper reads the schedule and changes nothing; a failed load says so rather than showing classes as unset.
+
 ### 4.2e Security notices (management)
 
 What the platform has told this business about a security incident that affects it: each notice's title, when it was sent, and what the business should do — for a personal data breach, that as controller it has 72 hours to tell its supervisory authority. **Acknowledge** records who confirmed they read it, once; an acknowledged notice shows when. Owners and managers only; a business sees only its own notices.
@@ -375,6 +379,7 @@ Navigation: **Shop · Cart** (with a live item-count badge). A sticky cart bar (
 | `/admin/inventory` | Inventory (Levels / Batches tabs) + Receive Stock |
 | `/admin/food-safety` | Food safety: Today / Diary, plus Setup / Reviews for managers |
 | `/admin/recalls` | Recalls: list, detail with store actions; open / close / cancel for managers |
+| `/admin/retention` | Data retention: the schedule with the law's floors, holds, run-now and the register of purges |
 | `/admin/age-checks` | Age checks register (management) |
 | `/admin/obligations` | Legal obligations |
 | `/admin/security-notices` | Security notices (management) |

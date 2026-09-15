@@ -87,6 +87,14 @@ const _navItems = [
   ),
   _AdminNavItem(
     destination: AdaptiveNavDestination(
+      label: 'Data retention',
+      icon: Icons.auto_delete_outlined,
+      selectedIcon: Icons.auto_delete,
+    ),
+    route: '/admin/retention',
+  ),
+  _AdminNavItem(
+    destination: AdaptiveNavDestination(
       label: 'Security notices',
       icon: Icons.shield_outlined,
       selectedIcon: Icons.shield,
