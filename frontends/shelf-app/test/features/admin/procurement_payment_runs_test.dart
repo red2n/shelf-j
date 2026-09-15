@@ -3,10 +3,12 @@ import 'dart:convert';
 import 'package:dio/dio.dart';
 import 'package:flutter/material.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
+import 'package:flutter_riverpod/misc.dart' show Override;
 import 'package:flutter_test/flutter_test.dart';
 import 'package:shelf_app/core/auth/auth_notifier.dart';
 import 'package:shelf_app/core/auth/auth_state.dart';
 import 'package:shelf_app/core/network/api_client.dart';
+import 'package:shelf_app/features/admin/payment_runs_tab.dart';
 import 'package:shelf_app/features/admin/procurement_screen.dart';
 
 // ---------------------------------------------------------------------------
@@ -17,6 +19,9 @@ import 'package:shelf_app/features/admin/procurement_screen.dart';
 // The proposer cannot approve their own run unless they own the business;
 // anyone without finance.payments is told so and the API is never called; bad
 // dates and half-keyed bank details are refused before a request is sent.
+// Bank-standard files (17.12): the formats a run's currency can be paid in,
+// the bank's status report read back, a close match held until released with
+// what was checked, and the paying accounts.
 // ---------------------------------------------------------------------------
 
 class _FakeApiClient implements ApiClient {
@@ -99,6 +104,10 @@ Map<String, dynamic> _run(String status) => {
   ],
 };
 
+/// The run with the bank's check on Muster's payment (17.12).
+Map<String, dynamic> _checked(String status, Map<String, dynamic> check) =>
+    _run(status)..['suppliers'][1]['bankCheck'] = check;
+
 class _Server implements HttpClientAdapter {
   final List<RequestOptions> requests = [];
   Map<String, dynamic> run = _run('PROPOSED');
@@ -139,7 +148,22 @@ class _Server implements HttpClientAdapter {
         },
       );
     }
-    if (o.method == 'POST' &&
+    if (o.path.endsWith('/paying-accounts')) {
+      return json({
+        'data': [
+          {
+            'currency': 'GBP',
+            'accountName': 'Corner Shop Ltd',
+            'sortCode': '402811',
+            'accountNumberMasked': '****5678',
+            'serviceUserNumber': '123456',
+            'sendsBacs': true,
+            'sendsSepa': false,
+          },
+        ],
+      });
+    }
+    if ((o.method == 'POST' || o.method == 'PUT') &&
         (o.path.contains('/payment-runs') || o.path.endsWith('/suppliers'))) {
       if (failStatus != 0) {
         return json({
@@ -182,11 +206,14 @@ Future<_Server> _pump(
   String userId = 'u-2',
   String status = 'PROPOSED',
   String tab = 'Payments',
+  Map<String, dynamic>? musterCheck,
+  List<Override> overrides = const [],
 }) async {
   tester.view.physicalSize = const Size(1200, 1600);
   tester.view.devicePixelRatio = 1;
   addTearDown(tester.view.reset);
-  final server = _Server()..run = _run(status);
+  final server = _Server()
+    ..run = musterCheck == null ? _run(status) : _checked(status, musterCheck);
   final dio = Dio(BaseOptions(baseUrl: 'http://test'))
     ..httpClientAdapter = server;
   await tester.pumpWidget(
@@ -197,6 +224,7 @@ Future<_Server> _pump(
         authNotifierProvider.overrideWith(
           () => _Auth(roles, permissions, userId),
         ),
+        ...overrides,
       ],
       child: const MaterialApp(home: ProcurementScreen()),
     ),
@@ -284,7 +312,17 @@ void main() {
 
       await tester.tap(find.text('Bank file'));
       await tester.pumpAndSettle();
+      // A sterling run is offered Bacs and the CSV, never a SEPA file.
+      expect(find.text('Bacs Standard 18'), findsOneWidget);
+      expect(find.text('CSV for bulk upload'), findsOneWidget);
+      expect(find.text('SEPA credit transfer (pain.001)'), findsNothing);
+      await tester.tap(find.text('Bacs Standard 18'));
+      await tester.pumpAndSettle();
       expect(server.called('GET', '/payment-runs/r-1/bank-file'), isTrue);
+      expect(
+        server.last('GET', '/bank-file').queryParameters['format'],
+        'BACS18',
+      );
       expect(
         find.text('Bank file for PAY260913-3F9A1C downloaded.'),
         findsOneWidget,
@@ -446,6 +484,169 @@ void main() {
       await add();
       final plain = narrowed.last('POST', '/suppliers').data as Map;
       expect(plain.containsKey('bankSortCode'), isFalse);
+    },
+  );
+
+  testWidgets(
+    "the bank's answer holds a close match until a manager releases it",
+    (tester) async {
+      String? picked;
+      final server = await _pump(
+        tester,
+        status: 'APPROVED',
+        overrides: [
+          statusReportPickerProvider.overrideWithValue(() async => picked),
+        ],
+      );
+      final answer = find.widgetWithText(OutlinedButton, "Bank's answer");
+
+      // Dismissed, or a file too large to be a report: nothing is sent.
+      await tester.tap(answer);
+      await tester.pumpAndSettle();
+      picked = 'x' * (maxStatusReportChars + 1);
+      await tester.tap(answer);
+      await tester.pumpAndSettle();
+      expect(
+        find.text('That file is too large to be a status report.'),
+        findsOneWidget,
+      );
+      expect(server.called('POST', '/status-report'), isFalse);
+
+      picked = '<Document/>';
+      server.run = _checked('APPROVED', {
+        'endToEndId': 'e2e-2',
+        'status': 'ACCP',
+        'payeeMatch': 'CMTC',
+        'matchedName': 'MUSTER HANDELS GMBH',
+        'held': true,
+        'releasable': true,
+      });
+      await tester.tap(answer);
+      await tester.pumpAndSettle();
+      final sent = server.last('POST', '/payment-runs/r-1/status-report');
+      expect(sent.data, '<Document/>');
+      expect(sent.contentType, startsWith('application/xml'));
+      expect(
+        find.text(
+          'Status report read: the bank holds 1 payment(s) in PAY260913-3F9A1C.',
+        ),
+        findsOneWidget,
+      );
+      expect(
+        find.text(
+          'Close match: the bank holds the account as "MUSTER HANDELS GMBH"',
+        ),
+        findsOneWidget,
+      );
+      expect(find.textContaining('1 held by the bank'), findsOneWidget);
+      expect(_filled(tester, 'Mark paid').onPressed, isNull);
+
+      await tester.tap(find.widgetWithText(TextButton, 'Release'));
+      await tester.pumpAndSettle();
+      expect(find.text('Release the payment to Muster GmbH?'), findsOneWidget);
+      await tester.tap(find.widgetWithText(FilledButton, 'Release'));
+      await tester.pumpAndSettle();
+      expect(find.text('Required'), findsOneWidget);
+      expect(server.called('POST', '/release'), isFalse);
+      await tester.enterText(
+        find.widgetWithText(TextFormField, 'What you checked *'),
+        'Rang Muster on the number we hold',
+      );
+      await tester.tap(find.widgetWithText(FilledButton, 'Release'));
+      await tester.pumpAndSettle();
+      expect(
+        server
+            .last('POST', '/payment-runs/r-1/payments/s-2/release')
+            .data['reason'],
+        'Rang Muster on the number we hold',
+      );
+      expect(find.text('Payment to Muster GmbH released.'), findsOneWidget);
+    },
+  );
+
+  testWidgets('a payee the bank could not match cannot be released', (
+    tester,
+  ) async {
+    await _pump(
+      tester,
+      status: 'APPROVED',
+      musterCheck: {
+        'endToEndId': 'e2e-2',
+        'status': 'PDNG',
+        'payeeMatch': 'NMTC',
+        'held': true,
+        'releasable': false,
+      },
+    );
+    expect(
+      find.textContaining('could not match the name to the account'),
+      findsOneWidget,
+    );
+    expect(find.widgetWithText(TextButton, 'Release'), findsNothing);
+    expect(_filled(tester, 'Mark paid').onPressed, isNull);
+  });
+
+  testWidgets(
+    'paying accounts: listed, checked before sending, refusals shown',
+    (tester) async {
+      final server = await _pump(tester);
+      Future<void> open() async {
+        await tester.tap(find.text('Paying accounts'));
+        await tester.pumpAndSettle();
+      }
+
+      Future<void> save() async {
+        await tester.tap(find.widgetWithText(FilledButton, 'Save account'));
+        await tester.pumpAndSettle();
+      }
+
+      Finder field(String label) => find.widgetWithText(TextFormField, label);
+
+      await open();
+      expect(find.text('GBP · Corner Shop Ltd'), findsOneWidget);
+      expect(find.textContaining('****5678'), findsOneWidget);
+      // The tenant's own currency to start from (SJ-D53).
+      expect(
+        tester.widget<TextFormField>(field('Currency *')).controller!.text,
+        'GBP',
+      );
+
+      await tester.enterText(field('Sort code'), 'ab-cd-ef');
+      await tester.enterText(field('Bacs service user number'), '12345');
+      await save();
+      expect(find.text('Required'), findsOneWidget);
+      expect(find.text('Six digits'), findsNWidgets(2));
+      expect(find.text('Required with a sort code'), findsOneWidget);
+      expect(server.called('PUT', '/paying-accounts/GBP'), isFalse);
+
+      await tester.enterText(field('Account holder name *'), 'Corner Shop Ltd');
+      await tester.enterText(field('Sort code'), '40-28-11');
+      await tester.enterText(field('Account number'), '12345678');
+      await tester.enterText(field('Bacs service user number'), '123456');
+      await save();
+      final sent =
+          server.last('PUT', '/payment-runs/paying-accounts/GBP').data as Map;
+      expect(sent['sortCode'], '40-28-11');
+      expect(sent['serviceUserNumber'], '123456');
+      expect(sent['iban'], isNull);
+      expect(
+        find.text('GBP payments are now made from Corner Shop Ltd.'),
+        findsOneWidget,
+      );
+
+      await open();
+      await tester.enterText(field('Currency *'), 'eur');
+      await tester.enterText(field('Account holder name *'), 'Corner Shop BV');
+      await tester.enterText(field('Sort code'), '40-28-11');
+      await tester.enterText(field('Account number'), '12345678');
+      server
+        ..failStatus = 400
+        ..failCode = 'PURCHASE_PAYING_ACCOUNT_INVALID'
+        ..failMessage = 'a euro paying account needs its IBAN';
+      await save();
+      expect(server.called('PUT', '/paying-accounts/EUR'), isTrue);
+      expect(find.text('a euro paying account needs its IBAN'), findsOneWidget);
+      expect(find.text('Paying accounts'), findsWidgets);
     },
   );
 }

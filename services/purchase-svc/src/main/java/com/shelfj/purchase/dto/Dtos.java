@@ -674,7 +674,12 @@ public final class Dtos {
           boolean remittanceEmailOnFile,
       @Schema(description = "BANK_DETAILS_CHANGED_RECENTLY when they changed in the last 14 days.")
           List<String> warnings,
-      List<PaymentRunDocumentResponse> documents) {}
+      List<PaymentRunDocumentResponse> documents,
+      @Schema(
+              description =
+                  "What the bank's latest status report said about this payment; absent until one"
+                      + " is read (17.12).")
+          PayeeCheckResponse bankCheck) {}
 
   @Schema(name = "PaymentRunDocumentResponse")
   public record PaymentRunDocumentResponse(
@@ -754,4 +759,64 @@ public final class Dtos {
       BigDecimal giftCardsRedeemed,
       @Schema(description = "Gift card breakage recognised (4031).") BigDecimal giftCardBreakage,
       BigDecimal giftCardLiability) {}
+
+  // ── Bank-standard payment files (17.12) ─────────────────────────────────────
+
+  @Schema(
+      name = "PayingAccountRequest",
+      description = "The account supplier payments are made from.")
+  public record PayingAccountRequest(
+      @Schema(description = "The account holder's name as the bank holds it.")
+          @NotBlank
+          @Size(max = 140)
+          String accountName,
+      @Schema(description = "A UK sort code, six digits.") String sortCode,
+      @Schema(description = "A UK account number, eight digits.") String accountNumber,
+      @Schema(description = "An IBAN; required for a euro account.") String iban,
+      String bic,
+      @Schema(
+              description =
+                  "The six-digit Bacs service user number, for a sterling account that sends Bacs"
+                      + " Standard 18 files.")
+          String serviceUserNumber) {}
+
+  @Schema(name = "PayingAccountResponse")
+  public record PayingAccountResponse(
+      String currency,
+      String accountName,
+      String sortCode,
+      @Schema(description = "The last four digits only.") String accountNumberMasked,
+      @Schema(description = "The last four characters only.") String ibanMasked,
+      String bic,
+      String serviceUserNumber,
+      @Schema(description = "Whether a Bacs Standard 18 file can be sent from it.")
+          boolean sendsBacs,
+      @Schema(description = "Whether a pain.001 SEPA file can be sent from it.") boolean sendsSepa,
+      UUID setBy,
+      Instant setAt) {}
+
+  @Schema(name = "ReleasePayeeRequest")
+  public record ReleasePayeeRequest(
+      @Schema(
+              description =
+                  "What was checked, e.g. the supplier confirmed the name the bank holds is theirs.")
+          @NotBlank
+          @Size(max = 500)
+          String reason) {}
+
+  @Schema(name = "PayeeCheckResponse", description = "The bank's answer on one payment.")
+  public record PayeeCheckResponse(
+      @Schema(description = "The end-to-end id the file gave the payment.") String endToEndId,
+      @Schema(description = "ISO status: ACCP, ACSP, ACSC, PDNG, RJCT and so on.") String status,
+      @Schema(description = "The bank's reason code, e.g. AC04 for a closed account.")
+          String reasonCode,
+      @Schema(description = "Verification of Payee: MTCH, CMTC, NMTC or NOAP.") String payeeMatch,
+      @Schema(description = "On a close match, the name the bank holds for the account.")
+          String matchedName,
+      @Schema(description = "Whether the bank's answer stops the payment.") boolean held,
+      @Schema(description = "Whether a manager may release it: a close match not rejected.")
+          boolean releasable,
+      UUID releasedBy,
+      Instant releasedAt,
+      String releaseReason) {}
 }

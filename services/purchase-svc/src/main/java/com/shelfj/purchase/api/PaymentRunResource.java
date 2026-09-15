@@ -12,6 +12,7 @@ import jakarta.ws.rs.Consumes;
 import jakarta.ws.rs.DefaultValue;
 import jakarta.ws.rs.GET;
 import jakarta.ws.rs.POST;
+import jakarta.ws.rs.PUT;
 import jakarta.ws.rs.Path;
 import jakarta.ws.rs.PathParam;
 import jakarta.ws.rs.Produces;
@@ -35,6 +36,7 @@ import org.eclipse.microprofile.openapi.annotations.tags.Tag;
 public class PaymentRunResource {
 
   @Inject PaymentRunService svc;
+  @Inject com.shelfj.purchase.service.BankFileService files;
   @Inject com.shelfj.web.TenantContext ctx;
 
   @Operation(
@@ -141,22 +143,117 @@ public class PaymentRunResource {
   @Operation(
       summary = "The bank file for an approved or paid run",
       description =
-          "CSV, one payment per supplier: payee name, sort code and account number or IBAN and"
-              + " BIC, amount, currency and the run reference. Cells are guarded against formula"
-              + " injection. Never cached. Refused when any supplier's bank details changed after"
-              + " the run was approved.")
+          "?format=CSV (the default): one payment per supplier, payee name, sort code and account"
+              + " number or IBAN and BIC, amount, currency and the run reference, cells guarded"
+              + " against formula injection. ?format=PAIN001 (17.12): an ISO 20022 pain.001.001.09"
+              + " SEPA credit transfer initiation for a euro run, from the euro paying account, one"
+              + " transfer per supplier to its IBAN, the run reference as message id and remittance."
+              + " ?format=BACS18: a Bacs Standard 18 direct credit file for a sterling run, from the"
+              + " sterling paying account and its service user number, with the processing day the"
+              + " banking day before the payment date. Never cached. Refused when any supplier's"
+              + " bank details, or the paying account, changed after the run was approved.")
   @APIResponse(responseCode = "200", description = "The file")
+  @APIResponse(responseCode = "400", description = "PURCHASE_BANK_FILE_FORMAT_UNKNOWN")
   @APIResponse(responseCode = "404", description = "Not found")
-  @APIResponse(responseCode = "409", description = "Not approved, or bank details changed")
+  @APIResponse(
+      responseCode = "409",
+      description =
+          "Not approved, bank details or the paying account changed, a format the run's currency"
+              + " does not take, no paying account, a supplier the format cannot pay, or a Bacs"
+              + " payment date too soon")
   @GET
   @Path("/{id}/bank-file")
-  @Produces({"text/csv", MediaType.APPLICATION_JSON})
-  public Response bankFile(@PathParam("id") UUID id) {
-    PaymentRunService.Export file = svc.bankFile(ctx, id);
-    return Response.ok(file.csv())
-        .type("text/csv")
+  @Produces({"text/csv", "application/xml", "text/plain", MediaType.APPLICATION_JSON})
+  public Response bankFile(@PathParam("id") UUID id, @QueryParam("format") String format) {
+    var file = files.bankFile(ctx, id, format);
+    return Response.ok(file.body())
+        .type(file.contentType())
         .header("Content-Disposition", "attachment; filename=\"" + file.fileName() + "\"")
         .header("Cache-Control", "no-store")
+        .build();
+  }
+
+  @Operation(
+      summary = "The accounts supplier payments are made from",
+      description = "One per currency, the latest set; account numbers and IBANs masked (17.12).")
+  @APIResponse(responseCode = "200", description = "The paying accounts")
+  @GET
+  @Path("/paying-accounts")
+  public Response payingAccounts() {
+    return Response.ok(
+            ApiResponse.ok(files.payingAccounts(ctx).stream().map(Mappers::toDto).toList()))
+        .build();
+  }
+
+  @Operation(
+      summary = "Set the account a currency's payments are made from",
+      description =
+          "The account holder's name, and a UK sort code and account number or an IBAN (with an"
+              + " optional BIC); a euro account needs its IBAN; a Bacs service user number goes"
+              + " with a UK account. Kept as history: a change made after a run was approved stops"
+              + " that run's bank file.")
+  @APIResponse(responseCode = "200", description = "The paying account in force")
+  @APIResponse(
+      responseCode = "400",
+      description = "PURCHASE_PAYING_ACCOUNT_INVALID naming what is wrong, or a currency code")
+  @PUT
+  @Path("/paying-accounts/{currency}")
+  public Response setPayingAccount(
+      @PathParam("currency") String currency,
+      com.shelfj.purchase.dto.Dtos.PayingAccountRequest req) {
+    Validations.validate(req);
+    return Response.ok(ApiResponse.ok(Mappers.toDto(files.setPayingAccount(ctx, currency, req))))
+        .build();
+  }
+
+  @Operation(
+      summary = "Read the bank's status report for a run's file",
+      description =
+          "An ISO 20022 pain.002 customer payment status report, as XML. Each payment is matched"
+              + " by the end-to-end id the file gave it; a rejected payment, or a payee the bank"
+              + " could not match (NMTC) or matched only closely (CMTC), is held, and the run cannot"
+              + " be paid while it is. A report is recorded once by its message id. Only for an"
+              + " approved run not yet paid.")
+  @APIResponse(responseCode = "200", description = "The run, with each supplier's bank check")
+  @APIResponse(
+      responseCode = "400",
+      description =
+          "PURCHASE_STATUS_REPORT_INVALID: not a well-formed pain.002, a DTD, an unknown status")
+  @APIResponse(
+      responseCode = "409",
+      description =
+          "The run is not approved or already paid, the report answers another file"
+              + " (PURCHASE_STATUS_REPORT_NOT_FOR_RUN), or names a payment the run does not make"
+              + " (PURCHASE_STATUS_REPORT_UNKNOWN_PAYMENT)")
+  @POST
+  @Path("/{id}/status-report")
+  @Consumes({"application/xml", "text/xml"})
+  public Response statusReport(@PathParam("id") UUID id, String xml) {
+    return Response.ok(ApiResponse.ok(Mappers.toDto(files.recordStatusReport(ctx, id, xml))))
+        .build();
+  }
+
+  @Operation(
+      summary = "Release a held close match",
+      description =
+          "With a reason saying what was checked. Only a close match the bank did not reject can"
+              + " be released; a payee the bank could not match, or a rejected payment, cannot be"
+              + " paid by this run. Once.")
+  @APIResponse(responseCode = "200", description = "The run")
+  @APIResponse(responseCode = "400", description = "No reason")
+  @APIResponse(
+      responseCode = "409",
+      description =
+          "PURCHASE_PAYEE_NOT_HELD, PURCHASE_PAYEE_NOT_RELEASABLE, PURCHASE_PAYEE_ALREADY_RELEASED,"
+              + " or the run is not approved")
+  @POST
+  @Path("/{id}/payments/{supplierId}/release")
+  public Response release(
+      @PathParam("id") UUID id,
+      @PathParam("supplierId") UUID supplierId,
+      com.shelfj.purchase.dto.Dtos.ReleasePayeeRequest req) {
+    Validations.validate(req);
+    return Response.ok(ApiResponse.ok(Mappers.toDto(files.release(ctx, id, supplierId, req))))
         .build();
   }
 }

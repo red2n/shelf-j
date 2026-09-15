@@ -21,6 +21,10 @@ final class PurchaseFixtures {
   private static final String TABLES =
       String.join(
           ", ",
+          "purchase.payment_hold_releases",
+          "purchase.payment_statuses",
+          "purchase.payment_status_reports",
+          "purchase.paying_accounts",
           "purchase.payment_run_items",
           "purchase.sales_orders",
           "purchase.sales_tenders",
