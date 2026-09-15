@@ -3,6 +3,8 @@ package com.shelfj.order.service;
 import static com.shelfj.events.EventPayload.esc;
 
 import com.shelfj.ids.Ids;
+import com.shelfj.order.domain.Domain.GiftCard;
+import com.shelfj.order.domain.Domain.GiftCardTransaction;
 import com.shelfj.order.domain.Domain.OrderItem;
 import com.shelfj.order.domain.Domain.ReturnItem;
 import com.shelfj.order.domain.RecallNotice.Line;
@@ -24,6 +26,7 @@ import java.util.UUID;
 public final class Events {
 
   static final String TOPIC_RECALL_NOTICE_ISSUED = "shelfj.order.recall-notice-issued";
+  static final String TOPIC_GIFT_CARD_LOADED = "shelfj.order.gift-card-loaded";
 
   private Events() {}
 
@@ -76,6 +79,27 @@ public final class Events {
         n.tenantId(),
         n.id(),
         b.build().toString());
+  }
+
+  /**
+   * A gift card issued or reloaded, and how it was paid for (17.11): purchase-svc posts the money
+   * taken, or the value given away, against the gift card liability, once per card transaction.
+   */
+  static OutboxRow giftCardLoaded(GiftCard gc, GiftCardTransaction tx, String paidBy) {
+    JsonObjectBuilder b =
+        Json.createObjectBuilder()
+            .add("eventId", Ids.newId().toString())
+            .add("eventType", "GiftCardLoaded")
+            .add("tenantId", gc.tenantId().toString())
+            .add("giftCardId", gc.id().toString())
+            .add("transactionId", tx.id().toString())
+            .add("kind", tx.txType())
+            .add("amount", tx.amount())
+            .add("currency", gc.currency())
+            .add("paidBy", paidBy);
+    nullable(b, "storeId", gc.storeId() == null ? null : gc.storeId().toString());
+    return new OutboxRow(
+        "GiftCardLoaded", TOPIC_GIFT_CARD_LOADED, gc.tenantId(), gc.id(), b.build().toString());
   }
 
   private static void nullable(JsonObjectBuilder b, String name, String value) {

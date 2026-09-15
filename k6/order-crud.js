@@ -270,15 +270,17 @@ export default function ({ tenant, rival, shopper, stranger }) {
   expect(call('POST', '/api/order-svc/pos/no-sale', { token: shopper.token, body: { storeId } }), '[-] a customer cannot open the drawer', 403);
 
   // ── gift cards ──────────────────────────────────────────────────────────────
-  const card = call('POST', '/api/order-svc/gift-cards', { token: t, body: { storeId, amount: 50, currency: 'GBP' } });
+  const card = call('POST', '/api/order-svc/gift-cards', { token: t, body: { storeId, amount: 50, currency: 'GBP', paidBy: 'CARD' } });
   expect(card, '[+] issue a £50 gift card', 201);
   const code = data(card).code;
-  expect(call('POST', '/api/order-svc/gift-cards', { token: t, body: { storeId, amount: 0 } }), '[-] gift card: amount above zero', 400);
+  expect(call('POST', '/api/order-svc/gift-cards', { token: t, body: { storeId, amount: 0, paidBy: 'CASH' } }), '[-] gift card: amount above zero', 400);
+  expect(call('POST', '/api/order-svc/gift-cards', { token: t, body: { storeId, amount: 50 } }), '[-] gift card: how it was paid for is required', 400);
+  expect(call('POST', '/api/order-svc/gift-cards', { token: t, body: { storeId, amount: 50, paidBy: 'GIFT_CARD' } }), '[-] gift card: not bought with another gift card', 400, 'GIFT_CARD_PAID_BY_INVALID');
   expect(call('GET', `/api/order-svc/gift-cards/${code}`, { token: t }), '[+] check a gift card', 200);
   expect(call('GET', `/api/order-svc/gift-cards/${code}`, { token: rival.owner.token }), "[-] another tenant's card is unknown", 404);
   expect(call('POST', `/api/order-svc/gift-cards/${code}/redeem`, { token: t, body: { amount: 20, orderId: order.id } }), '[+] redeem £20', 200);
   expect(call('POST', `/api/order-svc/gift-cards/${code}/redeem`, { token: t, body: { amount: 31 } }), '[-] redeem more than the balance', [409, 422]);
-  expect(call('POST', `/api/order-svc/gift-cards/${code}/reload`, { token: t, body: { amount: 10 } }), '[+] reload £10', 200);
+  expect(call('POST', `/api/order-svc/gift-cards/${code}/reload`, { token: t, body: { amount: 10, paidBy: 'CASH' } }), '[+] reload £10', 200);
   const balance = data(call('GET', `/api/order-svc/gift-cards/${code}`, { token: t }));
   truthy('[+] balance is 50 - 20 + 10', Number(balance.currentBalance) === 40 && Number(balance.initialBalance) === 50, balance);
   const tx = call('GET', `/api/order-svc/gift-cards/${code}/transactions`, { token: t });

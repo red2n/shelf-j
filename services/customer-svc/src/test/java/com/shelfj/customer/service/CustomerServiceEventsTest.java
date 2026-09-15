@@ -1,10 +1,12 @@
 package com.shelfj.customer.service;
 
 import static org.junit.jupiter.api.Assertions.assertEquals;
+import static org.junit.jupiter.api.Assertions.assertNotEquals;
 import static org.junit.jupiter.api.Assertions.assertNotNull;
 import static org.mockito.ArgumentMatchers.any;
 import static org.mockito.ArgumentMatchers.anyString;
 import static org.mockito.ArgumentMatchers.eq;
+import static org.mockito.Mockito.verify;
 import static org.mockito.Mockito.when;
 
 import com.shelfj.customer.domain.Domain.Customer;
@@ -16,8 +18,12 @@ import com.shelfj.customer.dto.Dtos.RedeemStoreCreditRequest;
 import com.shelfj.customer.repo.CustomerRepository;
 import com.shelfj.ids.Ids;
 import com.shelfj.service.OutboxRow;
+import jakarta.json.Json;
+import jakarta.json.JsonObject;
+import java.io.StringReader;
 import java.math.BigDecimal;
 import java.time.Instant;
+import java.util.List;
 import java.util.Optional;
 import java.util.UUID;
 import org.junit.jupiter.api.BeforeEach;
@@ -59,7 +65,9 @@ class CustomerServiceEventsTest {
                   : named.trim().toUpperCase(java.util.Locale.ROOT);
             });
     service.repo = repo;
-    when(repo.findById(eq(TENANT), eq(CUSTOMER)))
+    // Lenient: an accrual never looks the customer up.
+    org.mockito.Mockito.lenient()
+        .when(repo.findById(eq(TENANT), eq(CUSTOMER)))
         .thenReturn(
             Optional.of(
                 new Customer(
@@ -77,6 +85,52 @@ class CustomerServiceEventsTest {
                     null,
                     Instant.now(),
                     Instant.now())));
+  }
+
+  @Test
+  void anAccrualCarriesItsOwnIdAndTheSaleItCameFrom() {
+    service.pointsPerUnitRaw = "1";
+    UUID order = Ids.newId();
+    service.accrueLoyaltyFromOrder(
+        Ids.newId(), TENANT, CUSTOMER, order, new BigDecimal("24.00"), new BigDecimal("4.00"));
+
+    ArgumentCaptor<OutboxRow> captor = ArgumentCaptor.forClass(OutboxRow.class);
+    verify(repo)
+        .accrueFromOrderOnce(
+            any(),
+            any(),
+            eq(TENANT),
+            eq(CUSTOMER),
+            eq(order),
+            eq(new BigDecimal("24.00")),
+            anyString(),
+            captor.capture());
+    JsonObject p = Json.createReader(new StringReader(captor.getValue().payload())).readObject();
+    assertEquals("LoyaltyEarned", p.getString("eventType"));
+    assertNotNull(UUID.fromString(p.getString("eventId")));
+    assertEquals(order.toString(), p.getString("orderId"));
+    assertEquals(
+        0, new BigDecimal("24.00").compareTo(p.getJsonNumber("orderTotal").bigDecimalValue()));
+    assertEquals(
+        0, new BigDecimal("4.00").compareTo(p.getJsonNumber("orderTaxAmount").bigDecimalValue()));
+  }
+
+  @Test
+  void everyLoyaltyEventCarriesADistinctId() {
+    ArgumentCaptor<OutboxRow> captor = ArgumentCaptor.forClass(OutboxRow.class);
+    when(repo.adjustPoints(eq(TENANT), eq(CUSTOMER), any(), anyString(), captor.capture()))
+        .thenReturn(null);
+    service.adjustPoints(TENANT, CUSTOMER, new AdjustPointsRequest(BigDecimal.ONE, "one"));
+    service.adjustPoints(TENANT, CUSTOMER, new AdjustPointsRequest(BigDecimal.ONE, "two"));
+
+    List<String> ids =
+        captor.getAllValues().stream()
+            .map(e -> Json.createReader(new StringReader(e.payload())).readObject())
+            .peek(p -> assertEquals("LoyaltyAdjusted", p.getString("eventType")))
+            .map(p -> p.getString("eventId"))
+            .toList();
+    assertEquals(2, ids.size());
+    assertNotEquals(ids.get(0), ids.get(1));
   }
 
   @Test

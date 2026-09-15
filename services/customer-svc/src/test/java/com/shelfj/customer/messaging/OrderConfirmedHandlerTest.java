@@ -50,7 +50,7 @@ class OrderConfirmedHandlerTest {
         + customerIdJson
         + ",\"total\":"
         + total
-        + ",\"currency\":\"GBP\"}";
+        + ",\"taxAmount\":6.67,\"currency\":\"GBP\"}";
   }
 
   @Test
@@ -59,14 +59,42 @@ class OrderConfirmedHandlerTest {
 
     verify(service)
         .accrueLoyaltyFromOrder(
-            eq(EVENT), eq(TENANT), eq(CUSTOMER), eq(ORDER), eq(new BigDecimal("40.00")));
+            eq(EVENT),
+            eq(TENANT),
+            eq(CUSTOMER),
+            eq(ORDER),
+            eq(new BigDecimal("40.00")),
+            eq(new BigDecimal("6.67")));
+  }
+
+  @Test
+  void anEventFromBeforeTheVatWasCarriedAccruesWithNone() {
+    handler.handle(
+        "{\"eventId\":\""
+            + EVENT
+            + "\",\"eventType\":\"OrderConfirmed\",\"tenantId\":\""
+            + TENANT
+            + "\",\"orderId\":\""
+            + ORDER
+            + "\",\"customerId\":\""
+            + CUSTOMER
+            + "\",\"total\":12.00}");
+
+    verify(service)
+        .accrueLoyaltyFromOrder(
+            eq(EVENT),
+            eq(TENANT),
+            eq(CUSTOMER),
+            eq(ORDER),
+            eq(new BigDecimal("12.00")),
+            eq(BigDecimal.ZERO));
   }
 
   @Test
   void guestOrderWithNullCustomerIsSkipped() {
     handler.handle(payload("null", "40.00"));
 
-    verify(service, never()).accrueLoyaltyFromOrder(any(), any(), any(), any(), any());
+    verify(service, never()).accrueLoyaltyFromOrder(any(), any(), any(), any(), any(), any());
   }
 
   @Test
@@ -83,13 +111,13 @@ class OrderConfirmedHandlerTest {
 
     handler.handle(legacy);
 
-    verify(service, never()).accrueLoyaltyFromOrder(any(), any(), any(), any(), any());
+    verify(service, never()).accrueLoyaltyFromOrder(any(), any(), any(), any(), any(), any());
   }
 
   @Test
   void malformedJsonIsSkippedWithoutThrowing() {
     handler.handle("{not valid json");
 
-    verify(service, never()).accrueLoyaltyFromOrder(any(), any(), any(), any(), any());
+    verify(service, never()).accrueLoyaltyFromOrder(any(), any(), any(), any(), any(), any());
   }
 }

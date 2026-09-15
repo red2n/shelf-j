@@ -322,7 +322,7 @@ Server-side shopping cart for the online channel: session-scoped and customer ca
 The transaction/sales-journal service for **both** channels: online orders/returns and POS parked sales, layaway, gift cards, special orders, receipts.
 - **API:** `/orders` create/confirm/cancel/fulfil/void/returns; `/layaways` create/deposit/complete/cancel; `/gift-cards` issue/reload/redeem/transactions; `/pos/parked-sales`, `/pos/no-sale`; `/admin/special-orders`; `/admin/pos-log`; `/admin/pos/stock-positions`; `/admin/orders/{id}/receipts` (e-journal, print/email).
 - **Tables:** `orders`, `order_items`, `order_status_history` (append-only), `returns`, `layaways`, `gift_cards`, `gift_card_transactions`, `parked_sales`, `special_orders`, `pos_log_entries`, `order_receipts`, `idempotency_keys`, `receipt_series`, `fiscal_receipts` (append-only, hash-chained, stamped by the store's fiscal regime), `fiscal_store_settings`, `tse_devices`, `age_verifications` (append-only), `customer_erasures`.
-- **Events:** publishes `OrderPlaced`, `OrderConfirmed`, `OrderCancelled`, `OrderFulfilled`, `OrderReturned`, `OrderVoided`, `LayawayCreated/Completed/Cancelled`, `RecallNoticeIssued` (05.10: a recall's notice to a buyer the order identifies); consumes `StockReceived`/`StockDeducted`/`StockAdjusted` (POS stock-position projection), `PaymentCaptured`/`PaymentFailed`/`PaymentRefunded`, `RecallSaleAffected` (issues the notice), tenant/store status.
+- **Events:** publishes `OrderPlaced`, `OrderConfirmed`, `OrderCancelled`, `OrderFulfilled`, `OrderReturned`, `OrderVoided`, `LayawayCreated/Completed/Cancelled`, `RecallNoticeIssued` (05.10: a recall's notice to a buyer the order identifies), `GiftCardLoaded` (17.11: a gift card issued or reloaded, and how it was paid for); consumes `StockReceived`/`StockDeducted`/`StockAdjusted` (POS stock-position projection), `PaymentCaptured`/`PaymentFailed`/`PaymentRefunded`, `RecallSaleAffected` (issues the notice), tenant/store status.
 - **Notable:** POS and online share the **same endpoints** — only `channel`/`fulfilment_type` differ. Idempotency-Key on checkout. See [§12 checkout saga](#12-key-workflows).
 
 ### payment-svc — Payments & Cash Management
@@ -336,14 +336,14 @@ Payment capture/refund plus till sessions, cash drawer movements, and end-of-day
 Suppliers, purchase orders, goods receipts, and finance-adjacent intercompany invoicing.
 - **API:** `/suppliers`; `/purchase-orders` create/submit/lines; `/goods-receipts`; `/intercompany-invoices` (+settle); `/nominal-ledger` (read-only double-entry view).
 - **Tables:** `suppliers`, `purchase_orders`, `purchase_order_lines`, `purchase_order_approvals` (append-only), `goods_receipts`, `goods_receipt_lines`, `supplier_invoices`, `supplier_invoice_lines`, `vendor_returns`, `vendor_return_lines`, `debit_note_series` (07.8), `intercompany_invoices`, `nominal_ledger_entries`.
-- **Events:** publishes `PurchaseOrderCreated`, `GoodsReceived`, `IntercompanyInvoiceRaised`, `SupplierInvoiceCaptured`.
+- **Events:** publishes `PurchaseOrderCreated`, `GoodsReceived`, `IntercompanyInvoiceRaised`, `SupplierInvoiceCaptured`; consumes `OrderConfirmed`, `PaymentCaptured` and `PaymentRefunded` (17.7: the sale, its tenders and refunds on the nominal ledger) and `LoyaltyEarned/Redeemed/Adjusted` and `GiftCardLoaded` (17.11: deferred revenue for loyalty points and gift card breakage), each posted once.
 - **Notable:** FRS 102/UK GAAP-style double-entry nominal ledger; intercompany AR/AP invoicing for inter-org transfers.
 
 ### customer-svc — Customers, Loyalty, Store Credit
 Customer profiles, addresses, and two append-only ledgers.
 - **API:** `/customers` CRUD (+anonymize-on-delete), addresses CRUD; `/{id}/loyalty` earn/redeem/adjust/ledger; `/{id}/store-credit` issue/redeem.
 - **Tables:** `customers`, `customer_addresses`, `loyalty_accounts`, `loyalty_ledger` (append-only), `store_credit_accounts`, `store_credit_ledger` (append-only).
-- **Events:** publishes `CustomerRegistered`, `LoyaltyEarned/Redeemed/Adjusted`, `StoreCreditIssued/Redeemed`; consumes `OrderConfirmed` (auto-accrues loyalty points, deduped by event id).
+- **Events:** publishes `CustomerRegistered`, `LoyaltyEarned/Redeemed/Adjusted` (each with its own `eventId`; an accrual carries the sale's `orderTotal` and `orderTaxAmount`, which purchase-svc defers the points' share of, 17.11), `StoreCreditIssued/Redeemed`; consumes `OrderConfirmed` (auto-accrues loyalty points, deduped by event id).
 - **Notable:** GDPR-style anonymize-on-delete; both ledgers are auditable balances, never mutable counters.
 
 ### notification-svc — Alerting

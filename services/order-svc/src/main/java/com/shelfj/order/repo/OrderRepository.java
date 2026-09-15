@@ -1681,9 +1681,10 @@ public class OrderRepository extends BaseOutboxRepository {
    *
    * @param gc the card to persist, with its code and opening balance
    * @param tx the {@code ISSUE} transaction recording that balance
+   * @param loaded the {@code GiftCardLoaded} event, written in the same transaction (17.11)
    * @return the card as stored
    */
-  public GiftCard issueGiftCard(GiftCard gc, GiftCardTransaction tx) {
+  public GiftCard issueGiftCard(GiftCard gc, GiftCardTransaction tx, OutboxRow loaded) {
     return inTx(
         c -> {
           try (PreparedStatement ps =
@@ -1714,6 +1715,7 @@ public class OrderRepository extends BaseOutboxRepository {
             throw sqle;
           }
           insertGiftCardTx(c, tx);
+          insertOutbox(c, loaded);
           return gc;
         },
         "issue gift card");
@@ -1748,10 +1750,17 @@ public class OrderRepository extends BaseOutboxRepository {
    * @param code the card's code
    * @param amount the amount to add
    * @param reference free-text reference recorded on the transaction
+   * @param loaded builds the {@code GiftCardLoaded} event from the card and the transaction,
+   *     written in the same transaction (17.11)
    * @return the card with its new balance
    * @throws com.shelfj.web.ApiException when the card does not exist or is not active
    */
-  public GiftCard reloadGiftCard(UUID tenantId, String code, BigDecimal amount, String reference) {
+  public GiftCard reloadGiftCard(
+      UUID tenantId,
+      String code,
+      BigDecimal amount,
+      String reference,
+      java.util.function.BiFunction<GiftCard, GiftCardTransaction, OutboxRow> loaded) {
     return inTx(
         c -> {
           GiftCard gc = findGiftCardByCodeInTx(c, tenantId, code);
@@ -1769,8 +1778,7 @@ public class OrderRepository extends BaseOutboxRepository {
             ps.setString(3, code);
             ps.executeUpdate();
           }
-          insertGiftCardTx(
-              c,
+          GiftCardTransaction tx =
               new GiftCardTransaction(
                   Ids.newId(),
                   tenantId,
@@ -1781,7 +1789,9 @@ public class OrderRepository extends BaseOutboxRepository {
                   after,
                   null,
                   reference,
-                  Instant.now()));
+                  Instant.now());
+          insertGiftCardTx(c, tx);
+          insertOutbox(c, loaded.apply(gc, tx));
           return findGiftCardByCodeInTx(c, tenantId, code);
         },
         "reload gift card");

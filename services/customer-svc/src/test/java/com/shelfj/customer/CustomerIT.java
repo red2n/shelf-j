@@ -327,17 +327,28 @@ class CustomerIT {
 
     // Order A: £40 spent → 40 points at the default 1-point-per-unit rate.
     loyalty.accrueLoyaltyFromOrder(
-        eventA, tenant, customerId, com.shelfj.ids.Ids.newId(), new java.math.BigDecimal("40.00"));
+        eventA,
+        tenant,
+        customerId,
+        com.shelfj.ids.Ids.newId(),
+        new java.math.BigDecimal("40.00"),
+        java.math.BigDecimal.ZERO);
     // Redelivery of the SAME event must not accrue again (dedupe on eventId).
     loyalty.accrueLoyaltyFromOrder(
-        eventA, tenant, customerId, com.shelfj.ids.Ids.newId(), new java.math.BigDecimal("40.00"));
+        eventA,
+        tenant,
+        customerId,
+        com.shelfj.ids.Ids.newId(),
+        new java.math.BigDecimal("40.00"),
+        java.math.BigDecimal.ZERO);
     // A genuinely different order (new eventId) accrues normally → 50.
     loyalty.accrueLoyaltyFromOrder(
         com.shelfj.ids.Ids.newId(),
         tenant,
         customerId,
         com.shelfj.ids.Ids.newId(),
-        new java.math.BigDecimal("10.00"));
+        new java.math.BigDecimal("10.00"),
+        java.math.BigDecimal.ZERO);
 
     String acct =
         target

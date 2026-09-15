@@ -31,6 +31,8 @@ class _FakeApiClient implements ApiClient {
 class _RecordingAdapter implements HttpClientAdapter {
   final List<({String path, Map<String, dynamic> query})> calls = [];
   final Map<String, String> bodyFor = {};
+  final Map<String, int> statusFor = {};
+  final List<RequestOptions> requests = [];
 
   @override
   void close({bool force = false}) {}
@@ -39,11 +41,13 @@ class _RecordingAdapter implements HttpClientAdapter {
   Future<ResponseBody> fetch(
       RequestOptions options, Stream<List<int>>? stream, Future<void>? cancel) async {
     calls.add((path: options.path, query: Map.of(options.queryParameters)));
-    final body = bodyFor.entries
-        .firstWhere((e) => options.path.contains(e.key),
-            orElse: () => const MapEntry('', '{"data":[]}'))
-        .value;
-    return ResponseBody.fromString(body, 200, headers: {
+    requests.add(options);
+    // The longest fragment wins, so '/deferred-revenue/settings' is not answered as '/deferred-revenue'.
+    final keys = bodyFor.keys.where(options.path.contains).toList()
+      ..sort((a, b) => b.length.compareTo(a.length));
+    final body = keys.isEmpty ? '{"data":[]}' : bodyFor[keys.first]!;
+    final status = keys.isEmpty ? 200 : (statusFor[keys.first] ?? 200);
+    return ResponseBody.fromString(body, status, headers: {
       Headers.contentTypeHeader: [Headers.jsonContentType]
     });
   }
@@ -424,6 +428,68 @@ void main() {
       await tester.pumpAndSettle();
       expect(find.textContaining("Every sale's takings cleared"), findsOneWidget);
       expect(find.textContaining('Open sales clearing'), findsNothing);
+    });
+
+    Future<void> openDeferredRevenue(WidgetTester tester) async {
+      await tester.ensureVisible(find.text('Deferred Revenue', skipOffstage: false).last);
+      await tester.pumpAndSettle();
+      await tester.tap(find.text('Deferred Revenue').last);
+      await tester.pumpAndSettle();
+    }
+
+    const waiting = '{"data":{"history":[],"pointsOutstanding":0,"deferredIncome":0,'
+        '"pointsUnmatched":0,"eventsAwaitingEstimates":3,"giftCardsLoaded":120,'
+        '"giftCardsRedeemed":55,"giftCardBreakage":0,"giftCardLiability":65}}';
+
+    testWidgets('deferred revenue with no estimates says what is waiting (17.11)', (tester) async {
+      await pump(tester, _RecordingAdapter()..bodyFor['deferred-revenue'] = waiting);
+      await openDeferredRevenue(tester);
+      expect(find.textContaining('3 loyalty event(s) are waiting'), findsOneWidget);
+      expect(find.text('Set estimates'), findsOneWidget);
+      expect(find.text('65.00'), findsOneWidget);
+      expect(find.text('Deferred income (2330)'), findsOneWidget);
+    });
+
+    testWidgets('estimates need a reason, a refusal is shown in words, and what is saved is what was typed',
+        (tester) async {
+      final adapter = _RecordingAdapter()..bodyFor['deferred-revenue'] = waiting;
+      await pump(tester, adapter);
+      await openDeferredRevenue(tester);
+      await tester.tap(find.byKey(const Key('set-estimates')));
+      await tester.pumpAndSettle();
+      await tester.enterText(find.byKey(const Key('estimate-point-value')), '0.05');
+      await tester.enterText(find.byKey(const Key('estimate-points-breakage')), '96');
+      await tester.enterText(find.byKey(const Key('estimate-gift-card-breakage')), '10');
+      await tester.tap(find.byKey(const Key('save-estimates')));
+      await tester.pumpAndSettle();
+      expect(find.textContaining('the reason for them'), findsOneWidget);
+      expect(adapter.requests.where((r) => r.method == 'PUT'), isEmpty);
+
+      adapter
+        ..bodyFor['deferred-revenue/settings'] =
+            '{"error":{"code":"PURCHASE_BREAKAGE_OUT_OF_RANGE","message":"a breakage estimate is a percentage from 0 to 95, to two decimal places"}}'
+        ..statusFor['deferred-revenue/settings'] = 400;
+      await tester.enterText(find.byKey(const Key('estimate-reason')), 'Two years of scheme data');
+      await tester.tap(find.byKey(const Key('save-estimates')));
+      await tester.pumpAndSettle();
+      expect(find.textContaining('from 0 to 95'), findsOneWidget);
+      expect(find.byKey(const Key('save-estimates')), findsOneWidget);
+
+      adapter
+        ..bodyFor['deferred-revenue/settings'] = '{"data":{}}'
+        ..statusFor.remove('deferred-revenue/settings');
+      await tester.enterText(find.byKey(const Key('estimate-points-breakage')), '20');
+      await tester.tap(find.byKey(const Key('save-estimates')));
+      await tester.pumpAndSettle();
+      final put = adapter.requests.lastWhere((r) => r.method == 'PUT');
+      expect(put.path, contains('/nominal-ledger/deferred-revenue/settings'));
+      expect(put.data, {
+        'pointValue': 0.05,
+        'pointsBreakagePct': 20.0,
+        'giftCardBreakagePct': 10.0,
+        'reason': 'Two years of scheme data',
+      });
+      expect(find.byKey(const Key('save-estimates')), findsNothing);
     });
 
     testWidgets('an empty trial balance says so, and opens the journal dialog', (tester) async {

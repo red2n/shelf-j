@@ -1618,6 +1618,7 @@ public class OrderService {
     // requireTenantId (not the nullable tenantId()) so issuing a gift card without a tenant in
     // context fails 401 rather than minting stored value against a null-tenant row.
     UUID tenantId = ctx.requireTenantId();
+    String paidBy = giftCardPaidBy(req.paidBy());
     UUID storeId = Parsing.uuid(req.storeId(), "storeId");
     ctx.requireStoreAccess(storeId);
     UUID gcId = Ids.newId();
@@ -1652,7 +1653,7 @@ public class OrderService {
             null,
             Instant.now());
 
-    return repo.issueGiftCard(gc, tx);
+    return repo.issueGiftCard(gc, tx, Events.giftCardLoaded(gc, tx, paidBy));
   }
 
   /**
@@ -1679,7 +1680,33 @@ public class OrderService {
    *     when the card is not active
    */
   public GiftCard reloadGiftCard(UUID tenantId, String code, ReloadGiftCardRequest req) {
-    return repo.reloadGiftCard(tenantId, code, req.amount(), req.reference());
+    String paidBy = giftCardPaidBy(req.paidBy());
+    return repo.reloadGiftCard(
+        tenantId,
+        code,
+        req.amount(),
+        req.reference(),
+        (card, tx) -> Events.giftCardLoaded(card, tx, paidBy));
+  }
+
+  /** What gift card value may be paid for with, and PROMOTIONAL for value given away (17.11). */
+  static final java.util.Set<String> GIFT_CARD_PAID_BY =
+      java.util.Set.of("CASH", "CARD", "UPI", "WALLET", "PROMOTIONAL");
+
+  /**
+   * How gift card value was paid for, normalised. Stored value bought with another gift card, a
+   * voucher or store credit would only move a liability from one account to another, so those are
+   * refused with everything else that is not a tender.
+   *
+   * @throws ApiException {@code GIFT_CARD_PAID_BY_INVALID} (400)
+   */
+  static String giftCardPaidBy(String paidBy) {
+    String p = paidBy == null ? "" : paidBy.trim().toUpperCase(java.util.Locale.ROOT);
+    if (!GIFT_CARD_PAID_BY.contains(p)) {
+      throw ApiException.badRequest(
+          "GIFT_CARD_PAID_BY_INVALID", "paidBy must be CASH, CARD, UPI, WALLET or PROMOTIONAL");
+    }
+    return p;
   }
 
   /**

@@ -34,6 +34,7 @@ class OrderConfirmedHandler {
     UUID orderId;
     UUID customerId;
     BigDecimal total;
+    BigDecimal tax;
     try (var reader = Json.createReader(new StringReader(json))) {
       JsonObject obj = reader.readObject();
       // Guest orders carry customerId:null (or omit it on legacy events) — nobody to award.
@@ -45,11 +46,16 @@ class OrderConfirmedHandler {
       orderId = UUID.fromString(obj.getString("orderId"));
       customerId = UUID.fromString(obj.getString("customerId"));
       total = obj.getJsonNumber("total").bigDecimalValue();
+      // The VAT inside the total; an event from before 17.7 carries none.
+      tax =
+          obj.containsKey("taxAmount") && !obj.isNull("taxAmount")
+              ? obj.getJsonNumber("taxAmount").bigDecimalValue()
+              : BigDecimal.ZERO;
     } catch (RuntimeException e) {
       LOG.log(Level.WARNING, "Malformed OrderConfirmed payload skipped: " + e.getMessage());
       return;
     }
 
-    service.accrueLoyaltyFromOrder(eventId, tenantId, customerId, orderId, total);
+    service.accrueLoyaltyFromOrder(eventId, tenantId, customerId, orderId, total, tax);
   }
 }
