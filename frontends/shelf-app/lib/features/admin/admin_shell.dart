@@ -95,6 +95,14 @@ const _navItems = [
   ),
   _AdminNavItem(
     destination: AdaptiveNavDestination(
+      label: 'Data export',
+      icon: Icons.move_up_outlined,
+      selectedIcon: Icons.move_up,
+    ),
+    route: '/admin/tenant-data',
+  ),
+  _AdminNavItem(
+    destination: AdaptiveNavDestination(
       label: 'Security notices',
       icon: Icons.shield_outlined,
       selectedIcon: Icons.shield,

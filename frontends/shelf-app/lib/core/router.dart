@@ -179,6 +179,13 @@ final routerProvider = Provider<GoRouter>((ref) {
             ),
           ),
           GoRoute(
+            path: '/admin/tenant-data',
+            builder: (_, _) => DeferredWidget(
+              libraryLoader: admin_lib.loadLibrary,
+              builder: (_) => admin_lib.TenantDataScreen(),
+            ),
+          ),
+          GoRoute(
             path: '/admin/security-notices',
             builder: (_, _) => DeferredWidget(
               libraryLoader: admin_lib.loadLibrary,

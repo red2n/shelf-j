@@ -541,4 +541,12 @@ class PrivacyIT {
     assertThat(r.getStatus(), is(400));
     assertThat(r.readEntity(String.class), containsString("MARKETING_CHANNEL_UNKNOWN"));
   }
+
+  @org.junit.jupiter.api.Test
+  @org.junit.jupiter.api.DisplayName(
+      "The owner's tenant data manifest is complete: every table is exported or left out by name")
+  void tenantDataIsExportable() {
+    com.shelfj.test.TenantDataChecks.assertExportable(
+        target, "01a090ae-611e-702c-a97b-d1b8025478e1");
+  }
 }

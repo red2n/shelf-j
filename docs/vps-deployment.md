@@ -375,15 +375,21 @@ Caddy renews automatically before expiry (typically 30 days before the 90-day Le
 docker compose exec caddy caddy reload --config /etc/caddy/Caddyfile
 ```
 
-### Backup Postgres
+### Backup Postgres, and rehearse the restore
 
 ```bash
-# Dump all schemas
-docker compose exec postgres pg_dumpall -U shelfj > backup-$(date +%Y%m%d).sql
+# Dump every schema from one snapshot (custom format: restores in parallel)
+docker compose exec postgres pg_dump -U shelfj -d shelfj -Fc -f /tmp/shelfj.dump
+docker compose cp postgres:/tmp/shelfj.dump backup-$(date +%Y%m%d).dump
 
-# Restore
-cat backup-YYYYMMDD.sql | docker compose exec -T postgres psql -U shelfj
+# Restore into a fresh server, then re-apply the per-service roles
+pg_restore -U shelfj -d shelfj --no-owner --no-privileges -j 4 backup-YYYYMMDD.dump
+psql -U shelfj -d shelfj -v ON_ERROR_STOP=1 -f infra/postgres-init-roles.sql
 ```
+
+A backup is only as good as its last restore. `scripts/restore-rehearsal.sh` does both against the running stack: it dumps from one exported snapshot, restores into a scratch `postgres:16-alpine` container, re-applies the roles, compares every table row for row with counts taken in the same snapshot, and appends the timings to [RESTORE-REHEARSAL.md](RESTORE-REHEARSAL.md). Run it after any schema change and at least once a quarter.
+
+A single business's data is exported, erased and imported through each service's `/admin/tenant-data` and tenant-svc's `/admin/tenant/switching` instead ([API-GUIDE](API-GUIDE.md#tenant-data-export-and-leaving-2114)); a whole-database restore brings every business back together.
 
 ### Scale a service (if traffic grows)
 
