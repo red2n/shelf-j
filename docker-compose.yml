@@ -235,7 +235,9 @@ services:
       postgres: { condition: service_healthy }
     networks: [shelfj_network]
     healthcheck:
-      test: ["CMD-SHELL", "nc -z localhost 6432 || exit 1"]
+      # 127.0.0.1, not localhost: pgbouncer listens on IPv4 only, and busybox nc in the current image
+      # resolves localhost to ::1 first, so "nc -z localhost" failed and held every service back.
+      test: ["CMD-SHELL", "nc -z 127.0.0.1 6432 || exit 1"]
       interval: 10s
       timeout: 5s
       retries: 5
