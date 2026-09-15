@@ -87,6 +87,9 @@ public final class Mappers {
         cvs.vatRegistered(),
         cvs.reverseChargeEligible(),
         cvs.countryCode(),
+        cvs.legalName(),
+        cvs.einvoiceScheme(),
+        cvs.einvoiceId(),
         cvs.createdAt() != null ? cvs.createdAt().toString() : null,
         cvs.updatedAt() != null ? cvs.updatedAt().toString() : null);
   }

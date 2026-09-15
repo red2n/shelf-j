@@ -121,6 +121,11 @@ public final class Dtos {
       @Schema(description = "ALCOHOL, TOBACCO, KNIVES … or null when unrestricted.")
           String restrictionCategory,
       @Schema(description = "Ingredients as printed on the pack.") String ingredients,
+      @Schema(
+              description =
+                  "HSN code, or SAC code for a service: 4, 6 or 8 digits. India's e-invoices name"
+                      + " every line by it.")
+          String hsnCode,
       @Schema(description = "EACH, WEIGHT, VOLUME or LENGTH. Defaults to EACH.") String soldBy,
       @Schema(description = "Net quantity in the pack, for the unit price a shelf edge must show.")
           BigDecimal netContent,
@@ -146,6 +151,7 @@ public final class Dtos {
       String restrictionCategory,
       String allergenStatus,
       String ingredients,
+      String hsnCode,
       String soldBy,
       BigDecimal netContent,
       String netContentUom,
@@ -288,7 +294,8 @@ public final class Dtos {
       @Schema(description = "Base unit of measure code, e.g. EA, CS.") String unit,
       @Schema(description = "ACTIVE or DELISTED.") String status,
       String createdAt,
-      String updatedAt) {}
+      String updatedAt,
+      @Schema(description = "The HSN or SAC code, when one is recorded (18.9).") String hsnCode) {}
 
   // ── UOM ──────────────────────────────────────────────────────────────────
 

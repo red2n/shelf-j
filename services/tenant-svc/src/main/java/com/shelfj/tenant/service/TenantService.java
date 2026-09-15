@@ -682,7 +682,11 @@ public class TenantService {
       vatNumber =
           req.vatNumber() == null
               ? existing.vatNumber()
-              : com.shelfj.einvoice.VatIdentifier.parse(req.vatNumber());
+              // India's e-invoices name a business by its GSTIN, which carries a state code where
+              // a VAT identifier carries a country prefix.
+              : "IN".equals(existing.country())
+                  ? com.shelfj.einvoice.Gstin.parse(req.vatNumber())
+                  : com.shelfj.einvoice.VatIdentifier.parse(req.vatNumber());
     } catch (IllegalArgumentException e) {
       throw new ApiException(400, "TENANT_VAT_NUMBER_INVALID", e.getMessage(), List.of(), e);
     }

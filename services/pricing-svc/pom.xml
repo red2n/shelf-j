@@ -82,6 +82,10 @@
             <groupId>com.shelfj</groupId>
             <artifactId>common-service</artifactId>
         </dependency>
+        <dependency>
+            <groupId>com.shelfj</groupId>
+            <artifactId>einvoice</artifactId>
+        </dependency>
 
         <dependency>
             <groupId>org.postgresql</groupId>
