@@ -171,7 +171,8 @@ shelf-j/
 │   ├── events-contract/          # BaseEvent/DomainEvent/OutboxRecord
 │   ├── common-web/               # response envelope, error mapper, tenant context
 │   ├── common-service/           # DataSource/Flyway/Consul/health/outbox/Kafka base classes
-│   └── common-test/               # Testcontainers + ArchUnit rule helpers
+│   ├── common-test/               # Testcontainers + ArchUnit rule helpers
+│   └── einvoice/                  # EN 16931 as a format: UBL, CII, Factur-X, CEN + Peppol rules
 │
 ├── frontends/shelf-app/         # one Flutter app: storefront + POS + admin + platform
 ├── docs/                        # ARCHITECTURE.md, API-GUIDE.md, UI-GUIDE.md, onboarding-and-locations.md, coding-standards.md
@@ -270,6 +271,7 @@ For a service named `<service>` (e.g. `iam-svc`) and a profile `<profile>` (defa
 | `common-web` | `ApiResponse`/`ErrorBody`/`ErrorCodes`, exception mappers (generic + UUID-parse), `TenantContext`/`TenantContextFilter`, `AdminAuthorizationFilter`, `Cursor` (pagination), `Validations`. |
 | `common-service` | Reusable infra: `DataSourceProducer`, `FlywayRunner`, `ConsulRegistrar`, `HealthChecks`, `BaseJdbcRepository`, the outbox pattern (`BaseOutboxRepository`/`OutboxPublisher`/`OutboxStore`), `BaseKafkaConsumer`/`KafkaConsumerRegistry`, `RedisClientProducer`, shared tenant/store status-change projection consumers, and `db/migration/afterMigrate.sql` — run after every service's migrations, it fails `flyway migrate` if a column generates its own uuid (`FlywayRunner` logs that as a warning). |
 | `common-test` | Testcontainers helpers (`PostgresSupport`, `RedisSupport`) and `ShelfJArchRules` (ArchUnit rules enforcing the layering above). `PostgresSupport.stop()` fails the test class if any column defaults to a uuid generator or any table's `id` holds a row that is not UUIDv7. |
+| `einvoice` | EN 16931 e-invoices as a format, with no service state and no business decisions: one model (`Invoice`, every field named by its business term) read from and written to UBL 2.1 and UN/CEFACT CII D16B (`EInvoices.read`/`toUbl`/`toCii`), Factur-X PDF/A-3 with the CII inside (`toFacturX`; hybrids read back through their `factur-x.xml`, `zugferd-invoice.xml` or `xrechnung.xml`), and CEN's and Peppol BIS Billing 3.0's business rules and code lists as their schematron tests them (`Rules`, `EInvoices.validate`). A received document is hostile until read: DTDs refused, size, depth, element and attribute counts capped, an encrypted PDF refused and an embedded XML read no further than its cap. purchase-svc reads suppliers' invoices with it and order-svc writes its own. |
 
 ---
 
