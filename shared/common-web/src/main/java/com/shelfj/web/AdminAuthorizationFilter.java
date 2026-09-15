@@ -490,6 +490,9 @@ public class AdminAuthorizationFilter implements ContainerRequestFilter {
       if ("/admin/tenant".equals(path)) return true;
       // The laws the business trades under: the till obeys them, so every staff role reads them.
       if ("/admin/tenant/obligations".equals(path)) return true;
+      // The retention schedule (21.16): the services that purge read it under a staff identity.
+      // Only the sheet; its holds and register, and every write, stay management work.
+      if ("/admin/tenant/retention".equals(path)) return true;
       if (pathEqualsOrUnder(path, "/admin/stores")) return true;
       if ("/admin/products/variants/resolve".equals(path)) return true;
     }

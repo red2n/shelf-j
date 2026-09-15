@@ -25,6 +25,8 @@ public final class TenantSvcStub implements AutoCloseable {
   private final Map<String, String> profiles = new ConcurrentHashMap<>();
   private final Map<String, java.util.List<String>> obligations = new ConcurrentHashMap<>();
   private final Map<String, java.util.List<String>> stores = new ConcurrentHashMap<>();
+  private final java.util.Map<String, String> retention =
+      new java.util.concurrent.ConcurrentHashMap<>();
   private final java.util.concurrent.atomic.AtomicInteger requests =
       new java.util.concurrent.atomic.AtomicInteger();
 
@@ -69,6 +71,21 @@ public final class TenantSvcStub implements AutoCloseable {
                     + "\",\"obligations\":["
                     + String.join(",", stub.obligations.getOrDefault(country, java.util.List.of()))
                     + "]}}");
+          });
+      // A tenant's retention schedule (21.16), as registered; a tenant with none has an empty one.
+      server.createContext(
+          "/admin/tenant/retention",
+          exchange -> {
+            stub.requests.incrementAndGet();
+            String tenant = exchange.getRequestHeaders().getFirst("X-Tenant-Id");
+            String body = tenant == null ? null : stub.retention.get(tenant);
+            reply(
+                exchange,
+                200,
+                body != null
+                    ? body
+                    : "{\"data\":{\"country\":\"GB\",\"countries\":[\"GB\"],\"classes\":[],"
+                        + "\"holds\":[]}}");
           });
       // A tenant's stores, one page; a tenant with none registered has none.
       server.createContext(
@@ -137,6 +154,37 @@ public final class TenantSvcStub implements AutoCloseable {
                 + "\""
                 + (effectiveTo == null ? "" : ",\"effectiveTo\":\"" + effectiveTo + "\"")
                 + "}");
+    return this;
+  }
+
+  /**
+   * Registers a tenant's retention schedule (21.16), as tenant-svc's {@code GET
+   * /admin/tenant/retention} answers it.
+   *
+   * @param periods the period set per class, e.g. {@code "ORDER_PERSONAL_DATA", 0}; a class not
+   *     named has no period, so nothing of it is purged
+   * @param holds hold objects as the sheet lists them, e.g. {@code
+   *     {"subjectKind":"CUSTOMER","subjectId":"…"}}
+   */
+  public TenantSvcStub withRetention(
+      String tenantId, java.util.Map<String, Integer> periods, java.util.List<String> holds) {
+    StringBuilder classes = new StringBuilder();
+    for (var e : periods.entrySet()) {
+      if (classes.length() > 0) classes.append(',');
+      classes
+          .append("{\"code\":\"")
+          .append(e.getKey())
+          .append("\",\"periodDays\":")
+          .append(e.getValue())
+          .append('}');
+    }
+    retention.put(
+        tenantId,
+        "{\"data\":{\"country\":\"GB\",\"countries\":[\"GB\"],\"classes\":["
+            + classes
+            + "],\"holds\":["
+            + String.join(",", holds)
+            + "]}}");
     return this;
   }
 

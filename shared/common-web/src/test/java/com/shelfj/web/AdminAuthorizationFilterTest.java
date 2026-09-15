@@ -480,6 +480,23 @@ class AdminAuthorizationFilterTest {
     assertNotAborted(invoke("GET", "/orders/export"));
   }
 
+  // ── 21.16: the retention schedule ────────────────────────────────────────────
+
+  @Test
+  void retentionSheetIsStaffReadableAndTheRestIsManagement() throws Exception {
+    ctx.set(null, null, Set.of("STOREKEEPER"), null, null);
+    assertNotAborted(invoke("GET", "/admin/tenant/retention"));
+    assertAborted(invoke("GET", "/admin/tenant/retention/holds"), 403);
+    assertAborted(invoke("GET", "/admin/tenant/retention/runs"), 403);
+    assertAborted(invoke("PUT", "/admin/tenant/retention/CUSTOMER_RECORDS"), 403);
+    assertAborted(invoke("POST", "/admin/tenant/retention/holds"), 403);
+    ctx.set(null, null, Set.of("CUSTOMER"), null, null);
+    assertAborted(invoke("GET", "/admin/tenant/retention"), 403);
+    ctx.set(null, null, Set.of("MANAGER"), null, null);
+    assertNotAborted(invoke("PUT", "/admin/tenant/retention/CUSTOMER_RECORDS"));
+    assertNotAborted(invoke("GET", "/admin/tenant/retention/runs"));
+  }
+
   // ── 05.10: a recall's notices to buyers ──────────────────────────────────────
 
   @Test

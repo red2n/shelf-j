@@ -288,7 +288,7 @@ Staff/customer auth, JWT issuance, and POS cashier session lifecycle.
 Owns the Tenant→Store→Zone hierarchy and tenant onboarding (see §1).
 - **API:** `/onboarding` self-serve signup + tenant/store creation + status checklist; `/admin` tenant/store/zone CRUD + status, staff assign/list/remove, inventory-config; `/platform` cross-tenant list + suspend/reactivate; `/storefront` public config/store lookup.
 - **Tables:** `tenants`, `stores`, `zones`, `staff_assignments`, `tenant_inventory_config`.
-- **Events:** publishes `TenantCreated`, `TenantStatusChanged`, `StoreCreated`, `StoreStatusChanged`, `ZoneCreated`, `StaffAssigned`, `UserRoleGranted`.
+- **Events:** publishes `TenantCreated`, `TenantStatusChanged`, `StoreCreated`, `StoreStatusChanged`, `ZoneCreated`, `StaffAssigned`, `UserRoleGranted`; consumes `RetentionRunCompleted` from order-svc, customer-svc and notification-svc (21.16: the one register of every purge, keyed by event id).
 - **Notable:** source of truth for store/zone data every other service projects locally.
 
 ### product-svc — Product Catalog (PIM)
@@ -393,6 +393,7 @@ tenant-svc   ──REST──►  iam-svc         (verify user on staff assignme
 | `UserRegistered` | iam-svc | notification-svc (welcome notice) |
 | `RecallOpened` / `RecallSaleAffected` | inventory-svc | notification-svc (store alerts); order-svc (a notice per order the recall reached, 05.10) |
 | `RecallNoticeIssued` | order-svc | notification-svc (the written notice to the buyer: email, else text, and a push) |
+| `RetentionRunCompleted` | order-svc, customer-svc, notification-svc | tenant-svc (the register of purges, 21.16) |
 
 **Reliability requirements on every call:** REST calls carry a timeout, retries with backoff, and a circuit breaker (Helidon MP Fault Tolerance). Events are at-least-once with idempotent consumers, published via the outbox, and tracked via `processed_events` dedupe tables.
 

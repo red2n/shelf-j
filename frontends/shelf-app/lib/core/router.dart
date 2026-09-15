@@ -172,6 +172,13 @@ final routerProvider = Provider<GoRouter>((ref) {
             ),
           ),
           GoRoute(
+            path: '/admin/retention',
+            builder: (_, _) => DeferredWidget(
+              libraryLoader: admin_lib.loadLibrary,
+              builder: (_) => admin_lib.RetentionScreen(),
+            ),
+          ),
+          GoRoute(
             path: '/admin/security-notices',
             builder: (_, _) => DeferredWidget(
               libraryLoader: admin_lib.loadLibrary,
