@@ -338,6 +338,13 @@ final routerProvider = Provider<GoRouter>((ref) {
               builder: (_) => storefront_lib.StorefrontAccountScreen(),
             ),
           ),
+          GoRoute(
+            path: '/store/accessibility',
+            builder: (_, _) => DeferredWidget(
+              libraryLoader: storefront_lib.loadLibrary,
+              builder: (_) => storefront_lib.StorefrontAccessibilityScreen(),
+            ),
+          ),
         ],
       ),
     ],

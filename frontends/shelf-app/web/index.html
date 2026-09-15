@@ -1,5 +1,6 @@
 <!DOCTYPE html>
-<html>
+<!-- lang: WCAG 2.1 success criterion 3.1.1; en-GB is the app's fallback locale. -->
+<html lang="en-GB">
 <head>
   <base href="$FLUTTER_BASE_HREF">
   <meta charset="UTF-8">
@@ -48,18 +49,14 @@
   </style>
 </head>
 <body>
-  <div id="loading">
-    <svg class="spinner" viewBox="0 0 24 24">
+  <div id="loading" role="status" aria-live="polite">
+    <svg class="spinner" viewBox="0 0 24 24" aria-hidden="true" focusable="false">
       <circle cx="12" cy="12" r="10" />
     </svg>
     Loading Store…
   </div>
-  <script>
-    window.addEventListener('flutter-first-frame', () => {
-      const el = document.getElementById('loading');
-      if (el) el.remove();
-    });
-  </script>
+  <noscript>This shop needs JavaScript to run.</noscript>
+  <script src="first_frame.js"></script>
   <script src="flutter_bootstrap.js" async></script>
 </body>
 </html>

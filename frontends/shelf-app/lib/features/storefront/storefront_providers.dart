@@ -1073,8 +1073,13 @@ class CustomerPreferencesState {
 class CustomerPreferencesNotifier
     extends StateNotifier<CustomerPreferencesState> {
   CustomerPreferencesNotifier() : super(const CustomerPreferencesState()) {
-    _load();
+    ready = _load();
   }
+
+  /// Completes once the stored answers are read. Until then every flag reads as "not asked", so
+  /// whatever decides whether to ask must wait for it: reading straight after the provider was
+  /// created asked a shopper who had already answered, on every visit (SJ-D62).
+  late final Future<void> ready;
 
   static const _storage = AppStorage();
 

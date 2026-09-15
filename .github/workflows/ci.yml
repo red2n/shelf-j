@@ -76,4 +76,4 @@ jobs:
       # web build for a day and a half, unseen, while images shipped the last good bundle. Compile it.
       - name: Flutter web compiles
         working-directory: frontends/shelf-app
-        run: flutter build web --release --no-wasm-dry-run
+        run: flutter build web --release --no-wasm-dry-run --no-web-resources-cdn

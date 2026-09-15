@@ -44,53 +44,41 @@ class _GenderPickerSheetState extends ConsumerState<GenderPickerSheet> {
   @override
   Widget build(BuildContext context) {
     final cs = Theme.of(context).colorScheme;
-    return SafeArea(
-      top: false,
-      child: Padding(
-        padding: AppSpacing.pagePadding,
-        child: Column(
-          mainAxisSize: MainAxisSize.min,
-          crossAxisAlignment: CrossAxisAlignment.start,
-          children: [
-            Row(children: [
-              Text('Tell us about yourself',
-                  style: Theme.of(context).textTheme.titleMedium),
-              const Spacer(),
-              TextButton(onPressed: _skip, child: const Text('Skip')),
-            ]),
-            const Gap(AppSpacing.xs),
-            Text(
-              'This helps us personalise your experience.',
-              style: Theme.of(context)
-                  .textTheme
-                  .bodySmall
-                  ?.copyWith(color: cs.outline),
-            ),
-            const Gap(AppSpacing.lg),
-            Wrap(
-              spacing: AppSpacing.sm,
-              runSpacing: AppSpacing.xs,
-              children: _options
-                  .map((o) => ChoiceChip(
-                        label: Text(o.label),
-                        selected: _selected == o.value,
-                        onSelected: (_) =>
-                            setState(() => _selected = o.value),
-                        selectedColor: cs.primaryContainer,
-                      ))
-                  .toList(),
-            ),
-            const Gap(AppSpacing.xl),
-            SizedBox(
-              width: double.infinity,
-              child: FilledButton(
-                onPressed: _selected != null ? _save : null,
-                child: const Text('Save preference'),
-              ),
-            ),
-          ],
+    return _SheetFrame(
+      title: 'Tell us about yourself',
+      trailing: TextButton(onPressed: _skip, child: const Text('Skip')),
+      children: [
+        const Gap(AppSpacing.xs),
+        Text(
+          'This helps us personalise your experience.',
+          style: Theme.of(
+            context,
+          ).textTheme.bodySmall?.copyWith(color: cs.outline),
         ),
-      ),
+        const Gap(AppSpacing.lg),
+        Wrap(
+          spacing: AppSpacing.sm,
+          runSpacing: AppSpacing.xs,
+          children: _options
+              .map(
+                (o) => ChoiceChip(
+                  label: Text(o.label),
+                  selected: _selected == o.value,
+                  onSelected: (_) => setState(() => _selected = o.value),
+                  selectedColor: cs.primaryContainer,
+                ),
+              )
+              .toList(),
+        ),
+        const Gap(AppSpacing.xl),
+        SizedBox(
+          width: double.infinity,
+          child: FilledButton(
+            onPressed: _selected != null ? _save : null,
+            child: const Text('Save preference'),
+          ),
+        ),
+      ],
     );
   }
 }
@@ -104,9 +92,9 @@ Future<void> showGenderPickerSheet(BuildContext context) async {
   );
   // Drag-dismiss (null result) treated the same as Skip
   if (result == null && context.mounted) {
-    await ProviderScope.containerOf(context)
-        .read(customerPrefsProvider.notifier)
-        .skipGender();
+    await ProviderScope.containerOf(
+      context,
+    ).read(customerPrefsProvider.notifier).skipGender();
   }
 }
 
@@ -153,95 +141,92 @@ class _PostOrderSurveySheetState extends ConsumerState<PostOrderSurveySheet> {
   @override
   Widget build(BuildContext context) {
     final cs = Theme.of(context).colorScheme;
-    return SafeArea(
-      top: false,
-      child: SingleChildScrollView(
-        padding: EdgeInsets.only(
-          left: AppSpacing.xl,
-          right: AppSpacing.xl,
-          top: AppSpacing.xl,
-          bottom: AppSpacing.xl + MediaQuery.of(context).viewInsets.bottom,
-        ),
-        child: Column(
-          mainAxisSize: MainAxisSize.min,
-          crossAxisAlignment: CrossAxisAlignment.start,
-          children: [
-            Row(children: [
-              Text('Quick feedback',
-                  style: Theme.of(context).textTheme.titleMedium),
-              const Spacer(),
-              TextButton(
-                  onPressed: () => Navigator.of(context).pop(),
-                  child: const Text('Skip')),
-            ]),
-            const Gap(AppSpacing.xs),
-            Text(
-              'Takes less than a minute.',
-              style: Theme.of(context)
-                  .textTheme
-                  .bodySmall
-                  ?.copyWith(color: cs.outline),
-            ),
-            const Gap(AppSpacing.lg),
-            Text('How was your experience?',
-                style: Theme.of(context).textTheme.labelLarge),
-            const Gap(AppSpacing.sm),
-            Row(
-              mainAxisAlignment: MainAxisAlignment.spaceEvenly,
-              children: List.generate(5, (i) {
-                final isSelected = _rating == i + 1;
-                return GestureDetector(
-                  onTap: () => setState(() => _rating = i + 1),
-                  child: AnimatedContainer(
-                    duration: const Duration(milliseconds: 150),
-                    padding: const EdgeInsets.all(AppSpacing.sm),
-                    decoration: BoxDecoration(
-                      shape: BoxShape.circle,
-                      color: isSelected
-                          ? cs.primaryContainer
-                          : Colors.transparent,
-                    ),
-                    child: Text(_emojis[i],
-                        style: const TextStyle(fontSize: 28)),
-                  ),
-                );
-              }),
-            ),
-            const Gap(AppSpacing.lg),
-            Text(
-              'Would you recommend us? (${_nps.round()}/10)',
-              style: Theme.of(context).textTheme.labelLarge,
-            ),
-            Slider(
-              value: _nps,
-              min: 1,
-              max: 10,
-              divisions: 9,
-              activeColor: cs.primary,
-              onChanged: (v) => setState(() => _nps = v),
-            ),
-            const Gap(AppSpacing.md),
-            Text('Any comments? (optional)',
-                style: Theme.of(context).textTheme.labelLarge),
-            const Gap(AppSpacing.sm),
-            TextFormField(
-              controller: _commentCtrl,
-              maxLines: 3,
-              maxLength: 300,
-              decoration: const InputDecoration(
-                  hintText: 'Tell us more…', counterText: ''),
-            ),
-            const Gap(AppSpacing.xl),
-            SizedBox(
-              width: double.infinity,
-              child: FilledButton(
-                onPressed: _rating != null ? _submit : null,
-                child: const Text('Submit'),
-              ),
-            ),
-          ],
-        ),
+    return _SheetFrame(
+      title: 'Quick feedback',
+      roomForKeyboard: true,
+      trailing: TextButton(
+        onPressed: () => Navigator.of(context).pop(),
+        child: const Text('Skip'),
       ),
+      children: [
+        const Gap(AppSpacing.xs),
+        Text(
+          'Takes less than a minute.',
+          style: Theme.of(
+            context,
+          ).textTheme.bodySmall?.copyWith(color: cs.outline),
+        ),
+        const Gap(AppSpacing.lg),
+        Text(
+          'How was your experience?',
+          style: Theme.of(context).textTheme.labelLarge,
+        ),
+        const Gap(AppSpacing.sm),
+        Row(
+          mainAxisAlignment: MainAxisAlignment.spaceEvenly,
+          children: List.generate(5, (i) {
+            final isSelected = _rating == i + 1;
+            return Semantics(
+              button: true,
+              selected: isSelected,
+              label: 'Rate ${i + 1} of 5',
+              excludeSemantics: true,
+              onTap: () => setState(() => _rating = i + 1),
+              // An InkWell, not a GestureDetector: reachable by keyboard (12.11).
+              child: InkWell(
+                customBorder: const CircleBorder(),
+                onTap: () => setState(() => _rating = i + 1),
+                child: AnimatedContainer(
+                  duration: const Duration(milliseconds: 150),
+                  padding: const EdgeInsets.all(AppSpacing.sm),
+                  decoration: BoxDecoration(
+                    shape: BoxShape.circle,
+                    color:
+                        isSelected ? cs.primaryContainer : Colors.transparent,
+                  ),
+                  child: Text(_emojis[i], style: const TextStyle(fontSize: 28)),
+                ),
+              ),
+            );
+          }),
+        ),
+        const Gap(AppSpacing.lg),
+        Text(
+          'Would you recommend us? (${_nps.round()}/10)',
+          style: Theme.of(context).textTheme.labelLarge,
+        ),
+        Slider(
+          value: _nps,
+          min: 1,
+          max: 10,
+          divisions: 9,
+          activeColor: cs.primary,
+          onChanged: (v) => setState(() => _nps = v),
+        ),
+        const Gap(AppSpacing.md),
+        Text(
+          'Any comments? (optional)',
+          style: Theme.of(context).textTheme.labelLarge,
+        ),
+        const Gap(AppSpacing.sm),
+        TextFormField(
+          controller: _commentCtrl,
+          maxLines: 3,
+          maxLength: 300,
+          decoration: const InputDecoration(
+            hintText: 'Tell us more…',
+            counterText: '',
+          ),
+        ),
+        const Gap(AppSpacing.xl),
+        SizedBox(
+          width: double.infinity,
+          child: FilledButton(
+            onPressed: _rating != null ? _submit : null,
+            child: const Text('Submit'),
+          ),
+        ),
+      ],
     );
   }
 }
@@ -274,6 +259,7 @@ class _FeedbackSheetState extends ConsumerState<FeedbackSheet> {
     (label: 'Bug 🐛', value: 'Bug'),
     (label: 'Feature request 💡', value: 'Feature request'),
     (label: 'Compliment 🙏', value: 'Compliment'),
+    (label: 'Accessibility', value: 'Accessibility'),
     (label: 'Other', value: 'Other'),
   ];
 
@@ -309,93 +295,137 @@ class _FeedbackSheetState extends ConsumerState<FeedbackSheet> {
   @override
   Widget build(BuildContext context) {
     final cs = Theme.of(context).colorScheme;
+    return _SheetFrame(
+      title: 'Send feedback',
+      roomForKeyboard: true,
+      trailing: IconButton(
+        icon: const Icon(Icons.close),
+        tooltip: 'Close',
+        onPressed: () => Navigator.of(context).pop(),
+      ),
+      children: [
+        const Gap(AppSpacing.md),
+        Text('Category', style: Theme.of(context).textTheme.labelLarge),
+        const Gap(AppSpacing.sm),
+        Wrap(
+          spacing: AppSpacing.sm,
+          runSpacing: AppSpacing.xs,
+          children: _categories
+              .map(
+                (c) => FilterChip(
+                  label: Text(c.label),
+                  selected: _category == c.value,
+                  onSelected: (_) => setState(() => _category = c.value),
+                  selectedColor: cs.primaryContainer,
+                ),
+              )
+              .toList(),
+        ),
+        const Gap(AppSpacing.lg),
+        TextField(
+          controller: _textCtrl,
+          minLines: 3,
+          maxLines: 6,
+          maxLength: 500,
+          onChanged: (_) => setState(() {}),
+          decoration: const InputDecoration(
+            labelText: 'Describe your feedback',
+            counterText: '',
+          ),
+        ),
+        const Gap(AppSpacing.lg),
+        Text(
+          'Overall rating (optional)',
+          style: Theme.of(context).textTheme.labelLarge,
+        ),
+        const Gap(AppSpacing.sm),
+        Row(
+          children: List.generate(5, (i) {
+            final filled = _starRating != null && i < _starRating!;
+            return IconButton(
+              icon: Icon(
+                filled ? Icons.star : Icons.star_border,
+                color: filled ? cs.primary : cs.outline,
+              ),
+              tooltip: '${i + 1} star${i == 0 ? '' : 's'}',
+              onPressed: () => setState(() {
+                // Tapping the same star again clears the rating
+                _starRating = _starRating == i + 1 ? null : i + 1;
+              }),
+            );
+          }),
+        ),
+        const Gap(AppSpacing.xl),
+        SizedBox(
+          width: double.infinity,
+          child: FilledButton(
+            onPressed: _canSubmit ? _submit : null,
+            child: _submitting
+                ? const SizedBox(
+                    width: 18,
+                    height: 18,
+                    child: CircularProgressIndicator(strokeWidth: 2),
+                  )
+                : const Text('Submit feedback'),
+          ),
+        ),
+      ],
+    );
+  }
+}
+
+/// The frame every storefront sheet shares: the safe area, a scroll so enlarged text is never cut off,
+/// the padding (with room for the keyboard on a sheet that has a text field), and a header whose
+/// title is announced as a heading and wraps rather than overflows (12.11), with one action beside it.
+class _SheetFrame extends StatelessWidget {
+  final String title;
+  final Widget trailing;
+  final List<Widget> children;
+  final bool roomForKeyboard;
+
+  const _SheetFrame({
+    required this.title,
+    required this.trailing,
+    required this.children,
+    this.roomForKeyboard = false,
+  });
+
+  @override
+  Widget build(BuildContext context) {
+    final column = Column(
+      mainAxisSize: MainAxisSize.min,
+      crossAxisAlignment: CrossAxisAlignment.start,
+      children: [
+        Row(
+          children: [
+            Expanded(
+              child: Semantics(
+                header: true,
+                child: Text(
+                  title,
+                  style: Theme.of(context).textTheme.titleMedium,
+                ),
+              ),
+            ),
+            trailing,
+          ],
+        ),
+        ...children,
+      ],
+    );
     return SafeArea(
       top: false,
       child: SingleChildScrollView(
-        padding: EdgeInsets.only(
-          left: AppSpacing.xl,
-          right: AppSpacing.xl,
-          top: AppSpacing.xl,
-          bottom: AppSpacing.xl + MediaQuery.of(context).viewInsets.bottom,
-        ),
-        child: Column(
-          mainAxisSize: MainAxisSize.min,
-          crossAxisAlignment: CrossAxisAlignment.start,
-          children: [
-            Row(children: [
-              Text('Send feedback',
-                  style: Theme.of(context).textTheme.titleMedium),
-              const Spacer(),
-              IconButton(
-                icon: const Icon(Icons.close),
-                tooltip: 'Close',
-                onPressed: () => Navigator.of(context).pop(),
-              ),
-            ]),
-            const Gap(AppSpacing.md),
-            Text('Category', style: Theme.of(context).textTheme.labelLarge),
-            const Gap(AppSpacing.sm),
-            Wrap(
-              spacing: AppSpacing.sm,
-              runSpacing: AppSpacing.xs,
-              children: _categories
-                  .map((c) => FilterChip(
-                        label: Text(c.label),
-                        selected: _category == c.value,
-                        onSelected: (_) =>
-                            setState(() => _category = c.value),
-                        selectedColor: cs.primaryContainer,
-                      ))
-                  .toList(),
-            ),
-            const Gap(AppSpacing.lg),
-            TextField(
-              controller: _textCtrl,
-              minLines: 3,
-              maxLines: 6,
-              maxLength: 500,
-              onChanged: (_) => setState(() {}),
-              decoration: const InputDecoration(
-                labelText: 'Describe your feedback',
-                counterText: '',
-              ),
-            ),
-            const Gap(AppSpacing.lg),
-            Text('Overall rating (optional)',
-                style: Theme.of(context).textTheme.labelLarge),
-            const Gap(AppSpacing.sm),
-            Row(
-              children: List.generate(5, (i) {
-                final filled = _starRating != null && i < _starRating!;
-                return IconButton(
-                  icon: Icon(
-                    filled ? Icons.star : Icons.star_border,
-                    color: filled ? cs.primary : cs.outline,
-                  ),
-                  tooltip: '${i + 1} star${i == 0 ? '' : 's'}',
-                  onPressed: () => setState(() {
-                    // Tapping the same star again clears the rating
-                    _starRating = _starRating == i + 1 ? null : i + 1;
-                  }),
-                );
-              }),
-            ),
-            const Gap(AppSpacing.xl),
-            SizedBox(
-              width: double.infinity,
-              child: FilledButton(
-                onPressed: _canSubmit ? _submit : null,
-                child: _submitting
-                    ? const SizedBox(
-                        width: 18,
-                        height: 18,
-                        child: CircularProgressIndicator(strokeWidth: 2),
-                      )
-                    : const Text('Submit feedback'),
-              ),
-            ),
-          ],
-        ),
+        padding: roomForKeyboard
+            ? EdgeInsets.only(
+                left: AppSpacing.xl,
+                right: AppSpacing.xl,
+                top: AppSpacing.xl,
+                bottom:
+                    AppSpacing.xl + MediaQuery.of(context).viewInsets.bottom,
+              )
+            : AppSpacing.pagePadding,
+        child: column,
       ),
     );
   }
@@ -424,12 +454,7 @@ class _PreferencesSheetState extends ConsumerState<PreferencesSheet> {
   String _notifications = 'None';
 
   static const _shoppingOptions = ['Myself', 'Family', 'Business'];
-  static const _notifOptions = [
-    'Order updates',
-    'Promotions',
-    'Both',
-    'None',
-  ];
+  static const _notifOptions = ['Order updates', 'Promotions', 'Both', 'None'];
 
   @override
   void initState() {
@@ -459,80 +484,66 @@ class _PreferencesSheetState extends ConsumerState<PreferencesSheet> {
   @override
   Widget build(BuildContext context) {
     final cs = Theme.of(context).colorScheme;
-    return SafeArea(
-      top: false,
-      child: Padding(
-        padding: AppSpacing.pagePadding,
-        child: Column(
-          mainAxisSize: MainAxisSize.min,
-          crossAxisAlignment: CrossAxisAlignment.start,
-          children: [
-            Row(children: [
-              Text('Your preferences',
-                  style: Theme.of(context).textTheme.titleMedium),
-              const Spacer(),
-              TextButton(onPressed: _skip, child: const Text('Skip')),
-            ]),
-            const Gap(AppSpacing.xs),
-            Text(
-              'Helps us show you relevant products and updates.',
-              style: Theme.of(context)
-                  .textTheme
-                  .bodySmall
-                  ?.copyWith(color: cs.outline),
-            ),
-            const Gap(AppSpacing.lg),
-            Text('Shopping for',
-                style: Theme.of(context).textTheme.labelLarge),
-            const Gap(AppSpacing.sm),
-            Wrap(
-              spacing: AppSpacing.sm,
-              runSpacing: AppSpacing.xs,
-              children: _shoppingOptions
-                  .map((o) => FilterChip(
-                        label: Text(o),
-                        selected: _shoppingFor.contains(o),
-                        onSelected: (on) => setState(() {
-                          if (on) {
-                            _shoppingFor = {..._shoppingFor, o};
-                          } else {
-                            _shoppingFor = _shoppingFor
-                                .where((s) => s != o)
-                                .toSet();
-                          }
-                        }),
-                        selectedColor: cs.primaryContainer,
-                      ))
-                  .toList(),
-            ),
-            const Gap(AppSpacing.lg),
-            Text('Notifications',
-                style: Theme.of(context).textTheme.labelLarge),
-            const Gap(AppSpacing.sm),
-            Wrap(
-              spacing: AppSpacing.sm,
-              runSpacing: AppSpacing.xs,
-              children: _notifOptions
-                  .map((o) => ChoiceChip(
-                        label: Text(o),
-                        selected: _notifications == o,
-                        onSelected: (_) =>
-                            setState(() => _notifications = o),
-                        selectedColor: cs.primaryContainer,
-                      ))
-                  .toList(),
-            ),
-            const Gap(AppSpacing.xl),
-            SizedBox(
-              width: double.infinity,
-              child: FilledButton(
-                onPressed: _shoppingFor.isNotEmpty ? _save : null,
-                child: const Text('Save preferences'),
-              ),
-            ),
-          ],
+    return _SheetFrame(
+      title: 'Your preferences',
+      trailing: TextButton(onPressed: _skip, child: const Text('Skip')),
+      children: [
+        const Gap(AppSpacing.xs),
+        Text(
+          'Helps us show you relevant products and updates.',
+          style: Theme.of(
+            context,
+          ).textTheme.bodySmall?.copyWith(color: cs.outline),
         ),
-      ),
+        const Gap(AppSpacing.lg),
+        Text('Shopping for', style: Theme.of(context).textTheme.labelLarge),
+        const Gap(AppSpacing.sm),
+        Wrap(
+          spacing: AppSpacing.sm,
+          runSpacing: AppSpacing.xs,
+          children: _shoppingOptions
+              .map(
+                (o) => FilterChip(
+                  label: Text(o),
+                  selected: _shoppingFor.contains(o),
+                  onSelected: (on) => setState(() {
+                    if (on) {
+                      _shoppingFor = {..._shoppingFor, o};
+                    } else {
+                      _shoppingFor = _shoppingFor.where((s) => s != o).toSet();
+                    }
+                  }),
+                  selectedColor: cs.primaryContainer,
+                ),
+              )
+              .toList(),
+        ),
+        const Gap(AppSpacing.lg),
+        Text('Notifications', style: Theme.of(context).textTheme.labelLarge),
+        const Gap(AppSpacing.sm),
+        Wrap(
+          spacing: AppSpacing.sm,
+          runSpacing: AppSpacing.xs,
+          children: _notifOptions
+              .map(
+                (o) => ChoiceChip(
+                  label: Text(o),
+                  selected: _notifications == o,
+                  onSelected: (_) => setState(() => _notifications = o),
+                  selectedColor: cs.primaryContainer,
+                ),
+              )
+              .toList(),
+        ),
+        const Gap(AppSpacing.xl),
+        SizedBox(
+          width: double.infinity,
+          child: FilledButton(
+            onPressed: _shoppingFor.isNotEmpty ? _save : null,
+            child: const Text('Save preferences'),
+          ),
+        ),
+      ],
     );
   }
 }
@@ -546,8 +557,8 @@ Future<void> showPreferencesSheet(BuildContext context) async {
   );
   // Drag-dismiss treated as skip (marks asked so it won't auto-show again)
   if (result == null && context.mounted) {
-    await ProviderScope.containerOf(context)
-        .read(customerPrefsProvider.notifier)
-        .skipPrefs();
+    await ProviderScope.containerOf(
+      context,
+    ).read(customerPrefsProvider.notifier).skipPrefs();
   }
 }

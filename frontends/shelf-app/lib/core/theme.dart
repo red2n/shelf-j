@@ -1,11 +1,14 @@
 import 'package:flutter/material.dart';
 
 // Brand palette
-const Color _ivory = Color(0xFFFFFFF0);      // background / surface
-const Color _gray = Color(0xFFCCCCCC);        // borders / outlines
-const Color _charcoal = Color(0xFF575757);    // text / primary
-const Color _amber = Color(0xFFFFE9A9);       // highlight / POS accent
-const Color _green = Color(0xFFB6D7A8);       // success container / secondary
+const Color _ivory = Color(0xFFFFFFF0); // background / surface
+const Color _gray = Color(0xFFCCCCCC); // subtle dividers only
+// Outlines double as secondary text across the app, so they meet WCAG 2.1 AA as text (4.5:1) and
+// as a component boundary (3:1) on the ivory ground and on white cards. #CCCCCC reached 1.6:1 (12.11).
+const Color _outline = Color(0xFF6E6E6A);
+const Color _charcoal = Color(0xFF575757); // text / primary
+const Color _amber = Color(0xFFFFE9A9); // highlight / POS accent
+const Color _green = Color(0xFFB6D7A8); // success container / secondary
 
 // Legible text-safe derivations (same hue, higher contrast)
 const Color _forestGreen = Color(0xFF3D7A30);
@@ -131,8 +134,8 @@ class AppTheme {
       onSecondaryContainer: _charcoal,
       surface: _ivory,
       onSurface: _charcoal,
-      outline: _gray,
-      outlineVariant: const Color(0xFFE0E0DC),
+      outline: _outline,
+      outlineVariant: _gray,
     );
     return ThemeData(
       useMaterial3: true,
@@ -152,7 +155,7 @@ class AppTheme {
         filled: true,
         fillColor: const Color(0xFFF8F8E8),
       ),
-      dividerTheme: DividerThemeData(color: scheme.outline),
+      dividerTheme: DividerThemeData(color: scheme.outlineVariant),
       extensions: const [StatusColors.light],
     );
   }
@@ -172,7 +175,8 @@ class AppTheme {
       onSecondaryContainer: _green,
       surface: const Color(0xFF1E1E1A),
       onSurface: _ivory,
-      outline: const Color(0xFF575752),
+      // 4.5:1 and more on every dark surface, as text and as a boundary; #575752 reached 2.3:1.
+      outline: const Color(0xFFA6A69E),
       outlineVariant: const Color(0xFF3A3A36),
     );
     return ThemeData(
@@ -193,7 +197,7 @@ class AppTheme {
         filled: true,
         fillColor: scheme.surfaceContainerHighest,
       ),
-      dividerTheme: DividerThemeData(color: scheme.outline),
+      dividerTheme: DividerThemeData(color: scheme.outlineVariant),
       extensions: const [StatusColors.dark],
     );
   }

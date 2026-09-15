@@ -1,4 +1,6 @@
+import 'package:flutter/foundation.dart' show kIsWeb;
 import 'package:flutter/material.dart';
+import 'package:flutter/semantics.dart';
 import 'package:flutter_localizations/flutter_localizations.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'core/l10n/app_locales.dart';
@@ -6,7 +8,17 @@ import 'core/router.dart';
 import 'core/theme.dart';
 import 'l10n/gen/app_localizations.dart';
 
+/// Keeps the accessibility tree alive for the life of the app on the web; see [main].
+SemanticsHandle? webSemanticsHandle;
+
 void main() {
+  // On the web Flutter builds no accessibility tree until someone finds its hidden "Enable
+  // accessibility" button, so a screen reader meets a blank canvas. The storefront is a consumer
+  // e-commerce service under the European Accessibility Act (12.11): build it from the first frame.
+  if (kIsWeb) {
+    WidgetsFlutterBinding.ensureInitialized();
+    webSemanticsHandle = SemanticsBinding.instance.ensureSemantics();
+  }
   runApp(const ProviderScope(child: ShelfApp()));
 }
 
