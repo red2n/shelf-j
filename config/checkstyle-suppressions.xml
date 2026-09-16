@@ -1,0 +1,11 @@
+<?xml version="1.0"?>
+<!DOCTYPE suppressions PUBLIC
+    "-//Checkstyle//DTD SuppressionFilter Configuration 1.2//EN"
+    "https://checkstyle.org/dtds/suppressions_1_2.dtd">
+<!-- Every suppression names its reason. Generated sources are not ours to style. -->
+<suppressions>
+    <suppress files="[\\/]target[\\/]" checks=".*"/>
+    <!-- Method names: the strict form for production code, the given_when_then form for tests. -->
+    <suppress files="[\\/]src[\\/]test[\\/]" id="methodName"/>
+    <suppress files="[\\/]src[\\/]main[\\/]" id="testMethodName"/>
+</suppressions>

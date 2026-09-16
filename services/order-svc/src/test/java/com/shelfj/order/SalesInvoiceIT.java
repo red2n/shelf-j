@@ -599,10 +599,10 @@ class SalesInvoiceIT {
 
     // Eight requests at once for one sale: one number, one document.
     String third = sell(basket(S_SEQ, C_BIZ, "GBP", V_ZERO, "1"), T_SEQ);
-    List<Response> at_once =
+    List<Response> atOnce =
         Concurrency.inParallel(8, () -> post("/admin/orders/" + third + "/invoice", "{}", T_SEQ));
     Set<String> ids = new HashSet<>();
-    for (Response r : at_once) {
+    for (Response r : atOnce) {
       assertThat(r.getStatus(), is(200));
       ids.add(data(r).getString("id"));
     }

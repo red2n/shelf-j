@@ -30,9 +30,9 @@ import org.junit.jupiter.api.Test;
  */
 class CartServiceTest {
 
-  private final UUID TENANT = Ids.newId();
-  private final UUID STORE = Ids.newId();
-  private final UUID CUSTOMER = Ids.newId();
+  private static final UUID TENANT = Ids.newId();
+  private static final UUID STORE = Ids.newId();
+  private static final UUID CUSTOMER = Ids.newId();
 
   private CartService service;
 

@@ -21,7 +21,7 @@ class BaseKafkaConsumerTest {
   private static final String EXPLODING_NAME = "exploding-test-consumer";
   private static final String HEALTHY_NAME = "healthy-test-consumer";
 
-  private static class ExplodingConsumer extends BaseKafkaConsumer {
+  private static final class ExplodingConsumer extends BaseKafkaConsumer {
     @Override
     protected List<String> topics() {
       // Simulates any failure while assembling the loop (bad config, resolving a topic name,
@@ -43,7 +43,7 @@ class BaseKafkaConsumerTest {
     protected void handle(String topic, String value) {}
   }
 
-  private static class HealthyConsumer extends BaseKafkaConsumer {
+  private static final class HealthyConsumer extends BaseKafkaConsumer {
     @Override
     protected List<String> topics() {
       return List.of("some-topic");

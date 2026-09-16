@@ -1,0 +1,119 @@
+<?xml version="1.0"?>
+<!DOCTYPE module PUBLIC
+    "-//Checkstyle//DTD Checkstyle Configuration 1.3//EN"
+    "https://checkstyle.org/dtds/configuration_1_3.dtd">
+<!--
+  Checkstyle ruleset for Shelf-J.
+
+  Layout is google-java-format's job (fmt:check runs first and rewrites nothing by hand), so
+  nothing here is about whitespace, wrapping, indentation, brace placement or import order:
+  those checks would only ever agree with the formatter or fight it. What is left is what a
+  formatter cannot decide — names, imports that should not be there, blocks that do nothing,
+  comparisons and returns that say less than they cost, classes shaped wrongly for what they
+  hold. PMD (config/pmd-ruleset.xml) and SpotBugs cover bugs; this covers style that reads.
+
+  Suppress with a comment explaining WHY — never silently (config/checkstyle-suppressions.xml).
+-->
+<module name="Checker">
+    <property name="charset" value="UTF-8"/>
+    <property name="severity" value="error"/>
+    <property name="fileExtensions" value="java"/>
+
+    <module name="SuppressionFilter">
+        <property name="file" value="${config_loc}/checkstyle-suppressions.xml"/>
+        <property name="optional" value="false"/>
+    </module>
+
+    <!-- One top-level type per file, named after it; no tabs, no trailing whitespace. -->
+    <module name="FileTabCharacter"/>
+    <module name="RegexpSingleline">
+        <property name="format" value="\s+$"/>
+        <property name="message" value="Trailing whitespace"/>
+    </module>
+    <module name="NewlineAtEndOfFile"/>
+
+    <module name="TreeWalker">
+        <module name="OuterTypeFilename"/>
+        <module name="OneTopLevelClass"/>
+
+        <!-- ── Names ─────────────────────────────────────────────────────────── -->
+        <module name="PackageName">
+            <property name="format" value="^[a-z]+(\.[a-z][a-z0-9]*)*$"/>
+        </module>
+        <module name="TypeName"/>
+        <module name="ConstantName">
+            <!-- LOG, MAX_SIZE, T, S2: a static final is UPPER_SNAKE or a single capital letter. -->
+            <property name="format" value="^[A-Z][A-Z0-9]*(_[A-Z0-9]+)*$"/>
+        </module>
+        <module name="MemberName"/>
+        <!-- A method is lowerCamel. A test may read as given_when_then, with underscores between
+             the parts: the strict form is suppressed under src/test and the test form under
+             src/main (config/checkstyle-suppressions.xml). -->
+        <module name="MethodName">
+            <property name="id" value="methodName"/>
+        </module>
+        <module name="MethodName">
+            <property name="id" value="testMethodName"/>
+            <property name="format" value="^[a-z][a-zA-Z0-9]*(_[a-zA-Z0-9]+)*$"/>
+        </module>
+        <module name="ParameterName"/>
+        <module name="LambdaParameterName"/>
+        <module name="LocalVariableName"/>
+        <module name="LocalFinalVariableName"/>
+        <module name="ClassTypeParameterName"/>
+        <module name="MethodTypeParameterName"/>
+        <module name="RecordComponentName"/>
+
+        <!-- ── Imports ───────────────────────────────────────────────────────── -->
+        <module name="AvoidStarImport"/>
+        <module name="RedundantImport"/>
+        <module name="UnusedImports"/>
+        <module name="IllegalImport">
+            <!-- sun.* is not an API; org.junit.Assert is JUnit 4, and the platform is JUnit 5. -->
+            <property name="illegalPkgs" value="sun, org.junit.Assert"/>
+        </module>
+
+        <!-- ── Blocks and statements ─────────────────────────────────────────── -->
+        <module name="EmptyBlock">
+            <property name="option" value="text"/>
+        </module>
+        <module name="EmptyStatement"/>
+        <module name="AvoidNestedBlocks"/>
+        <module name="OneStatementPerLine"/>
+        <module name="MultipleVariableDeclarations"/>
+        <module name="FallThrough"/>
+        <module name="DefaultComesLast"/>
+        <module name="ModifiedControlVariable"/>
+        <module name="UnnecessarySemicolonAfterTypeMemberDeclaration"/>
+        <module name="UnnecessarySemicolonInEnumeration"/>
+        <module name="UnnecessarySemicolonInTryWithResources"/>
+
+        <!-- ── Expressions ───────────────────────────────────────────────────── -->
+        <module name="EqualsHashCode"/>
+        <module name="StringLiteralEquality"/>
+        <module name="SimplifyBooleanExpression"/>
+        <module name="SimplifyBooleanReturn"/>
+        <module name="ArrayTypeStyle"/>
+        <module name="UpperEll"/>
+        <module name="NoFinalizer"/>
+        <module name="NoClone"/>
+        <module name="CovariantEquals"/>
+        <module name="PackageDeclaration"/>
+        <module name="InnerAssignment"/>
+        <!-- Not UnnecessaryParentheses: it flags the parentheses around an && inside an ||, which
+             every reader wants and the formatter keeps. -->
+
+        <!-- ── Class shape ───────────────────────────────────────────────────── -->
+        <module name="FinalClass"/>
+        <module name="HideUtilityClassConstructor"/>
+        <module name="InterfaceIsType"/>
+        <module name="MutableException"/>
+        <module name="MissingOverride"/>
+        <module name="ModifierOrder"/>
+        <module name="RedundantModifier"/>
+
+        <!-- A SuppressWarnings("checkstyle:Rule") next to the line, for the rare exception. -->
+        <module name="SuppressWarningsHolder"/>
+    </module>
+    <module name="SuppressWarningsFilter"/>
+</module>

@@ -1,6 +1,9 @@
 package com.shelfj.service;
 
-import static org.junit.jupiter.api.Assertions.*;
+import static org.junit.jupiter.api.Assertions.assertDoesNotThrow;
+import static org.junit.jupiter.api.Assertions.assertEquals;
+import static org.junit.jupiter.api.Assertions.assertNotNull;
+import static org.junit.jupiter.api.Assertions.assertThrows;
 
 import java.lang.reflect.Field;
 import java.lang.reflect.Proxy;
@@ -17,7 +20,7 @@ import org.junit.jupiter.api.Test;
  */
 class BaseJdbcRepositoryTest {
 
-  private static class TestRepo extends BaseJdbcRepository {
+  private static final class TestRepo extends BaseJdbcRepository {
     @Override
     protected RuntimeException handleTxSqlException(String what, SQLException e) {
       return new RuntimeException(e);
