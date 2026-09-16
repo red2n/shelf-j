@@ -477,6 +477,7 @@ For the full screen-by-screen, persona-by-persona tour of what's actually on eac
 ## 14. Cross-cutting conventions
 
 - **Response envelope:** `{ "data": ..., "error": { "code", "message" } | null, "meta": { "requestId", "nextCursor" } }`.
+- **Errors on the wire are RFC 9457 problem details:** `application/problem+json` with `type` (`urn:shelfj:problem:CODE`), `title` (the code in words), `status`, `detail` (the message), `instance` (the request path), the platform's `code`, `details` and `requestId`, and the legacy `error`/`meta` members so a client that reads `error.code` keeps working. `ProblemResponseFilter` (common-web) converts every outgoing error envelope — from an exception mapper, an aborting filter or a resource — so nothing builds a problem by hand. Every service and the gateway publish **OpenAPI 3.1** (`mp.openapi.extensions.smallrye.openapi=3.1.0`; the static `openapi.yaml` carries the `Problem` schema and a `Problem` response).
 - **Errors:** correct HTTP codes (`400` validation, `401`/`403` auth, `404`, `409` conflict, `422` business rule, `500` unexpected); stable machine `code`; never leak stack traces or SQL. A body that is not the JSON a request takes — malformed, or a field of the wrong type — is `400 REQUEST_BODY_INVALID` from `common-web`'s `RequestBodyExceptionMapper`, which claims the failure only while the server reads the request entity, so a malformed response from another service stays a `500` (SJ-D57: it was a `500` everywhere).
 - **Pagination:** cursor only (`?after=&limit=`, default 20 / max 100, opaque base64 keyset cursor). No page numbers.
 - **Naming:** REST paths = plural kebab nouns (`/purchase-orders`); JSON = `camelCase`; DB columns = `snake_case`; events = `PascalCase` past tense (`OrderPlaced`); Kafka topics = `shelfj.<domain>.<event>`.
@@ -553,6 +554,8 @@ Internal-only (not published to the host): `otel-collector`, `loki`, `tempo`, no
 ---
 
 ## 17. Production deployment & startup ordering
+
+**Hardening on Kubernetes:** the `shelf-j` namespace enforces Pod Security Standards *restricted*; every workload runs as a numeric non-root user under the runtime seccomp profile with all capabilities dropped and no privilege escalation, the platform's own images on a read-only root filesystem; a default-deny NetworkPolicy set allows only the architecture's conversations, with PgBouncer alone reaching Postgres; `scripts/k8s-check.sh` (kubeconform + the hardening check) runs in CI. See [k8s/README.md](../k8s/README.md#hardening).
 
 - The `docker-compose.yml` port map (§15) is **local-dev only**. In production every service listens on the **same port (8080)**; addressing is by **k8s DNS + Consul**, never `host:port`.
 - **Do not order individual services at startup** — the dependency graph is a mesh (order-svc needs pricing+inventory+payment; cart-svc needs pricing+inventory+product; etc.), so no linear order works. Services start in **any order** and gate on readiness: `/health/started` (booting grace period), `/health/live` (restart if failing), `/health/ready` (stop routing traffic if failing — must check real DB/Kafka/config reachability), backed by `@Retry`/`@CircuitBreaker`/`@Fallback`.

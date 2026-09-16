@@ -1,4 +1,4 @@
-openapi: 3.0.3
+openapi: 3.1.0
 info:
   title: Purchase Service API
   version: "1.0"
@@ -20,6 +20,43 @@ tags:
   - name: Nominal Ledger
     description: Read-only double-entry nominal ledger view.
 components:
+  schemas:
+    Problem:
+      type: object
+      description: >-
+        An error as RFC 9457 problem details (application/problem+json). type is a URN for the
+        stable code (urn:shelfj:problem:CODE), title the code in words, status the HTTP status,
+        detail the message for a person, instance the request path. code and details are the
+        platform's extension members, requestId the correlation id, and error/meta the envelope
+        members clients read before problem details.
+      required: [type, title, status, code]
+      properties:
+        type: { type: string, format: uri, example: "urn:shelfj:problem:VALIDATION_FAILED" }
+        title: { type: string, example: "Validation failed" }
+        status: { type: integer, example: 400 }
+        detail: { type: string }
+        instance: { type: string, example: "/api/order-svc/orders" }
+        code: { type: string, example: "VALIDATION_FAILED" }
+        details: { type: array, items: { type: string } }
+        requestId: { type: string }
+        error:
+          type: object
+          properties:
+            code: { type: string }
+            message: { type: string }
+            details: { type: array, items: { type: string } }
+        meta:
+          type: object
+          properties:
+            requestId: { type: string }
+            nextCursor: { type: string }
+  responses:
+    Problem:
+      description: An error, as RFC 9457 problem details.
+      content:
+        application/problem+json:
+          schema:
+            $ref: '#/components/schemas/Problem'
   securitySchemes:
     bearerAuth:
       type: http
