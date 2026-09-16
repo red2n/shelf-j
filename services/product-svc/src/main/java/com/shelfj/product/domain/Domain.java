@@ -39,9 +39,24 @@ public final class Domain {
       boolean sellableOnline,
       boolean sellablePos,
       Instant createdAt,
-      Instant updatedAt) {
+      Instant updatedAt,
+      /** For a NEW_LINE: the day it is meant to go on sale, or null (item lifecycle). */
+      java.time.LocalDate launchOn,
+      /** When the line was marked for run-down; null unless DISCONTINUED. */
+      Instant discontinuedAt) {
     public static final String STATUS_ACTIVE = "ACTIVE";
     public static final String STATUS_DELISTED = "DELISTED";
+
+    /** Listed, not yet on sale: hidden from the shop, refused at the till until launched. */
+    public static final String STATUS_NEW_LINE = "NEW_LINE";
+
+    /** Being run down: sold while stock lasts, never reordered. */
+    public static final String STATUS_DISCONTINUED = "DISCONTINUED";
+
+    /** Whether the shop lists it and the till sells it: on sale or being run down. */
+    public boolean onSale() {
+      return STATUS_ACTIVE.equals(status) || STATUS_DISCONTINUED.equals(status);
+    }
   }
 
   /** The product's primary image (owner-uploaded, one per product, always under 256 KB). */

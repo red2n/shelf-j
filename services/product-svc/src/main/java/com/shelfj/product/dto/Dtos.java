@@ -47,7 +47,14 @@ public final class Dtos {
               description =
                   "The manufacturer, EU responsible person and warnings (GPSR art.19). Required to"
                       + " offer the product online where the regulation binds the business.")
-          SafetyInformationRequest safetyInformation) {}
+          SafetyInformationRequest safetyInformation,
+      @Schema(
+              description =
+                  "ACTIVE (default) or NEW_LINE: listed but not yet on sale — hidden from the shop"
+                      + " and refused at the till until launched (item lifecycle).")
+          String status,
+      @Schema(description = "For a NEW_LINE: the day it is meant to go on sale (ISO date).")
+          String launchOn) {}
 
   /** Replace a product's store assortment. Empty/null = sold at all stores. */
   @Schema(
@@ -272,11 +279,16 @@ public final class Dtos {
       String description,
       @Schema(description = "UUID of the brand, or null for unbranded.") String brandId,
       @Schema(description = "UUID of the category, or null for uncategorized.") String categoryId,
-      @Schema(description = "ACTIVE or DELISTED.") String status,
+      @Schema(description = "NEW_LINE, ACTIVE, DISCONTINUED or DELISTED (item lifecycle).")
+          String status,
       @Schema(description = "Whether the storefront shows this product.") boolean sellableOnline,
       @Schema(description = "Whether POS can sell this product.") boolean sellablePos,
       String createdAt,
-      String updatedAt) {}
+      String updatedAt,
+      @Schema(description = "For a NEW_LINE: the day it is meant to go on sale (item lifecycle).")
+          String launchOn,
+      @Schema(description = "When the line was marked for run-down; null unless DISCONTINUED.")
+          String discontinuedAt) {}
 
   @Schema(name = "VariantResponse")
   public record VariantResponse(

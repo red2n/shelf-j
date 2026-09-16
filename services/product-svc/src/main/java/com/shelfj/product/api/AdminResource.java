@@ -370,6 +370,67 @@ public class AdminResource {
     return ApiResponse.ok(Mappers.toProduct(service.delistProduct(ctx.requireTenantId(), id)));
   }
 
+  /**
+   * Puts a new line on sale (item lifecycle: NEW_LINE → ACTIVE).
+   *
+   * @param id the product
+   * @throws com.shelfj.web.ApiException {@code 409} unless the product is a NEW_LINE
+   */
+  @Operation(
+      summary = "Launch a new line",
+      description =
+          "NEW_LINE → ACTIVE: the shop lists it and the till sells it from now. Publishes"
+              + " ProductLaunched with the variants it covers.")
+  @APIResponse(responseCode = "404", description = "No such product")
+  @APIResponse(responseCode = "409", description = "Not a NEW_LINE")
+  @Tag(name = "Products")
+  @POST
+  @Path("/products/{id}/launch")
+  public ApiResponse<ProductResponse> launchProduct(@PathParam("id") UUID id) {
+    return ApiResponse.ok(Mappers.toProduct(service.launchProduct(ctx.requireTenantId(), id)));
+  }
+
+  /**
+   * Marks a line for run-down (item lifecycle: ACTIVE → DISCONTINUED).
+   *
+   * @param id the product
+   * @throws com.shelfj.web.ApiException {@code 409} unless the product is ACTIVE
+   */
+  @Operation(
+      summary = "Discontinue a line",
+      description =
+          "ACTIVE → DISCONTINUED: sold while stock lasts, never reordered — inventory-svc takes its"
+              + " variants out of the low-stock report and the planning run. Publishes"
+              + " ProductDiscontinued with the variants it covers.")
+  @APIResponse(responseCode = "404", description = "No such product")
+  @APIResponse(responseCode = "409", description = "Not ACTIVE")
+  @Tag(name = "Products")
+  @POST
+  @Path("/products/{id}/discontinue")
+  public ApiResponse<ProductResponse> discontinueProduct(@PathParam("id") UUID id) {
+    return ApiResponse.ok(Mappers.toProduct(service.discontinueProduct(ctx.requireTenantId(), id)));
+  }
+
+  /**
+   * Brings a discontinued line back (item lifecycle: DISCONTINUED → ACTIVE).
+   *
+   * @param id the product
+   * @throws com.shelfj.web.ApiException {@code 409} unless the product is DISCONTINUED
+   */
+  @Operation(
+      summary = "Reinstate a discontinued line",
+      description =
+          "DISCONTINUED → ACTIVE: back on sale and back into replenishment. Publishes"
+              + " ProductReinstated.")
+  @APIResponse(responseCode = "404", description = "No such product")
+  @APIResponse(responseCode = "409", description = "Not DISCONTINUED")
+  @Tag(name = "Products")
+  @POST
+  @Path("/products/{id}/reinstate")
+  public ApiResponse<ProductResponse> reinstateProduct(@PathParam("id") UUID id) {
+    return ApiResponse.ok(Mappers.toProduct(service.reinstateProduct(ctx.requireTenantId(), id)));
+  }
+
   // ── product image ──────────────────────────────────────────────────────────
 
   /**
