@@ -930,6 +930,10 @@ services:
       # Per-IP budget. The k6 regression suite drives ~50 VUs from one host IP and peaks
       # well above 10k/min; 10k caused mid-run 429 cascades. Local-dev/load-test value only.
       shelfj.gateway.rate-limit.requests-per-minute: "30000"
+      # Script integrity on the web shell (PCI DSS 11.6.1): the monitor reads the shell's inventory
+      # and checks the served scripts against it on a schedule; drift is a gauge Prometheus alerts on.
+      shelfj.gateway.script-integrity.web-url: http://shelf-app:8080
+      shelfj.gateway.script-integrity.interval-minutes: "${GATEWAY_SCRIPT_INTEGRITY_INTERVAL_MINUTES:-60}"
       shelfj.jwt.secret: ${SHELFJ_JWT_SECRET:?SHELFJ_JWT_SECRET must be set (>= 32 chars) - see .env.example}
       otel.exporter.otlp.endpoint: http://otel-collector:4317
       # Browser origins that may call the API. The web UI (8088) and `flutter run` (40015) on this
