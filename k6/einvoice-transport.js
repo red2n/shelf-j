@@ -213,7 +213,7 @@ export default function ({ gb, noaddr, cafe, nobody, slow, offline, inbox, inbox
   expect(deliver('peppol', {}), '[-] a delivery without the key is refused before the document is read', 401, 'PURCHASE_EINVOICE_KEY_REFUSED');
   expect(deliver('peppol', { 'X-EInvoice-Key': 'not-the-key' }), '[-] as is a wrong key', 401, 'PURCHASE_EINVOICE_KEY_REFUSED');
   expect(deliver('peppol', auth(t)), '[abuse] a staff token is not a delivery key', 401, 'PURCHASE_EINVOICE_KEY_REFUSED');
-  expect(deliver('peppol', { ...auth(gb.rival.owner.token), 'X-Tenant-Id': gb.rival.tenant.id }), '[abuse] nor a rival\'s token with a tenant header', 401, 'PURCHASE_EINVOICE_KEY_REFUSED');
+  expect(deliver('peppol', { ...auth(gb.rival.owner.token), 'X-Tenant-Id': gb.rival.tenantId }), '[abuse] nor a rival\'s token with a tenant header', 401, 'PURCHASE_EINVOICE_KEY_REFUSED');
   expect(deliver('ksef', keyed), '[-] KSeF does not deliver in: a Polish buyer pulls', 400, 'PURCHASE_EINVOICE_NETWORK_UNKNOWN');
   expect(deliver('fax', keyed), '[-] nor a network that does not exist', 400, 'PURCHASE_EINVOICE_NETWORK_UNKNOWN');
   const stranger = issued.body.split(inboxGln).join(gln('579000199999')).split('GB444444444').join('GB000000001');
