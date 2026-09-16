@@ -1,7 +1,10 @@
 package com.shelfj.order.api;
 
+import com.shelfj.order.domain.EInvoiceTransports.Transmission;
 import com.shelfj.order.domain.SalesInvoices.SalesInvoice;
+import com.shelfj.order.dto.SalesInvoiceDtos;
 import com.shelfj.order.mapper.SalesInvoiceMappers;
+import com.shelfj.order.service.EInvoiceTransportService;
 import com.shelfj.order.service.SalesInvoiceService;
 import com.shelfj.web.ApiResponse;
 import com.shelfj.web.Parsing;
@@ -19,6 +22,7 @@ import jakarta.ws.rs.QueryParam;
 import jakarta.ws.rs.core.MediaType;
 import jakarta.ws.rs.core.Response;
 import java.util.List;
+import java.util.Map;
 import java.util.UUID;
 import org.eclipse.microprofile.openapi.annotations.Operation;
 import org.eclipse.microprofile.openapi.annotations.responses.APIResponse;
@@ -42,6 +46,7 @@ public class SalesInvoiceResource {
   static final int MAX_PAGE = 100;
 
   @Inject SalesInvoiceService svc;
+  @Inject EInvoiceTransportService transport;
   @Inject TenantContext ctx;
 
   @Operation(
@@ -77,10 +82,7 @@ public class SalesInvoiceResource {
   @Path("/orders/{orderId}/invoices")
   public Response ofOrder(@PathParam("orderId") UUID orderId) {
     return Response.ok(
-            ApiResponse.ok(
-                svc.list(ctx.requireTenantId(), orderId, null, MAX_PAGE).stream()
-                    .map(SalesInvoiceMappers::toDto)
-                    .toList()))
+            ApiResponse.ok(dtos(svc.list(ctx.requireTenantId(), orderId, null, MAX_PAGE))))
         .build();
   }
 
@@ -112,10 +114,7 @@ public class SalesInvoiceResource {
     List<SalesInvoice> page =
         svc.list(ctx.requireTenantId(), null, Parsing.optionalUuid(after, "after"), size);
     String next = page.size() == size ? page.get(page.size() - 1).id().toString() : null;
-    return Response.ok(
-            ApiResponse.ok(
-                page.stream().map(SalesInvoiceMappers::toDto).toList(),
-                new ApiResponse.Meta(ctx.requestId(), next)))
+    return Response.ok(ApiResponse.ok(dtos(page), new ApiResponse.Meta(ctx.requestId(), next)))
         .build();
   }
 
@@ -155,7 +154,14 @@ public class SalesInvoiceResource {
         .build();
   }
 
-  private static Response one(SalesInvoice s) {
-    return Response.ok(ApiResponse.ok(SalesInvoiceMappers.toDto(s))).build();
+  private Response one(SalesInvoice s) {
+    return Response.ok(ApiResponse.ok(dtos(List.of(s)).get(0))).build();
+  }
+
+  /** The documents with the newest attempt to send each, in one read. */
+  private List<SalesInvoiceDtos.SalesInvoiceResponse> dtos(List<SalesInvoice> docs) {
+    Map<UUID, Transmission> latest =
+        transport.latest(ctx.requireTenantId(), docs.stream().map(SalesInvoice::id).toList());
+    return docs.stream().map(d -> SalesInvoiceMappers.toDto(d, latest.get(d.id()))).toList();
   }
 }

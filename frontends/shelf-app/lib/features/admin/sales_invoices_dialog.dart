@@ -45,6 +45,28 @@ class _OrderInvoicesDialogState extends ConsumerState<OrderInvoicesDialog> {
     }
   }
 
+  Future<void> _send(SalesInvoice inv) async {
+    if (_busy) return;
+    setState(() {
+      _busy = true;
+      _error = null;
+    });
+    try {
+      final t = await sendInvoice(ref.read(apiClientProvider).dio, inv.id);
+      ref.invalidate(orderInvoicesProvider(widget.orderId));
+      if (mounted) {
+        setState(() {
+          _busy = false;
+          _error = t.status == 'ACCEPTED' || t.status == 'PENDING'
+              ? null
+              : t.summary;
+        });
+      }
+    } catch (e) {
+      _failed(e, 'Could not send the document.');
+    }
+  }
+
   Future<void> _download(SalesInvoice inv, String format) async {
     if (_busy) return;
     setState(() {
@@ -78,6 +100,8 @@ class _OrderInvoicesDialogState extends ConsumerState<OrderInvoicesDialog> {
     final cs = Theme.of(context).colorScheme;
     final async = ref.watch(orderInvoicesProvider(widget.orderId));
     final docs = async.value ?? const <SalesInvoice>[];
+    final sending =
+        ref.watch(transportSettingsProvider).value?.sending ?? false;
     final invoiced = docs.any((d) => !d.creditNote);
     return AlertDialog(
       title: const Text('Invoices and credit notes'),
@@ -104,7 +128,15 @@ class _OrderInvoicesDialogState extends ConsumerState<OrderInvoicesDialog> {
                     style: TextStyle(color: cs.outline),
                   ),
                 for (final d in docs)
-                  _DocumentTile(doc: d, busy: _busy, onDownload: _download),
+                  _DocumentTile(
+                    doc: d,
+                    busy: _busy,
+                    canSend: sending &&
+                        (d.transmission == null ||
+                            d.transmission!.sendableAgain),
+                    onDownload: _download,
+                    onSend: _send,
+                  ),
                 if (_error != null) ...[
                   const SizedBox(height: 12),
                   Text(_error!,
@@ -136,9 +168,16 @@ class _OrderInvoicesDialogState extends ConsumerState<OrderInvoicesDialog> {
 class _DocumentTile extends StatelessWidget {
   final SalesInvoice doc;
   final bool busy;
+  final bool canSend;
   final void Function(SalesInvoice doc, String format) onDownload;
-  const _DocumentTile(
-      {required this.doc, required this.busy, required this.onDownload});
+  final void Function(SalesInvoice doc) onSend;
+  const _DocumentTile({
+    required this.doc,
+    required this.busy,
+    required this.canSend,
+    required this.onDownload,
+    required this.onSend,
+  });
 
   @override
   Widget build(BuildContext context) {
@@ -210,6 +249,38 @@ class _DocumentTile extends StatelessWidget {
               '${doc.creditNote ? 'Credited' : 'Payable'} ${money(doc.payableAmount)}',
               style: text.bodySmall,
             ),
+            if (doc.transmission != null || canSend) ...[
+              const SizedBox(height: 6),
+              Row(
+                children: [
+                  if (doc.transmission != null)
+                    Expanded(
+                      child: Text(
+                        doc.transmission!.summary,
+                        key: Key('sales-invoice-transmission-${doc.id}'),
+                        style: TextStyle(
+                          fontSize: 12,
+                          color: switch (doc.transmission!.status) {
+                            'ACCEPTED' => cs.primary,
+                            'REJECTED' || 'FAILED' => cs.error,
+                            _ => cs.outline,
+                          },
+                        ),
+                      ),
+                    )
+                  else
+                    const Spacer(),
+                  if (canSend)
+                    TextButton.icon(
+                      key: Key('sales-invoice-send-${doc.id}'),
+                      onPressed: busy ? null : () => onSend(doc),
+                      icon: const Icon(Icons.send_outlined, size: 16),
+                      label: Text(
+                          doc.transmission == null ? 'Send' : 'Send again'),
+                    ),
+                ],
+              ),
+            ],
             if (doc.irpProblems.isNotEmpty) ...[
               const SizedBox(height: 8),
               Text(

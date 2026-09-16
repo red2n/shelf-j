@@ -1,6 +1,7 @@
 package com.shelfj.order.mapper;
 
 import com.shelfj.einvoice.Invoice;
+import com.shelfj.order.domain.EInvoiceTransports.Transmission;
 import com.shelfj.order.domain.SalesInvoices;
 import com.shelfj.order.domain.SalesInvoices.SalesInvoice;
 import com.shelfj.order.dto.SalesInvoiceDtos.SalesInvoiceResponse;
@@ -13,6 +14,13 @@ public final class SalesInvoiceMappers {
   private SalesInvoiceMappers() {}
 
   public static SalesInvoiceResponse toDto(SalesInvoice s) {
+    return toDto(s, null);
+  }
+
+  /**
+   * @param latest the newest attempt to send the document, or null
+   */
+  public static SalesInvoiceResponse toDto(SalesInvoice s, Transmission latest) {
     List<String> formats =
         new ArrayList<>(
             List.of(
@@ -43,7 +51,8 @@ public final class SalesInvoiceMappers {
         s.customizationId(),
         Invoice.PEPPOL_BIS_3.equals(s.customizationId()),
         List.copyOf(formats),
-        SalesInvoices.problems(s.irpProblems()));
+        SalesInvoices.problems(s.irpProblems()),
+        EInvoiceTransportMappers.toDto(latest));
   }
 
   private static String str(Object o) {

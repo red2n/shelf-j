@@ -10,6 +10,7 @@ import '../../core/theme.dart';
 import '../../shared/widgets/error_view.dart';
 import '../../shared/widgets/loading_view.dart';
 import 'einvoice_providers.dart';
+import 'einvoice_transport_dialog.dart';
 import 'procurement_providers.dart';
 import 'providers/admin_providers.dart' show TenantInfo, tenantInfoProvider;
 
@@ -152,7 +153,8 @@ class _ReceivingAddress extends ConsumerWidget {
       padding: const EdgeInsets.fromLTRB(16, 12, 16, 0),
       child: Card(
         margin: EdgeInsets.zero,
-        child: ListTile(
+        child: Column(children: [
+          ListTile(
           leading: Icon(Icons.hub_outlined, color: cs.primary),
           title: Text(
             tenant.hasElectronicAddress
@@ -181,6 +183,10 @@ class _ReceivingAddress extends ConsumerWidget {
                 )
               : null,
         ),
+          const Divider(height: 1),
+          // Where the business's own invoices leave (the transport seam).
+          TransportSettingsTile(canEdit: canEdit),
+        ]),
       ),
     );
   }

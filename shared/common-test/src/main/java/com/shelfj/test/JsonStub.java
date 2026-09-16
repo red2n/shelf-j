@@ -75,6 +75,16 @@ public final class JsonStub implements AutoCloseable {
     return this;
   }
 
+  /** Where the stub listens, for a client configured by URL rather than by service name. */
+  public String baseUrl() {
+    return baseOf(server);
+  }
+
+  /** Forgets the requests received so far. */
+  public void reset() {
+    calls.clear();
+  }
+
   /** Every request received so far, oldest first. */
   public List<Call> calls() {
     return List.copyOf(calls);
