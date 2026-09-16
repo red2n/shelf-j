@@ -119,7 +119,8 @@ abstract class BearerFacadeTransport implements EInvoiceTransport {
   }
 
   private Reply answered(HttpClientResponse res) {
-    Reply reply = new Reply(res.status().code(), res.as(String.class));
+    Reply reply =
+        new Reply(res.status().code(), res.entity().hasEntity() ? res.as(String.class) : "");
     if (!reply.ok() && !reply.refused()) {
       throw new TransportException(facade() + " answered HTTP " + reply.status(), null);
     }

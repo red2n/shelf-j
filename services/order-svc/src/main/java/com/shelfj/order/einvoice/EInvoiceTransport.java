@@ -70,22 +70,24 @@ public interface EInvoiceTransport {
    * @param state {@code ACCEPTED}, {@code REJECTED} or {@code PENDING} (taken, not yet answered)
    * @param detail the answer in words
    * @param response the answer as it came, JSON, for the record
+   * @param reference the network's final reference for the document when it differs from the one it
+   *     was taken under — a KSeF number for a session reference; null to keep the first
    */
-  record Outcome(String state, String detail, String response) {
+  record Outcome(String state, String detail, String response, String reference) {
 
     public static Outcome accepted(String detail, String response) {
       return new Outcome(
-          com.shelfj.order.domain.EInvoiceTransports.STATUS_ACCEPTED, detail, response);
+          com.shelfj.order.domain.EInvoiceTransports.STATUS_ACCEPTED, detail, response, null);
     }
 
     public static Outcome rejected(String detail, String response) {
       return new Outcome(
-          com.shelfj.order.domain.EInvoiceTransports.STATUS_REJECTED, detail, response);
+          com.shelfj.order.domain.EInvoiceTransports.STATUS_REJECTED, detail, response, null);
     }
 
     public static Outcome pending(String detail, String response) {
       return new Outcome(
-          com.shelfj.order.domain.EInvoiceTransports.STATUS_PENDING, detail, response);
+          com.shelfj.order.domain.EInvoiceTransports.STATUS_PENDING, detail, response, null);
     }
   }
 

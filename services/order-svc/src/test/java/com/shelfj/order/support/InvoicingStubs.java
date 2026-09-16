@@ -50,6 +50,7 @@ public final class InvoicingStubs {
   public static final String V_GST = Ids.newId().toString();
   public static final String V_NOHSN = Ids.newId().toString();
   public static final String V_ODD = Ids.newId().toString();
+  public static final String V_PL = Ids.newId().toString();
 
   public static final Map<String, Item> CATALOGUE =
       Map.of(
@@ -62,7 +63,11 @@ public final class InvoicingStubs {
                   "Basmati rice 25kg", "RICE-25", "KG", "1006", "100.00", "0.18", "GST18", null),
           V_NOHSN, new Item("Jaggery", "JAG-1", "KG", null, "50.00", "0.18", "GST18", null),
           // A line whose recorded tax is more than its rate makes: 30.00 on 100.00 at 20%.
-          V_ODD, new Item("Odd lot", "ODD", "EA", null, "100.00", "0.20", "STD", "30.00"));
+          V_ODD, new Item("Odd lot", "ODD", "EA", null, "100.00", "0.20", "STD", "30.00"),
+          // Poland's standard rate.
+          V_PL,
+              new Item(
+                  "Kawa ziarnista 1 kg", "KAWA-1", "KG", null, "100.00", "0.23", "PL23", null));
 
   /** The three services, with the catalogue priced and named. */
   public static JsonStub services() {

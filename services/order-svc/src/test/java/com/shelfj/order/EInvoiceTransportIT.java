@@ -1,6 +1,7 @@
 package com.shelfj.order;
 
 import static com.shelfj.order.support.InvoicingStubs.V_GST;
+import static com.shelfj.order.support.InvoicingStubs.V_PL;
 import static com.shelfj.order.support.InvoicingStubs.V_STD;
 import static com.shelfj.order.support.InvoicingStubs.basket;
 import static com.shelfj.order.support.InvoicingStubs.business;
@@ -23,6 +24,7 @@ import static org.hamcrest.Matchers.startsWith;
 
 import com.shelfj.ids.Ids;
 import com.shelfj.order.support.IrpPortalStub;
+import com.shelfj.order.support.KsefStub;
 import com.shelfj.order.support.Till;
 import com.shelfj.test.Concurrency;
 import com.shelfj.test.JsonStub;
@@ -74,6 +76,9 @@ class EInvoiceTransportIT {
   private static final String S_FR = Ids.newId().toString();
   private static final String C_FR = Ids.newId().toString();
   private static final String C_FR_REFUSE = Ids.newId().toString();
+  private static final String T_PL = Ids.newId().toString();
+  private static final String S_PL = Ids.newId().toString();
+  private static final String C_PL = Ids.newId().toString();
 
   private static final String[] LEEDS = {"2 Mill Lane", "Leeds", "LS1 4AB"};
 
@@ -87,6 +92,7 @@ class EInvoiceTransportIT {
   private static final TenantSvcStub TENANTS;
   private static final JsonStub SERVICES;
   private static final IrpPortalStub PORTAL;
+  private static final KsefStub KSEF;
 
   static {
     PG = PostgresSupport.start();
@@ -112,6 +118,10 @@ class EInvoiceTransportIT {
             .withIdentity(T_FR, "FR32123456789", null, null)
             .withLegalName(T_FR, "Épicerie du Port SARL")
             .withStore(T_FR, S_FR, "FR", "3 rue du Port", "Paris", "75001")
+            .with(T_PL, "PLN", "PL")
+            .withIdentity(T_PL, "PL5260250991", null, null)
+            .withLegalName(T_PL, "Sklep Portowy sp. z o.o.")
+            .withStore(T_PL, S_PL, "PL", "ul. Portowa 1", "Gdańsk", "80-001")
             // As if the mandate were in force: what the settings suggest.
             .withObligation("GB", "E_INVOICING_B2B", "COUNTRY", "2020-01-01", null);
     SERVICES = services();
@@ -149,8 +159,20 @@ class EInvoiceTransportIT {
         "0009",
         "55208131700013REFUSE",
         paris);
-    // India's portal, doing its own cryptography; France's platform, answering by the buyer.
+    business(
+        SERVICES,
+        C_PL,
+        "Kawiarnia Molo sp. z o.o.",
+        "PL7010001455",
+        "PL",
+        null,
+        null,
+        new String[] {"ul. Długa 2", "Gdańsk", "80-002"});
+    // India's portal, doing its own cryptography; France's platform, answering by the buyer;
+    // Poland's system, opening what the client sealed.
     PORTAL = IrpPortalStub.on(SERVICES, "user1", "pass1");
+    KSEF = KsefStub.on(SERVICES, "5260250991", "ksef-token-1");
+    System.setProperty("shelfj.einvoice.ksef.base-url", SERVICES.baseUrl() + KsefStub.PREFIX);
     SERVICES.on("POST", "/pdp/invoices", EInvoiceTransportIT::platformDeposit);
     SERVICES.on(
         "GET",
@@ -208,6 +230,7 @@ class EInvoiceTransportIT {
             "shelfj.einvoice.irp.public-key",
             "shelfj.einvoice.fr-pdp.base-url",
             "shelfj.einvoice.fr-pdp.api-key",
+            "shelfj.einvoice.ksef.base-url",
             "shelfj.einvoice.secrets-key")) {
       System.clearProperty(p);
     }
@@ -327,7 +350,9 @@ class EInvoiceTransportIT {
     assertThat(
         s.getJsonObject("providers").getJsonArray("PEPPOL").toString(),
         is("[\"ACCESS_POINT\",\"SIMULATED\"]"));
-    assertThat(s.getJsonObject("providers").getJsonArray("KSEF").toString(), is("[\"SIMULATED\"]"));
+    assertThat(
+        s.getJsonObject("providers").getJsonArray("KSEF").toString(),
+        is("[\"KSEF\",\"SIMULATED\"]"));
     // The stub's credentials are configured, so the access point can be chosen here.
     assertThat(
         s.getJsonObject("available").getJsonArray("PEPPOL").toString(),
@@ -655,5 +680,42 @@ class EInvoiceTransportIT {
     JsonObject refused = transmissionIn(T_FR, unwanted.getString("id"), "REJECTED", "FAILED");
     assertThat(refused.getString("status"), is("REJECTED"));
     assertThat(refused.getString("detail"), is("refused by the buyer: bon de commande inconnu"));
+  }
+
+  @Test
+  @DisplayName(
+      "A Polish business signs in to KSeF with its token, sends FA(3), and is given a KSeF number")
+  void ksef() {
+    KSEF.mode("accept");
+    Response noToken = setTransport(T_PL, "{\"network\":\"KSEF\",\"provider\":\"KSEF\"}");
+    assertThat(noToken.getStatus(), is(409));
+    assertThat(code(noToken), is("EINVOICE_PROVIDER_SECRET_REQUIRED"));
+    Response chosen =
+        setTransport(
+            T_PL,
+            "{\"network\":\"KSEF\",\"provider\":\"KSEF\",\"providerSecret\":\"ksef-token-1\"}");
+    assertThat(chosen.readEntity(String.class), chosen.getStatus(), is(200));
+    JsonObject inv = invoiced(T_PL, S_PL, "PLN", C_PL, V_PL);
+    JsonObject numbered =
+        transmissionIn(T_PL, inv.getString("id"), "ACCEPTED", "REJECTED", "FAILED");
+    assertThat(numbered.toString(), numbered.getString("status"), is("ACCEPTED"));
+    assertThat(numbered.getString("providerRef"), is("5260250991-20260916-010203ABCDEF-01"));
+    assertThat(numbered.getString("detail"), startsWith("KSeF number "));
+    assertThat("taken, then asked after", numbered.getInt("attempts"), greaterThanOrEqualTo(2));
+    assertThat(KSEF.lastInvoice(), containsString("<NIP>5260250991</NIP>"));
+    assertThat(KSEF.lastInvoice(), containsString("<NIP>7010001455</NIP>"));
+    assertThat(
+        KSEF.lastInvoice(), containsString("<P_2>" + inv.getString("fullNumber") + "</P_2>"));
+
+    // The system's refusal of the document is final.
+    KSEF.mode("reject");
+    try {
+      JsonObject bad = invoiced(T_PL, S_PL, "PLN", C_PL, V_PL);
+      JsonObject rejected = transmissionIn(T_PL, bad.getString("id"), "REJECTED", "FAILED");
+      assertThat(rejected.getString("status"), is("REJECTED"));
+      assertThat(rejected.getString("detail"), containsString("KSeF refused (450)"));
+    } finally {
+      KSEF.mode("accept");
+    }
   }
 }

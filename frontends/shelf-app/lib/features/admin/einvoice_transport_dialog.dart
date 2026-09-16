@@ -175,9 +175,11 @@ class _TransportSettingsDialogState
                     obscureText: true,
                     maxLength: 200,
                     decoration: InputDecoration(
-                      labelText: _provider == 'NIC'
-                          ? 'Portal password'
-                          : 'Credential at the provider',
+                      labelText: switch (_provider) {
+                        'NIC' => 'Portal password',
+                        'KSEF' => 'KSeF token',
+                        _ => 'Credential at the provider',
+                      },
                       helperText: c.hasSecret
                           ? 'One is kept, sealed. Leave blank to keep it.'
                           : 'Kept sealed on the server and never shown again.',
@@ -227,6 +229,7 @@ class _TransportSettingsDialogState
         'ACCESS_POINT' => 'Peppol access point',
         'PDP' => 'Approved platform',
         'NIC' => 'Invoice Registration Portal (NIC)',
+        'KSEF' => 'KSeF (Ministry of Finance)',
         _ => p,
       };
 }
