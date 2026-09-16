@@ -1,5 +1,6 @@
 package com.shelfj.einvoice;
 
+import static com.shelfj.einvoice.TestInvoices.totals;
 import static org.junit.jupiter.api.Assertions.assertEquals;
 import static org.junit.jupiter.api.Assertions.assertFalse;
 import static org.junit.jupiter.api.Assertions.assertThrows;
@@ -103,7 +104,7 @@ class IrpTest {
     Invoice.Line vatRate =
         line("Taxed at a VAT rate", "30049099", "1", "C62", "10.00", null, "10.00", "20");
     Invoice bad =
-        invoice(
+        TestInvoices.invoice(
             "inv 1",
             "388",
             "EUR",
@@ -114,7 +115,8 @@ class IrpTest {
                     false, BigDecimal.ONE, null, null, "S", BigDecimal.TEN, "Loyal", "95")),
             List.of(noHsn, vatRate),
             List.of(),
-            totals("20.00", "20.00"));
+            totals("20.00", "20.00"),
+            List.of());
     Set<String> rules = Irp.check(bad).stream().map(Violation::rule).collect(Collectors.toSet());
     for (String rule :
         List.of(
@@ -250,20 +252,6 @@ class IrpTest {
         null);
   }
 
-  private static Invoice.Totals totals(String net, String gross) {
-    return new Invoice.Totals(
-        new BigDecimal(net),
-        null,
-        null,
-        new BigDecimal(net),
-        null,
-        null,
-        new BigDecimal(gross),
-        null,
-        null,
-        new BigDecimal(gross));
-  }
-
   private static Invoice invoice(
       String number,
       String type,
@@ -282,7 +270,7 @@ class IrpTest {
       String gross) {
     BigDecimal net =
         lines.stream().map(Invoice.Line::netAmount).reduce(BigDecimal.ZERO, BigDecimal::add);
-    return invoice(
+    return TestInvoices.invoice(
         number,
         type,
         "INR",
@@ -291,54 +279,7 @@ class IrpTest {
         List.of(),
         lines,
         preceding,
-        totals(net.toPlainString(), gross));
-  }
-
-  private static Invoice invoice(
-      String number,
-      String type,
-      String currency,
-      Invoice.Party seller,
-      Invoice.Party buyer,
-      List<Invoice.AllowanceCharge> allowances,
-      List<Invoice.Line> lines,
-      List<Invoice.PrecedingInvoice> preceding,
-      Invoice.Totals totals) {
-    return new Invoice(
-        Invoice.EN16931,
-        null,
-        number,
-        LocalDate.of(2026, 9, 15),
-        type,
-        currency,
-        null,
-        null,
-        null,
-        null,
-        null,
-        null,
-        null,
-        null,
-        null,
-        null,
-        null,
-        null,
-        null,
-        null,
-        null,
-        List.of(),
-        preceding,
-        seller,
-        buyer,
-        null,
-        null,
-        null,
-        null,
-        null,
-        allowances,
-        totals,
-        List.of(),
-        List.of(),
-        lines);
+        totals(net.toPlainString(), gross),
+        List.of());
   }
 }

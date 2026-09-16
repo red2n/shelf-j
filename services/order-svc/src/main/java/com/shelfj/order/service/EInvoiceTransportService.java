@@ -419,6 +419,7 @@ public class EInvoiceTransportService {
         ref = d.providerRef();
         o = d.outcome();
       }
+      if (o.reference() != null && !o.reference().isBlank()) ref = o.reference();
       boolean taken = !EInvoiceTransports.STATUS_REJECTED.equals(o.state()) || ref != null;
       Instant sentAt = taken ? now : null;
       switch (o.state()) {
