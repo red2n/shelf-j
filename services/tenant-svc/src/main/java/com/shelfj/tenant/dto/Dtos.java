@@ -454,7 +454,26 @@ public final class Dtos {
 
   @org.eclipse.microprofile.openapi.annotations.media.Schema(name = "ObligationsResponse")
   public record ObligationsResponse(
-      String country, String on, java.util.List<ObligationResponse> obligations) {}
+      String country,
+      String on,
+      java.util.List<ObligationResponse> obligations,
+      @Schema(description = "The cash payment limits that reach the country (09.17).")
+          java.util.List<CashLimitResponse> cashLimits) {}
+
+  @Schema(
+      name = "CashLimit",
+      description =
+          "A cash payment limit: cash of fromAmount or more, in the currency the law names, is"
+              + " refused where the store trades.")
+  public record CashLimitResponse(
+      @Schema(description = "EU for a regime's law, or the country's own code.") String scope,
+      String currency,
+      java.math.BigDecimal fromAmount,
+      String effectiveFrom,
+      String effectiveTo,
+      String citation,
+      String summary,
+      @Schema(description = "IN_FORCE or UPCOMING on the day asked about.") String status) {}
 
   // ── Security incidents (21.15) ────────────────────────────────────────────
 

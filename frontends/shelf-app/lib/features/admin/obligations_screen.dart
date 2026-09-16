@@ -50,13 +50,49 @@ class LegalObligation {
       );
 }
 
+/// A cash payment limit reaching the country (09.17): cash of [fromAmount] or
+/// more, in [currency], is refused at the till while it is in force.
+class CashLimit {
+  final String scope;
+  final String currency;
+  final num fromAmount;
+  final String effectiveFrom;
+  final String? effectiveTo;
+  final String citation;
+  final String summary;
+  final String status;
+  const CashLimit({
+    required this.scope,
+    required this.currency,
+    required this.fromAmount,
+    required this.effectiveFrom,
+    this.effectiveTo,
+    required this.citation,
+    required this.summary,
+    required this.status,
+  });
+  bool get inForce => status == 'IN_FORCE';
+  factory CashLimit.fromJson(Map<String, dynamic> j) => CashLimit(
+        scope: j['scope'] as String? ?? '',
+        currency: j['currency'] as String? ?? '',
+        fromAmount: j['fromAmount'] as num? ?? 0,
+        effectiveFrom: j['effectiveFrom'] as String? ?? '',
+        effectiveTo: j['effectiveTo'] as String?,
+        citation: j['citation'] as String? ?? '',
+        summary: j['summary'] as String? ?? '',
+        status: j['status'] as String? ?? '',
+      );
+}
+
 class ObligationSheet {
   final String country;
   final String on;
   final List<LegalObligation> obligations;
 
+  final List<CashLimit> cashLimits;
   const ObligationSheet(
-      {required this.country, required this.on, required this.obligations});
+      {required this.country, required this.on, required this.obligations,
+      this.cashLimits = const []});
 
   factory ObligationSheet.fromJson(Map<String, dynamic> j) => ObligationSheet(
         country: j['country'] as String? ?? '',
@@ -64,6 +100,10 @@ class ObligationSheet {
         obligations: [
           for (final o in (j['obligations'] as List?) ?? const [])
             LegalObligation.fromJson(o as Map<String, dynamic>)
+        ],
+  cashLimits: [
+          for (final l in (j['cashLimits'] as List?) ?? const [])
+            CashLimit.fromJson(l as Map<String, dynamic>)
         ],
       );
 }
@@ -108,11 +148,23 @@ class ObligationsScreen extends ConsumerWidget {
           data: (s) {
             final inForce = s.obligations.where((o) => o.inForce).toList();
             final coming = s.obligations.where((o) => !o.inForce).toList();
+            final cash = [
+              if (s.cashLimits.isNotEmpty) ...[
+                const SizedBox(height: AppSpacing.lg),
+                _CashLimits(limits: s.cashLimits, country: s.country),
+              ],
+            ];
             if (s.obligations.isEmpty) {
-              return Text(
-                  'No obligations are recorded for ${s.country}. That means '
-                  'the platform tracks none for this country yet, not that '
-                  'none apply.');
+              return Column(
+                crossAxisAlignment: CrossAxisAlignment.stretch,
+                children: [
+                  Text(
+                      'No obligations are recorded for ${s.country}. That means '
+                      'the platform tracks none for this country yet, not that '
+                      'none apply.'),
+                  ...cash,
+                ],
+              );
             }
             return Column(
               crossAxisAlignment: CrossAxisAlignment.stretch,
@@ -124,6 +176,7 @@ class ObligationsScreen extends ConsumerWidget {
                   const SizedBox(height: AppSpacing.lg),
                   _ObligationGroup(title: 'Coming', items: coming),
                 ],
+                ...cash,
               ],
             );
           },
@@ -167,6 +220,48 @@ class _ObligationGroup extends StatelessWidget {
           ),
         ),
       ],
+    );
+  }
+}
+
+/// The cash payment limits that reach the country (09.17): what the till
+/// refuses, in the law's currency, and from when.
+class _CashLimits extends StatelessWidget {
+  const _CashLimits({required this.limits, required this.country});
+  final List<CashLimit> limits;
+  final String country;
+
+  @override
+  Widget build(BuildContext context) {
+    final theme = Theme.of(context);
+    return Card(
+      child: Padding(
+        padding: const EdgeInsets.all(AppSpacing.lg),
+        child: Column(
+          crossAxisAlignment: CrossAxisAlignment.start,
+          children: [
+            Text('Cash limits in $country', style: theme.textTheme.titleMedium),
+            const SizedBox(height: AppSpacing.xs),
+            Text(
+              'The till refuses cash of these amounts or more, counting what was '
+              'already taken in cash for the same sale.',
+              style: theme.textTheme.bodySmall,
+            ),
+            for (final l in limits)
+              ListTile(
+                key: Key('cash-limit-${l.scope}-${l.currency}'),
+                dense: true,
+                contentPadding: EdgeInsets.zero,
+                leading: Icon(l.inForce ? Icons.block : Icons.schedule),
+                title: Text('${l.currency} ${l.fromAmount} or more'
+                    '${l.inForce ? '' : ' — from ${l.effectiveFrom}'}'),
+                subtitle: Text('${l.summary}\n${l.citation}'),
+                isThreeLine: true,
+                trailing: Chip(label: Text(l.inForce ? 'In force' : 'Coming')),
+              ),
+          ],
+        ),
+      ),
     );
   }
 }

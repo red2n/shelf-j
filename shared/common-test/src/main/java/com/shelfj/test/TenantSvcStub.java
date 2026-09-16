@@ -21,6 +21,7 @@ public final class TenantSvcStub implements AutoCloseable {
   private final HttpServer server;
   private final Map<String, String> profiles = new ConcurrentHashMap<>();
   private final Map<String, java.util.List<String>> obligations = new ConcurrentHashMap<>();
+  private final Map<String, java.util.List<String>> cashLimits = new ConcurrentHashMap<>();
   private final Map<String, java.util.List<String>> stores = new ConcurrentHashMap<>();
   private final java.util.Map<String, String> retention =
       new java.util.concurrent.ConcurrentHashMap<>();
@@ -101,6 +102,8 @@ public final class TenantSvcStub implements AutoCloseable {
                   + country
                   + "\",\"obligations\":["
                   + String.join(",", stub.obligations.getOrDefault(country, java.util.List.of()))
+                  + "],\"cashLimits\":["
+                  + String.join(",", stub.cashLimits.getOrDefault(country, java.util.List.of()))
                   + "]}}");
         });
     // A tenant's retention schedule (21.16), as registered; a tenant with none has an empty one.
@@ -197,6 +200,39 @@ public final class TenantSvcStub implements AutoCloseable {
 
   private static String field(String name, String value) {
     return value == null ? "" : ",\"" + name + "\":\"" + value + "\"";
+  }
+
+  /**
+   * Registers a cash payment limit that reaches a country (09.17), as tenant-svc's {@code GET
+   * /admin/tenant/obligations} lists it under {@code cashLimits}.
+   *
+   * @param effectiveTo the last day it applies, or null while it still does
+   */
+  public TenantSvcStub withCashLimit(
+      String country,
+      String scope,
+      String currency,
+      String fromAmount,
+      String effectiveFrom,
+      String effectiveTo,
+      String citation) {
+    cashLimits
+        .computeIfAbsent(country, c -> new java.util.concurrent.CopyOnWriteArrayList<>())
+        .add(
+            "{\"scope\":\""
+                + scope
+                + "\",\"currency\":\""
+                + currency
+                + "\",\"fromAmount\":"
+                + fromAmount
+                + ",\"effectiveFrom\":\""
+                + effectiveFrom
+                + "\""
+                + (effectiveTo == null ? "" : ",\"effectiveTo\":\"" + effectiveTo + "\"")
+                + ",\"citation\":\""
+                + citation
+                + "\",\"summary\":\"stubbed\",\"status\":\"IN_FORCE\"}");
+    return this;
   }
 
   /**

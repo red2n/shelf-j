@@ -186,6 +186,7 @@ const STORE_DEFAULTS = {
   US: { city: 'Austin', pincode: '73301', timezone: 'America/Chicago' },
   DE: { city: 'Berlin', pincode: '10117', timezone: 'Europe/Berlin' },
   PT: { city: 'Lisboa', pincode: '1100-148', timezone: 'Europe/Lisbon' },
+  FR: { city: 'Paris', pincode: '75001', timezone: 'Europe/Paris' },
 };
 
 /**

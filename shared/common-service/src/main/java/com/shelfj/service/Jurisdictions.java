@@ -11,6 +11,7 @@ import jakarta.json.JsonValue;
 import java.io.StringReader;
 import java.lang.System.Logger;
 import java.lang.System.Logger.Level;
+import java.math.BigDecimal;
 import java.time.Clock;
 import java.time.Duration;
 import java.time.Instant;
@@ -63,7 +64,32 @@ public class Jurisdictions {
     }
   }
 
-  private record Cached(List<Obligation> obligations, Instant expiresAt) {}
+  /**
+   * A cash payment limit reaching a country (09.17): cash of {@code fromAmount} or more, in the
+   * currency the law names, is refused while it is in force.
+   */
+  public record CashLimit(
+      String scope,
+      String currency,
+      BigDecimal fromAmount,
+      LocalDate effectiveFrom,
+      LocalDate effectiveTo,
+      String citation) {
+
+    public boolean inForceOn(LocalDate day) {
+      return !effectiveFrom.isAfter(day) && (effectiveTo == null || !effectiveTo.isBefore(day));
+    }
+
+    /** Whether a cash payment of this amount is refused under this limit. */
+    public boolean refuses(BigDecimal amount) {
+      return amount.compareTo(fromAmount) >= 0;
+    }
+  }
+
+  /** The sheet tenant-svc gives for a country: its obligations and its cash limits. */
+  record Sheet(List<Obligation> obligations, List<CashLimit> cashLimits) {}
+
+  private record Cached(Sheet sheet, Instant expiresAt) {}
 
   @Inject TenantProfiles profiles;
   @Inject ServiceSettings settings;
@@ -159,11 +185,47 @@ public class Jurisdictions {
    * @throws ApiException 503 {@code OBLIGATIONS_UNAVAILABLE} when tenant-svc cannot answer
    */
   public List<Obligation> obligations(UUID tenantId, String country) {
+    return sheet(tenantId, country).obligations();
+  }
+
+  /**
+   * The cash payment limits that reach a country, in force or upcoming (09.17).
+   *
+   * @throws ApiException 503 {@code OBLIGATIONS_UNAVAILABLE} when tenant-svc cannot be read
+   */
+  public List<CashLimit> cashLimits(UUID tenantId, String country) {
+    return sheet(tenantId, country).cashLimits();
+  }
+
+  /**
+   * The lowest cash limit in force on a day, in a currency, where a store trades: the store's
+   * country when a store is named, else the business's own. A limit the law names in another
+   * currency does not apply — the equivalent is a matter of rate, not of law — so a business whose
+   * currency is not the law's meets no limit until the register carries one in its currency.
+   *
+   * @param storeId the store the cash is taken at, or null for the business's own country
+   * @return the limit, or empty when none binds
+   */
+  public Optional<CashLimit> cashLimit(
+      UUID tenantId, UUID storeId, String currency, LocalDate day) {
+    String country = profiles.requireCountry(tenantId);
+    if (storeId != null) {
+      TenantProfiles.Stores stores = profiles.stores(tenantId, storeId);
+      String storeCountry = stores.countries().get(storeId);
+      if (storeCountry != null) country = storeCountry;
+    }
+    String cur = currency == null ? "" : currency.trim().toUpperCase(Locale.ROOT);
+    return cashLimits(tenantId, country).stream()
+        .filter(l -> l.inForceOn(day) && l.currency().equalsIgnoreCase(cur))
+        .min(java.util.Comparator.comparing(CashLimit::fromAmount));
+  }
+
+  private Sheet sheet(UUID tenantId, String country) {
     String cc = country == null ? "" : country.trim().toUpperCase(Locale.ROOT);
     Instant now = clock.instant();
     Cached hit = cache.get(cc);
-    if (hit != null && hit.expiresAt().isAfter(now)) return hit.obligations();
-    List<Obligation> read =
+    if (hit != null && hit.expiresAt().isAfter(now)) return hit.sheet();
+    Sheet read =
         fetch
             .apply(tenantId, cc)
             .flatMap(Jurisdictions::parse)
@@ -184,12 +246,28 @@ public class Jurisdictions {
    * Reads a {@code GET /admin/tenant/obligations} response; empty when any obligation in it cannot
    * be read, because a list with one duty silently missing is worse than no list.
    */
-  static Optional<List<Obligation>> parse(String body) {
+  static Optional<Sheet> parse(String body) {
     try (JsonReader reader = Json.createReader(new StringReader(body))) {
       JsonObject root = reader.readObject();
       if (!root.containsKey("data") || root.isNull("data")) return Optional.empty();
       JsonObject data = root.getJsonObject("data");
       if (!data.containsKey("obligations") || data.isNull("obligations")) return Optional.empty();
+      List<CashLimit> limits = new ArrayList<>();
+      if (data.containsKey("cashLimits") && !data.isNull("cashLimits")) {
+        for (JsonValue value : data.getJsonArray("cashLimits")) {
+          JsonObject l = value.asJsonObject();
+          limits.add(
+              new CashLimit(
+                  l.getString("scope", null),
+                  l.getString("currency"),
+                  l.getJsonNumber("fromAmount").bigDecimalValue(),
+                  LocalDate.parse(l.getString("effectiveFrom")),
+                  l.containsKey("effectiveTo") && !l.isNull("effectiveTo")
+                      ? LocalDate.parse(l.getString("effectiveTo"))
+                      : null,
+                  l.getString("citation", null)));
+        }
+      }
       List<Obligation> out = new ArrayList<>();
       for (JsonValue value : data.getJsonArray("obligations")) {
         JsonObject o = value.asJsonObject();
@@ -204,7 +282,7 @@ public class Jurisdictions {
                 LocalDate.parse(o.getString("effectiveFrom")),
                 to));
       }
-      return Optional.of(List.copyOf(out));
+      return Optional.of(new Sheet(List.copyOf(out), List.copyOf(limits)));
     } catch (RuntimeException e) {
       LOG.log(Level.WARNING, "unreadable legal obligations: {0}", e.getMessage());
       return Optional.empty();

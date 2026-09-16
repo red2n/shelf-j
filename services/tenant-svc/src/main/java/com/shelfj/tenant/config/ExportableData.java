@@ -25,6 +25,8 @@ public class ExportableData extends TenantDataSpec {
         "the platform's reference data: the law as recorded for every business",
         "breach_duties",
         "the platform's reference data: the law as recorded for every business",
+        "cash_limits",
+        "the platform's reference data: the law as recorded for every business",
         "jurisdiction_members",
         "the platform's reference data: the law as recorded for every business",
         "jurisdiction_regimes",
