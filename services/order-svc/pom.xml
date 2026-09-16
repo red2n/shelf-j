@@ -80,6 +80,10 @@
             <groupId>com.shelfj</groupId>
             <artifactId>common-service</artifactId>
         </dependency>
+        <dependency>
+            <groupId>com.shelfj</groupId>
+            <artifactId>einvoice</artifactId>
+        </dependency>
 
         <!-- Persistence: JDBC + Flyway -->
         <dependency>

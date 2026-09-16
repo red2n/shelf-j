@@ -78,10 +78,10 @@ public class Jurisdictions {
 
   @PostConstruct
   void init() {
-    TenantSvcClient client = new TenantSvcClient(settings, tenantSvcUrl);
+    ServiceReader client = ServiceReader.tenantSvc(settings, tenantSvcUrl);
     fetch =
         (tenantId, country) ->
-            client.get(
+            client.body(
                 tenantId,
                 "/admin/tenant/obligations",
                 Map.of("country", country, "on", EVERY_WINDOW));

@@ -357,7 +357,42 @@ public final class Domain {
        * The reduce-to-clear markdown a scanned sticker named (05.4), so pricing-svc can count the
        * sticker down once the order stands. Null for a line sold at the list price.
        */
-      UUID markdownId) {
+      UUID markdownId,
+      /** The VAT code the quote applied (18.9); null for a line placed before it was kept. */
+      String vatCode,
+      /** The VAT rate the quote applied, as a fraction: 0.2000 for 20% (18.9). */
+      BigDecimal vatRate) {
+
+    /** A line as recorded before its VAT code and rate were kept. */
+    public OrderItem(
+        UUID id,
+        UUID tenantId,
+        UUID orderId,
+        UUID variantId,
+        BigDecimal qty,
+        BigDecimal unitPrice,
+        BigDecimal lineTotal,
+        String notes,
+        UUID weighingInstrumentId,
+        BigDecimal fulfilledQty,
+        BigDecimal vatAmount,
+        UUID markdownId) {
+      this(
+          id,
+          tenantId,
+          orderId,
+          variantId,
+          qty,
+          unitPrice,
+          lineTotal,
+          notes,
+          weighingInstrumentId,
+          fulfilledQty,
+          vatAmount,
+          markdownId,
+          null,
+          null);
+    }
 
     /** A line as placed: nothing handed over yet, VAT unknown, no sticker. */
     public OrderItem(
