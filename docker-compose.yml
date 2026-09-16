@@ -714,6 +714,9 @@ services:
       shelfj.fiscal.pt.producer-tax-id: ${SHELFJ_FISCAL_PT_PRODUCER_TAX_ID:-}
       shelfj.fiscal.tse.cloud.api-key: ${SHELFJ_FISCAL_TSE_CLOUD_API_KEY:-}
       shelfj.fiscal.tse.cloud.api-secret: ${SHELFJ_FISCAL_TSE_CLOUD_API_SECRET:-}
+      # 07.13 / 18.9, the e-invoicing transport seam: the key the simulated network presents when it
+      # delivers a document into purchase-svc's inbox. The same value purchase-svc holds it against.
+      shelfj.einvoice.inbound.key: ${SHELFJ_EINVOICE_INBOUND_KEY:-dev-einvoice-inbound-key}
     mem_limit: ${ORDER_MEM_LIMIT:-700m}
     networks: [shelfj_network]
     depends_on: *svc-depends
@@ -736,6 +739,11 @@ services:
       # feature existed — turning mandatory approval on for every tenant already trading is not a
       # change to make in a config default. Per currency because there is no FX to convert with.
       shelfj.purchase.approval.limits: ${PURCHASE_APPROVAL_LIMITS:-}
+      # 07.13, the transport seam: the key every network's provider presents when it delivers a
+      # supplier's e-invoice (POST /e-invoices/inbound/{network}). Empty means no deliveries at all.
+      # A real access point contract gets its own value; the dev default only lets order-svc's
+      # simulated network deliver between the businesses on this stack.
+      shelfj.einvoice.inbound.key: ${SHELFJ_EINVOICE_INBOUND_KEY:-dev-einvoice-inbound-key}
       JAVA_TOOL_OPTIONS: "${PURCHASE_JAVA_OPTS:--Xms128m -Xmx384m -XX:+UseG1GC}"
       SHELFJ_ADVERTISE_HOST: purchase-svc
     mem_limit: ${PURCHASE_MEM_LIMIT:-512m}

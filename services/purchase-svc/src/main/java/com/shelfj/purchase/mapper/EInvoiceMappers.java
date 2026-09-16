@@ -3,6 +3,7 @@ package com.shelfj.purchase.mapper;
 import com.shelfj.purchase.domain.EInvoiceIntake;
 import com.shelfj.purchase.domain.SupplierEInvoices.Document;
 import com.shelfj.purchase.domain.SupplierEInvoices.Line;
+import com.shelfj.purchase.dto.EInvoiceDtos.DeliveryResponse;
 import com.shelfj.purchase.dto.EInvoiceDtos.RuleViolationResponse;
 import com.shelfj.purchase.dto.EInvoiceDtos.SupplierEInvoiceLineResponse;
 import com.shelfj.purchase.dto.EInvoiceDtos.SupplierEInvoiceResponse;
@@ -19,12 +20,19 @@ public final class EInvoiceMappers {
 
   private EInvoiceMappers() {}
 
+  /** A delivery's receipt: the network learns the id and nothing of the receiver's own. */
+  public static DeliveryResponse toDto(Document d, boolean alreadyReceived) {
+    return new DeliveryResponse(
+        d.id(), d.channel(), d.deliveryRef(), alreadyReceived, d.receivedAt());
+  }
+
   public static SupplierEInvoiceResponse toDto(
       Document d, List<Line> lines, boolean alreadyReceived) {
     return new SupplierEInvoiceResponse(
         d.id(),
         d.receivedAt(),
         d.channel(),
+        d.deliveryRef(),
         d.container(),
         d.syntax(),
         d.embeddedFilename(),

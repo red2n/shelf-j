@@ -1,6 +1,7 @@
 package com.shelfj.web;
 
 import jakarta.enterprise.context.RequestScoped;
+import java.util.Objects;
 import java.util.Set;
 import java.util.UUID;
 
@@ -215,6 +216,27 @@ public class TenantContext {
     this.storeIds = storeIds == null ? Set.of() : Set.copyOf(storeIds);
     this.permissions = permissions == null ? null : Set.copyOf(permissions);
     this.requestId = requestId;
+  }
+
+  /**
+   * Makes this request act for a tenant the service resolved itself, with one role and no user.
+   *
+   * <p>A network delivering a supplier's e-invoice names the receiver inside the document, and the
+   * request that carries it holds no token (07.13, the transport seam). Only a resource that has
+   * already verified the delivery's own credential may call this; from then on every query the
+   * request makes is scoped to the tenant named here, and what it writes is written by nobody.
+   *
+   * @param tenantId the tenant the request now acts for
+   * @param role the one role it acts with
+   */
+  public void assume(UUID tenantId, String role) {
+    Objects.requireNonNull(tenantId, "tenantId");
+    Objects.requireNonNull(role, "role");
+    this.tenantId = tenantId;
+    this.userId = null;
+    this.roles = Set.of(role);
+    this.storeIds = Set.of();
+    this.permissions = null;
   }
 
   /**

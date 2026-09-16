@@ -4,6 +4,8 @@ import com.shelfj.purchase.domain.SupplierEInvoices.Original;
 import com.shelfj.purchase.dto.EInvoiceDtos.MatchSupplierEInvoiceRequest;
 import com.shelfj.purchase.dto.EInvoiceDtos.RefuseSupplierEInvoiceRequest;
 import com.shelfj.purchase.mapper.EInvoiceMappers;
+import com.shelfj.purchase.service.EInvoiceDeliveryService;
+import com.shelfj.purchase.service.EInvoiceDeliveryService.Delivery;
 import com.shelfj.purchase.service.SupplierEInvoiceService;
 import com.shelfj.purchase.service.SupplierEInvoiceService.Receipt;
 import com.shelfj.web.ApiResponse;
@@ -41,6 +43,7 @@ import org.eclipse.microprofile.openapi.annotations.tags.Tag;
 public class SupplierEInvoiceResource {
 
   @Inject SupplierEInvoiceService svc;
+  @Inject EInvoiceDeliveryService deliveries;
   @Inject TenantContext ctx;
 
   @Operation(
@@ -69,6 +72,48 @@ public class SupplierEInvoiceResource {
       byte[] document, @HeaderParam(HttpHeaders.CONTENT_TYPE) String contentType) {
     Receipt r = svc.receive(ctx, document, contentType);
     return Response.status(r.alreadyReceived() ? 200 : 201).entity(ApiResponse.ok(dto(r))).build();
+  }
+
+  @Operation(
+      summary = "A network delivers a supplier's e-invoice",
+      description =
+          "What a Peppol access point, France's approved platform or this platform's own simulated"
+              + " network calls (07.13, the transport seam). No token: the request presents the"
+              + " deployment's delivery key as X-EInvoice-Key, and the receiver is the business the"
+              + " document names as its buyer — by electronic address, else by VAT identifier —"
+              + " never anything in the request. The network's own reference, X-EInvoice-Reference,"
+              + " is kept with the document. The body is the document, as for an upload: it is"
+              + " read, checked and matched the same way, and the network learns the document's id"
+              + " and nothing of the receiver's own. The same bytes delivered again answer 200.")
+  @APIResponse(responseCode = "201", description = "Delivered into the receiver's inbox")
+  @APIResponse(responseCode = "200", description = "These bytes were already there")
+  @APIResponse(
+      responseCode = "400",
+      description =
+          "A network that does not deliver in, a document that cannot be read, a reference"
+              + " too long")
+  @APIResponse(responseCode = "401", description = "The delivery key is missing or wrong")
+  @APIResponse(responseCode = "404", description = "No business on this platform is the buyer")
+  @APIResponse(responseCode = "409", description = "More than one business holds the address")
+  @APIResponse(responseCode = "413", description = "Larger than an e-invoice may be")
+  @APIResponse(responseCode = "415", description = "Not XML or PDF")
+  @APIResponse(responseCode = "422", description = "The document names no buyer to deliver to")
+  @APIResponse(
+      responseCode = "503",
+      description = "This deployment takes no deliveries, or the directory could not be asked")
+  @POST
+  @Path("/inbound/{network}")
+  @Consumes({"application/xml", "text/xml", "application/pdf", "application/octet-stream"})
+  public Response deliver(
+      @PathParam("network") String network,
+      byte[] document,
+      @HeaderParam(HttpHeaders.CONTENT_TYPE) String contentType,
+      @HeaderParam(com.shelfj.web.HttpHeaders.EINVOICE_KEY) String key,
+      @HeaderParam(com.shelfj.web.HttpHeaders.EINVOICE_REFERENCE) String reference) {
+    Delivery d = deliveries.deliver(ctx, network, key, reference, document, contentType);
+    return Response.status(d.alreadyReceived() ? 200 : 201)
+        .entity(ApiResponse.ok(EInvoiceMappers.toDto(d.document(), d.alreadyReceived())))
+        .build();
   }
 
   @Operation(

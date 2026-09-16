@@ -29,11 +29,14 @@ Map<String, dynamic> _einvoice({
   String? problem = 'Line 1 is not on the order: pick its order line',
   String? poLineId,
   List<Map<String, dynamic>> violations = const [],
+  String channel = 'UPLOAD',
+  String? deliveryRef,
 }) =>
     {
       'id': id,
       'receivedAt': '2026-09-15T10:00:00Z',
-      'channel': 'UPLOAD',
+      'channel': channel,
+      'deliveryRef': deliveryRef,
       'container': 'XML',
       'syntax': 'UBL',
       'typeCode': '380',
@@ -212,6 +215,20 @@ void main() {
     expect(find.text('Captured'), findsOneWidget);
     expect(find.text('NEEDS_LINES'), findsNothing, reason: 'the constant is not the sentence');
     expect(find.text('Line 1 is not on the order: pick its order line'), findsOneWidget);
+  });
+
+  testWidgets('a delivered document says which network brought it, and its reference when opened',
+      (tester) async {
+    final delivered = _einvoice(id: 'e-ap', number: 'INV-7', channel: 'PEPPOL', deliveryRef: 'AP-MSG-77');
+    final server = _Server()
+      ..inbox = [delivered, _einvoice(id: 'e-up', number: 'INV-8')]
+      ..detail = delivered;
+    await _pump(tester, server: server);
+
+    expect(find.textContaining('via Peppol'), findsOneWidget);
+    expect(find.textContaining('via'), findsOneWidget, reason: 'an upload needs no saying');
+    await _open(tester, 'e-ap');
+    expect(find.textContaining('ref AP-MSG-77'), findsOneWidget);
   });
 
   testWidgets('an empty inbox says what to upload, and a missing address says why it matters',

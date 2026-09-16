@@ -49,4 +49,14 @@ public final class HttpHeaders {
 
   /** Idempotency key for retryable writes (checkout, payment capture, stock receipt). */
   public static final String IDEMPOTENCY_KEY = "Idempotency-Key";
+
+  /**
+   * The key a network's provider presents when it delivers a supplier's e-invoice into the platform
+   * (07.13, the transport seam). Client-controlled, like the idempotency key: purchase-svc holds it
+   * against the deployment's own before it reads a byte of the document.
+   */
+  public static final String EINVOICE_KEY = "X-EInvoice-Key";
+
+  /** The network's own reference for a delivery, kept beside the document it delivered. */
+  public static final String EINVOICE_REFERENCE = "X-EInvoice-Reference";
 }

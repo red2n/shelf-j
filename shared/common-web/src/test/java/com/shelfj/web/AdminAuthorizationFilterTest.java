@@ -272,6 +272,19 @@ class AdminAuthorizationFilterTest {
     assertNotAborted(invoke("POST", "/payments/webhooks/razorpay"));
   }
 
+  /**
+   * A network delivering an e-invoice reaches purchase-svc with no JWT and no tenant, like a
+   * webhook; the delivery key is checked there. A person's upload beside it needs a staff role.
+   */
+  @Test
+  void eInvoiceDeliveriesAreReachableWithoutAnyRoleButUploadsAreNot() throws Exception {
+    assertNotAborted(invoke("POST", "/e-invoices/inbound/peppol"));
+    assertNotAborted(invoke("POST", "/e-invoices/inbound/simulated"));
+    assertAborted(invoke("POST", "/e-invoices"), 403);
+    assertAborted(invoke("POST", "/e-invoices/inbound-replay/peppol"), 403);
+    assertAborted(invoke("GET", "/e-invoices/inbound/peppol"), 403);
+  }
+
   /** Taking the money is the business's act, not the shopper's. */
   @Test
   void capturingAnIntentRequiresStaff() throws Exception {

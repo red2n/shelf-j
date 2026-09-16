@@ -28,6 +28,7 @@ import com.shelfj.order.support.KsefStub;
 import com.shelfj.order.support.Till;
 import com.shelfj.test.Concurrency;
 import com.shelfj.test.JsonStub;
+import com.shelfj.test.JsonStub.Answer;
 import com.shelfj.test.PostgresSupport;
 import com.shelfj.test.TenantSvcStub;
 import io.helidon.microprofile.testing.junit5.HelidonTest;
@@ -84,6 +85,11 @@ class EInvoiceTransportIT {
 
   /** What the access point stub does with the next document: deliver, accept, reject or down. */
   private static final AtomicReference<String> MODE = new AtomicReference<>("deliver");
+
+  /** How the platform's own inbox answers a simulated delivery: taken, nobody, down, refused. */
+  private static final AtomicReference<String> INBOX = new AtomicReference<>("taken");
+
+  private static final String DELIVERY_KEY = "it-delivery-key";
 
   private static final AtomicInteger AP_POSTS = new AtomicInteger();
   private static final AtomicReference<String> LAST_POST = new AtomicReference<>();
@@ -192,6 +198,30 @@ class EInvoiceTransportIT {
     // The access point's facade: one document id, answered as MODE says.
     SERVICES.on("POST", "/documents", EInvoiceTransportIT::accessPointSend);
     SERVICES.on("GET", "/documents/AP-1", EInvoiceTransportIT::accessPointStatus);
+    System.setProperty("shelfj.einvoice.inbound.key", DELIVERY_KEY);
+    SERVICES.on(
+        "POST",
+        "/e-invoices/inbound/simulated",
+        call ->
+            switch (INBOX.get()) {
+              case "down" -> new Answer(503, "");
+              case "nobody" ->
+                  new Answer(
+                      404,
+                      "{\"error\":{\"code\":\"PURCHASE_EINVOICE_RECEIVER_UNKNOWN\",\"message\":\"no"
+                          + " business on this platform holds it\"}}");
+              case "refused" ->
+                  new Answer(
+                      422,
+                      "{\"error\":{\"code\":\"PURCHASE_EINVOICE_RECEIVER_UNNAMED\",\"message\":\"the"
+                          + " document names no buyer\"}}");
+              default ->
+                  new Answer(
+                      201,
+                      "{\"data\":{\"id\":\""
+                          + Ids.newId()
+                          + "\",\"network\":\"SIMULATED\",\"alreadyReceived\":false}}");
+            });
     System.setProperty("shelfj.einvoice.peppol.base-url", SERVICES.baseUrl());
     System.setProperty("shelfj.einvoice.peppol.api-key", "test-key");
     System.setProperty("shelfj.order.einvoice-transport.interval-seconds", "1");
@@ -655,6 +685,71 @@ class EInvoiceTransportIT {
     JsonObject rejected = transmissionIn(T_IN, refused.getString("id"), "REJECTED", "FAILED");
     assertThat(rejected.getString("status"), is("REJECTED"));
     assertThat(rejected.getString("detail"), containsString("refused the business's credentials"));
+  }
+
+  @Test
+  @DisplayName(
+      "Over the simulated network a receiver on this platform gets the document in its inbox")
+  void inPlatform() {
+    assertThat(setTransport(T, transport("PEPPOL", "SIMULATED")).getStatus(), is(200));
+    INBOX.set("taken");
+    SERVICES.reset();
+    JsonObject inv = invoiced(C_PEPPOL);
+    JsonObject sent = transmissionOf(inv.getString("id"), "ACCEPTED");
+    assertThat(sent.getString("detail"), containsString("inbox on this platform"));
+    JsonStub.Call delivery =
+        SERVICES.calls().stream()
+            .filter(c -> c.path().equals("/e-invoices/inbound/simulated"))
+            .reduce((first, last) -> last)
+            .orElseThrow();
+    assertThat(
+        "the deployment's key, as an access point would present it",
+        delivery.header("X-EInvoice-Key"),
+        is(DELIVERY_KEY));
+    assertThat(delivery.header("X-EInvoice-Reference"), is(sent.getString("providerRef")));
+    assertThat(delivery.header("Content-Type"), startsWith("application/xml"));
+    assertThat(
+        "no identity: the receiver is whoever the document names",
+        delivery.tenantId(),
+        nullValue());
+    assertThat(delivery.header("X-Roles"), nullValue());
+    assertThat(
+        delivery.body(), containsString("<cbc:ID>" + inv.getString("fullNumber") + "</cbc:ID>"));
+    assertThat(delivery.body(), containsString("<cbc:EndpointID schemeID=\"9932\">GB555555555"));
+
+    // An inbox that cannot be reached is a network that is down: tried again, later.
+    INBOX.set("down");
+    JsonObject waiting = invoiced(C_PEPPOL);
+    JsonObject tried =
+        eventually(
+            () -> {
+              JsonObject d = document(waiting.getString("id"));
+              if (!d.containsKey("transmission") || d.isNull("transmission")) return null;
+              JsonObject tr = d.getJsonObject("transmission");
+              return tr.getInt("attempts") >= 1 && tr.containsKey("detail") && !tr.isNull("detail")
+                  ? tr
+                  : null;
+            });
+    assertThat(tried.getString("detail"), containsString("inbox"));
+    assertThat(tried.getString("status"), anyOf(is("QUEUED"), is("SENDING")));
+    INBOX.set("taken");
+    assertThat(
+        transmissionOf(waiting.getString("id"), "ACCEPTED").getInt("attempts"),
+        greaterThanOrEqualTo(2));
+
+    // A receiver nobody here holds is delivered the simulated way: to nowhere, and said so.
+    INBOX.set("nobody");
+    JsonObject away = invoiced(C_PEPPOL);
+    assertThat(
+        transmissionOf(away.getString("id"), "ACCEPTED").getString("detail"),
+        containsString("no business on this platform holds 9932:GB555555555"));
+
+    // An inbox that refuses the document is a refusal, with the inbox's reason.
+    INBOX.set("refused");
+    JsonObject bad = invoiced(C_PEPPOL);
+    JsonObject rejected = transmissionOf(bad.getString("id"), "REJECTED");
+    assertThat(rejected.getString("detail"), containsString("names no buyer"));
+    INBOX.set("taken");
   }
 
   @Test

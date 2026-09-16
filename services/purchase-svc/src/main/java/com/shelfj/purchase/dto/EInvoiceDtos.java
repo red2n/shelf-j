@@ -18,6 +18,19 @@ public final class EInvoiceDtos {
   private EInvoiceDtos() {}
 
   @Schema(
+      name = "EInvoiceDelivery",
+      description =
+          "What a network is told when it delivers: the document's id in the receiver's inbox and"
+              + " nothing of the receiver's own.")
+  public record DeliveryResponse(
+      UUID id,
+      @Schema(description = "The network that delivered it.") String network,
+      @Schema(description = "The network's reference, as it was presented.") String reference,
+      @Schema(description = "These bytes had been received before; the first receipt's id.")
+          boolean alreadyReceived,
+      Instant receivedAt) {}
+
+  @Schema(
       name = "SupplierEInvoiceResponse",
       description =
           "A supplier e-invoice as received: what it says, the EN 16931 and Peppol rules it broke on"
@@ -25,7 +38,13 @@ public final class EInvoiceDtos {
   public record SupplierEInvoiceResponse(
       UUID id,
       Instant receivedAt,
-      @Schema(description = "UPLOAD, or PEPPOL when an access point delivered it.") String channel,
+      @Schema(
+              description =
+                  "UPLOAD when a person posted it; PEPPOL, FR_PDP or SIMULATED when that network"
+                      + " delivered it.")
+          String channel,
+      @Schema(description = "The network's own reference for the delivery; null for an upload.")
+          String deliveryRef,
       @Schema(description = "XML, or PDF for a Factur-X or ZUGFeRD hybrid.") String container,
       @Schema(description = "UBL or CII.") String syntax,
       @Schema(description = "The PDF attachment the invoice was read from.")

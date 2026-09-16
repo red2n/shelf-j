@@ -117,6 +117,15 @@ public class JwtAuthFilter implements ContainerRequestFilter {
       return;
     }
 
+    // A network delivering a supplier's e-invoice (07.13, the transport seam). Like a payment
+    // provider, the access point calls from its own infrastructure with no JWT and no tenant; the
+    // receiver is the business the document itself names. purchase-svc holds the delivery key the
+    // request presents against the deployment's own before it reads a byte, and identity headers
+    // have been stripped above, so the request carries no role a spoofed header could claim.
+    if (isEInvoiceDelivery(normalizedPath, ctx.getMethod())) {
+      return;
+    }
+
     // OpenAPI contract documents are not sensitive (no tenant data) and need to be reachable by
     // an unauthenticated browser (Swagger UI) for API discovery/docs.
     if ("GET".equals(ctx.getMethod()) && isOpenApiSpec(normalizedPath)) {
@@ -393,15 +402,28 @@ public class JwtAuthFilter implements ContainerRequestFilter {
    * @return {@code true} if this is a provider webhook delivery
    */
   private static boolean isProviderWebhook(String path, String method) {
-    if (!"POST".equals(method)) {
-      return false;
-    }
-    String prefix = "api/payment-svc/payments/webhooks/";
+    return "POST".equals(method) && isLeafUnder(path, "api/payment-svc/payments/webhooks/");
+  }
+
+  /**
+   * {@code POST api/purchase-svc/e-invoices/inbound/{network}} — exactly six segments, so nothing
+   * deeper inherits the exemption, and never the upload route beside it.
+   *
+   * @param path the normalized request path
+   * @param method the HTTP method
+   * @return {@code true} if this is a network delivering an e-invoice
+   */
+  private static boolean isEInvoiceDelivery(String path, String method) {
+    return "POST".equals(method) && isLeafUnder(path, "api/purchase-svc/e-invoices/inbound/");
+  }
+
+  /** Whether the path is the prefix plus exactly one more non-empty segment. */
+  private static boolean isLeafUnder(String path, String prefix) {
     if (!path.startsWith(prefix)) {
       return false;
     }
-    String provider = path.substring(prefix.length());
-    return !provider.isEmpty() && provider.indexOf('/') < 0;
+    String leaf = path.substring(prefix.length());
+    return !leaf.isEmpty() && leaf.indexOf('/') < 0;
   }
 
   /**

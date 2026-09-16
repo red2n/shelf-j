@@ -110,6 +110,12 @@ class EInvoiceLine {
 class SupplierEInvoice {
   final String id;
   final String? receivedAt;
+
+  /// UPLOAD when a person posted it; the network's name when it delivered it.
+  final String channel;
+
+  /// The network's own reference for the delivery, when it gave one.
+  final String? deliveryRef;
   final String container;
   final String syntax;
   final bool creditNote;
@@ -134,6 +140,8 @@ class SupplierEInvoice {
   const SupplierEInvoice({
     required this.id,
     this.receivedAt,
+    this.channel = 'UPLOAD',
+    this.deliveryRef,
     required this.container,
     required this.syntax,
     this.creditNote = false,
@@ -158,6 +166,15 @@ class SupplierEInvoice {
 
   bool get open => openEInvoiceStatuses.contains(status);
 
+  /// Where it came from, in words; null for an upload, which needs no saying.
+  String? get arrivedBy => switch (channel) {
+        'PEPPOL' => 'via Peppol',
+        'FR_PDP' => "via France's platform",
+        'SIMULATED' => 'via the simulated network',
+        'UPLOAD' => null,
+        _ => 'via $channel',
+      };
+
   /// Open, and something a person can match rather than only refuse.
   bool get matchable =>
       open && status != 'NOT_COMPLIANT' && status != 'MISDIRECTED';
@@ -168,6 +185,8 @@ class SupplierEInvoice {
   factory SupplierEInvoice.fromJson(Map<String, dynamic> j) => SupplierEInvoice(
         id: j['id'] as String? ?? '',
         receivedAt: j['receivedAt'] as String?,
+        channel: j['channel'] as String? ?? 'UPLOAD',
+        deliveryRef: j['deliveryRef'] as String?,
         container: j['container'] as String? ?? '',
         syntax: j['syntax'] as String? ?? '',
         creditNote: j['creditNote'] == true,

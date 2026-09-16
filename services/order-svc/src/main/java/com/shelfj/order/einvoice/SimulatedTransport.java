@@ -1,7 +1,13 @@
 package com.shelfj.order.einvoice;
 
+import com.shelfj.order.client.EInvoiceDeliveryClient;
+import com.shelfj.order.client.EInvoiceDeliveryClient.Delivery;
 import com.shelfj.order.domain.EInvoiceTransports;
 import jakarta.enterprise.context.ApplicationScoped;
+import jakarta.inject.Inject;
+import jakarta.json.Json;
+import jakarta.json.JsonObject;
+import jakarta.json.JsonObjectBuilder;
 import java.util.Locale;
 import java.util.Set;
 
@@ -11,12 +17,20 @@ import java.util.Set;
  * delivered at once, except two the tests and the demonstrations rely on: a receiver whose
  * identifier contains {@code REJECT} is refused as unknown to the network, and one containing
  * {@code LATER} is taken but answered only when asked after, the way an access point answers.
+ *
+ * <p>Delivered means delivered: when the deployment holds a delivery key, the document goes to
+ * purchase-svc's delivery route as an access point's would, and a receiver that is a business on
+ * this platform finds it in its inbox. A receiver nobody here holds is delivered to the outside
+ * world the simulated way — that is, nowhere. An inbox that cannot be reached is tried again later,
+ * like a network that is down; one that refuses the document is a refusal.
  */
 @ApplicationScoped
 public class SimulatedTransport implements EInvoiceTransport {
 
   static final String REFUSED = "REJECT";
   static final String DEFERRED = "LATER";
+
+  @Inject EInvoiceDeliveryClient inbox;
 
   @Override
   public Set<String> networks() {
@@ -30,7 +44,8 @@ public class SimulatedTransport implements EInvoiceTransport {
 
   @Override
   public String configuration() {
-    return "nothing: the platform stands in for the network, and nothing leaves it";
+    return "nothing: the platform stands in for the network, and nothing leaves it; a receiver on"
+        + " this platform gets the document in its inbox";
   }
 
   @Override
@@ -44,30 +59,70 @@ public class SimulatedTransport implements EInvoiceTransport {
           ref,
           Outcome.rejected(
               "the network knows no participant " + d.receiver(),
-              json(ref, "REJECTED", "unknown participant")));
+              json(ref, "REJECTED", "unknown participant", null)));
     }
     if (receiver.contains(DEFERRED)) {
       return new Dispatch(
           ref,
           Outcome.pending(
               "taken; the receiver's access point has not answered yet",
-              json(ref, "PENDING", "awaiting the receiver")));
+              json(ref, "PENDING", "awaiting the receiver", null)));
     }
-    return new Dispatch(ref, Outcome.accepted("delivered", json(ref, "DELIVERED", "delivered")));
+    if (inbox == null || !inbox.isConfigured()) {
+      return new Dispatch(
+          ref, Outcome.accepted("delivered", json(ref, "DELIVERED", "delivered", null)));
+    }
+    // Standing in for the network means delivering: to the receiver's inbox when the receiver is
+    // a business on this platform, through the route an access point would call.
+    Delivery in = inbox.deliver(name(), ref, d.ubl());
+    if (in.delivered()) {
+      return new Dispatch(
+          ref,
+          Outcome.accepted(
+              "delivered into the receiver's inbox on this platform",
+              json(
+                  ref,
+                  "DELIVERED",
+                  "delivered into the receiver's inbox",
+                  in.json().orElse(null))));
+    }
+    if (in.status() == 404) {
+      return new Dispatch(
+          ref,
+          Outcome.accepted(
+              "delivered; no business on this platform holds " + d.receiver(),
+              json(ref, "DELIVERED", "delivered outside the platform", null)));
+    }
+    if (in.status() == 401 || in.unreachable()) {
+      throw new TransportException(
+          in.status() == 0
+              ? "the platform's inbox could not be reached"
+              : "the platform's inbox answered HTTP "
+                  + in.status()
+                  + (in.status() == 401 ? ": the delivery key differs between services" : ""),
+          null);
+    }
+    return new Dispatch(
+        ref,
+        Outcome.rejected(
+            "the receiver's inbox refused the document: " + in.reason(),
+            json(ref, "REJECTED", in.reason(), in.json().orElse(null))));
   }
 
   @Override
   public Outcome status(Outbound d, String providerRef) {
-    return Outcome.accepted("delivered", json(providerRef, "DELIVERED", "delivered"));
+    return Outcome.accepted("delivered", json(providerRef, "DELIVERED", "delivered", null));
   }
 
-  private static String json(String ref, String state, String message) {
-    return "{\"provider\":\"SIMULATED\",\"reference\":\""
-        + ref
-        + "\",\"state\":\""
-        + state
-        + "\",\"message\":\""
-        + message
-        + "\"}";
+  /** The network's answer as kept, with the inbox's own when it gave one. */
+  private static String json(String ref, String state, String message, JsonObject inbox) {
+    JsonObjectBuilder b =
+        Json.createObjectBuilder()
+            .add("provider", EInvoiceTransports.PROVIDER_SIMULATED)
+            .add("reference", ref)
+            .add("state", state)
+            .add("message", message);
+    if (inbox != null) b.add("inbox", inbox);
+    return b.build().toString();
   }
 }

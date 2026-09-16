@@ -145,16 +145,33 @@ public class SupplierEInvoiceService {
    *     NO_EMBEDDED_INVOICE …), {@code 413 PURCHASE_EINVOICE_TOO_LARGE}
    */
   public Receipt receive(TenantContext ctx, byte[] body, String contentType) {
+    return receive(ctx, body, contentType, SupplierEInvoices.CHANNEL_UPLOAD, null, null);
+  }
+
+  /**
+   * Receives a document over a channel: a person's upload, or a network's delivery once {@link
+   * EInvoiceDeliveryService} has found the business it names.
+   *
+   * @param channel {@code UPLOAD}, or the network that delivered it
+   * @param deliveryRef the network's own reference for the delivery, or null
+   * @param already the document as the caller has read it, or null to read it here
+   * @throws ApiException as {@link #receive(TenantContext, byte[], String)}
+   */
+  public Receipt receive(
+      TenantContext ctx,
+      byte[] body,
+      String contentType,
+      String channel,
+      String deliveryRef,
+      EInvoices.Received already) {
     UUID tenantId = ctx.requireTenantId();
     String type = mediaType(contentType);
-    if (body == null || body.length == 0) {
-      throw ApiException.badRequest("PURCHASE_EINVOICE_EMPTY", "the request carries no document");
-    }
+    requireDocument(body);
     String sha = sha256(body);
     Optional<UUID> seen = repo.findIdBySha(tenantId, sha);
     if (seen.isPresent()) return receipt(tenantId, seen.get(), true);
 
-    EInvoices.Received received = read(body);
+    EInvoices.Received received = already != null ? already : read(body);
     Invoice inv = received.invoice();
     List<Violation> violations = EInvoices.validate(received);
     Decision d = decide(ctx, inv, violations, Choices.NONE);
@@ -167,7 +184,8 @@ public class SupplierEInvoiceService {
             tenantId,
             now,
             ctx.userId(),
-            SupplierEInvoices.CHANNEL_UPLOAD,
+            channel,
+            deliveryRef,
             type,
             received.container().name(),
             received.syntax().name(),
@@ -658,7 +676,21 @@ public class SupplierEInvoiceService {
     }
   }
 
-  private static EInvoices.Received read(byte[] body) {
+  /**
+   * @throws ApiException {@code 400 PURCHASE_EINVOICE_EMPTY} for no document at all
+   */
+  static void requireDocument(byte[] body) {
+    if (body == null || body.length == 0) {
+      throw ApiException.badRequest("PURCHASE_EINVOICE_EMPTY", "the request carries no document");
+    }
+  }
+
+  /**
+   * Reads a document as an e-invoice, refusing what cannot be read as the intake does.
+   *
+   * @throws ApiException {@code 400 PURCHASE_EINVOICE_<code>}, or {@code 413} when too large
+   */
+  static EInvoices.Received read(byte[] body) {
     try {
       return EInvoices.read(body);
     } catch (EInvoiceFormatException e) {
@@ -667,7 +699,10 @@ public class SupplierEInvoiceService {
     }
   }
 
-  private static String mediaType(String contentType) {
+  /**
+   * @throws ApiException {@code 415 PURCHASE_EINVOICE_MEDIA_TYPE}
+   */
+  static String mediaType(String contentType) {
     String type =
         contentType == null ? "" : contentType.split(";", 2)[0].strip().toLowerCase(Locale.ROOT);
     if (!MEDIA_TYPES.contains(type)) {

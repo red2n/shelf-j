@@ -323,7 +323,12 @@ public class ProxyResource {
           HttpHeaders.PERMISSIONS,
           // Client-controlled, not identity — forwarded so downstream writes can dedupe retries
           // (golden rule #11). Not stripped/overwritten: the client owns this value.
-          HttpHeaders.IDEMPOTENCY_KEY);
+          HttpHeaders.IDEMPOTENCY_KEY,
+          // A network delivering an e-invoice (07.13): the key it presents, which purchase-svc
+          // holds against the deployment's own, and its reference for the delivery. Client-owned,
+          // like the idempotency key; worthless to anyone who does not hold the key.
+          HttpHeaders.EINVOICE_KEY,
+          HttpHeaders.EINVOICE_REFERENCE);
 
   /**
    * The response headers the proxy passes back from a service, beyond the Content-Type it always

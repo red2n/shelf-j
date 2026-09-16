@@ -69,9 +69,9 @@ public final class InvoicingStubs {
               new Item(
                   "Kawa ziarnista 1 kg", "KAWA-1", "KG", null, "100.00", "0.23", "PL23", null));
 
-  /** The three services, with the catalogue priced and named. */
+  /** The services order-svc reads and delivers to, with the catalogue priced and named. */
   public static JsonStub services() {
-    return JsonStub.start("pricing-svc", "customer-svc", "product-svc")
+    return JsonStub.start("pricing-svc", "customer-svc", "product-svc", "purchase-svc")
         .on("POST", "/prices/quote", InvoicingStubs::quote)
         .on("GET", "/admin/products/variants/resolve", InvoicingStubs::resolve);
   }
