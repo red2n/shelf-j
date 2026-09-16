@@ -360,9 +360,9 @@ class _ChangePasswordDialogState extends ConsumerState<ChangePasswordDialog> {
                 controller: _newCtrl,
                 obscureText: true,
                 decoration: const InputDecoration(
-                    labelText: 'New password (min 8 chars)'),
+                    labelText: 'New password (15 characters or more)'),
                 validator: (v) =>
-                    v == null || v.length < 8 ? 'At least 8 characters' : null,
+                    v == null || v.length < 15 ? 'At least 15 characters — a phrase of a few words is easiest' : null,
               ),
             ],
           ),

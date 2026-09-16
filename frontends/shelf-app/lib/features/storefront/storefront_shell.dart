@@ -488,7 +488,7 @@ class _StorefrontAuthDialogState extends ConsumerState<StorefrontAuthDialog> {
                 decoration: const InputDecoration(
                     labelText: 'Password', prefixIcon: Icon(Icons.lock_outline)),
                 validator: (v) =>
-                    v == null || v.length < 8 ? 'At least 8 characters' : null,
+                    v == null || v.length < 15 ? 'At least 15 characters — a phrase of a few words is easiest' : null,
               ),
               if (_register) ...[
                 const SizedBox(height: 12),

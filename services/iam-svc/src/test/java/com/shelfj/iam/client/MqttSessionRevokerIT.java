@@ -86,7 +86,9 @@ class MqttSessionRevokerIT {
   @Test
   void logoutDisconnectsTheUsersLiveMqttSession() throws Exception {
     Response reg =
-        post("/auth/register", "{\"email\":\"kick@example.com\",\"password\":\"strongpass1\"}");
+        post(
+            "/auth/register",
+            "{\"email\":\"kick@example.com\",\"password\":\"strongpass1 for shelf-j\"}");
     assertThat(reg.getStatus(), is(201));
 
     UUID tenantId = Ids.newId();
@@ -100,7 +102,9 @@ class MqttSessionRevokerIT {
     }
 
     Response login =
-        post("/auth/login", "{\"email\":\"kick@example.com\",\"password\":\"strongpass1\"}");
+        post(
+            "/auth/login",
+            "{\"email\":\"kick@example.com\",\"password\":\"strongpass1 for shelf-j\"}");
     assertThat(login.getStatus(), is(200));
     String loginBody = login.readEntity(String.class);
     String accessToken = field(loginBody, "accessToken");

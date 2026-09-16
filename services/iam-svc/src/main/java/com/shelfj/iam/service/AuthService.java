@@ -34,6 +34,7 @@ public class AuthService {
 
   @Inject ServiceConfig config;
   @Inject Passwords passwords;
+  @Inject PasswordPolicy policy;
   @Inject JwtService jwt;
   @Inject UserRepository users;
   @Inject RefreshTokenRepository refreshTokens;
@@ -42,6 +43,7 @@ public class AuthService {
 
   /** Customer self-signup → creates a CUSTOMER (global, tenantId null) and returns a token pair. */
   public TokenResponse register(String email, String password, String phone) {
+    policy.check(password, email);
     String hash = passwords.hash(password);
     UUID userId = Ids.newId();
     Instant now = Instant.now();
@@ -97,6 +99,7 @@ public class AuthService {
           java.util.List.of());
     }
 
+    policy.check(rawPassword, email);
     UUID userId = Ids.newId();
     Instant now = Instant.now();
     var user =
@@ -284,6 +287,7 @@ public class AuthService {
           java.util.List.of(),
           null);
     }
+    policy.check(rawPassword, email);
     UUID userId = Ids.newId();
     Instant now = Instant.now();
     var user =
@@ -318,6 +322,7 @@ public class AuthService {
     if (!passwords.verify(user.passwordHash(), currentPassword)) {
       throw ApiException.unauthorized("INVALID_CREDENTIALS", "Current password is incorrect");
     }
+    policy.check(newPassword, user.email());
     users.updatePassword(userId, passwords.hash(newPassword));
     // Revoke every outstanding refresh token: a password change must invalidate sessions that
     // may have been established with the old (possibly compromised) credentials.

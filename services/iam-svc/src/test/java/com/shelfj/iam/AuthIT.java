@@ -54,7 +54,9 @@ class AuthIT {
   void registerLoginRefreshMe() {
     // register
     Response reg =
-        post("/auth/register", "{\"email\":\"it-user@example.com\",\"password\":\"strongpass1\"}");
+        post(
+            "/auth/register",
+            "{\"email\":\"it-user@example.com\",\"password\":\"strongpass1 for shelf-j\"}");
     assertThat(reg.getStatus(), is(201));
     String regBody = reg.readEntity(String.class);
     String access = extract(regBody, "accessToken");
@@ -67,7 +69,9 @@ class AuthIT {
 
     // login
     Response login =
-        post("/auth/login", "{\"email\":\"it-user@example.com\",\"password\":\"strongpass1\"}");
+        post(
+            "/auth/login",
+            "{\"email\":\"it-user@example.com\",\"password\":\"strongpass1 for shelf-j\"}");
     assertThat(login.getStatus(), is(200));
 
     // refresh rotates: old token then fails
@@ -79,7 +83,9 @@ class AuthIT {
 
   @Test
   void wrongPasswordIs401() {
-    post("/auth/register", "{\"email\":\"pw@example.com\",\"password\":\"correctpass1\"}");
+    post(
+        "/auth/register",
+        "{\"email\":\"pw@example.com\",\"password\":\"correctpass1 for shelf-j\"}");
     Response bad =
         post("/auth/login", "{\"email\":\"pw@example.com\",\"password\":\"wrongwrong\"}");
     assertThat(bad.getStatus(), is(401));
@@ -88,7 +94,9 @@ class AuthIT {
 
   @Test
   void disabledUserCannotLogIn() throws Exception {
-    post("/auth/register", "{\"email\":\"disabled@example.com\",\"password\":\"correctpass1\"}");
+    post(
+        "/auth/register",
+        "{\"email\":\"disabled@example.com\",\"password\":\"correctpass1 for shelf-j\"}");
     try (var c = iamConnection();
         var ps = c.prepareStatement("UPDATE users SET status='DISABLED' WHERE lower(email)=?")) {
       ps.setString(1, "disabled@example.com");
@@ -98,7 +106,9 @@ class AuthIT {
     // in (and not via a different/faster code path that would leak the account's status by
     // timing — see AuthService.login()'s burn() call on the non-ACTIVE branch).
     Response login =
-        post("/auth/login", "{\"email\":\"disabled@example.com\",\"password\":\"correctpass1\"}");
+        post(
+            "/auth/login",
+            "{\"email\":\"disabled@example.com\",\"password\":\"correctpass1 for shelf-j\"}");
     assertThat(login.getStatus(), is(401));
     assertThat(login.readEntity(String.class), containsString("INVALID_CREDENTIALS"));
   }
@@ -115,7 +125,9 @@ class AuthIT {
   @Test
   void changePasswordRevokesOutstandingRefreshTokens() {
     Response reg =
-        post("/auth/register", "{\"email\":\"rotate@example.com\",\"password\":\"strongpass1\"}");
+        post(
+            "/auth/register",
+            "{\"email\":\"rotate@example.com\",\"password\":\"strongpass1 for shelf-j\"}");
     assertThat(reg.getStatus(), is(201));
     String regBody = reg.readEntity(String.class);
     String access = extract(regBody, "accessToken");
@@ -132,7 +144,7 @@ class AuthIT {
             .header("X-User-Id", userId)
             .put(
                 Entity.entity(
-                    "{\"currentPassword\":\"strongpass1\",\"newPassword\":\"evenstronger2\"}",
+                    "{\"currentPassword\":\"strongpass1 for shelf-j\",\"newPassword\":\"evenstronger2 for shelf-j\"}",
                     MediaType.APPLICATION_JSON));
     assertThat(changed.getStatus(), is(200));
 
@@ -142,7 +154,9 @@ class AuthIT {
 
     // and the new password logs in
     Response login =
-        post("/auth/login", "{\"email\":\"rotate@example.com\",\"password\":\"evenstronger2\"}");
+        post(
+            "/auth/login",
+            "{\"email\":\"rotate@example.com\",\"password\":\"evenstronger2 for shelf-j\"}");
     assertThat(login.getStatus(), is(200));
   }
 
@@ -177,9 +191,13 @@ class AuthIT {
 
   @Test
   void duplicateRegisterIs409() {
-    post("/auth/register", "{\"email\":\"dup@example.com\",\"password\":\"strongpass1\"}");
+    post(
+        "/auth/register",
+        "{\"email\":\"dup@example.com\",\"password\":\"strongpass1 for shelf-j\"}");
     Response dup =
-        post("/auth/register", "{\"email\":\"dup@example.com\",\"password\":\"strongpass1\"}");
+        post(
+            "/auth/register",
+            "{\"email\":\"dup@example.com\",\"password\":\"strongpass1 for shelf-j\"}");
     assertThat(dup.getStatus(), is(409));
   }
 
@@ -188,7 +206,9 @@ class AuthIT {
     // Register a user, then bind it to a tenant and mark that tenant INACTIVE in iam's projection
     // (simulating the TenantStatusChanged event the consumer would apply).
     Response reg =
-        post("/auth/register", "{\"email\":\"susp@example.com\",\"password\":\"strongpass1\"}");
+        post(
+            "/auth/register",
+            "{\"email\":\"susp@example.com\",\"password\":\"strongpass1 for shelf-j\"}");
     assertThat(reg.getStatus(), is(201));
     String refresh = extract(reg.readEntity(String.class), "refreshToken");
 
@@ -212,7 +232,9 @@ class AuthIT {
 
     // Login is now forbidden for this tenant's staff, even with the correct password.
     Response blocked =
-        post("/auth/login", "{\"email\":\"susp@example.com\",\"password\":\"strongpass1\"}");
+        post(
+            "/auth/login",
+            "{\"email\":\"susp@example.com\",\"password\":\"strongpass1 for shelf-j\"}");
     assertThat(blocked.getStatus(), is(403));
     assertThat(blocked.readEntity(String.class), containsString("TENANT_INACTIVE"));
 
@@ -235,7 +257,9 @@ class AuthIT {
       ps.executeUpdate();
     }
     Response ok =
-        post("/auth/login", "{\"email\":\"susp@example.com\",\"password\":\"strongpass1\"}");
+        post(
+            "/auth/login",
+            "{\"email\":\"susp@example.com\",\"password\":\"strongpass1 for shelf-j\"}");
     assertThat(ok.getStatus(), is(200));
     // ...and the refresh token held through the suspension works again.
     Response refreshed = post("/auth/refresh", "{\"refreshToken\":\"" + refresh + "\"}");
@@ -285,7 +309,7 @@ class AuthIT {
             .header("X-Roles", "CASHIER")
             .post(
                 Entity.entity(
-                    "{\"email\":\"staff-forbidden@example.com\",\"password\":\"strongpass1\"}",
+                    "{\"email\":\"staff-forbidden@example.com\",\"password\":\"strongpass1 for shelf-j\"}",
                     MediaType.APPLICATION_JSON));
     assertThat(asCashier.getStatus(), is(403));
   }
@@ -305,7 +329,7 @@ class AuthIT {
             .header("X-Roles", "OWNER")
             .post(
                 Entity.entity(
-                    "{\"email\":\"staff-new@example.com\",\"password\":\"strongpass1\"}",
+                    "{\"email\":\"staff-new@example.com\",\"password\":\"strongpass1 for shelf-j\"}",
                     MediaType.APPLICATION_JSON));
     assertThat(resp.getStatus(), is(200));
     String body = resp.readEntity(String.class);
@@ -333,7 +357,7 @@ class AuthIT {
             .header("X-Roles", "OWNER")
             .post(
                 Entity.entity(
-                    "{\"email\":\"staff-idem@example.com\",\"password\":\"strongpass1\"}",
+                    "{\"email\":\"staff-idem@example.com\",\"password\":\"strongpass1 for shelf-j\"}",
                     MediaType.APPLICATION_JSON))
             .readEntity(String.class);
     String body2 =
@@ -344,7 +368,7 @@ class AuthIT {
             .header("X-Roles", "OWNER")
             .post(
                 Entity.entity(
-                    "{\"email\":\"staff-idem@example.com\",\"password\":\"strongpass1\"}",
+                    "{\"email\":\"staff-idem@example.com\",\"password\":\"strongpass1 for shelf-j\"}",
                     MediaType.APPLICATION_JSON))
             .readEntity(String.class);
     assertThat(extract(body1, "userId"), is(extract(body2, "userId")));
@@ -377,7 +401,8 @@ class AuthIT {
   void meNeedsTheGatewayIdentity() {
     Response reg =
         post(
-            "/auth/register", "{\"email\":\"me-direct@example.com\",\"password\":\"strongpass1\"}");
+            "/auth/register",
+            "{\"email\":\"me-direct@example.com\",\"password\":\"strongpass1 for shelf-j\"}");
     String access = extract(reg.readEntity(String.class), "accessToken");
     Response bearerOnly =
         target.path("/auth/me").request().header("Authorization", "Bearer " + access).get();
@@ -400,7 +425,9 @@ class AuthIT {
 
   private String registerAndGetUserId(String email) {
     Response reg =
-        post("/auth/register", "{\"email\":\"" + email + "\",\"password\":\"strongpass1\"}");
+        post(
+            "/auth/register",
+            "{\"email\":\"" + email + "\",\"password\":\"strongpass1 for shelf-j\"}");
     assertThat(reg.getStatus(), is(201));
     String access = extract(reg.readEntity(String.class), "accessToken");
     return extract(me(access), "userId");
@@ -417,7 +444,9 @@ class AuthIT {
   @Test
   void aCustomerCanDeleteTheirOwnAccount() throws Exception {
     Response reg =
-        post("/auth/register", "{\"email\":\"leaving@example.com\",\"password\":\"strongpass1\"}");
+        post(
+            "/auth/register",
+            "{\"email\":\"leaving@example.com\",\"password\":\"strongpass1 for shelf-j\"}");
     assertThat(reg.getStatus(), is(201));
     String regBody = reg.readEntity(String.class);
     String refresh = extract(regBody, "refreshToken");
@@ -425,11 +454,13 @@ class AuthIT {
 
     // A session left open on a shared device is not enough: the password is asked for again.
     assertThat(deleteAccount(userId, "not-my-password").getStatus(), is(401));
-    assertThat(deleteAccount(userId, "strongpass1").getStatus(), is(200));
+    assertThat(deleteAccount(userId, "strongpass1 for shelf-j").getStatus(), is(200));
 
     // The login no longer works, and no session survives it.
     assertThat(
-        post("/auth/login", "{\"email\":\"leaving@example.com\",\"password\":\"strongpass1\"}")
+        post(
+                "/auth/login",
+                "{\"email\":\"leaving@example.com\",\"password\":\"strongpass1 for shelf-j\"}")
             .getStatus(),
         is(401));
     assertThat(
@@ -461,7 +492,9 @@ class AuthIT {
 
     // The same address can open a new account later — a new one, not the old one back.
     Response again =
-        post("/auth/register", "{\"email\":\"leaving@example.com\",\"password\":\"anotherpass2\"}");
+        post(
+            "/auth/register",
+            "{\"email\":\"leaving@example.com\",\"password\":\"anotherpass2 for shelf-j\"}");
     assertThat(again.getStatus(), is(201));
   }
 
@@ -473,7 +506,9 @@ class AuthIT {
     String userId = registerAndGetUserId(email);
     // A successful sign-in and a failed one: both recorded the address until this fix.
     assertThat(
-        post("/auth/login", "{\"email\":\"" + email + "\",\"password\":\"strongpass1\"}")
+        post(
+                "/auth/login",
+                "{\"email\":\"" + email + "\",\"password\":\"strongpass1 for shelf-j\"}")
             .getStatus(),
         is(200));
     assertThat(
@@ -492,7 +527,7 @@ class AuthIT {
       }
     }
 
-    assertThat(deleteAccount(userId, "strongpass1").getStatus(), is(200));
+    assertThat(deleteAccount(userId, "strongpass1 for shelf-j").getStatus(), is(200));
 
     try (var c = iamConnection()) {
       try (var ps =
@@ -524,7 +559,9 @@ class AuthIT {
   void theAccessTokenCarriesTheEmail() {
     String email = "claims@example.com";
     Response reg =
-        post("/auth/register", "{\"email\":\"" + email + "\",\"password\":\"strongpass1\"}");
+        post(
+            "/auth/register",
+            "{\"email\":\"" + email + "\",\"password\":\"strongpass1 for shelf-j\"}");
     assertThat(reg.getStatus(), is(201));
     String access = extract(reg.readEntity(String.class), "accessToken");
 
@@ -564,7 +601,9 @@ class AuthIT {
       ps.executeUpdate();
     }
     Response login =
-        post("/auth/login", "{\"email\":\"" + email + "\",\"password\":\"strongpass1\"}");
+        post(
+            "/auth/login",
+            "{\"email\":\"" + email + "\",\"password\":\"strongpass1 for shelf-j\"}");
     assertThat(login.getStatus(), is(200));
     String access = extract(login.readEntity(String.class), "accessToken");
     String claims =
@@ -577,9 +616,9 @@ class AuthIT {
   @Test
   void deletingTwiceIsRefusedNotRepeated() {
     String userId = registerAndGetUserId("twice@example.com");
-    assertThat(deleteAccount(userId, "strongpass1").getStatus(), is(200));
+    assertThat(deleteAccount(userId, "strongpass1 for shelf-j").getStatus(), is(200));
     // The account is no longer active, so the same request cannot be verified a second time.
-    assertThat(deleteAccount(userId, "strongpass1").getStatus(), is(401));
+    assertThat(deleteAccount(userId, "strongpass1 for shelf-j").getStatus(), is(401));
   }
 
   @Test
@@ -591,7 +630,7 @@ class AuthIT {
       ps.executeUpdate();
     }
     // A staff login belongs to the business that employs its holder, which removes it.
-    Response r = deleteAccount(userId, "strongpass1");
+    Response r = deleteAccount(userId, "strongpass1 for shelf-j");
     assertThat(r.getStatus(), is(403));
     assertThat(r.readEntity(String.class).contains("ACCOUNT_MANAGED_BY_EMPLOYER"), is(true));
   }
@@ -654,7 +693,9 @@ class AuthIT {
 
   private String claimsOf(String email) {
     Response login =
-        post("/auth/login", "{\"email\":\"" + email + "\",\"password\":\"strongpass1\"}");
+        post(
+            "/auth/login",
+            "{\"email\":\"" + email + "\",\"password\":\"strongpass1 for shelf-j\"}");
     assertThat(login.getStatus(), is(200));
     String access = extract(login.readEntity(String.class), "accessToken");
     return new String(
@@ -664,7 +705,9 @@ class AuthIT {
 
   private String meOf(String email) {
     Response login =
-        post("/auth/login", "{\"email\":\"" + email + "\",\"password\":\"strongpass1\"}");
+        post(
+            "/auth/login",
+            "{\"email\":\"" + email + "\",\"password\":\"strongpass1 for shelf-j\"}");
     String access = extract(login.readEntity(String.class), "accessToken");
     DecodedJWT jwt = JWT.decode(access);
     var req = target.path("/auth/me").request().header("X-User-Id", jwt.getSubject());

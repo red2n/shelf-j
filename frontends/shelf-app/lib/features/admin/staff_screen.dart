@@ -433,8 +433,8 @@ class _AssignStaffDialogState extends ConsumerState<_AssignStaffDialog> {
                 ),
                 validator: (v) {
                   final s = v?.trim() ?? '';
-                  if (s.isNotEmpty && s.length < 8) {
-                    return 'At least 8 characters';
+                  if (s.isNotEmpty && s.length < 15) {
+                    return 'At least 15 characters — a phrase of a few words is easiest';
                   }
                   return null;
                 },

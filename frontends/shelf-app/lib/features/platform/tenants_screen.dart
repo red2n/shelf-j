@@ -612,7 +612,7 @@ class _AccountForm extends StatelessWidget {
               ),
             ),
             validator: (v) =>
-                v == null || v.length < 8 ? 'Min 8 characters' : null,
+                v == null || v.length < 15 ? 'At least 15 characters — a phrase of a few words is easiest' : null,
           ),
           const SizedBox(height: 20),
           FilledButton(

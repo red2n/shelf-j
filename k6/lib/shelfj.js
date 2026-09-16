@@ -9,7 +9,8 @@ import { check, sleep } from 'k6';
 import encoding from 'k6/encoding';
 
 export const BASE = __ENV.BASE_URL || 'http://localhost:8090';
-export const PASSWORD = 'K6-Passw0rd!';
+// Fifteen characters or more: a password that is the only factor (NIST SP 800-63B-4).
+export const PASSWORD = 'K6-Passw0rd! for shelf-j';
 
 const UUID_SEGMENT = /[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}/gi;
 
