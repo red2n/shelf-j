@@ -1,43 +1,47 @@
 package com.shelfj.order;
 
+import static com.shelfj.order.support.InvoicingStubs.V_GST;
+import static com.shelfj.order.support.InvoicingStubs.V_NOHSN;
+import static com.shelfj.order.support.InvoicingStubs.V_ODD;
+import static com.shelfj.order.support.InvoicingStubs.V_RED;
+import static com.shelfj.order.support.InvoicingStubs.V_STD;
+import static com.shelfj.order.support.InvoicingStubs.V_ZERO;
+import static com.shelfj.order.support.InvoicingStubs.amount;
+import static com.shelfj.order.support.InvoicingStubs.basket;
+import static com.shelfj.order.support.InvoicingStubs.business;
+import static com.shelfj.order.support.InvoicingStubs.code;
+import static com.shelfj.order.support.InvoicingStubs.data;
+import static com.shelfj.order.support.InvoicingStubs.dataArray;
+import static com.shelfj.order.support.InvoicingStubs.envelope;
+import static com.shelfj.order.support.InvoicingStubs.only;
+import static com.shelfj.order.support.InvoicingStubs.readBack;
+import static com.shelfj.order.support.InvoicingStubs.services;
 import static org.hamcrest.MatcherAssert.assertThat;
 import static org.hamcrest.Matchers.containsString;
 import static org.hamcrest.Matchers.hasSize;
 import static org.hamcrest.Matchers.is;
-import static org.hamcrest.Matchers.notNullValue;
 import static org.hamcrest.Matchers.startsWith;
 
 import com.shelfj.einvoice.EInvoices;
 import com.shelfj.einvoice.Invoice;
-import com.shelfj.einvoice.Violation;
 import com.shelfj.ids.Ids;
+import com.shelfj.order.support.Till;
 import com.shelfj.test.Concurrency;
 import com.shelfj.test.JsonStub;
 import com.shelfj.test.PostgresSupport;
 import com.shelfj.test.TenantSvcStub;
 import io.helidon.microprofile.testing.junit5.HelidonTest;
 import jakarta.inject.Inject;
-import jakarta.json.Json;
 import jakarta.json.JsonArray;
-import jakarta.json.JsonArrayBuilder;
 import jakarta.json.JsonObject;
-import jakarta.json.JsonObjectBuilder;
-import jakarta.json.JsonReader;
-import jakarta.json.JsonValue;
-import jakarta.ws.rs.client.Entity;
 import jakarta.ws.rs.client.WebTarget;
-import jakarta.ws.rs.core.MediaType;
 import jakarta.ws.rs.core.Response;
-import java.io.StringReader;
 import java.math.BigDecimal;
-import java.math.RoundingMode;
 import java.nio.charset.StandardCharsets;
 import java.util.ArrayList;
 import java.util.HashSet;
 import java.util.List;
-import java.util.Map;
 import java.util.Set;
-import java.util.function.Supplier;
 import java.util.stream.Collectors;
 import org.junit.jupiter.api.AfterAll;
 import org.junit.jupiter.api.DisplayName;
@@ -73,36 +77,8 @@ class SalesInvoiceIT {
   private static final String C_NOADDR = Ids.newId().toString();
   private static final String C_IN = Ids.newId().toString();
   private static final String C_DOWN = Ids.newId().toString();
-  private static final String V_STD = Ids.newId().toString();
-  private static final String V_RED = Ids.newId().toString();
-  private static final String V_ZERO = Ids.newId().toString();
-  private static final String V_GST = Ids.newId().toString();
-  private static final String V_NOHSN = Ids.newId().toString();
-  private static final String V_ODD = Ids.newId().toString();
 
-  /** What pricing-svc and product-svc know of an item. */
-  private record Item(
-      String name,
-      String sku,
-      String unit,
-      String hsn,
-      String unitPrice,
-      String rate,
-      String code,
-      String vatOverride) {}
-
-  private static final Map<String, Item> CATALOGUE =
-      Map.of(
-          V_STD,
-              new Item("Espresso beans 1kg", "BEANS-1", "KG", null, "10.00", "0.20", "STD", null),
-          V_RED, new Item("Tea cakes", "CAKE-6", "PACK", null, "4.00", "0.05", "RED", null),
-          V_ZERO, new Item("Bread", "LOAF", "EA", null, "2.50", "0", "ZERO", null),
-          V_GST,
-              new Item(
-                  "Basmati rice 25kg", "RICE-25", "KG", "1006", "100.00", "0.18", "GST18", null),
-          V_NOHSN, new Item("Jaggery", "JAG-1", "KG", null, "50.00", "0.18", "GST18", null),
-          // A line whose recorded tax is more than its rate makes: 30.00 on 100.00 at 20%.
-          V_ODD, new Item("Odd lot", "ODD", "EA", null, "100.00", "0.20", "STD", "30.00"));
+  private static final String[] LEEDS = {"2 Mill Lane", "Leeds", "LS1 4AB"};
 
   private static final PostgresSupport PG;
   private static final TenantSvcStub TENANTS;
@@ -131,63 +107,35 @@ class SalesInvoiceIT {
             .withIdentity(T_OTHER, "GB111111111", null, null)
             .withLegalName(T_OTHER, "Someone Else Ltd")
             .withStore(T_OTHER, S_OTHER, "GB", "1 Other Street", "Hull", "HU1 1AA");
-    SERVICES =
-        JsonStub.start("pricing-svc", "customer-svc", "product-svc")
-            .on("POST", "/prices/quote", SalesInvoiceIT::quote)
-            .on("GET", "/admin/products/variants/resolve", SalesInvoiceIT::resolve)
-            .on(
-                "GET",
-                "/customer-vat-status/" + C_BIZ,
-                200,
-                vatStatus(C_BIZ, "GB555555555", "Cafe Leeds Ltd", "GB", null, null))
-            .on(
-                "GET",
-                "/customer-vat-status/" + C_PEPPOL,
-                200,
-                vatStatus(C_PEPPOL, "GB555555555", "Cafe Leeds Ltd", "GB", "9932", "GB555555555"))
-            .on(
-                "GET",
-                "/customer-vat-status/" + C_NOADDR,
-                200,
-                vatStatus(C_NOADDR, "GB222222222", "Nowhere Ltd", "GB", null, null))
-            .on(
-                "GET",
-                "/customer-vat-status/" + C_IN,
-                200,
-                vatStatus(C_IN, "29AAGCB7383J1Z4", "Bengaluru Stores Pvt Ltd", "IN", null, null))
-            .on(
-                "GET",
-                "/customer-vat-status/" + C_UNREG,
-                200,
-                "{\"data\":{\"customerId\":\""
-                    + C_UNREG
-                    + "\",\"vatRegistered\":false,\"reverseChargeEligible\":false}}")
-            .on(
-                "GET",
-                "/customer-vat-status/" + C_DOWN,
-                503,
-                "{\"error\":{\"code\":\"DOWN\",\"message\":\"pricing-svc is down\"}}")
-            // C_PRIVATE has no registration: pricing-svc answers 404.
-            .on("GET", "/customers/" + C_BIZ, 200, customer(C_BIZ, "Ada", "Lovelace"))
-            .on("GET", "/customers/" + C_PEPPOL, 200, customer(C_PEPPOL, "Ada", "Lovelace"))
-            .on("GET", "/customers/" + C_NOADDR, 200, customer(C_NOADDR, "No", "Body"))
-            .on("GET", "/customers/" + C_IN, 200, customer(C_IN, "Kiran", "Rao"))
-            .on(
-                "GET",
-                "/customers/" + C_BIZ + "/addresses",
-                200,
-                addresses(C_BIZ, "GB", "2 Mill Lane", "Leeds", "LS1 4AB"))
-            .on(
-                "GET",
-                "/customers/" + C_PEPPOL + "/addresses",
-                200,
-                addresses(C_PEPPOL, "GB", "2 Mill Lane", "Leeds", "LS1 4AB"))
-            .on("GET", "/customers/" + C_NOADDR + "/addresses", 200, "{\"data\":[]}")
-            .on(
-                "GET",
-                "/customers/" + C_IN + "/addresses",
-                200,
-                addresses(C_IN, "IN", "4 Residency Road", "Bengaluru", "560025"));
+    SERVICES = services();
+    business(SERVICES, C_BIZ, "Cafe Leeds Ltd", "GB555555555", "GB", null, null, LEEDS);
+    business(
+        SERVICES, C_PEPPOL, "Cafe Leeds Ltd", "GB555555555", "GB", "9932", "GB555555555", LEEDS);
+    business(SERVICES, C_NOADDR, "Nowhere Ltd", "GB222222222", "GB", null, null, null);
+    business(
+        SERVICES,
+        C_IN,
+        "Bengaluru Stores Pvt Ltd",
+        "29AAGCB7383J1Z4",
+        "IN",
+        null,
+        null,
+        new String[] {"4 Residency Road", "Bengaluru", "560025"});
+    // Known to the shop, recorded as not registered; and one pricing-svc cannot answer for.
+    business(SERVICES, C_UNREG, "Ada Lovelace", null, "GB", null, null, LEEDS);
+    SERVICES.on(
+        "GET",
+        "/customer-vat-status/" + C_UNREG,
+        200,
+        "{\"data\":{\"customerId\":\""
+            + C_UNREG
+            + "\",\"vatRegistered\":false,\"reverseChargeEligible\":false}}");
+    SERVICES.on(
+        "GET",
+        "/customer-vat-status/" + C_DOWN,
+        503,
+        "{\"error\":{\"code\":\"DOWN\",\"message\":\"pricing-svc is down\"}}");
+    // C_PRIVATE has no record anywhere: every read is 404.
     System.setProperty("shelfj.db.url", PG.jdbcUrl());
     System.setProperty("shelfj.db.migration-url", PG.jdbcUrl());
     System.setProperty("shelfj.db.user", PG.username());
@@ -212,253 +160,40 @@ class SalesInvoiceIT {
     PG.stop();
   }
 
-  // ── stubs ──────────────────────────────────────────────────────────────────
-
-  /** pricing-svc's quote: each line at the catalogue's price and rate, in the order asked. */
-  private static JsonStub.Answer quote(JsonStub.Call call) {
-    JsonArrayBuilder lines = Json.createArrayBuilder();
-    try (JsonReader r = Json.createReader(new StringReader(call.body()))) {
-      for (JsonValue v : r.readObject().getJsonArray("lines")) {
-        JsonObject l = v.asJsonObject();
-        Item item = CATALOGUE.get(l.getString("variantId"));
-        if (item == null) {
-          return new JsonStub.Answer(
-              404, "{\"error\":{\"code\":\"PRICING_NO_PRICE\",\"message\":\"no price\"}}");
-        }
-        BigDecimal qty = l.getJsonNumber("qty").bigDecimalValue();
-        BigDecimal lineTotal = money(new BigDecimal(item.unitPrice()).multiply(qty));
-        BigDecimal vat =
-            item.vatOverride() != null
-                ? new BigDecimal(item.vatOverride())
-                : money(lineTotal.multiply(new BigDecimal(item.rate())));
-        lines.add(
-            Json.createObjectBuilder()
-                .add("variantId", l.getString("variantId"))
-                .add("qty", qty)
-                .add("lineTotal", lineTotal)
-                .add("discount", BigDecimal.ZERO)
-                .add("vatAmount", vat)
-                .add("vatCode", item.code())
-                .add("vatRate", new BigDecimal(item.rate())));
-      }
-    }
-    return JsonStub.Answer.ok(
-        Json.createObjectBuilder()
-            .add("lines", lines)
-            .add("basketDiscount", BigDecimal.ZERO)
-            .build()
-            .toString());
+  private Till till() {
+    return new Till(target);
   }
-
-  /** product-svc's resolve: the items asked for that the catalogue knows. */
-  private static JsonStub.Answer resolve(JsonStub.Call call) {
-    JsonArrayBuilder out = Json.createArrayBuilder();
-    String ids = call.query() == null ? "" : call.query().replaceFirst("^.*ids=", "");
-    for (String id : ids.split("(,|%2C)")) {
-      Item item = CATALOGUE.get(id);
-      if (item == null) continue;
-      JsonObjectBuilder o =
-          Json.createObjectBuilder()
-              .add("variantId", id)
-              .add("productName", item.name())
-              .add("sku", item.sku())
-              .add("unit", item.unit());
-      if (item.hsn() != null) o.add("hsnCode", item.hsn());
-      out.add(o);
-    }
-    return JsonStub.Answer.ok(out.build().toString());
-  }
-
-  private static String vatStatus(
-      String customer, String vat, String legalName, String country, String scheme, String id) {
-    JsonObjectBuilder o =
-        Json.createObjectBuilder()
-            .add("customerId", customer)
-            .add("vatNumber", vat)
-            .add("vatRegistered", true)
-            .add("reverseChargeEligible", false)
-            .add("countryCode", country)
-            .add("legalName", legalName);
-    if (scheme != null) o.add("einvoiceScheme", scheme).add("einvoiceId", id);
-    return "{\"data\":" + o.build() + "}";
-  }
-
-  private static String customer(String id, String first, String last) {
-    return "{\"data\":{\"id\":\""
-        + id
-        + "\",\"firstName\":\""
-        + first
-        + "\",\"lastName\":\""
-        + last
-        + "\",\"status\":\"ACTIVE\"}}";
-  }
-
-  /** A home address first, then the billing one: the invoice must pick the billing one. */
-  private static String addresses(
-      String customer, String country, String line1, String city, String pincode) {
-    return "{\"data\":[{\"id\":\""
-        + Ids.newId()
-        + "\",\"customerId\":\""
-        + customer
-        + "\",\"type\":\"HOME\",\"line1\":\"7 Somewhere Else\",\"city\":\"Elsewhere\","
-        + "\"country\":\""
-        + country
-        + "\",\"pincode\":\"XX1 1XX\",\"isDefault\":true},{\"id\":\""
-        + Ids.newId()
-        + "\",\"customerId\":\""
-        + customer
-        + "\",\"type\":\"BILLING\",\"line1\":\""
-        + line1
-        + "\",\"city\":\""
-        + city
-        + "\",\"country\":\""
-        + country
-        + "\",\"pincode\":\""
-        + pincode
-        + "\",\"isDefault\":false}]}";
-  }
-
-  private static BigDecimal money(BigDecimal x) {
-    return x.setScale(2, RoundingMode.HALF_UP);
-  }
-
-  // ── harness ────────────────────────────────────────────────────────────────
 
   private Response post(String path, String json, String tenant) {
-    return postAs(path, json, tenant, "OWNER");
+    return till().post(path, json, tenant);
   }
 
   private Response postAs(String path, String json, String tenant, String role) {
-    return target
-        .path(path)
-        .request()
-        .header("X-Tenant-Id", tenant)
-        .header("X-Roles", role)
-        .header("Idempotency-Key", Ids.newId().toString())
-        .post(Entity.entity(json, MediaType.APPLICATION_JSON));
+    return till().postAs(path, json, tenant, role);
   }
 
   private Response get(String path, String tenant, String... params) {
-    return getAs(path, tenant, "OWNER", params);
+    return till().get(path, tenant, params);
   }
 
   private Response getAs(String path, String tenant, String role, String... params) {
-    WebTarget t = target.path(path);
-    for (int i = 0; i < params.length; i += 2) t = t.queryParam(params[i], params[i + 1]);
-    return t.request().header("X-Tenant-Id", tenant).header("X-Roles", role).get();
-  }
-
-  private static JsonObject data(Response r) {
-    return envelope(r).getJsonObject("data");
-  }
-
-  private static JsonArray dataArray(Response r) {
-    return envelope(r).getJsonArray("data");
-  }
-
-  private static JsonObject envelope(Response r) {
-    String body = r.readEntity(String.class);
-    try (JsonReader reader = Json.createReader(new StringReader(body))) {
-      return reader.readObject();
-    }
-  }
-
-  private static String code(Response r) {
-    return envelope(r).getJsonObject("error").getString("code");
-  }
-
-  /** A till basket: variant and quantity pairs; the quote prices it. */
-  private static String basket(String store, String customer, String currency, String... lines) {
-    JsonArrayBuilder items = Json.createArrayBuilder();
-    for (int i = 0; i < lines.length; i += 2) {
-      items.add(
-          Json.createObjectBuilder()
-              .add("variantId", lines[i])
-              .add("qty", new BigDecimal(lines[i + 1])));
-    }
-    JsonObjectBuilder o =
-        Json.createObjectBuilder()
-            .add("storeId", store)
-            .add("channel", "POS")
-            .add("fulfilmentType", "INSTORE")
-            .add("currency", currency)
-            .add("items", items);
-    if (customer != null) o.add("customerId", customer);
-    return o.build().toString();
+    return till().getAs(path, tenant, role, params);
   }
 
   private String place(String basket, String tenant) {
-    Response r = post("/orders", basket, tenant);
-    JsonObject placed = data(r);
-    assertThat(placed.toString(), r.getStatus(), is(201));
-    return placed.getString("id");
+    return till().place(basket, tenant);
   }
 
-  /** Places and confirms a till sale: a completed sale, handed over, that can be invoiced. */
   private String sell(String basket, String tenant) {
-    String id = place(basket, tenant);
-    Response r = post("/orders/" + id + "/confirm", "{}", tenant);
-    assertThat(r.readEntity(String.class), r.getStatus(), is(200));
-    return id;
+    return till().sell(basket, tenant);
   }
 
   private JsonArray documentsOf(String order, String tenant) {
-    return dataArray(get("/admin/orders/" + order + "/invoices", tenant));
+    return till().documentsOf(order, tenant);
   }
 
-  /** The documents a sale has once it has {@code n} of them: issuing runs in the background. */
   private JsonArray documentsOf(String order, String tenant, int n) {
-    JsonArray docs =
-        eventually(
-            () -> {
-              JsonArray d = documentsOf(order, tenant);
-              return d.size() >= n ? d : null;
-            });
-    assertThat("documents of " + order, docs, notNullValue());
-    return docs;
-  }
-
-  private static <T> T eventually(Supplier<T> probe) {
-    long deadline = System.nanoTime() + java.util.concurrent.TimeUnit.SECONDS.toNanos(20);
-    while (System.nanoTime() < deadline) {
-      T got = probe.get();
-      if (got != null) return got;
-      try {
-        Thread.sleep(100);
-      } catch (InterruptedException e) {
-        Thread.currentThread().interrupt();
-        return null;
-      }
-    }
-    return null;
-  }
-
-  private static JsonObject only(JsonArray docs, String kind) {
-    List<JsonObject> matching =
-        docs.stream()
-            .map(JsonValue::asJsonObject)
-            .filter(d -> kind.equals(d.getString("kind")))
-            .toList();
-    assertThat(docs.toString(), matching, hasSize(1));
-    return matching.get(0);
-  }
-
-  private static List<String> fatal(List<Violation> violations) {
-    return violations.stream()
-        .filter(Violation::isFatal)
-        .map(v -> v.rule() + ": " + v.message())
-        .toList();
-  }
-
-  private static EInvoices.Received readBack(Response r) {
-    byte[] bytes = r.readEntity(byte[].class);
-    EInvoices.Received received = EInvoices.read(bytes);
-    assertThat(fatal(EInvoices.validate(received)), is(List.of()));
-    return received;
-  }
-
-  private static BigDecimal amount(JsonObject o, String key) {
-    return o.getJsonNumber(key).bigDecimalValue().setScale(2, RoundingMode.HALF_UP);
+    return till().documentsOf(order, tenant, n);
   }
 
   // ── the invoice ────────────────────────────────────────────────────────────

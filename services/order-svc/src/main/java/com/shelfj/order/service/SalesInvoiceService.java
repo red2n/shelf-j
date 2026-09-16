@@ -81,6 +81,7 @@ public class SalesInvoiceService {
   @Inject SalesInvoiceRepository invoices;
   @Inject com.shelfj.service.TenantProfiles profiles;
   @Inject ServiceReads reads;
+  @Inject EInvoiceTransportService transport;
 
   // Documents issued in the background of a sale: a till is never kept waiting on four services.
   private final ExecutorService background =
@@ -161,25 +162,28 @@ public class SalesInvoiceService {
             parties.buyer().vatId(),
             order.currency(),
             null);
-    return invoices.issue(
-        pending,
-        number ->
-            write(
-                new Document(
-                    SalesInvoiceDraft.TYPE_INVOICE,
-                    number,
-                    day,
-                    order.currency(),
-                    orderId.toString(),
-                    null,
-                    null,
-                    TERMS,
-                    discount,
-                    order.total(),
-                    india),
-                parties,
-                lines,
-                india));
+    SalesInvoice issued =
+        invoices.issue(
+            pending,
+            number ->
+                write(
+                    new Document(
+                        SalesInvoiceDraft.TYPE_INVOICE,
+                        number,
+                        day,
+                        order.currency(),
+                        orderId.toString(),
+                        null,
+                        null,
+                        TERMS,
+                        discount,
+                        order.total(),
+                        india),
+                    parties,
+                    lines,
+                    india));
+    transport.enqueueQuietly(issued);
+    return issued;
   }
 
   /**
@@ -242,25 +246,28 @@ public class SalesInvoiceService {
             parties.buyer().vatId(),
             order.currency(),
             invoice.id());
-    return invoices.issue(
-        pending,
-        number ->
-            write(
-                new Document(
-                    SalesInvoiceDraft.TYPE_CREDIT_NOTE,
-                    number,
-                    day,
-                    order.currency(),
-                    order.id().toString(),
-                    invoice.fullNumber(),
-                    invoice.issueDate(),
-                    null,
-                    BigDecimal.ZERO,
-                    null,
-                    india),
-                parties,
-                lines,
-                india));
+    SalesInvoice issued =
+        invoices.issue(
+            pending,
+            number ->
+                write(
+                    new Document(
+                        SalesInvoiceDraft.TYPE_CREDIT_NOTE,
+                        number,
+                        day,
+                        order.currency(),
+                        order.id().toString(),
+                        invoice.fullNumber(),
+                        invoice.issueDate(),
+                        null,
+                        BigDecimal.ZERO,
+                        null,
+                        india),
+                    parties,
+                    lines,
+                    india));
+    transport.enqueueQuietly(issued);
+    return issued;
   }
 
   /**

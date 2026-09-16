@@ -47,5 +47,9 @@ public final class SalesInvoiceDtos {
               description =
                   "India: what the Invoice Registration Portal would refuse, rule by rule. Empty"
                       + " elsewhere, and when it would accept the document.")
-          List<String> irpProblems) {}
+          List<String> irpProblems,
+      @Schema(
+              description =
+                  "The newest attempt to send it over the business's network; null when never sent.")
+          EInvoiceTransportDtos.TransmissionResponse transmission) {}
 }

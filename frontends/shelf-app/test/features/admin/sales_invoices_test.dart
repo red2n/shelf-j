@@ -88,12 +88,12 @@ class _Server implements HttpClientAdapter {
     if (gate != null) await gate!.future;
     final path = o.path;
     if (o.method == 'GET' && path.endsWith('/admin/orders/o-1/invoices')) {
-      return _json('{"data":${jsonEncode(documents)}}');
+      return jsonResponse('{"data":${jsonEncode(documents)}}');
     }
     if (o.method == 'POST' && path.endsWith('/admin/orders/o-1/invoice')) {
-      if (issueStatus != 200) return _json(issueRefusal, issueStatus);
+      if (issueStatus != 200) return jsonResponse(issueRefusal, issueStatus);
       documents = [_doc()];
-      return _json('{"data":${jsonEncode(_doc())}}');
+      return jsonResponse('{"data":${jsonEncode(_doc())}}');
     }
     if (o.method == 'GET' &&
         path.contains('/admin/sales-invoices/') &&
@@ -114,29 +114,20 @@ class _Server implements HttpClientAdapter {
     }
     if (o.method == 'GET' && path.endsWith('/customer-vat-status/c-1')) {
       return vatStatus == null
-          ? _json(
+          ? jsonResponse(
               '{"error":{"code":"PRICING_VAT_STATUS_NOT_FOUND","message":"none"}}',
               404)
-          : _json('{"data":${jsonEncode(vatStatus)}}');
+          : jsonResponse('{"data":${jsonEncode(vatStatus)}}');
     }
     if (o.method == 'POST' && path.endsWith('/customer-vat-status')) {
-      if (saveStatus != 200) return _json(saveRefusal, saveStatus);
+      if (saveStatus != 200) return jsonResponse(saveRefusal, saveStatus);
       vatStatus = {..._body(o), 'id': 'v-1', 'tenantId': 't'};
-      return _json('{"data":${jsonEncode(vatStatus)}}');
+      return jsonResponse('{"data":${jsonEncode(vatStatus)}}');
     }
-    return _json(
+    return jsonResponse(
         '{"error":{"code":"NOT_FOUND","message":"no route ${o.method} $path"}}',
         404);
   }
-
-  ResponseBody _json(String body, [int status = 200]) =>
-      ResponseBody.fromString(
-        body,
-        status,
-        headers: {
-          Headers.contentTypeHeader: [Headers.jsonContentType],
-        },
-      );
 }
 
 class _Opened {

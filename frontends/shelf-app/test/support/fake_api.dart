@@ -19,10 +19,20 @@ class RoleAuth extends AuthNotifier {
 
   @override
   Future<AuthState> build() async => AuthAuthenticated(
-    accessToken: 'a',
-    refreshToken: 'r',
-    userId: 'u',
-    tenantId: 't',
-    roles: [role],
-  );
+        accessToken: 'a',
+        refreshToken: 'r',
+        userId: 'u',
+        tenantId: 't',
+        roles: [role],
+      );
 }
+
+/// A JSON answer from a test's stand-in server.
+ResponseBody jsonResponse(String body, [int status = 200]) =>
+    ResponseBody.fromString(
+      body,
+      status,
+      headers: {
+        Headers.contentTypeHeader: [Headers.jsonContentType],
+      },
+    );
