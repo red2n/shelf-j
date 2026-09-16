@@ -67,12 +67,14 @@ export default function ({ tenant, rival }) {
   let row = null;
   poll(60, () => {
     row = rowsOf(call('GET', `${INVENTORY}/on-hand?storeId=${storeId}&variantId=${variantId}`, { token: t })).find((r) => r.variantId === variantId);
-    return row && Number(row.onHand) === 95;
+    // 95 once the write-off lands; 93 once the sale of 2 has been fulfilled too — the two events
+    // race, and either reading shows the write-off counted.
+    return row && (Number(row.onHand) === 95 || Number(row.onHand) === 93);
   });
-  truthy('[+] on-hand shows 100 received less 5 written off', row && Number(row.onHand) === 95, row);
+  truthy('[+] on-hand shows 100 received less 5 written off (less 2 sold, once the sale lands)', row && (Number(row.onHand) === 95 || Number(row.onHand) === 93), row);
   const onHand = call('GET', `${INVENTORY}/on-hand`, { token: t });
   expect(onHand, '[+] on-hand for the tenant', 200);
-  truthy('[+] on-hand grand total counts it', Number(data(onHand).grandTotal) >= 95, data(onHand));
+  truthy('[+] on-hand grand total counts it', Number(data(onHand).grandTotal) >= 93, data(onHand));
   expect(call('GET', `${INVENTORY}/on-hand?storeId=nope`, { token: t }), '[-] on-hand: store filter must be a UUID', 400);
 
   const netting = call('GET', `${INVENTORY}/supply-demand?variantId=${variantId}`, { token: t });

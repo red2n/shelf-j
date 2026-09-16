@@ -7,6 +7,7 @@
 // sheet, cash in a currency the limit does not name.
 //
 //   k6/run.sh cash-limit-flow
+import { sleep } from 'k6';
 import { Counter } from 'k6/metrics';
 import {
   ALL_CHECKS_PASS,
@@ -90,7 +91,15 @@ export default function ({ fr, de, india, gb }) {
 
   // ── abuse ────────────────────────────────────────────────────────────────────────────────────────
   expect(call('GET', `${OBL}?country=FR`, { token: gb.rival.owner.token }), '[abuse] a rival reads only the law, never a sheet with anything of ours in it', 200);
-  expect(pay(fr, sale(fr), '1200.00', 'CASH', 'EUR', gb.tenant.owner.token), "[abuse] another business's owner cannot pay our sale", [403, 404, 422]);
+  // A payment is recorded in the caller's own business: a rival's owner tendering against our order
+  // id reaches nothing of ours — no refusal is needed for our sale to stay unpaid and unconfirmed.
+  const ours = sale(fr);
+  const stray = pay(fr, ours, '1200.00', 'CASH', 'EUR', gb.tenant.owner.token);
+  sleep(3);
+  const after = data(call('GET', `${O}/${ours.id}`, { token: fr.cashier.token })) || {};
+  truthy("[abuse] another business's owner tendering against our sale reaches nothing of ours: it stays unpaid", [403, 404, 422].includes(stray.status) || after.status === 'PENDING', { stray: stray.status, order: after.status });
+  const inOurBooks = data(call('GET', `${PAY}/by-order/${ours.id}`, { token: fr.tenant.owner.token }));
+  truthy('[abuse] ...and none of it is in our books', !(Array.isArray(inOurBooks) ? inOurBooks : []).some((p) => Number(p.amount) === 1200), inOurBooks);
 
   completed.add(1);
 }

@@ -99,7 +99,7 @@ export default function ({ de, gb }) {
 
   // ── empties come back ────────────────────────────────────────────────────────────────────────────
   for (const t of [de, gb]) {
-    t.session = data(must(call('POST', '/api/iam-svc/auth/pos/sessions', { token: t.cashier.token, body: { storeId: t.store.id } }), 201, 'till session')).id;
+    t.session = must(call('POST', '/api/iam-svc/auth/pos/sessions', { token: t.cashier.token, body: { storeId: t.store.id } }), 201, 'till session').id;
   }
   expect(refund(de, { lines: [] }), '[-] a refund needs containers', 400, 'ORDER_CONTAINER_LINES_INVALID');
   expect(refund(de, { lines: [{ material: 'GLASS', volumeMl: 5000, count: 1 }] }), '[-] a five-litre glass jar is not a container the scheme takes back', 400, 'ORDER_CONTAINER_NOT_IN_SCHEME');
