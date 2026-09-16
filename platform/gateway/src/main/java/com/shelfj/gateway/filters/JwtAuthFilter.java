@@ -309,6 +309,12 @@ public class JwtAuthFilter implements ContainerRequestFilter {
       case "api/customer-svc/customers/me" -> get || "POST".equals(method) || "PUT".equals(method);
       case "api/customer-svc/customers/me/marketing" -> get || "PUT".equals(method);
       case "api/customer-svc/customers/me/export" -> get;
+      // The shopper's own privacy (13.12): what they consented to, withdrawn in one step, and what
+      // they asked for. The notice itself is public, below.
+      case "api/customer-svc/customers/me/privacy" -> get;
+      case "api/customer-svc/customers/me/privacy/consents" ->
+          "PUT".equals(method) || "DELETE".equals(method);
+      case "api/customer-svc/customers/me/privacy/requests" -> get || "POST".equals(method);
       // The shopper's own address book (12.10), and below, one address in it by id.
       case "api/customer-svc/customers/me/addresses" -> get || "POST".equals(method);
       // The shopper's own push devices (13.7), and below, one device by id.
@@ -369,6 +375,11 @@ public class JwtAuthFilter implements ContainerRequestFilter {
       return true;
     }
     // Per-store storefront config (show-prices flag) and stock availability.
+    // The privacy notice a shopper reads before they sign up (13.12, DPDP Act s.5): public, one
+    // exact path, resolved to the shop by the storefront header like the rest of the storefront.
+    if ("GET".equals(method) && "api/customer-svc/customers/privacy/notice".equals(path)) {
+      return true;
+    }
     if ("GET".equals(method) && path.startsWith("api/tenant-svc/storefront")) {
       return true;
     }

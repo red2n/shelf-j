@@ -198,4 +198,204 @@ void main() {
     expect(find.byType(SwitchListTile), findsNothing);
     expect(find.text('Sign in'), findsOneWidget);
   });
+
+  // ── 13.12: the notice, consent by purpose, a child, requests ────────────────
+
+  testWidgets('the notice is shown in the language served, with the purposes and the contact',
+      (tester) async {
+    final recorder = _Recorder(responses: {
+      'GET /customer-svc/customers/me/marketing': <dynamic>[],
+      'GET /customer-svc/customers/privacy/notice': {
+  'requested': 'hi',
+  'served': 'hi',
+  'notice': {'language': 'hi', 'languageName': 'Hindi', 'version': 1, 'title': 'हम आपके डेटा का उपयोग कैसे करते हैं', 'body': 'हम आपके ऑर्डर रखते हैं।'},
+  'languages': [
+    {'code': 'en', 'name': 'English', 'published': true},
+    {'code': 'hi', 'name': 'Hindi', 'published': true},
+    {'code': 'ta', 'name': 'Tamil', 'published': false},
+  ],
+  'purposes': [
+    {'code': 'LOYALTY', 'text': 'Loyalty: points on what you buy', 'tracking': false},
+    {'code': 'MARKETING', 'text': 'Marketing: offers by email', 'tracking': true},
+  ],
+  'settings': {'grievanceName': 'Grievance Officer', 'grievanceEmail': 'privacy@example.in', 'responseDays': 15, 'hasGrievanceContact': true},
+  'dpdp': false,
+  'dpdpFrom': '2027-05-13',
+},
+      'GET /customer-svc/customers/me/privacy': {
+  'consents': [
+    {'purpose': 'LOYALTY', 'text': 'Loyalty: points on what you buy', 'tracking': false, 'granted': true},
+    {'purpose': 'MARKETING', 'text': 'Marketing: offers by email', 'tracking': true, 'granted': false},
+    {'purpose': 'PERSONALISATION', 'text': 'Personalisation: suggestions', 'tracking': true, 'granted': false},
+    {'purpose': 'ANALYTICS', 'text': 'Analytics: how the shop is used', 'tracking': true, 'granted': false},
+  ],
+  'child': false,
+  'canTrack': true,
+  'guardian': null,
+},
+      'GET /customer-svc/customers/me/privacy/requests': <dynamic>[],
+    });
+    await _pump(tester, recorder);
+    expect(find.text('हम आपके डेटा का उपयोग कैसे करते हैं'), findsOneWidget);
+    expect(find.textContaining('Loyalty: points'), findsWidgets);
+    expect(find.textContaining('privacy@example.in'), findsOneWidget);
+    expect(find.textContaining('answered within 15 days'), findsOneWidget);
+    expect(find.textContaining('binds this shop from 2027-05-13'), findsOneWidget);
+    final languages = recorder.calls.firstWhere((c) => c.path.endsWith('/privacy/notice'));
+    expect(languages.queryParameters['language'], 'en', reason: 'English until the shopper picks');
+  });
+
+  testWidgets('each purpose is its own switch, and withdrawing everything is one DELETE',
+      (tester) async {
+    final recorder = _Recorder(responses: {
+      'GET /customer-svc/customers/me/marketing': <dynamic>[],
+      'GET /customer-svc/customers/privacy/notice': {
+  'requested': 'hi',
+  'served': 'hi',
+  'notice': {'language': 'hi', 'languageName': 'Hindi', 'version': 1, 'title': 'हम आपके डेटा का उपयोग कैसे करते हैं', 'body': 'हम आपके ऑर्डर रखते हैं।'},
+  'languages': [
+    {'code': 'en', 'name': 'English', 'published': true},
+    {'code': 'hi', 'name': 'Hindi', 'published': true},
+    {'code': 'ta', 'name': 'Tamil', 'published': false},
+  ],
+  'purposes': [
+    {'code': 'LOYALTY', 'text': 'Loyalty: points on what you buy', 'tracking': false},
+    {'code': 'MARKETING', 'text': 'Marketing: offers by email', 'tracking': true},
+  ],
+  'settings': {'grievanceName': 'Grievance Officer', 'grievanceEmail': 'privacy@example.in', 'responseDays': 15, 'hasGrievanceContact': true},
+  'dpdp': false,
+  'dpdpFrom': '2027-05-13',
+},
+      'GET /customer-svc/customers/me/privacy': {
+  'consents': [
+    {'purpose': 'LOYALTY', 'text': 'Loyalty: points on what you buy', 'tracking': false, 'granted': true},
+    {'purpose': 'MARKETING', 'text': 'Marketing: offers by email', 'tracking': true, 'granted': false},
+    {'purpose': 'PERSONALISATION', 'text': 'Personalisation: suggestions', 'tracking': true, 'granted': false},
+    {'purpose': 'ANALYTICS', 'text': 'Analytics: how the shop is used', 'tracking': true, 'granted': false},
+  ],
+  'child': false,
+  'canTrack': true,
+  'guardian': null,
+},
+      'GET /customer-svc/customers/me/privacy/requests': <dynamic>[],
+      'PUT /customer-svc/customers/me/privacy/consents': <String, dynamic>{},
+      'DELETE /customer-svc/customers/me/privacy/consents': <String, dynamic>{},
+    });
+    await _pump(tester, recorder);
+    final analytics = tester.widget<SwitchListTile>(find.byKey(const Key('consent-ANALYTICS')));
+    expect(analytics.value, isFalse);
+    await tester.tap(find.byKey(const Key('consent-ANALYTICS')));
+    await tester.pumpAndSettle();
+    final put = recorder.calls.singleWhere((c) => c.method == 'PUT' && c.path.endsWith('/privacy/consents'));
+    final choice = ((put.data as Map)['choices'] as List).single as Map;
+    expect(choice['purpose'], 'ANALYTICS');
+    expect(choice['granted'], isTrue);
+    expect((put.data as Map)['language'], 'en', reason: 'the notice read is named with the consent');
+    await tester.scrollUntilVisible(find.byKey(const Key('privacy-withdraw-all')), 200,
+        scrollable: find.byType(Scrollable).first);
+    await tester.tap(find.byKey(const Key('privacy-withdraw-all')));
+    await tester.pumpAndSettle();
+    expect(recorder.calls.where((c) => c.method == 'DELETE').single.path, endsWith('/privacy/consents'));
+  });
+
+  testWidgets('a child sees the tracking switches held off until a guardian consents',
+      (tester) async {
+    final recorder = _Recorder(responses: {
+      'GET /customer-svc/customers/me/marketing': <dynamic>[],
+      'GET /customer-svc/customers/privacy/notice': {
+  'requested': 'hi',
+  'served': 'hi',
+  'notice': {'language': 'hi', 'languageName': 'Hindi', 'version': 1, 'title': 'हम आपके डेटा का उपयोग कैसे करते हैं', 'body': 'हम आपके ऑर्डर रखते हैं।'},
+  'languages': [
+    {'code': 'en', 'name': 'English', 'published': true},
+    {'code': 'hi', 'name': 'Hindi', 'published': true},
+    {'code': 'ta', 'name': 'Tamil', 'published': false},
+  ],
+  'purposes': [
+    {'code': 'LOYALTY', 'text': 'Loyalty: points on what you buy', 'tracking': false},
+    {'code': 'MARKETING', 'text': 'Marketing: offers by email', 'tracking': true},
+  ],
+  'settings': {'grievanceName': 'Grievance Officer', 'grievanceEmail': 'privacy@example.in', 'responseDays': 15, 'hasGrievanceContact': true},
+  'dpdp': false,
+  'dpdpFrom': '2027-05-13',
+},
+      'GET /customer-svc/customers/me/privacy': {
+  'consents': [
+    {'purpose': 'LOYALTY', 'text': 'Loyalty: points on what you buy', 'tracking': false, 'granted': true},
+    {'purpose': 'MARKETING', 'text': 'Marketing: offers by email', 'tracking': true, 'granted': false},
+    {'purpose': 'PERSONALISATION', 'text': 'Personalisation: suggestions', 'tracking': true, 'granted': false},
+    {'purpose': 'ANALYTICS', 'text': 'Analytics: how the shop is used', 'tracking': true, 'granted': false},
+  ],
+  'child': true,
+  'canTrack': false,
+  'guardian': null,
+},
+      'GET /customer-svc/customers/me/privacy/requests': <dynamic>[],
+    });
+    await _pump(tester, recorder);
+    expect(find.byKey(const Key('privacy-child')), findsOneWidget);
+    expect(tester.widget<SwitchListTile>(find.byKey(const Key('consent-MARKETING'))).onChanged, isNull);
+    expect(tester.widget<SwitchListTile>(find.byKey(const Key('consent-LOYALTY'))).onChanged, isNotNull,
+        reason: 'loyalty tracks nobody');
+  });
+
+  testWidgets('asking for a right posts the kind, and a nomination names somebody',
+      (tester) async {
+    final recorder = _Recorder(responses: {
+      'GET /customer-svc/customers/me/marketing': <dynamic>[],
+      'GET /customer-svc/customers/privacy/notice': {
+  'requested': 'hi',
+  'served': 'hi',
+  'notice': {'language': 'hi', 'languageName': 'Hindi', 'version': 1, 'title': 'हम आपके डेटा का उपयोग कैसे करते हैं', 'body': 'हम आपके ऑर्डर रखते हैं।'},
+  'languages': [
+    {'code': 'en', 'name': 'English', 'published': true},
+    {'code': 'hi', 'name': 'Hindi', 'published': true},
+    {'code': 'ta', 'name': 'Tamil', 'published': false},
+  ],
+  'purposes': [
+    {'code': 'LOYALTY', 'text': 'Loyalty: points on what you buy', 'tracking': false},
+    {'code': 'MARKETING', 'text': 'Marketing: offers by email', 'tracking': true},
+  ],
+  'settings': {'grievanceName': 'Grievance Officer', 'grievanceEmail': 'privacy@example.in', 'responseDays': 15, 'hasGrievanceContact': true},
+  'dpdp': false,
+  'dpdpFrom': '2027-05-13',
+},
+      'GET /customer-svc/customers/me/privacy': {
+  'consents': [
+    {'purpose': 'LOYALTY', 'text': 'Loyalty: points on what you buy', 'tracking': false, 'granted': true},
+    {'purpose': 'MARKETING', 'text': 'Marketing: offers by email', 'tracking': true, 'granted': false},
+    {'purpose': 'PERSONALISATION', 'text': 'Personalisation: suggestions', 'tracking': true, 'granted': false},
+    {'purpose': 'ANALYTICS', 'text': 'Analytics: how the shop is used', 'tracking': true, 'granted': false},
+  ],
+  'child': false,
+  'canTrack': true,
+  'guardian': null,
+},
+      'GET /customer-svc/customers/me/privacy/requests': [
+        {'id': 'r-1', 'kind': 'GRIEVANCE', 'dueOn': '2026-09-30', 'status': 'OPEN', 'overdue': false},
+      ],
+      'POST /customer-svc/customers/me/privacy/requests': <String, dynamic>{'id': 'r-2'},
+    });
+    await _pump(tester, recorder);
+    // The page is a lazy list: the requests sit below the fold until scrolled to the end.
+    await tester.drag(find.byType(Scrollable).first, const Offset(0, -4000));
+    await tester.pumpAndSettle();
+    await tester.ensureVisible(find.byKey(const Key('privacy-ask')));
+    await tester.pumpAndSettle();
+    expect(find.text('Raise a grievance'), findsOneWidget);
+    expect(find.text('Due by 2026-09-30'), findsOneWidget);
+    await tester.tap(find.byKey(const Key('privacy-ask')));
+    await tester.pumpAndSettle();
+    await tester.tap(find.byKey(const Key('request-kind')));
+    await tester.pumpAndSettle();
+    await tester.tap(find.text('Nominate someone to act for me').last);
+    await tester.pumpAndSettle();
+    await tester.enterText(find.byKey(const Key('request-nominee')), 'Arun');
+    await tester.tap(find.byKey(const Key('request-send')));
+    await tester.pumpAndSettle();
+    final post = recorder.calls.singleWhere((c) => c.method == 'POST');
+    expect(post.path, endsWith('/customers/me/privacy/requests'));
+    expect((post.data as Map)['kind'], 'NOMINATION');
+    expect((post.data as Map)['nomineeName'], 'Arun');
+  });
 }

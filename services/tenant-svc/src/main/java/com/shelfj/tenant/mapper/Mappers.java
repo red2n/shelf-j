@@ -1,8 +1,11 @@
 package com.shelfj.tenant.mapper;
 
 import com.shelfj.tenant.domain.Domain.DeliveryArea;
+import com.shelfj.tenant.domain.Domain.DutyState;
 import com.shelfj.tenant.domain.Domain.IncidentSheet;
+import com.shelfj.tenant.domain.Domain.NoticeDuties;
 import com.shelfj.tenant.domain.Domain.NoticeIssue;
+import com.shelfj.tenant.domain.Domain.NoticeReport;
 import com.shelfj.tenant.domain.Domain.SecurityNotice;
 import com.shelfj.tenant.domain.Domain.StaffAssignment;
 import com.shelfj.tenant.domain.Domain.StageStatus;
@@ -15,6 +18,7 @@ import com.shelfj.tenant.dto.Dtos.IncidentEventResponse;
 import com.shelfj.tenant.dto.Dtos.IncidentResponse;
 import com.shelfj.tenant.dto.Dtos.IncidentStageResponse;
 import com.shelfj.tenant.dto.Dtos.IncidentSummaryResponse;
+import com.shelfj.tenant.dto.Dtos.NoticeDutyResponse;
 import com.shelfj.tenant.dto.Dtos.NoticesIssuedResponse;
 import com.shelfj.tenant.dto.Dtos.SecurityNoticeResponse;
 import com.shelfj.tenant.dto.Dtos.StaffResponse;
@@ -24,6 +28,8 @@ import com.shelfj.tenant.dto.Dtos.TenantResponse;
 import com.shelfj.tenant.dto.Dtos.ZoneResponse;
 import com.shelfj.tenant.service.IncidentRules;
 import java.time.Instant;
+import java.util.ArrayList;
+import java.util.List;
 import java.util.UUID;
 
 /** Entity → DTO conversion (never expose entities over HTTP). */
@@ -334,7 +340,22 @@ public final class Mappers {
     return new NoticesIssuedResponse(n.issued(), n.total(), n.acknowledged());
   }
 
-  public static SecurityNoticeResponse toSecurityNotice(SecurityNotice n) {
+  public static SecurityNoticeResponse toSecurityNotice(SecurityNotice n, NoticeDuties duties) {
+    List<NoticeDutyResponse> out = new ArrayList<>();
+    for (DutyState d : duties.duties()) {
+      NoticeReport r = d.report();
+      out.add(
+          new NoticeDutyResponse(
+              d.duty(),
+              d.citation(),
+              d.summary(),
+              ts(d.dueAt()),
+              d.state(),
+              r == null ? null : ts(r.doneAt()),
+              r == null ? null : r.reference(),
+              r == null ? null : r.note(),
+              r == null || r.recordedBy() == null ? null : r.recordedBy().toString()));
+    }
     return new SecurityNoticeResponse(
         n.id().toString(),
         n.incidentId().toString(),
@@ -342,6 +363,10 @@ public final class Mappers {
         n.body(),
         ts(n.issuedAt()),
         ts(n.acknowledgedAt()),
-        n.acknowledgedAt() != null);
+        n.acknowledgedAt() != null,
+        duties.regime(),
+        duties.binding(),
+        duties.bindsFrom() == null ? null : duties.bindsFrom().toString(),
+        out);
   }
 }

@@ -7,6 +7,7 @@ import 'package:flutter_riverpod/flutter_riverpod.dart';
 
 import '../../core/constants.dart';
 import '../../core/network/api_error.dart';
+import 'privacy_rights.dart';
 import 'storefront_providers.dart';
 import 'storefront_shell.dart' show StorefrontAuthDialog;
 
@@ -166,6 +167,10 @@ class _StorefrontPrivacyScreenState
       child: ListView(
         padding: const EdgeInsets.all(16),
         children: [
+          const PrivacyNoticeSection(),
+          const SizedBox(height: 28),
+          const ConsentsSection(),
+          const SizedBox(height: 28),
           Text('Marketing', style: theme.textTheme.titleLarge),
           const SizedBox(height: 4),
           Text(
@@ -238,6 +243,8 @@ class _StorefrontPrivacyScreenState
                 ? 'Download my data'
                 : 'Gathering your data…'),
           ),
+          const SizedBox(height: 28),
+          const RequestsSection(),
         ],
       ),
     );

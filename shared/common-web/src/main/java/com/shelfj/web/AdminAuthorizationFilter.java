@@ -286,6 +286,10 @@ public class AdminAuthorizationFilter implements ContainerRequestFilter {
         || "/customers/me".equals(path)
         || "/customers/me/export".equals(path)
         || "/customers/me/marketing".equals(path)
+        // The shopper's own privacy (13.12), and the notice anyone may read before signing up.
+        || "/customers/me/privacy".equals(path)
+        || "/customers/me/privacy/requests".equals(path)
+        || "/customers/privacy/notice".equals(path)
         // The shopper's own address book, same shape and same reason (12.10).
         || isCustomerSelfAddress(path)
         // The caller's own push devices (13.7): a login reads the devices it registered.
@@ -373,6 +377,14 @@ public class AdminAuthorizationFilter implements ContainerRequestFilter {
         // The shopper's own preference centre. Same shape and same reason as /customers/me: the
         // login comes from the token, so the only preferences reachable are the caller's.
         || "/customers/me/marketing".equals(path)
+        // The shopper withdrawing or giving consent, and asking for their rights (13.12): the
+        // record is theirs alone, keyed on the token's login like /customers/me.
+        || "/customers/me/privacy/consents".equals(path)
+        || "/customers/me/privacy/requests".equals(path)
+        // The shopper's own privacy (13.12), and the notice anyone may read before signing up.
+        || "/customers/me/privacy".equals(path)
+        || "/customers/me/privacy/requests".equals(path)
+        || "/customers/privacy/notice".equals(path)
         // The shopper's own profile is the same path as the claim, PUT rather than POST; the
         // address book is the shopper's own, keyed on the login, id-addressed by shape (12.10).
         || isCustomerSelfAddress(path)

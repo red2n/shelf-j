@@ -325,6 +325,35 @@ class JwtAuthFilterTest {
     return headers.getFirst("X-Tenant-Id");
   }
 
+  /** The privacy notice is read before anyone signs up (13.12): public, one exact shape. */
+  @Test
+  void thePrivacyNoticeIsPublicAndTheRestOfPrivacyIsNot() throws IOException {
+    // A guest reads it from a storefront: the tenant comes from the storefront header.
+    when(requestContext.getMethod()).thenReturn("GET");
+    when(uriInfo.getPath()).thenReturn("api/customer-svc/customers/privacy/notice");
+    when(requestContext.getHeaderString("X-Storefront-Tenant")).thenReturn("tenant-abc");
+    filter.filter(requestContext);
+    verify(requestContext, never()).abortWith(any());
+    org.junit.jupiter.api.Assertions.assertEquals("tenant-abc", headers.getFirst("X-Tenant-Id"));
+
+    for (String[] c :
+        new String[][] {
+          {"GET", "api/customer-svc/customers/privacy/settings"},
+          {"GET", "api/customer-svc/customers/privacy/notices"},
+          {"POST", "api/customer-svc/customers/privacy/notice"},
+          {"GET", "api/customer-svc/customers/privacy/notice/extra"},
+          {"GET", "api/customer-svc/customers/me/privacy"},
+        }) {
+      org.mockito.Mockito.reset(requestContext);
+      lenient().when(requestContext.getUriInfo()).thenReturn(uriInfo);
+      lenient().when(requestContext.getHeaders()).thenReturn(headers);
+      when(requestContext.getMethod()).thenReturn(c[0]);
+      when(uriInfo.getPath()).thenReturn(c[1]);
+      filter.filter(requestContext);
+      verify(requestContext, org.mockito.Mockito.description(c[0] + " " + c[1])).abortWith(any());
+    }
+  }
+
   @Test
   void customerTokenReachesItsOwnProfileAndAddressBookFromAStorefront() throws IOException {
     // 12.10. The first live run of the account flow got NO_TENANT on PUT /customers/me: the
@@ -338,6 +367,12 @@ class JwtAuthFilterTest {
       {"GET", "api/notification-svc/notifications/devices"},
       {"POST", "api/notification-svc/notifications/devices"},
       {"DELETE", "api/notification-svc/notifications/devices/01a09509-72ec-72e9-9f08-94a93df26a36"},
+      // 13.12: the shopper's own privacy — consents withdrawn in one step, requests for rights.
+      {"GET", "api/customer-svc/customers/me/privacy"},
+      {"PUT", "api/customer-svc/customers/me/privacy/consents"},
+      {"DELETE", "api/customer-svc/customers/me/privacy/consents"},
+      {"GET", "api/customer-svc/customers/me/privacy/requests"},
+      {"POST", "api/customer-svc/customers/me/privacy/requests"},
     };
     for (String[] c : cases) {
       org.junit.jupiter.api.Assertions.assertEquals(

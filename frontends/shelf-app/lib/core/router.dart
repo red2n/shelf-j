@@ -186,6 +186,13 @@ final routerProvider = Provider<GoRouter>((ref) {
             ),
           ),
           GoRoute(
+            path: '/admin/privacy',
+            builder: (_, _) => DeferredWidget(
+              libraryLoader: admin_lib.loadLibrary,
+              builder: (_) => admin_lib.PrivacyScreen(),
+            ),
+          ),
+          GoRoute(
             path: '/admin/security-notices',
             builder: (_, _) => DeferredWidget(
               libraryLoader: admin_lib.loadLibrary,

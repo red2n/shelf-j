@@ -18,7 +18,7 @@ export PLATFORM_ADMIN_PASSWORD="${PLATFORM_ADMIN_PASSWORD:-$(env_value PLATFORM_
 FUNCTIONAL=(
   flow-guard-comprehensive flow-guard-runtime
   iam-crud tenant-crud product-crud inventory-crud pricing-crud order-crud notification-crud reporting-crud
-  privacy-flow compliance-flow purchase-crud vat-return-flow markdown-flow audit-trail storefront-account notification-channels ledger-flow role-model promotion-scoping payment-run-flow tenant-defaults sales-posting security-incidents recall-buyers retention-flow web-shell deferred-revenue bank-files tenant-export einvoice-inbound einvoice-outbound einvoice-transport
+  privacy-flow compliance-flow purchase-crud vat-return-flow markdown-flow audit-trail storefront-account notification-channels ledger-flow role-model promotion-scoping payment-run-flow tenant-defaults sales-posting security-incidents recall-buyers retention-flow web-shell deferred-revenue bank-files tenant-export einvoice-inbound einvoice-outbound einvoice-transport dpdp-flow
   gateway-smoke-it gateway-login-protection gateway-unsubscribe-protection gateway-card-data-guard
 )
 LOAD=(multi-tenant-retail full-stack-simulation gateway-rate-limit-stress)

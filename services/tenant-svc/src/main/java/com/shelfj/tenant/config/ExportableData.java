@@ -23,6 +23,8 @@ public class ExportableData extends TenantDataSpec {
     return Map.of(
         "incident_reporting_stages",
         "the platform's reference data: the law as recorded for every business",
+        "breach_duties",
+        "the platform's reference data: the law as recorded for every business",
         "jurisdiction_members",
         "the platform's reference data: the law as recorded for every business",
         "jurisdiction_regimes",
