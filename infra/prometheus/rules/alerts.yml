@@ -129,3 +129,24 @@ groups:
           severity: warning
         annotations:
           summary: "Host memory low: {{ $value | humanizePercentage }} available"
+
+  # ── Script integrity on the web shell (PCI DSS 11.6.1) ──────────────────────
+  - name: script-integrity
+    rules:
+      - alert: ScriptIntegrityDrift
+        expr: shelfj_script_integrity_drift > 0
+        for: 0m
+        labels:
+          severity: critical
+        annotations:
+          summary: "A script on the web shell changed or appeared"
+          description: "The gateway's script integrity monitor found {{ $value }} difference(s) between the scripts the web shell serves and its inventory. See GET /admin/security/script-integrity on the gateway."
+
+      - alert: ScriptIntegrityUnchecked
+        expr: shelfj_script_integrity_drift < 0
+        for: 30m
+        labels:
+          severity: warning
+        annotations:
+          summary: "The web shell could not be checked for script integrity"
+          description: "The gateway could not read the web shell's entry page or inventory for 30 minutes, so its scripts are unverified."

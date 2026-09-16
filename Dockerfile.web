@@ -18,6 +18,18 @@ LABEL org.opencontainers.image.title="shelf-j-web" \
 
 # Static, content-hashed Flutter bundle (dart2js release → refresh-safe).
 COPY --chown=nginx:nginx frontends/shelf-app/build/web /usr/share/nginx/html
+# The inventory of every script the shell serves, with a reason and a hash for each (PCI DSS
+# SAQ-A: the site cannot be altered by scripts; 6.4.3 / 11.6.1). Generated from the bundle at image
+# build, so a script without a reason fails the build; served as /script-inventory.json for the
+# gateway's ScriptIntegrityMonitor to check the served scripts against.
+COPY --chown=nginx:nginx infra/script-inventory.sh /tmp/script-inventory.sh
+# The html directory is the base image's (root-owned); write the inventory as root, hand it to
+# nginx, and drop back to the unprivileged user the image runs as (uid 101).
+USER root
+RUN sh /tmp/script-inventory.sh /usr/share/nginx/html \
+    && chown nginx:nginx /usr/share/nginx/html/script-inventory.json \
+    && rm /tmp/script-inventory.sh
+USER 101
 # Rendered at start-up by the image's entrypoint (envsubst on /etc/nginx/templates).
 COPY infra/nginx-spa.conf.template /etc/nginx/templates/default.conf.template
 # The gateway origin for the CSP's connect-src; empty suits the relative /api build CI publishes.
