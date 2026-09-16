@@ -98,8 +98,8 @@ Per-service internal shape (copy for each): `api/ dto/ service/ domain/ repo/ me
 
 ## Conventions cheat-sheet (full list: [ARCHITECTURE §14](docs/ARCHITECTURE.md#14-cross-cutting-conventions))
 
-- **Response envelope:** `{ "data": ..., "error": ..., "meta": { "requestId", "nextCursor" } }`.
-- **Errors:** correct HTTP codes; stable machine `code` (e.g. `INVENTORY_INSUFFICIENT_STOCK`); never leak stack/SQL.
+- **Response envelope:** `{ "data": ..., "error": ..., "meta": { "requestId", "nextCursor" } }` for data.
+- **Errors:** correct HTTP codes; stable machine `code` (e.g. `INVENTORY_INSUFFICIENT_STOCK`); never leak stack/SQL. On the wire every error is **RFC 9457 problem details** (`application/problem+json`: `type` = `urn:shelfj:problem:CODE`, `title`, `status`, `detail`, `instance`, plus `code`, `details`, `requestId` and the legacy `error`/`meta` members) — produced once by `ProblemResponseFilter` in common-web from any `ApiResponse.error(...)`, so services keep throwing `ApiException` and never build problems by hand. API descriptions are OpenAPI 3.1 (`mp.openapi.extensions.smallrye.openapi=3.1.0`, static files `openapi: 3.1.0`, a shared `Problem` schema).
 - **Pagination:** cursor only (`?after=&limit=`), default 20 / max 100. No page numbers.
 - **Naming:** REST paths = plural kebab nouns (`/purchase-orders`); JSON = `camelCase`; DB columns = `snake_case`; events = `PascalCase` past tense (`OrderPlaced`); Kafka topics = `shelfj.<domain>.<event>`.
 - **IDs:** UUIDv7 only. Mint in the service with `Ids.newId()` (`shared/common-ids`); deterministic keys with `Ids.derived(eventId, name)`. Never `UUID.randomUUID()`/`nameUUIDFromBytes()`, never `gen_random_uuid()` in SQL, never a column `DEFAULT` that fills in a uuid — every `INSERT` binds its `id`. PMD rules and the integration-test audit (`PostgresSupport.stop()`: column defaults + stored ids) fail the build on violations; a Flyway `afterMigrate` check backs them up ([ARCHITECTURE §14](docs/ARCHITECTURE.md#14-cross-cutting-conventions)).

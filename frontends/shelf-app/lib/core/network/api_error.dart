@@ -19,6 +19,15 @@ ApiError? apiErrorOf(Object error) {
     if (data is Map && data['error'] is Map) {
       return ApiError.fromJson(Map<String, dynamic>.from(data['error'] as Map));
     }
+    // RFC 9457 problem details without the legacy member: the stable code and
+    // the detail written for a person sit at the top level.
+    if (data is Map && data['code'] is String) {
+      return ApiError.fromJson(<String, dynamic>{
+        'code': data['code'],
+        'message': data['detail'] ?? data['title'] ?? '',
+        if (data['details'] is List) 'details': data['details'],
+      });
+    }
   }
   return null;
 }
