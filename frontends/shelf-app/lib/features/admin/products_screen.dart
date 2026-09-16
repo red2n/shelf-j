@@ -192,6 +192,7 @@ class _ProductsScreenState extends ConsumerState<ProductsScreen> {
                             _showAssortmentDialog(context, ref, p),
                         onImage: (p) => _manageImage(context, ref, p),
                         onDelist: (p) => _delist(context, ref, p),
+                        onLifecycle: (p, move) => _lifecycle(context, ref, p, move),
                       );
                     }
                     return _NarrowList(
@@ -202,6 +203,7 @@ class _ProductsScreenState extends ConsumerState<ProductsScreen> {
                       onAssortment: (p) => _showAssortmentDialog(context, ref, p),
                       onImage: (p) => _manageImage(context, ref, p),
                       onDelist: (p) => _delist(context, ref, p),
+                        onLifecycle: (p, move) => _lifecycle(context, ref, p, move),
                     );
                   }),
                 ),
@@ -354,6 +356,32 @@ class _ProductsScreenState extends ConsumerState<ProductsScreen> {
     }
   }
 
+  /// A lifecycle move (item lifecycle): launch a new line, discontinue a line
+  /// for run-down, or reinstate one. The server refuses a move a product cannot
+  /// make from where it is.
+  Future<void> _lifecycle(
+      BuildContext context, WidgetRef ref, ProductInfo product, String move) async {
+    try {
+      await ref
+          .read(apiClientProvider)
+          .dio
+          .post('/${ApiConstants.product}/admin/products/${product.id}/$move');
+      ref.read(productsPaginationProvider(_categoryFilter).notifier).refresh();
+      if (!context.mounted) return;
+      ScaffoldMessenger.of(context).showSnackBar(SnackBar(
+          content: Text(switch (move) {
+        'launch' => '${product.name} is on sale.',
+        'discontinue' =>
+          '${product.name} is being run down: sold while stock lasts, not reordered.',
+        _ => '${product.name} is back on sale.',
+      })));
+    } catch (e) {
+      if (!context.mounted) return;
+      ScaffoldMessenger.of(context).showSnackBar(SnackBar(
+          content: Text(friendlyError(e, fallback: 'Could not change the line.'))));
+    }
+  }
+
   Future<void> _delist(
       BuildContext context, WidgetRef ref, ProductInfo product) async {
     final confirmed = await showDialog<bool>(
@@ -405,6 +433,7 @@ class _WideTable extends StatelessWidget {
   final void Function(ProductInfo) onAssortment;
   final void Function(ProductInfo) onImage;
   final void Function(ProductInfo) onDelist;
+  final void Function(ProductInfo, String) onLifecycle;
 
   const _WideTable({
     required this.products,
@@ -413,6 +442,7 @@ class _WideTable extends StatelessWidget {
     required this.onAssortment,
     required this.onImage,
     required this.onDelist,
+    required this.onLifecycle,
   });
 
   @override
@@ -483,64 +513,14 @@ class _WideTable extends StatelessWidget {
                           ? context.status.success
                           : cs.outlineVariant,
                     )),
-                    DataCell(_StatusChip(active: active, label: p.status)),
-                    DataCell(PopupMenuButton<String>(
-                      icon: const Icon(Icons.more_vert),
-                      tooltip: 'Actions',
-                      itemBuilder: (_) => [
-                        const PopupMenuItem(
-                            value: 'variants',
-                            child: Row(children: [
-                              Icon(Icons.view_list_outlined, size: 18),
-                              SizedBox(width: 8),
-                              Text('View Variants'),
-                            ])),
-                        const PopupMenuItem(
-                            value: 'stores',
-                            child: Row(children: [
-                              Icon(Icons.storefront_outlined, size: 18),
-                              SizedBox(width: 8),
-                              Text('Sold at stores'),
-                            ])),
-                        const PopupMenuItem(
-                            value: 'image',
-                            child: Row(children: [
-                              Icon(Icons.image_outlined, size: 18),
-                              SizedBox(width: 8),
-                              Text('Product image'),
-                            ])),
-                        const PopupMenuItem(
-                            value: 'safety',
-                            child: Row(children: [
-                              Icon(Icons.health_and_safety_outlined, size: 18),
-                              SizedBox(width: 8),
-                              Text('Safety information'),
-                            ])),
-                        if (active)
-                          PopupMenuItem(
-                              value: 'delist',
-                              child: Row(children: [
-                                Icon(Icons.block_outlined,
-                                    size: 18, color: cs.error),
-                                const SizedBox(width: 8),
-                                Text('Delist',
-                                    style: TextStyle(color: cs.error)),
-                              ])),
-                      ],
-                      onSelected: (v) {
-                        if (v == 'variants') {
-                          onViewVariants(p);
-                        } else if (v == 'stores') {
-                          onAssortment(p);
-                        } else if (v == 'image') {
-                          onImage(p);
-                        } else if (v == 'safety') {
-                          showProductSafetyDialog(context,
-                              productId: p.id, productName: p.name);
-                        } else {
-                          onDelist(p);
-                        }
-                      },
+                    DataCell(_StatusChip(active: active, label: p.lifecycleLabel)),
+                    DataCell(_ProductActions(
+                      p: p,
+                      onViewVariants: onViewVariants,
+                      onAssortment: onAssortment,
+                      onImage: onImage,
+                      onDelist: onDelist,
+                      onLifecycle: onLifecycle,
                     )),
                   ]);
                 }).toList(),
@@ -555,6 +535,100 @@ class _WideTable extends StatelessWidget {
 
 // ── Narrow list ───────────────────────────────────────────────────────────────
 
+/// The actions on a product row — the same menu on the wide table and the
+/// narrow list: its variants, stores, image and safety information, the one
+/// lifecycle move it can make next, and delisting until it is delisted.
+class _ProductActions extends StatelessWidget {
+  final ProductInfo p;
+  final void Function(ProductInfo) onViewVariants;
+  final void Function(ProductInfo) onAssortment;
+  final void Function(ProductInfo) onImage;
+  final void Function(ProductInfo) onDelist;
+  final void Function(ProductInfo, String) onLifecycle;
+
+  const _ProductActions({
+    required this.p,
+    required this.onViewVariants,
+    required this.onAssortment,
+    required this.onImage,
+    required this.onDelist,
+    required this.onLifecycle,
+  });
+
+  @override
+  Widget build(BuildContext context) {
+    final cs = Theme.of(context).colorScheme;
+    return PopupMenuButton<String>(
+      icon: const Icon(Icons.more_vert),
+      tooltip: 'Actions',
+      itemBuilder: (_) => [
+        const PopupMenuItem(
+            value: 'variants',
+            child: Row(children: [
+              Icon(Icons.view_list_outlined, size: 18),
+              SizedBox(width: 8),
+              Text('View Variants'),
+            ])),
+        const PopupMenuItem(
+            value: 'stores',
+            child: Row(children: [
+              Icon(Icons.storefront_outlined, size: 18),
+              SizedBox(width: 8),
+              Text('Sold at stores'),
+            ])),
+        const PopupMenuItem(
+            value: 'image',
+            child: Row(children: [
+              Icon(Icons.image_outlined, size: 18),
+              SizedBox(width: 8),
+              Text('Product image'),
+            ])),
+        const PopupMenuItem(
+            value: 'safety',
+            child: Row(children: [
+              Icon(Icons.health_and_safety_outlined, size: 18),
+              SizedBox(width: 8),
+              Text('Safety information'),
+            ])),
+        if (nextLifecycleMove(p.status) != null)
+          PopupMenuItem(
+              value: 'lifecycle:${nextLifecycleMove(p.status)!.$1}',
+              child: Row(children: [
+                const Icon(Icons.swap_horiz, size: 18),
+                const SizedBox(width: 8),
+                Text(nextLifecycleMove(p.status)!.$2),
+              ])),
+        if (p.status.toUpperCase() != 'DELISTED')
+          PopupMenuItem(
+              value: 'delist',
+              child: Row(children: [
+                Icon(Icons.block_outlined,
+                    size: 18, color: cs.error),
+                const SizedBox(width: 8),
+                Text('Delist',
+                    style: TextStyle(color: cs.error)),
+              ])),
+      ],
+      onSelected: (v) {
+        if (v == 'variants') {
+          onViewVariants(p);
+        } else if (v == 'stores') {
+          onAssortment(p);
+        } else if (v == 'image') {
+          onImage(p);
+        } else if (v == 'safety') {
+          showProductSafetyDialog(context,
+              productId: p.id, productName: p.name);
+        } else if (v.startsWith('lifecycle:')) {
+          onLifecycle(p, v.substring('lifecycle:'.length));
+        } else {
+          onDelist(p);
+        }
+      },
+    );
+  }
+}
+
 class _NarrowList extends StatelessWidget {
   final List<ProductInfo> products;
   final Map<String, CategoryInfo> catById;
@@ -562,6 +636,7 @@ class _NarrowList extends StatelessWidget {
   final void Function(ProductInfo) onAssortment;
   final void Function(ProductInfo) onImage;
   final void Function(ProductInfo) onDelist;
+  final void Function(ProductInfo, String) onLifecycle;
 
   const _NarrowList({
     required this.products,
@@ -570,6 +645,7 @@ class _NarrowList extends StatelessWidget {
     required this.onAssortment,
     required this.onImage,
     required this.onDelist,
+    required this.onLifecycle,
   });
 
   @override
@@ -602,64 +678,15 @@ class _NarrowList extends StatelessWidget {
             trailing: Row(
               mainAxisSize: MainAxisSize.min,
               children: [
-                _StatusChip(active: active, label: p.status),
-                PopupMenuButton<String>(
-                  icon: const Icon(Icons.more_vert),
-                  itemBuilder: (_) => [
-                    const PopupMenuItem(
-                        value: 'variants',
-                        child: Row(children: [
-                          Icon(Icons.view_list_outlined, size: 18),
-                          SizedBox(width: 8),
-                          Text('View Variants'),
-                        ])),
-                    const PopupMenuItem(
-                        value: 'stores',
-                        child: Row(children: [
-                          Icon(Icons.storefront_outlined, size: 18),
-                          SizedBox(width: 8),
-                          Text('Sold at stores'),
-                        ])),
-                    const PopupMenuItem(
-                        value: 'image',
-                        child: Row(children: [
-                          Icon(Icons.image_outlined, size: 18),
-                          SizedBox(width: 8),
-                          Text('Product image'),
-                        ])),
-                    const PopupMenuItem(
-                        value: 'safety',
-                        child: Row(children: [
-                          Icon(Icons.health_and_safety_outlined, size: 18),
-                          SizedBox(width: 8),
-                          Text('Safety information'),
-                        ])),
-                    if (active)
-                      PopupMenuItem(
-                          value: 'delist',
-                          child: Row(children: [
-                            Icon(Icons.block_outlined,
-                                size: 18, color: cs.error),
-                            const SizedBox(width: 8),
-                            Text('Delist',
-                                style: TextStyle(color: cs.error)),
-                          ])),
-                  ],
-                  onSelected: (v) {
-                    if (v == 'variants') {
-                      onViewVariants(p);
-                    } else if (v == 'stores') {
-                      onAssortment(p);
-                    } else if (v == 'image') {
-                      onImage(p);
-                    } else if (v == 'safety') {
-                      showProductSafetyDialog(context,
-                          productId: p.id, productName: p.name);
-                    } else {
-                      onDelist(p);
-                    }
-                  },
-                ),
+                _StatusChip(active: active, label: p.lifecycleLabel),
+                _ProductActions(
+                      p: p,
+                      onViewVariants: onViewVariants,
+                      onAssortment: onAssortment,
+                      onImage: onImage,
+                      onDelist: onDelist,
+                      onLifecycle: onLifecycle,
+                    ),
               ],
             ),
           ),
@@ -714,6 +741,11 @@ class _ProductDialogState extends State<_ProductDialog> {
   String? _categoryId;
   bool _online = true;
   bool _pos = true;
+
+  /// Listed now, on sale later (item lifecycle): hidden from the shop and
+  /// refused at the till until launched, with the day it is meant to launch.
+  bool _newLine = false;
+  DateTime? _launchOn;
   final _safety = SafetyInformationForm();
   bool _loading = false;
   String? _error;
@@ -820,6 +852,38 @@ class _ProductDialogState extends State<_ProductDialog> {
                       ),
                     ],
                   ),
+                  CheckboxListTile(
+                    key: const Key('product-new-line'),
+                    contentPadding: EdgeInsets.zero,
+                    title: const Text('New line — not on sale yet'),
+                    subtitle: Text(_newLine
+                        ? (_launchOn == null
+                            ? 'Hidden from the shop and refused at the till until launched.'
+                            : 'Goes on sale ${_launchOn!.toIso8601String().substring(0, 10)} — launch it that day.')
+                        : 'On sale as soon as it is priced and stocked.'),
+                    value: _newLine,
+                    onChanged: (v) => setState(() => _newLine = v ?? false),
+                  ),
+                  if (_newLine)
+                    Align(
+                      alignment: Alignment.centerLeft,
+                      child: TextButton.icon(
+                        key: const Key('product-launch-on'),
+                        onPressed: () async {
+                          final d = await showDatePicker(
+                            context: context,
+                            firstDate: DateTime.now(),
+                            lastDate: DateTime.now().add(const Duration(days: 730)),
+                            initialDate: _launchOn ?? DateTime.now(),
+                          );
+                          if (d != null) setState(() => _launchOn = d);
+                        },
+                        icon: const Icon(Icons.event),
+                        label: Text(_launchOn == null
+                            ? 'Launch day'
+                            : 'Launch day: ${_launchOn!.toIso8601String().substring(0, 10)}'),
+                      ),
+                    ),
                   ExpansionTile(
                     key: const Key('new-product-safety'),
                     tilePadding: EdgeInsets.zero,
@@ -873,6 +937,9 @@ class _ProductDialogState extends State<_ProductDialog> {
         'categoryId': _categoryId,
         'sellableOnline': _online,
         'sellablePos': _pos,
+        if (_newLine) 'status': 'NEW_LINE',
+        if (_newLine && _launchOn != null)
+          'launchOn': _launchOn!.toIso8601String().substring(0, 10),
         if (!_safety.isEmpty) 'safetyInformation': _safety.toJson(),
       });
       if (mounted) Navigator.pop(context);

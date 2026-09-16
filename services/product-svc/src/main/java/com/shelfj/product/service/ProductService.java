@@ -262,11 +262,13 @@ public class ProductService {
             req.description(),
             parseOptionalUuid(req.brandId(), "brandId"),
             parseOptionalUuid(req.categoryId(), "categoryId"),
-            Product.STATUS_ACTIVE,
+            initialStatus(req.status()),
             req.sellableOnline() == null || req.sellableOnline(),
             req.sellablePos() == null || req.sellablePos(),
             now,
-            now);
+            now,
+            launchOn(req.status(), req.launchOn()),
+            null);
     var event =
         new OutboxRow(
             "ProductCreated",
@@ -305,7 +307,9 @@ public class ProductService {
             req.sellableOnline(),
             req.sellablePos(),
             existing.createdAt(),
-            Instant.now());
+            Instant.now(),
+            existing.launchOn(),
+            existing.discontinuedAt());
     var event =
         new OutboxRow(
             "ProductUpdated",
@@ -413,15 +417,121 @@ public class ProductService {
             existing.sellableOnline(),
             existing.sellablePos(),
             existing.createdAt(),
-            Instant.now());
+            Instant.now(),
+            existing.launchOn(),
+            existing.discontinuedAt());
     var event =
         new OutboxRow(
             "ProductDelisted",
             "shelfj.catalog.product-delisted",
             tenantId,
             productId,
-            Events.productDelisted(tenantId, productId));
+            Events.productLifecycle(
+                "ProductDelisted",
+                tenantId,
+                productId,
+                Product.STATUS_DELISTED,
+                repo.variantIdsOf(tenantId, productId)));
     return repo.updateProductWithOutbox(delisted, event);
+  }
+
+  // ── item lifecycle: new line → active → discontinued → delisted ──────────
+
+  private static final String LIFECYCLE_TOPIC = "shelfj.catalog.product-lifecycle";
+
+  static String initialStatus(String requested) {
+    if (requested == null || requested.isBlank()) return Product.STATUS_ACTIVE;
+    String s = requested.trim().toUpperCase(java.util.Locale.ROOT);
+    if (Product.STATUS_ACTIVE.equals(s) || Product.STATUS_NEW_LINE.equals(s)) return s;
+    throw ApiException.badRequest(
+        "PRODUCT_STATUS_INVALID", "a product is created ACTIVE or as a NEW_LINE, not " + s);
+  }
+
+  static java.time.LocalDate launchOn(String status, String launchOn) {
+    if (launchOn == null || launchOn.isBlank()) return null;
+    if (!Product.STATUS_NEW_LINE.equals(initialStatus(status))) {
+      throw ApiException.badRequest(
+          "PRODUCT_LAUNCH_ON_NEEDS_NEW_LINE",
+          "launchOn belongs to a NEW_LINE, not a product on sale");
+    }
+    try {
+      return java.time.LocalDate.parse(launchOn.trim());
+    } catch (java.time.format.DateTimeParseException e) {
+      throw new ApiException(
+          400, "PRODUCT_LAUNCH_ON_INVALID", "launchOn must be an ISO date", List.of(), e);
+    }
+  }
+
+  /**
+   * Puts a new line on sale.
+   *
+   * @throws ApiException {@code 409 PRODUCT_LIFECYCLE_INVALID} unless the product is a NEW_LINE
+   */
+  public Product launchProduct(UUID tenantId, UUID productId) {
+    return move(
+        tenantId, productId, Product.STATUS_NEW_LINE, Product.STATUS_ACTIVE, "ProductLaunched");
+  }
+
+  /**
+   * Marks a line for run-down: sold while stock lasts, never reordered.
+   *
+   * @throws ApiException {@code 409 PRODUCT_LIFECYCLE_INVALID} unless the product is ACTIVE
+   */
+  public Product discontinueProduct(UUID tenantId, UUID productId) {
+    return move(
+        tenantId,
+        productId,
+        Product.STATUS_ACTIVE,
+        Product.STATUS_DISCONTINUED,
+        "ProductDiscontinued");
+  }
+
+  /**
+   * Brings a discontinued line back on sale and into replenishment.
+   *
+   * @throws ApiException {@code 409 PRODUCT_LIFECYCLE_INVALID} unless the product is DISCONTINUED
+   */
+  public Product reinstateProduct(UUID tenantId, UUID productId) {
+    return move(
+        tenantId,
+        productId,
+        Product.STATUS_DISCONTINUED,
+        Product.STATUS_ACTIVE,
+        "ProductReinstated");
+  }
+
+  private Product move(UUID tenantId, UUID productId, String from, String to, String eventType) {
+    Product existing = getProduct(tenantId, productId);
+    if (!from.equals(existing.status())) {
+      throw ApiException.conflict(
+          "PRODUCT_LIFECYCLE_INVALID",
+          "a " + existing.status() + " product cannot be moved to " + to + "; it must be " + from);
+    }
+    Instant now = Instant.now();
+    var moved =
+        new Product(
+            existing.id(),
+            tenantId,
+            existing.name(),
+            existing.description(),
+            existing.brandId(),
+            existing.categoryId(),
+            to,
+            existing.sellableOnline(),
+            existing.sellablePos(),
+            existing.createdAt(),
+            now,
+            Product.STATUS_ACTIVE.equals(to) ? null : existing.launchOn(),
+            Product.STATUS_DISCONTINUED.equals(to) ? now : null);
+    var event =
+        new OutboxRow(
+            eventType,
+            LIFECYCLE_TOPIC,
+            tenantId,
+            productId,
+            Events.productLifecycle(
+                eventType, tenantId, productId, to, repo.variantIdsOf(tenantId, productId)));
+    return repo.updateProductWithOutbox(moved, event);
   }
 
   /**
@@ -625,11 +735,22 @@ public class ProductService {
    */
   public com.shelfj.product.domain.Domain.VariantWithProduct findVariantByBarcode(
       UUID tenantId, String barcode) {
-    return repo.findVariantByBarcode(tenantId, barcode)
-        .orElseThrow(
-            () ->
-                ApiException.notFound(
-                    "VARIANT_NOT_FOUND", "No active variant found for barcode: " + barcode));
+    var found =
+        repo.findVariantByBarcode(tenantId, barcode)
+            .orElseThrow(
+                () ->
+                    ApiException.notFound(
+                        "VARIANT_NOT_FOUND", "No active variant found for barcode: " + barcode));
+    // Item lifecycle: a new line is listed before it goes on sale; the till says so rather than
+    // selling it early or pretending it does not exist.
+    if (Product.STATUS_NEW_LINE.equals(found.product().status())) {
+      throw ApiException.conflict(
+          "PRODUCT_NOT_ON_SALE_YET",
+          found.product().launchOn() == null
+              ? "this line is not on sale yet"
+              : "this line goes on sale on " + found.product().launchOn());
+    }
+    return found;
   }
 
   /**
@@ -1692,7 +1813,9 @@ public class ProductService {
                     p.sellableOnline() == null || p.sellableOnline(),
                     p.sellablePos() == null || p.sellablePos(),
                     now,
-                    now);
+                    now,
+                    null,
+                    null);
             var productEvent =
                 new OutboxRow(
                     "ProductCreated",

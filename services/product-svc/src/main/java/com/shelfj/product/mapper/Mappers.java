@@ -104,7 +104,9 @@ public final class Mappers {
         p.sellableOnline(),
         p.sellablePos(),
         ts(p.createdAt()),
-        ts(p.updatedAt()));
+        ts(p.updatedAt()),
+        p.launchOn() == null ? null : p.launchOn().toString(),
+        p.discontinuedAt() == null ? null : ts(p.discontinuedAt()));
   }
 
   /**

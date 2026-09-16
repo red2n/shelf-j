@@ -96,6 +96,7 @@ public class InventoryService {
   @Inject LotGenealogyRepository lotGenealogyRepo;
   @Inject ThresholdRepository thresholdRepo;
   @Inject SuggestionRepository suggestionRepo;
+  @Inject com.shelfj.inventory.repo.CatalogLinesOutRepository linesOut;
   @Inject DemandHistoryRepository demandHistoryRepo;
   @Inject CycleCountRepository cycleCountRepo;
   @Inject AbcAnalysisRepository abcRepo;
@@ -918,8 +919,12 @@ public class InventoryService {
     }
 
     List<Threshold> thresholds = thresholdRepo.listThresholds(tenantId, storeId);
+    // Item lifecycle: a line discontinued or delisted is sold while stock lasts and never
+    // reordered, so no suggestion is raised for it however low it runs.
+    java.util.Set<UUID> out = linesOut.variantsOut(tenantId);
     List<Suggestion> created = new ArrayList<>();
     for (Threshold t : thresholds) {
+      if (out.contains(t.variantId())) continue;
       BigDecimal available = avail.getOrDefault(t.storeId() + ":" + t.variantId(), BigDecimal.ZERO);
       if (available.compareTo(t.threshold()) >= 0) continue;
 

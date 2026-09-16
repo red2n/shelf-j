@@ -66,7 +66,9 @@ public class ProductRepository extends BaseOutboxRepository {
         Boolean.toString(p.sellableOnline()),
         Boolean.toString(p.sellablePos()),
         p.createdAt().toString(),
-        p.updatedAt().toString());
+        p.updatedAt().toString(),
+        p.launchOn() == null ? "" : p.launchOn().toString(),
+        p.discontinuedAt() == null ? "" : p.discontinuedAt().toString());
   }
 
   private static Product decodeProduct(String s) {
@@ -82,7 +84,9 @@ public class ProductRepository extends BaseOutboxRepository {
         Boolean.parseBoolean(f[7]),
         Boolean.parseBoolean(f[8]),
         Instant.parse(f[9]),
-        Instant.parse(f[10]));
+        Instant.parse(f[10]),
+        f.length > 11 && !f[11].isEmpty() ? java.time.LocalDate.parse(f[11]) : null,
+        f.length > 12 && !f[12].isEmpty() ? Instant.parse(f[12]) : null);
   }
 
   // ──────────────────────────────────────────── products (atomic with outbox)
@@ -166,6 +170,18 @@ public class ProductRepository extends BaseOutboxRepository {
    * @param tenantId owning tenant; the first condition of the query
    * @return variant ids by product id, in creation order
    */
+  /** The ids of a product's variants, delisted ones included, for a lifecycle event. */
+  public List<UUID> variantIdsOf(UUID tenantId, UUID productId) {
+    return query(
+        "SELECT id FROM product_variants WHERE tenant_id = ? AND product_id = ? ORDER BY id",
+        ps -> {
+          ps.setObject(1, tenantId);
+          ps.setObject(2, productId);
+        },
+        rs -> (UUID) rs.getObject(1),
+        "variant ids");
+  }
+
   public Map<UUID, List<UUID>> listVariantIdsByProduct(UUID tenantId) {
     Map<UUID, List<UUID>> out = new java.util.HashMap<>();
     query(
@@ -235,7 +251,8 @@ public class ProductRepository extends BaseOutboxRepository {
               try (PreparedStatement ps =
                   c.prepareStatement(
                       "UPDATE products SET name=?, description=?, brand_id=?, category_id=?,"
-                          + " status=?, sellable_online=?, sellable_pos=?, updated_at=?"
+                          + " status=?, sellable_online=?, sellable_pos=?, updated_at=?,"
+                          + " launch_on=?, discontinued_at=?"
                           + " WHERE tenant_id=? AND id=?")) {
                 ps.setString(1, p.name());
                 ps.setString(2, p.description());
@@ -245,8 +262,14 @@ public class ProductRepository extends BaseOutboxRepository {
                 ps.setBoolean(6, p.sellableOnline());
                 ps.setBoolean(7, p.sellablePos());
                 ps.setObject(8, p.updatedAt().atOffset(ZoneOffset.UTC));
-                ps.setObject(9, p.tenantId());
-                ps.setObject(10, p.id());
+                ps.setObject(9, p.launchOn());
+                ps.setObject(
+                    10,
+                    p.discontinuedAt() == null
+                        ? null
+                        : p.discontinuedAt().atOffset(ZoneOffset.UTC));
+                ps.setObject(11, p.tenantId());
+                ps.setObject(12, p.id());
                 if (ps.executeUpdate() == 0)
                   throw ApiException.notFound(
                       "PRODUCT_NOT_FOUND", "No such product in this tenant");
@@ -273,7 +296,7 @@ public class ProductRepository extends BaseOutboxRepository {
     Optional<Product> fresh =
         query(
                 "SELECT id, tenant_id, name, description, brand_id, category_id, status,"
-                    + " sellable_online, sellable_pos, created_at, updated_at"
+                    + " sellable_online, sellable_pos, created_at, updated_at, launch_on, discontinued_at"
                     + " FROM products WHERE tenant_id = ? AND id = ?",
                 ps -> {
                   ps.setObject(1, tenantId);
@@ -402,8 +425,8 @@ public class ProductRepository extends BaseOutboxRepository {
     StringBuilder sql =
         new StringBuilder(
             "SELECT id, tenant_id, name, description, brand_id, category_id, status,"
-                + " sellable_online, sellable_pos, created_at, updated_at"
-                + " FROM products WHERE tenant_id = ? AND status = 'ACTIVE'");
+                + " sellable_online, sellable_pos, created_at, updated_at, launch_on, discontinued_at"
+                + " FROM products WHERE tenant_id = ? AND status IN ('ACTIVE', 'DISCONTINUED')");
     if (categoryId != null) sql.append(" AND category_id = ?");
     if (onlineOnly) sql.append(" AND sellable_online = true");
     if (posOnly) sql.append(" AND sellable_pos = true");
@@ -450,7 +473,7 @@ public class ProductRepository extends BaseOutboxRepository {
     StringBuilder sql =
         new StringBuilder(
             "SELECT id, tenant_id, name, description, brand_id, category_id, status,"
-                + " sellable_online, sellable_pos, created_at, updated_at"
+                + " sellable_online, sellable_pos, created_at, updated_at, launch_on, discontinued_at"
                 + " FROM products WHERE tenant_id = ?");
     if (categoryId != null) sql.append(" AND category_id = ?");
     if (status != null) sql.append(" AND status = ?");
@@ -502,13 +525,13 @@ public class ProductRepository extends BaseOutboxRepository {
         new StringBuilder(
             "SELECT DISTINCT p.id, p.tenant_id, p.name, p.description, p.brand_id,"
                 + " p.category_id, p.status, p.sellable_online, p.sellable_pos,"
-                + " p.created_at, p.updated_at FROM products p");
+                + " p.created_at, p.updated_at, p.launch_on, p.discontinued_at FROM products p");
     if (hasVariantFilter) {
       sql.append(
           " JOIN product_variants v"
               + " ON v.product_id = p.id AND v.tenant_id = p.tenant_id AND v.status = 'ACTIVE'");
     }
-    sql.append(" WHERE p.tenant_id = ? AND p.status = 'ACTIVE'");
+    sql.append(" WHERE p.tenant_id = ? AND p.status IN ('ACTIVE', 'DISCONTINUED')");
     if (q != null) sql.append(" AND p.name ILIKE ?");
     if (sku != null) sql.append(" AND v.sku = ?");
     if (barcode != null) sql.append(" AND v.barcode = ?");
@@ -622,11 +645,11 @@ public class ProductRepository extends BaseOutboxRepository {
                 + " v.created_at AS v_cat, v.updated_at AS v_uat,"
                 + " p.id AS p_id, p.name, p.description, p.brand_id, p.category_id,"
                 + " p.status AS p_status, p.sellable_online, p.sellable_pos,"
-                + " p.created_at AS p_cat, p.updated_at AS p_uat"
+                + " p.created_at AS p_cat, p.updated_at AS p_uat, p.launch_on, p.discontinued_at"
                 + " FROM product_variants v"
                 + " JOIN products p ON p.id = v.product_id AND p.tenant_id = v.tenant_id"
                 + " WHERE v.tenant_id = ? AND v.barcode = ?"
-                + " AND v.status = 'ACTIVE' AND p.status = 'ACTIVE'",
+                + " AND v.status = 'ACTIVE' AND p.status <> 'DELISTED'",
             ps -> {
               ps.setObject(1, tenantId);
               ps.setString(2, barcode);
@@ -653,7 +676,7 @@ public class ProductRepository extends BaseOutboxRepository {
             + " v.created_at AS v_cat, v.updated_at AS v_uat,"
             + " p.id AS p_id, p.name, p.description, p.brand_id, p.category_id,"
             + " p.status AS p_status, p.sellable_online, p.sellable_pos,"
-            + " p.created_at AS p_cat, p.updated_at AS p_uat"
+            + " p.created_at AS p_cat, p.updated_at AS p_uat, p.launch_on, p.discontinued_at"
             + " FROM product_variants v"
             + " JOIN products p ON p.id = v.product_id AND p.tenant_id = v.tenant_id"
             + " WHERE v.tenant_id = ? AND v.id = ANY(?)",
@@ -677,7 +700,11 @@ public class ProductRepository extends BaseOutboxRepository {
         rs.getBoolean("sellable_online"),
         rs.getBoolean("sellable_pos"),
         rs.getObject("created_at", OffsetDateTime.class).toInstant(),
-        rs.getObject("updated_at", OffsetDateTime.class).toInstant());
+        rs.getObject("updated_at", OffsetDateTime.class).toInstant(),
+        rs.getObject("launch_on", java.time.LocalDate.class),
+        rs.getObject("discontinued_at", OffsetDateTime.class) == null
+            ? null
+            : rs.getObject("discontinued_at", OffsetDateTime.class).toInstant());
   }
 
   private static VariantWithProduct mapVariantWithProduct(ResultSet rs) throws SQLException {
@@ -706,7 +733,11 @@ public class ProductRepository extends BaseOutboxRepository {
             rs.getBoolean("sellable_online"),
             rs.getBoolean("sellable_pos"),
             rs.getObject("p_cat", OffsetDateTime.class).toInstant(),
-            rs.getObject("p_uat", OffsetDateTime.class).toInstant());
+            rs.getObject("p_uat", OffsetDateTime.class).toInstant(),
+            rs.getObject("launch_on", java.time.LocalDate.class),
+            rs.getObject("discontinued_at", OffsetDateTime.class) == null
+                ? null
+                : rs.getObject("discontinued_at", OffsetDateTime.class).toInstant());
     return new VariantWithProduct(variant, product);
   }
 
@@ -869,8 +900,9 @@ public class ProductRepository extends BaseOutboxRepository {
         c.prepareStatement(
             "INSERT INTO products"
                 + " (id, tenant_id, name, description, brand_id, category_id, status,"
-                + " sellable_online, sellable_pos, created_at, updated_at)"
-                + " VALUES (?,?,?,?,?,?,?,?,?,?,?)")) {
+                + " sellable_online, sellable_pos, created_at, updated_at, launch_on,"
+                + " discontinued_at)"
+                + " VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?)")) {
       ps.setObject(1, p.id());
       ps.setObject(2, p.tenantId());
       ps.setString(3, p.name());
@@ -882,6 +914,9 @@ public class ProductRepository extends BaseOutboxRepository {
       ps.setBoolean(9, p.sellablePos());
       ps.setObject(10, p.createdAt().atOffset(ZoneOffset.UTC));
       ps.setObject(11, p.updatedAt().atOffset(ZoneOffset.UTC));
+      ps.setObject(12, p.launchOn());
+      ps.setObject(
+          13, p.discontinuedAt() == null ? null : p.discontinuedAt().atOffset(ZoneOffset.UTC));
       ps.executeUpdate();
     }
   }
@@ -920,7 +955,11 @@ public class ProductRepository extends BaseOutboxRepository {
         rs.getBoolean("sellable_online"),
         rs.getBoolean("sellable_pos"),
         rs.getObject("created_at", OffsetDateTime.class).toInstant(),
-        rs.getObject("updated_at", OffsetDateTime.class).toInstant());
+        rs.getObject("updated_at", OffsetDateTime.class).toInstant(),
+        rs.getObject("launch_on", java.time.LocalDate.class),
+        rs.getObject("discontinued_at", OffsetDateTime.class) == null
+            ? null
+            : rs.getObject("discontinued_at", OffsetDateTime.class).toInstant());
   }
 
   private static Variant mapVariant(ResultSet rs) throws SQLException {

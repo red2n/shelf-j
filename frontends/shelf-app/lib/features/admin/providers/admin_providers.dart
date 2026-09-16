@@ -803,6 +803,9 @@ class ProductInfo {
   final bool sellablePos;
   final String createdAt;
 
+  /// For a new line: the day it is meant to go on sale (item lifecycle).
+  final String? launchOn;
+
   const ProductInfo({
     required this.id,
     required this.name,
@@ -813,7 +816,11 @@ class ProductInfo {
     required this.sellableOnline,
     required this.sellablePos,
     required this.createdAt,
+    this.launchOn,
   });
+
+  /// NEW_LINE, ACTIVE, DISCONTINUED or DELISTED, in words.
+  String get lifecycleLabel => lifecycleLabelOf(status);
 
   factory ProductInfo.fromJson(Map<String, dynamic> j) => ProductInfo(
         id: j['id'] as String? ?? '',
@@ -825,8 +832,27 @@ class ProductInfo {
         sellableOnline: j['sellableOnline'] as bool? ?? false,
         sellablePos: j['sellablePos'] as bool? ?? false,
         createdAt: j['createdAt'] as String? ?? '',
+        launchOn: j['launchOn'] as String?,
       );
 }
+
+/// The item lifecycle in words: a line is listed, sells, is run down, is taken off.
+String lifecycleLabelOf(String status) => switch (status.toUpperCase()) {
+      'NEW_LINE' => 'New line',
+      'ACTIVE' => 'On sale',
+      'DISCONTINUED' => 'Discontinued',
+      'DELISTED' => 'Delisted',
+      _ => status,
+    };
+
+/// The lifecycle move a product can make next, as (route, label), or null for one delisted.
+/// Delisting is always its own action.
+(String, String)? nextLifecycleMove(String status) => switch (status.toUpperCase()) {
+      'NEW_LINE' => ('launch', 'Launch — put on sale'),
+      'ACTIVE' => ('discontinue', 'Discontinue — run down, no reorder'),
+      'DISCONTINUED' => ('reinstate', 'Reinstate — back on sale'),
+      _ => null,
+    };
 
 class VariantInfo {
   final String id;

@@ -96,6 +96,10 @@ public class LowStockRepository extends BaseJdbcRepository {
             + "   LEFT JOIN avail a"
             + "     ON a.store_id = b.store_id AND a.variant_id = b.variant_id"
             + "  WHERE COALESCE(a.available, 0) < b.level"
+            // Item lifecycle: a line discontinued or delisted is never reordered, so it is no
+            // shortage however low it runs.
+            + "  AND NOT EXISTS (SELECT 1 FROM catalog_lines_out o"
+            + "                  WHERE o.tenant_id = ? AND o.variant_id = b.variant_id)"
             + (storeId != null ? " AND b.store_id = ?" : "")
             + "  ORDER BY shortfall DESC, b.store_id, b.variant_id"
             + "  LIMIT ?";
@@ -110,6 +114,8 @@ public class LowStockRepository extends BaseJdbcRepository {
           // signals: one tenant filter per UNION branch
           ps.setObject(i++, tenantId);
           ps.setObject(i++, tenantId);
+          ps.setObject(i++, tenantId);
+          // lines out: the tenant again
           ps.setObject(i++, tenantId);
           if (storeId != null) ps.setObject(i++, storeId);
           ps.setInt(i, limit);
