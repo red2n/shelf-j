@@ -143,7 +143,7 @@ data:
       # ── Infrastructure exporters ─────────────────────────────────────────────
       - job_name: 'node'
         static_configs:
-          - targets: ['node-exporter:9100']
+          - targets: ['node-exporter.shelf-j-nodes:9100']
             labels: { service: 'node', layer: 'infra' }
 
       - job_name: 'postgres'

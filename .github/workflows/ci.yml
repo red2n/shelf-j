@@ -77,3 +77,23 @@ jobs:
       - name: Flutter web compiles
         working-directory: frontends/shelf-app
         run: flutter build web --release --no-wasm-dry-run --no-web-resources-cdn
+
+  # The Kubernetes manifests: schema-valid (kubeconform, strict) and hardened as the platform
+  # promises — Pod Security Standards restricted, default-deny NetworkPolicy, Postgres reachable
+  # from the pooler alone (scripts/k8s-hardening-check.py).
+  k8s:
+    name: Kubernetes manifests
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
+
+      - name: Install kubeconform
+        run: |
+          curl -sSL https://github.com/yannh/kubeconform/releases/download/v0.8.0/kubeconform-linux-amd64.tar.gz | tar -xz kubeconform
+          sudo mv kubeconform /usr/local/bin/kubeconform
+
+      - name: Validate and check the manifests
+        run: |
+          python3 -m pip install --quiet pyyaml
+          scripts/k8s-check.sh

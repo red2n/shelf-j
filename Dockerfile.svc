@@ -12,7 +12,8 @@ LABEL org.opencontainers.image.title="${SVC_JAR}" \
 
 # Run as a non-root user (production hardening). The app writes nothing to disk —
 # it logs to stdout — so a read-only app dir owned by root is fine.
-RUN groupadd -r app && useradd -r -g app -d /app app
+# A fixed numeric id, so a Kubernetes pod can assert runAsNonRoot and a manifest can name the user.
+RUN groupadd -r -g 10001 app && useradd -r -u 10001 -g app -d /app app
 WORKDIR /app
 
 # The Helidon jar references libs/ via its manifest Class-Path; copy both.
@@ -22,7 +23,7 @@ COPY ${SVC_PATH}/target/libs /app/libs
 # In containers, advertise the container hostname to Consul so its health check is reachable on the compose network.
 ENV SHELFJ_ADVERTISE_HOST=""
 
-USER app
+USER 10001:10001
 EXPOSE 8080
 # Container-aware JVM defaults; per-service heap is tuned via JAVA_TOOL_OPTIONS in compose.
 ENTRYPOINT ["java", "-XX:+UseContainerSupport", "-XX:MaxRAMPercentage=75.0", "-jar", "/app/app.jar"]

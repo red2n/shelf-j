@@ -24,9 +24,26 @@ spec:
     spec:
       imagePullSecrets:
         - name: ghcr-creds
+      securityContext:
+        runAsNonRoot: true
+        runAsUser: 101
+        runAsGroup: 101
+        seccompProfile: { type: RuntimeDefault }
+      volumes:
+        - { name: tmp, emptyDir: {} }
+        - { name: etc-nginx-conf-d, emptyDir: {} }
+        - { name: var-cache-nginx, emptyDir: {} }
       containers:
         - name: shelf-app
           image: ghcr.io/red2n/shelf-j-web:latest
+          securityContext:
+            allowPrivilegeEscalation: false
+            readOnlyRootFilesystem: true
+            capabilities: { drop: [ALL] }
+          volumeMounts:
+            - { name: tmp, mountPath: /tmp }
+            - { name: etc-nginx-conf-d, mountPath: /etc/nginx/conf.d }
+            - { name: var-cache-nginx, mountPath: /var/cache/nginx }
           ports: [{ containerPort: 8080 }]
           readinessProbe:
             httpGet: { path: /healthz, port: 8080 }

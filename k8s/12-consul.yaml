@@ -25,9 +25,19 @@ spec:
   template:
     metadata: { labels: { app: consul } }
     spec:
+      securityContext:
+        runAsNonRoot: true
+        runAsUser: 100
+        runAsGroup: 1000
+        fsGroup: 1000
+        seccompProfile: { type: RuntimeDefault }
       containers:
         - name: consul
           image: hashicorp/consul:1.22.0
+          securityContext:
+            allowPrivilegeEscalation: false
+            readOnlyRootFilesystem: false
+            capabilities: { drop: [ALL] }
           args: ["agent", "-dev", "-client=0.0.0.0"]
           ports: [{ containerPort: 8500 }]
           readinessProbe:
