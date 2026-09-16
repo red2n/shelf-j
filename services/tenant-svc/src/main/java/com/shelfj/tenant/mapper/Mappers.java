@@ -279,6 +279,19 @@ public final class Mappers {
                         o.citation(),
                         o.summary(),
                         o.statusOn(sheet.on())))
+            .toList(),
+        sheet.cashLimits().stream()
+            .map(
+                l ->
+                    new com.shelfj.tenant.dto.Dtos.CashLimitResponse(
+                        l.scope(),
+                        l.currency(),
+                        l.fromAmount(),
+                        l.effectiveFrom().toString(),
+                        l.effectiveTo() == null ? null : l.effectiveTo().toString(),
+                        l.citation(),
+                        l.summary(),
+                        l.status(sheet.on())))
             .toList());
   }
 

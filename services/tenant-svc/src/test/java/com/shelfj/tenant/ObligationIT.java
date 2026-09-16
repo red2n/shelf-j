@@ -74,6 +74,54 @@ class ObligationIT {
   }
 
   @Test
+  @DisplayName("The cash limits that reach a country come with the sheet, in the law's currency")
+  void cashLimitsComeWithTheSheet() {
+    String fr = onboard("FR", "EUR");
+    String today = sheet(fr, null, null);
+    assertThat(today, containsString("\"cashLimits\":["));
+    String limit = cashLimit(today, "FR");
+    assertThat(limit, containsString("\"currency\":\"EUR\""));
+    assertThat(limit, containsString("\"fromAmount\":1000"));
+    assertThat(limit, containsString("\"status\":\"IN_FORCE\""));
+    String eu = cashLimit(today, "EU");
+    assertThat(eu, containsString("\"fromAmount\":10000"));
+    assertThat(eu, containsString("\"effectiveFrom\":\"2027-07-10\""));
+    assertThat(eu, containsString("\"status\":\"UPCOMING\""));
+    assertThat(
+        "from the day the Regulation applies, the EU cap is in force too",
+        cashLimit(sheet(fr, null, "2027-07-10"), "EU"),
+        containsString("\"status\":\"IN_FORCE\""));
+
+    String de = onboard("DE", "EUR");
+    String germany = sheet(de, null, null);
+    assertThat(
+        "Germany has no limit of its own",
+        germany.substring(
+            germany.indexOf("\"cashLimits\":["),
+            germany.indexOf("]", germany.indexOf("\"cashLimits\":[")) + 1),
+        not(containsString("\"scope\":\"DE\"")));
+    assertThat(cashLimit(germany, "EU"), containsString("UPCOMING"));
+
+    String in = onboard("IN", "INR");
+    String india = cashLimit(sheet(in, null, null), "IN");
+    assertThat(india, containsString("\"currency\":\"INR\""));
+    assertThat(india, containsString("\"fromAmount\":200000"));
+    assertThat(india, containsString("269ST"));
+
+    String gb = onboard("GB", "GBP");
+    assertThat(
+        "Britain sets no cash limit", sheet(gb, null, null), containsString("\"cashLimits\":[]"));
+  }
+
+  private static String cashLimit(String body, String scope) {
+    int start = body.indexOf("\"cashLimits\":[");
+    if (start < 0) throw new AssertionError("no cashLimits in " + body);
+    int at = body.indexOf("\"scope\":\"" + scope + "\"", start);
+    if (at < 0) throw new AssertionError(scope + " has no cash limit in " + body);
+    return body.substring(body.lastIndexOf('{', at), body.indexOf('}', at) + 1);
+  }
+
+  @Test
   @DisplayName("A British business gets UK law, and no EU law made after the UK left")
   void aBritishBusinessIsNotBoundByEuLawMadeAfterItLeft() {
     String gb = onboard("GB", "GBP");

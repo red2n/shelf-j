@@ -1,6 +1,7 @@
 package com.shelfj.tenant.repo;
 
 import com.shelfj.service.BaseJdbcRepository;
+import com.shelfj.tenant.domain.Domain.CashLimit;
 import com.shelfj.tenant.domain.Domain.LegalObligation;
 import jakarta.enterprise.context.ApplicationScoped;
 import java.time.LocalDate;
@@ -18,6 +19,37 @@ public class ObligationRepository extends BaseJdbcRepository {
    * window narrowed to the membership. A window that closes before it opens is returned as such,
    * for the caller to drop.
    */
+  /** The cash limits that reach a country, its own and its regimes' (09.17). */
+  public List<CashLimit> cashLimitsFor(String country) {
+    return query(
+        "SELECT l.scope_kind, l.scope, l.currency, l.from_amount, l.citation, l.summary,"
+            + " GREATEST(l.effective_from, COALESCE(m.member_from, l.effective_from)) AS eff_from,"
+            + " CASE WHEN m.member_to IS NULL THEN l.effective_to"
+            + "      WHEN l.effective_to IS NULL THEN m.member_to"
+            + "      ELSE LEAST(l.effective_to, m.member_to) END AS eff_to"
+            + " FROM cash_limits l"
+            + " LEFT JOIN jurisdiction_members m"
+            + "   ON l.scope_kind = 'REGIME' AND m.regime_code = l.scope AND m.country = ?"
+            + " WHERE (l.scope_kind = 'COUNTRY' AND l.scope = ?)"
+            + "    OR (l.scope_kind = 'REGIME' AND m.country IS NOT NULL)"
+            + " ORDER BY eff_from, l.from_amount",
+        ps -> {
+          ps.setString(1, country);
+          ps.setString(2, country);
+        },
+        rs ->
+            new CashLimit(
+                rs.getString("scope_kind"),
+                rs.getString("scope"),
+                rs.getString("currency"),
+                rs.getBigDecimal("from_amount"),
+                rs.getObject("eff_from", java.time.LocalDate.class),
+                rs.getObject("eff_to", java.time.LocalDate.class),
+                rs.getString("citation"),
+                rs.getString("summary")),
+        "cash limits for a country");
+  }
+
   public List<LegalObligation> forCountry(String country) {
     return query(
         "SELECT o.code, o.scope_kind, o.scope, o.citation, o.summary,"

@@ -251,7 +251,37 @@ public final class Domain {
 
   /** The obligations that bind a country on a day, in force first and then those still to come. */
   public record ObligationSheet(
-      String country, java.time.LocalDate on, java.util.List<LegalObligation> obligations) {}
+      String country,
+      java.time.LocalDate on,
+      java.util.List<LegalObligation> obligations,
+      java.util.List<CashLimit> cashLimits) {}
+
+  /**
+   * A cash payment limit that reaches a country (09.17): the amount at and above which cash is
+   * refused, in the currency the law names, with the instrument behind it.
+   */
+  public record CashLimit(
+      String scopeKind,
+      String scope,
+      String currency,
+      java.math.BigDecimal fromAmount,
+      java.time.LocalDate effectiveFrom,
+      java.time.LocalDate effectiveTo,
+      String citation,
+      String summary) {
+
+    public boolean inForceOn(java.time.LocalDate day) {
+      return !effectiveFrom.isAfter(day) && (effectiveTo == null || !effectiveTo.isBefore(day));
+    }
+
+    public boolean endedBefore(java.time.LocalDate day) {
+      return effectiveTo != null && effectiveTo.isBefore(day);
+    }
+
+    public String status(java.time.LocalDate day) {
+      return inForceOn(day) ? LegalObligation.IN_FORCE : LegalObligation.UPCOMING;
+    }
+  }
 
   // ── security incidents (21.15) ─────────────────────────────────────────────
 

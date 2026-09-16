@@ -46,6 +46,42 @@ class JurisdictionsTest {
           + "{\"code\":\"GDPR\",\"scope\":\"EU\",\"effectiveFrom\":\"2018-05-25\",\"effectiveTo\":\"2020-01-31\"},"
           + "{\"code\":\"TOBACCO_BIRTH_COHORT\",\"scope\":\"GB\",\"effectiveFrom\":\"2027-01-01\"}]}}";
 
+  private static final String LIMITS =
+      "{\"data\":{\"country\":\"FR\",\"obligations\":[],\"cashLimits\":["
+          + "{\"scope\":\"EU\",\"currency\":\"EUR\",\"fromAmount\":10000,\"effectiveFrom\":\"2027-07-10\",\"citation\":\"AMLR art.80\"},"
+          + "{\"scope\":\"FR\",\"currency\":\"EUR\",\"fromAmount\":1000.00,\"effectiveFrom\":\"2015-09-01\",\"citation\":\"CMF L112-6\"},"
+          + "{\"scope\":\"FR\",\"currency\":\"USD\",\"fromAmount\":1,\"effectiveFrom\":\"2000-01-01\",\"effectiveTo\":\"2001-01-01\",\"citation\":\"old\"}]}}";
+
+  @Test
+  @DisplayName("The cash limit is the lowest in force in the currency where the store trades")
+  void theLowestCashLimitInForceInTheCurrencyBinds() {
+    var j = Jurisdictions.forTest(profiles("FR"), (t, c) -> Optional.of(LIMITS), new Hands());
+    var limit = j.cashLimit(TENANT, null, "eur", LocalDate.of(2026, 9, 16));
+    assertTrue(limit.isPresent());
+    assertEquals(new java.math.BigDecimal("1000.00"), limit.get().fromAmount());
+    assertTrue(limit.get().refuses(new java.math.BigDecimal("1000.00")));
+    assertFalse(limit.get().refuses(new java.math.BigDecimal("999.99")));
+    assertTrue(
+        j.cashLimit(TENANT, null, "GBP", LocalDate.of(2026, 9, 16)).isEmpty(),
+        "a limit in another currency does not bind");
+    assertTrue(
+        j.cashLimit(TENANT, null, "USD", LocalDate.of(2026, 9, 16)).isEmpty(),
+        "one that ended does not bind");
+    assertEquals(3, j.cashLimits(TENANT, "FR").size());
+    assertFalse(
+        j.cashLimits(TENANT, "FR").get(0).inForceOn(LocalDate.of(2027, 7, 9)),
+        "the EU cap is upcoming");
+    assertTrue(j.cashLimits(TENANT, "FR").get(0).inForceOn(LocalDate.of(2027, 7, 10)));
+  }
+
+  @Test
+  @DisplayName("A sheet without cash limits still reads, with none")
+  void aSheetWithoutLimitsHasNone() {
+    var j = Jurisdictions.forTest(profiles("GB"), (t, c) -> Optional.of(RULES), new Hands());
+    assertTrue(j.cashLimits(TENANT, "GB").isEmpty());
+    assertTrue(j.cashLimit(TENANT, null, "GBP", LocalDate.of(2026, 9, 16)).isEmpty());
+  }
+
   private static TenantProfiles profiles(String country) {
     return TenantProfiles.forTest(
         id -> Optional.of("{\"data\":{\"currency\":\"GBP\",\"country\":\"" + country + "\"}}"),

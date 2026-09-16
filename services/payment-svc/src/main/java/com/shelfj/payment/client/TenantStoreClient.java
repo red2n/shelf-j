@@ -95,14 +95,32 @@ public class TenantStoreClient {
   @CircuitBreaker(requestVolumeThreshold = 5, failureRatio = 0.6, delay = 5000)
   @Fallback(fallbackMethod = "fetchUnavailable")
   Optional<Set<String>> fetch(UUID tenantId, UUID storeId) {
-    ServiceInstance instance = registry.resolve(TENANT_SERVICE).orElse(null);
-    if (instance == null) {
+    // A configured URL first, discovery second, as every other client; and a host that cannot be
+    // reached fails open here rather than failing the sale — the fallback below never sees a
+    // self-invocation, so the catch is explicit.
+    String base =
+        com.shelfj.service.ServiceReader.configuredUrl(TENANT_SERVICE)
+            .or(() -> registry.resolve(TENANT_SERVICE).map(ServiceInstance::baseUri))
+            .orElse(null);
+    if (base == null) {
       LOG.log(Level.WARNING, "no healthy tenant-svc instance — skipping method enforcement");
       return Optional.empty();
     }
+    try {
+      return read(tenantId, storeId, base);
+    } catch (RuntimeException e) {
+      LOG.log(
+          Level.WARNING,
+          "tenant-svc unreachable ({0}) — skipping method enforcement",
+          e.getMessage());
+      return Optional.empty();
+    }
+  }
+
+  private Optional<Set<String>> read(UUID tenantId, UUID storeId, String base) {
     try (HttpClientResponse res =
         webClient
-            .get(instance.baseUri() + "/storefront/config")
+            .get(base + "/storefront/config")
             .queryParam("store", storeId.toString())
             .header(HeaderNames.create(HttpHeaders.TENANT_ID), tenantId.toString())
             .request()) {

@@ -7,12 +7,15 @@ import com.shelfj.payment.domain.Domain.RefundTender;
 import com.shelfj.payment.dto.Dtos.RecordRefundRequest;
 import com.shelfj.payment.dto.Dtos.RecordTenderRequest;
 import com.shelfj.payment.repo.PaymentRepository;
+import com.shelfj.service.Jurisdictions;
 import com.shelfj.web.ApiException;
 import com.shelfj.web.TenantContext;
 import jakarta.enterprise.context.ApplicationScoped;
 import jakarta.inject.Inject;
 import java.math.BigDecimal;
 import java.time.Instant;
+import java.time.LocalDate;
+import java.time.ZoneOffset;
 import java.util.List;
 import java.util.Locale;
 import java.util.Optional;
@@ -56,6 +59,7 @@ public class PaymentService {
 
   @Inject PaymentRepository repo;
   @Inject com.shelfj.service.TenantProfiles profiles;
+  @Inject Jurisdictions jurisdictions;
   @Inject OrderClient orderClient;
   @Inject OrderPaymentGuard guard;
   @Inject com.shelfj.payment.client.TenantStoreClient storeClient;
@@ -114,6 +118,9 @@ public class PaymentService {
           "method must be one of CASH, CARD, UPI, WALLET, GIFT_CARD, VOUCHER, STORE_CREDIT — got: "
               + req.method());
     requireMethodEnabledForStore(tenantId, storeId, method);
+    if (PaymentTender.METHOD_CASH.equals(method)) {
+      requireUnderCashLimit(tenantId, orderId, storeId, req);
+    }
 
     if (PaymentTender.METHOD_STORE_CREDIT.equals(method)) {
       return captureStoreCredit(req, tenantId, orderId, storeId);
@@ -188,6 +195,52 @@ public class PaymentService {
    * Fails open when the setting can't be read right now: a briefly unreachable tenant-svc must not
    * stop every sale in the shop.
    */
+  /**
+   * Refuses cash that would reach the limit the law sets where the store trades (09.17): the EU's
+   * EUR 10,000 from 10 July 2027, a member state's lower limit, India's two lakh rupees. What was
+   * already taken in cash for the same sale counts — a split payment for the same goods is one
+   * payment — so the limit cannot be walked round in instalments.
+   *
+   * @throws ApiException 409 {@code PAYMENT_CASH_LIMIT_EXCEEDED}
+   */
+  private void requireUnderCashLimit(
+      UUID tenantId, UUID orderId, UUID storeId, RecordTenderRequest req) {
+    String currency = profiles.currencyOr(tenantId, req.currency());
+    LocalDate today = LocalDate.now(ZoneOffset.UTC);
+    Optional<Jurisdictions.CashLimit> limit =
+        jurisdictions.cashLimit(tenantId, storeId, currency, today);
+    if (limit.isEmpty()) return;
+    BigDecimal cashSoFar =
+        repo.findTendersByOrder(tenantId, orderId).stream()
+            .filter(
+                t ->
+                    PaymentTender.METHOD_CASH.equals(t.method())
+                        && PaymentTender.STATUS_CAPTURED.equals(t.status()))
+            .map(PaymentTender::amount)
+            .reduce(BigDecimal.ZERO, BigDecimal::add);
+    BigDecimal cash = cashSoFar.add(req.amount());
+    if (limit.get().refuses(cash)) {
+      cash = cash.setScale(2, java.math.RoundingMode.HALF_UP);
+      cashSoFar = cashSoFar.setScale(2, java.math.RoundingMode.HALF_UP);
+      throw ApiException.conflict(
+          "PAYMENT_CASH_LIMIT_EXCEEDED",
+          "cash for this sale would come to "
+              + currency
+              + " "
+              + cash.toPlainString()
+              + (cashSoFar.signum() > 0
+                  ? " (" + cashSoFar.toPlainString() + " already taken in cash)"
+                  : "")
+              + ": "
+              + limit.get().citation()
+              + " refuses cash of "
+              + currency
+              + " "
+              + limit.get().fromAmount().toPlainString()
+              + " or more; take the balance another way");
+    }
+  }
+
   private void requireMethodEnabledForStore(UUID tenantId, UUID storeId, String method) {
     if (storeId == null || !STORE_TOGGLEABLE_METHODS.contains(method)) return;
     Optional<Set<String>> enabled = storeClient.enabledMethods(tenantId, storeId);

@@ -85,6 +85,21 @@ void main() {
     expect(find.text('Coming'), findsNothing);
   });
 
+  testWidgets('cash limits that reach the country are listed with their amount, currency and day',
+      (tester) async {
+    await _pump(tester, (t) => t.body =
+        '{"data":{"country":"FR","on":"2026-09-16","obligations":[],"cashLimits":['
+        '{"scope":"FR","currency":"EUR","fromAmount":1000.00,"effectiveFrom":"2015-09-01","citation":"CMF art. L112-6","summary":"A resident may not pay a business EUR 1,000 or more in cash.","status":"IN_FORCE"},'
+        '{"scope":"EU","currency":"EUR","fromAmount":10000.00,"effectiveFrom":"2027-07-10","citation":"Regulation (EU) 2024/1624 art.80(1)","summary":"Cash of EUR 10,000 or more may not be accepted.","status":"UPCOMING"}]}}');
+    expect(find.text('Cash limits in FR'), findsOneWidget);
+    expect(find.byKey(const Key('cash-limit-FR-EUR')), findsOneWidget);
+    expect(find.text('EUR 1000.0 or more'), findsOneWidget);
+    expect(find.text('EUR 10000.0 or more — from 2027-07-10'), findsOneWidget);
+    expect(find.text('In force'), findsWidgets);
+    expect(find.text('Coming'), findsWidgets);
+    expect(find.textContaining('L112-6'), findsOneWidget);
+  });
+
   testWidgets('an empty list says the platform tracks none, not that none apply',
       (tester) async {
     await _pump(tester, (t) => t.body = '{"data":{"country":"US","on":"2026-09-14","obligations":[]}}');

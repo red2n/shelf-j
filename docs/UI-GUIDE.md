@@ -152,7 +152,7 @@ The register a licensing officer asks to see. Filters: one store or all, a date 
 
 ### 4.2d Legal obligations
 
-The laws the business trades under, as the platform tracks them: **In force in <country>** and **Coming**, each with what it asks in a sentence, the instrument behind it, whether it is EU or national law, and its day — *Since 6 Apr 2026* or *From 1 Jan 2027*, with *until* when a window has closed (EU law stopped reaching a British business on 31 Jan 2020). The business's own country; every staff role can open it, because the till obeys these laws. Nothing is editable: the rules change with the law. An empty list says the platform tracks no obligations for that country yet, not that none apply, and the page says it is not legal advice.
+The laws the business trades under, as the platform tracks them: **In force in <country>** and **Coming**, each with what it asks in a sentence, the instrument behind it, whether it is EU or national law, and its day — *Since 6 Apr 2026* or *From 1 Jan 2027*, with *until* when a window has closed (EU law stopped reaching a British business on 31 Jan 2020). The business's own country; every staff role can open it, because the till obeys these laws. Nothing is editable: the rules change with the law. An empty list says the platform tracks no obligations for that country yet, not that none apply, and the page says it is not legal advice. **Cash limits (09.17):** below the two groups, a card per country listing every cash payment limit that reaches it — the amount from which the till refuses cash, in the law's currency, In force or Coming with its day, the sentence and the instrument — so a cashier told *PAYMENT_CASH_LIMIT_EXCEEDED* can see why.
 
 ### 4.2f Data retention (management)
 

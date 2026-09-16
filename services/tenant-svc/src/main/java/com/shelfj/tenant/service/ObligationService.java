@@ -1,5 +1,6 @@
 package com.shelfj.tenant.service;
 
+import com.shelfj.tenant.domain.Domain.CashLimit;
 import com.shelfj.tenant.domain.Domain.LegalObligation;
 import com.shelfj.tenant.domain.Domain.ObligationSheet;
 import com.shelfj.tenant.repo.ObligationRepository;
@@ -73,7 +74,15 @@ public class ObligationService {
                     .thenComparing(LegalObligation::effectiveFrom)
                     .thenComparing(LegalObligation::code))
             .toList();
-    return new ObligationSheet(cc, day, rows);
+    List<CashLimit> limits =
+        repo.cashLimitsFor(cc).stream()
+            .filter(l -> !l.endedBefore(day))
+            .sorted(
+                Comparator.comparing((CashLimit l) -> l.effectiveFrom().isAfter(day))
+                    .thenComparing(CashLimit::effectiveFrom)
+                    .thenComparing(CashLimit::fromAmount))
+            .toList();
+    return new ObligationSheet(cc, day, rows, limits);
   }
 
   private LocalDate day(String on) {
