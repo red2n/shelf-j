@@ -11,7 +11,7 @@ import java.util.concurrent.ConcurrentHashMap;
  */
 final class KafkaConsumerRegistry {
 
-  private static final Set<String> failed = ConcurrentHashMap.newKeySet();
+  private static final Set<String> FAILED = ConcurrentHashMap.newKeySet();
 
   private KafkaConsumerRegistry() {}
 
@@ -19,7 +19,7 @@ final class KafkaConsumerRegistry {
    * @param consumerName the failing consumer's {@code consumerName()}
    */
   static void markFailed(String consumerName) {
-    failed.add(consumerName);
+    FAILED.add(consumerName);
   }
 
   /**
@@ -29,13 +29,13 @@ final class KafkaConsumerRegistry {
    * @param consumerName the consumer's {@code consumerName()}
    */
   static void clear(String consumerName) {
-    failed.remove(consumerName);
+    FAILED.remove(consumerName);
   }
 
   /**
    * @return a snapshot of every consumer name currently marked failed; empty when all are healthy
    */
   static Set<String> failedConsumers() {
-    return Set.copyOf(failed);
+    return Set.copyOf(FAILED);
   }
 }

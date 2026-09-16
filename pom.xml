@@ -51,10 +51,15 @@
         <spotbugs-plugin.version>4.9.8.3</spotbugs-plugin.version>
         <pmd-plugin.version>3.28.0</pmd-plugin.version>
         <fmt-plugin.version>2.29</fmt-plugin.version>
+        <checkstyle-plugin.version>3.6.0</checkstyle-plugin.version>
+        <checkstyle.version>14.1.0</checkstyle.version>
 
         <!-- Quality gate skip flags (override per-module or on CLI with -Dspotbugs.skip=true etc.) -->
         <spotbugs.skip>false</spotbugs.skip>
         <pmd.skip>false</pmd.skip>
+        <checkstyle.skip>false</checkstyle.skip>
+        <!-- false surveys every module in one run instead of stopping at the first -->
+        <checkstyle.failsOnError>true</checkstyle.failsOnError>
         <maven.fmt.skip>false</maven.fmt.skip>
     </properties>
 
@@ -247,6 +252,28 @@
                      excludes noisy CDI/framework false-positives.                      -->
                 <plugin>
                     <groupId>org.apache.maven.plugins</groupId>
+                    <artifactId>maven-checkstyle-plugin</artifactId>
+                    <version>${checkstyle-plugin.version}</version>
+                    <dependencies>
+                        <!-- The plugin's own Checkstyle is years behind; pin the current one. -->
+                        <dependency>
+                            <groupId>com.puppycrawl.tools</groupId>
+                            <artifactId>checkstyle</artifactId>
+                            <version>${checkstyle.version}</version>
+                        </dependency>
+                    </dependencies>
+                    <configuration>
+                        <configLocation>${maven.multiModuleProjectDirectory}/config/checkstyle.xml</configLocation>
+                        <propertyExpansion>config_loc=${maven.multiModuleProjectDirectory}/config</propertyExpansion>
+                        <includeTestSourceDirectory>true</includeTestSourceDirectory>
+                        <consoleOutput>true</consoleOutput>
+                        <failsOnError>${checkstyle.failsOnError}</failsOnError>
+                        <violationSeverity>error</violationSeverity>
+                        <skip>${checkstyle.skip}</skip>
+                    </configuration>
+                </plugin>
+                <plugin>
+                    <groupId>org.apache.maven.plugins</groupId>
                     <artifactId>maven-pmd-plugin</artifactId>
                     <version>${pmd-plugin.version}</version>
                     <configuration>
@@ -273,6 +300,20 @@
                 <executions>
                     <execution>
                         <id>format-check</id>
+                        <phase>validate</phase>
+                        <goals><goal>check</goal></goals>
+                    </execution>
+                </executions>
+            </plugin>
+
+            <!-- Checkstyle runs at validate too, right after the formatter: names, imports and shapes
+                 a formatter cannot decide (config/checkstyle.xml), before anything is compiled -->
+            <plugin>
+                <groupId>org.apache.maven.plugins</groupId>
+                <artifactId>maven-checkstyle-plugin</artifactId>
+                <executions>
+                    <execution>
+                        <id>checkstyle-check</id>
                         <phase>validate</phase>
                         <goals><goal>check</goal></goals>
                     </execution>

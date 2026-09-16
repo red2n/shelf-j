@@ -18,7 +18,7 @@ import org.junit.jupiter.api.Test;
  * Counters now live in Redis (shared across gateway replicas) instead of gateway heap, so these
  * tests run against a real Redis container rather than mocking the storage layer.
  */
-class BruteForceProtectionServiceTest {
+class BruteForceFilterTest {
 
   private static RedisSupport REDIS;
   private static RedisClient client;

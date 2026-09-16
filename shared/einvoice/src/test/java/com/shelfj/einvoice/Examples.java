@@ -94,10 +94,10 @@ final class Examples {
     List<Invoice.Line> lines = new ArrayList<>();
     for (Invoice.Line l : inv.lines()) {
       Invoice.Price p = l.price();
-      if (p != null && p.gross() == null && p.discount() != null && p.net() != null) {
-        l = with(l, "price", with(p, "gross", p.net().add(p.discount())));
-      }
-      lines.add(l);
+      lines.add(
+          p != null && p.gross() == null && p.discount() != null && p.net() != null
+              ? with(l, "price", with(p, "gross", p.net().add(p.discount())))
+              : l);
     }
     out = with(out, "lines", lines);
     out = with(out, "seller", orderedIdentifiers(inv.seller()));
