@@ -86,8 +86,48 @@ public class Jurisdictions {
     }
   }
 
-  /** The sheet tenant-svc gives for a country: its obligations and its cash limits. */
-  record Sheet(List<Obligation> obligations, List<CashLimit> cashLimits) {}
+  /**
+   * A deposit return scheme reaching a country (09.16): what a drink in an in-scope container
+   * carries as a deposit while the scheme is in force, and how the deposit is taxed.
+   */
+  public record DepositScheme(
+      String scope,
+      String currency,
+      BigDecimal depositEach,
+      List<String> materials,
+      int minVolumeMl,
+      int maxVolumeMl,
+      String vatTreatment,
+      LocalDate effectiveFrom,
+      LocalDate effectiveTo,
+      String citation) {
+
+    public static final String OUTSIDE_SCOPE = "OUTSIDE_SCOPE";
+    public static final String STANDARD = "STANDARD";
+
+    public boolean inForceOn(LocalDate day) {
+      return !effectiveFrom.isAfter(day) && (effectiveTo == null || !effectiveTo.isBefore(day));
+    }
+
+    /** Whether a container of this material and volume is in the scheme. */
+    public boolean covers(String material, int volumeMl) {
+      return material != null
+          && materials.stream().anyMatch(m -> m.equalsIgnoreCase(material.trim()))
+          && volumeMl >= minVolumeMl
+          && volumeMl <= maxVolumeMl;
+    }
+
+    /** Whether the deposit is taxed as the drink is, rather than outside the scope of VAT. */
+    public boolean taxed() {
+      return STANDARD.equals(vatTreatment);
+    }
+  }
+
+  /** The sheet tenant-svc gives for a country: its obligations, cash limits and deposit schemes. */
+  record Sheet(
+      List<Obligation> obligations,
+      List<CashLimit> cashLimits,
+      List<DepositScheme> depositSchemes) {}
 
   private record Cached(Sheet sheet, Instant expiresAt) {}
 
@@ -208,16 +248,42 @@ public class Jurisdictions {
    */
   public Optional<CashLimit> cashLimit(
       UUID tenantId, UUID storeId, String currency, LocalDate day) {
+    String country = countryOf(tenantId, storeId);
+    String cur = currency == null ? "" : currency.trim().toUpperCase(Locale.ROOT);
+    return cashLimits(tenantId, country).stream()
+        .filter(l -> l.inForceOn(day) && l.currency().equalsIgnoreCase(cur))
+        .min(java.util.Comparator.comparing(CashLimit::fromAmount));
+  }
+
+  /** The deposit return schemes that reach a country, in force or upcoming (09.16). */
+  public List<DepositScheme> depositSchemes(UUID tenantId, String country) {
+    return sheet(tenantId, country).depositSchemes();
+  }
+
+  /**
+   * The deposit scheme in force on a day, in a currency, where a store trades (09.16): the store's
+   * country when a store is named, else the business's own. A scheme the law names in another
+   * currency does not apply.
+   *
+   * @return the scheme, or empty when none binds
+   */
+  public Optional<DepositScheme> depositScheme(
+      UUID tenantId, UUID storeId, String currency, LocalDate day) {
+    String country = countryOf(tenantId, storeId);
+    String cur = currency == null ? "" : currency.trim().toUpperCase(Locale.ROOT);
+    return depositSchemes(tenantId, country).stream()
+        .filter(d -> d.inForceOn(day) && d.currency().equalsIgnoreCase(cur))
+        .findFirst();
+  }
+
+  private String countryOf(UUID tenantId, UUID storeId) {
     String country = profiles.requireCountry(tenantId);
     if (storeId != null) {
       TenantProfiles.Stores stores = profiles.stores(tenantId, storeId);
       String storeCountry = stores.countries().get(storeId);
       if (storeCountry != null) country = storeCountry;
     }
-    String cur = currency == null ? "" : currency.trim().toUpperCase(Locale.ROOT);
-    return cashLimits(tenantId, country).stream()
-        .filter(l -> l.inForceOn(day) && l.currency().equalsIgnoreCase(cur))
-        .min(java.util.Comparator.comparing(CashLimit::fromAmount));
+    return country;
   }
 
   private Sheet sheet(UUID tenantId, String country) {
@@ -268,6 +334,32 @@ public class Jurisdictions {
                   l.getString("citation", null)));
         }
       }
+      List<DepositScheme> schemes = new ArrayList<>();
+      if (data.containsKey("depositSchemes") && !data.isNull("depositSchemes")) {
+        for (JsonValue value : data.getJsonArray("depositSchemes")) {
+          JsonObject d = value.asJsonObject();
+          List<String> materials = new ArrayList<>();
+          if (d.containsKey("materials") && !d.isNull("materials")) {
+            for (JsonValue m : d.getJsonArray("materials")) {
+              materials.add(((jakarta.json.JsonString) m).getString());
+            }
+          }
+          schemes.add(
+              new DepositScheme(
+                  d.getString("scope", null),
+                  d.getString("currency"),
+                  d.getJsonNumber("depositEach").bigDecimalValue(),
+                  List.copyOf(materials),
+                  d.getInt("minVolumeMl", 0),
+                  d.getInt("maxVolumeMl", Integer.MAX_VALUE),
+                  d.getString("vatTreatment", DepositScheme.OUTSIDE_SCOPE),
+                  LocalDate.parse(d.getString("effectiveFrom")),
+                  d.containsKey("effectiveTo") && !d.isNull("effectiveTo")
+                      ? LocalDate.parse(d.getString("effectiveTo"))
+                      : null,
+                  d.getString("citation", null)));
+        }
+      }
       List<Obligation> out = new ArrayList<>();
       for (JsonValue value : data.getJsonArray("obligations")) {
         JsonObject o = value.asJsonObject();
@@ -282,7 +374,7 @@ public class Jurisdictions {
                 LocalDate.parse(o.getString("effectiveFrom")),
                 to));
       }
-      return Optional.of(new Sheet(List.copyOf(out), List.copyOf(limits)));
+      return Optional.of(new Sheet(List.copyOf(out), List.copyOf(limits), List.copyOf(schemes)));
     } catch (RuntimeException e) {
       LOG.log(Level.WARNING, "unreadable legal obligations: {0}", e.getMessage());
       return Optional.empty();

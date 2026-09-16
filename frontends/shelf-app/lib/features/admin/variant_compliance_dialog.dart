@@ -61,6 +61,10 @@ class _VariantComplianceDialogState extends ConsumerState<VariantComplianceDialo
   String? _restriction;
   String _soldBy = 'EACH';
   bool _catchWeight = false;
+  // 09.16: the drinks container the item comes in, for the deposit a return
+  // scheme puts on it where one is in force: material and volume, both or neither.
+  String? _depositMaterial;
+  final _depositVolume = TextEditingController();
 
   String get _base => '/${ApiConstants.product}';
 
@@ -72,7 +76,7 @@ class _VariantComplianceDialogState extends ConsumerState<VariantComplianceDialo
 
   @override
   void dispose() {
-    for (final c in [_ingredients, _hsn, _origin, _originDetail, _netContent, _netContentUom, _tare]) {
+    for (final c in [_ingredients, _hsn, _origin, _originDetail, _netContent, _netContentUom, _tare, _depositVolume]) {
       c.dispose();
     }
     super.dispose();
@@ -114,6 +118,8 @@ class _VariantComplianceDialogState extends ConsumerState<VariantComplianceDialo
         _netContentUom.text = c['netContentUom'] as String? ?? '';
         _tare.text = (c['tareWeight'] as num?)?.toString() ?? '';
         _catchWeight = c['catchWeight'] as bool? ?? false;
+        _depositMaterial = c['depositMaterial'] as String?;
+        _depositVolume.text = (c['depositVolumeMl'] as num?)?.toString() ?? '';
         _loading = false;
       });
     } catch (e) {
@@ -150,6 +156,8 @@ class _VariantComplianceDialogState extends ConsumerState<VariantComplianceDialo
         'netContentUom': _blankToNull(_netContentUom.text),
         'tareWeight': num.tryParse(_tare.text.trim()),
         'catchWeight': _catchWeight,
+        'depositMaterial': _depositMaterial,
+        'depositVolumeMl': int.tryParse(_depositVolume.text.trim()),
       });
       if (declare) {
         await dio.put('$_base/admin/products/variants/$id/allergens', data: {
@@ -330,6 +338,45 @@ class _VariantComplianceDialogState extends ConsumerState<VariantComplianceDialo
                         value: _catchWeight,
                         onChanged: (v) => setState(() => _catchWeight = v),
                       ),
+                    const SizedBox(height: 16),
+                    Text('Drinks container', style: text.titleSmall),
+                    const SizedBox(height: 4),
+                    Text(
+                      'For a drink sold in a container a deposit return scheme takes back. '
+                      'The scheme sets the deposit where the store trades; the till adds '
+                      'it as its own line and pays it back on the empty.',
+                      style: text.bodySmall,
+                    ),
+                    Row(
+                      children: [
+                        Expanded(
+                          child: DropdownButtonFormField<String?>(
+                            key: const Key('deposit-material'),
+                            isExpanded: true,
+                            initialValue: _depositMaterial,
+                            decoration: const InputDecoration(labelText: 'Material'),
+                            items: const [
+                              DropdownMenuItem<String?>(value: null, child: Text('Not a drinks container')),
+                              DropdownMenuItem<String?>(value: 'PET', child: Text('PET plastic')),
+                              DropdownMenuItem<String?>(value: 'ALUMINIUM', child: Text('Aluminium')),
+                              DropdownMenuItem<String?>(value: 'STEEL', child: Text('Steel')),
+                              DropdownMenuItem<String?>(value: 'GLASS', child: Text('Glass')),
+                            ],
+                            onChanged: (v) => setState(() => _depositMaterial = v),
+                          ),
+                        ),
+                        const SizedBox(width: 12),
+                        Expanded(
+                          child: TextField(
+                            key: const Key('deposit-volume'),
+                            controller: _depositVolume,
+                            keyboardType: TextInputType.number,
+                            decoration: const InputDecoration(labelText: 'Volume (ml)'),
+                          ),
+                        ),
+                      ],
+                    ),
+                    const SizedBox(height: 8),
                     Row(
                       children: [
                         Expanded(

@@ -198,7 +198,11 @@ public class CatalogResource {
       throw ApiException.badRequest("INVALID_BARCODE", "barcode must not be blank");
     }
     var vp = service.findVariantByBarcode(tenantId, code.trim());
-    return ApiResponse.ok(Mappers.toVariantScan(vp.variant(), vp.product()));
+    var container =
+        service
+            .depositContainers(tenantId, java.util.List.of(vp.variant().id()))
+            .get(vp.variant().id());
+    return ApiResponse.ok(Mappers.toVariantScan(vp.variant(), vp.product(), null, container));
   }
 
   private UUID requireTenant() {

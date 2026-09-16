@@ -19,6 +19,10 @@ class PosReceiptData {
   final List<PosLine> items;
   final double subtotal;
   final double discount;
+
+  /// The return-scheme deposits on the sale's containers (09.16), shown as
+  /// their own line: part of the total, no part of the goods or the VAT on them.
+  final double deposit;
   final double total;
   final String currency;
   final List<PosTender> tenders;
@@ -46,6 +50,7 @@ class PosReceiptData {
     required this.items,
     required this.subtotal,
     required this.discount,
+    this.deposit = 0,
     required this.total,
     required this.currency,
     required this.tenders,
@@ -71,6 +76,7 @@ class PosReceiptData {
     items: items,
     subtotal: subtotal,
     discount: discount,
+    deposit: deposit,
     total: total,
     currency: currency,
     tenders: tenders,
@@ -118,6 +124,14 @@ class PosReceiptData {
         </tr>
       ''');
     }
+
+    final depositRow = deposit > 0
+
+        ? '<tr><td class="total-label">Container deposit</td>'
+
+            '<td class="total-value">${_esc(_fmt(deposit))}</td></tr>'
+
+        : '';
 
     final discountRow = discount > 0
         ? '<tr><td>Discount</td><td></td><td class="item-total">- ${_esc(_fmt(discount))}</td></tr>'
@@ -263,6 +277,7 @@ class PosReceiptData {
       <td class="total-label">Subtotal</td>
       <td class="total-value">${_esc(_fmt(subtotal))}</td>
     </tr>
+    $depositRow
     $discountRow
     <tr class="grand-total">
       <td class="total-label">TOTAL</td>

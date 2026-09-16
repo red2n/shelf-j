@@ -254,7 +254,50 @@ public final class Domain {
       String country,
       java.time.LocalDate on,
       java.util.List<LegalObligation> obligations,
-      java.util.List<CashLimit> cashLimits) {}
+      java.util.List<CashLimit> cashLimits,
+      java.util.List<DepositScheme> depositSchemes) {}
+
+  /**
+   * A rule the law dates: in force from a day, until a day or open-ended. Shared by the cash limits
+   * (09.17) and the deposit schemes (09.16), which the sheet reports with the same status words.
+   */
+  public interface Dated {
+    java.time.LocalDate effectiveFrom();
+
+    java.time.LocalDate effectiveTo();
+
+    default boolean inForceOn(java.time.LocalDate day) {
+      return !effectiveFrom().isAfter(day)
+          && (effectiveTo() == null || !effectiveTo().isBefore(day));
+    }
+
+    default boolean endedBefore(java.time.LocalDate day) {
+      return effectiveTo() != null && effectiveTo().isBefore(day);
+    }
+
+    default String status(java.time.LocalDate day) {
+      return inForceOn(day) ? LegalObligation.IN_FORCE : LegalObligation.UPCOMING;
+    }
+  }
+
+  /**
+   * A deposit return scheme reaching a country (09.16): what a drink in an in-scope container
+   * carries as a deposit, in the currency the law names, and how the deposit is taxed.
+   */
+  public record DepositScheme(
+      String scopeKind,
+      String scope,
+      String currency,
+      java.math.BigDecimal depositEach,
+      java.util.List<String> materials,
+      int minVolumeMl,
+      int maxVolumeMl,
+      String vatTreatment,
+      java.time.LocalDate effectiveFrom,
+      java.time.LocalDate effectiveTo,
+      String citation,
+      String summary)
+      implements Dated {}
 
   /**
    * A cash payment limit that reaches a country (09.17): the amount at and above which cash is
@@ -268,20 +311,8 @@ public final class Domain {
       java.time.LocalDate effectiveFrom,
       java.time.LocalDate effectiveTo,
       String citation,
-      String summary) {
-
-    public boolean inForceOn(java.time.LocalDate day) {
-      return !effectiveFrom.isAfter(day) && (effectiveTo == null || !effectiveTo.isBefore(day));
-    }
-
-    public boolean endedBefore(java.time.LocalDate day) {
-      return effectiveTo != null && effectiveTo.isBefore(day);
-    }
-
-    public String status(java.time.LocalDate day) {
-      return inForceOn(day) ? LegalObligation.IN_FORCE : LegalObligation.UPCOMING;
-    }
-  }
+      String summary)
+      implements Dated {}
 
   // ── security incidents (21.15) ─────────────────────────────────────────────
 

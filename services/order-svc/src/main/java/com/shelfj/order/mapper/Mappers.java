@@ -178,6 +178,16 @@ public final class Mappers {
    * @return its API representation, header and lines together
    */
   public static OrderResponse toDto(Order o, List<OrderItem> items) {
+    return toDto(o, items, null);
+  }
+
+  /**
+   * Converts an order with its deposit lines (09.16).
+   *
+   * @param deposits the return-scheme deposits on the sale, or null for a shape that omits them
+   */
+  public static OrderResponse toDto(
+      Order o, List<OrderItem> items, List<com.shelfj.order.domain.Domain.OrderDeposit> deposits) {
     return new OrderResponse(
         str(o.id()),
         str(o.storeId()),
@@ -205,7 +215,51 @@ public final class Mappers {
         o.deliveryRecipientName(),
         o.deliveryRecipientPhone(),
         o.contactPhone(),
-        o.paymentMethod());
+        o.paymentMethod(),
+        deposits == null
+            ? null
+            : deposits.stream()
+                .map(com.shelfj.order.domain.Domain.OrderDeposit::amount)
+                .reduce(java.math.BigDecimal.ZERO, java.math.BigDecimal::add),
+        deposits == null ? null : deposits.stream().map(Mappers::toDto).toList());
+  }
+
+  /** Converts one deposit line (09.16). */
+  public static com.shelfj.order.dto.Dtos.OrderDepositResponse toDto(
+      com.shelfj.order.domain.Domain.OrderDeposit d) {
+    return new com.shelfj.order.dto.Dtos.OrderDepositResponse(
+        str(d.variantId()),
+        d.material(),
+        d.volumeMl(),
+        d.qty(),
+        d.depositEach(),
+        d.amount(),
+        d.vatTreatment(),
+        d.vatRate(),
+        d.vatAmount(),
+        d.schemeScope(),
+        d.citation());
+  }
+
+  /** Converts a till refund of container deposits (09.16). */
+  public static com.shelfj.order.dto.Dtos.ContainerRefundResponse toDto(
+      com.shelfj.order.domain.Domain.ContainerRefund r) {
+    return new com.shelfj.order.dto.Dtos.ContainerRefundResponse(
+        str(r.id()),
+        str(r.storeId()),
+        str(r.tillSessionId()),
+        r.currency(),
+        r.containers(),
+        r.amount(),
+        r.schemeScope(),
+        str(r.refundedBy()),
+        ts(r.createdAt()),
+        r.lines().stream()
+            .map(
+                l ->
+                    new com.shelfj.order.dto.Dtos.ContainerRefundLineResponse(
+                        l.material(), l.volumeMl(), l.count(), l.depositEach(), l.amount()))
+            .toList());
   }
 
   /**

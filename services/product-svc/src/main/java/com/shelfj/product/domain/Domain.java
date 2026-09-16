@@ -147,6 +147,9 @@ public final class Domain {
       java.time.LocalDate bornBefore,
       boolean bornBeforeFromTenant) {}
 
+  /** A variant's drinks container, for the deposit a scheme puts on it (09.16). */
+  public record DepositContainer(UUID variantId, String material, int volumeMl) {}
+
   /** How a variant is sold, and the declarations attached to it. */
   public record VariantCompliance(
       UUID variantId,
@@ -160,8 +163,17 @@ public final class Domain {
       java.math.BigDecimal netContent,
       String netContentUom,
       java.math.BigDecimal tareWeight,
-      boolean catchWeight) {
+      boolean catchWeight,
+      /**
+       * PET, ALUMINIUM, STEEL or GLASS when sold in a drinks container a deposit scheme may reach
+       * (09.16).
+       */
+      String depositMaterial,
+      /** The container's volume in millilitres, with {@code depositMaterial}. */
+      Integer depositVolumeMl) {
     public static final String UNDECLARED = "UNDECLARED";
+    public static final java.util.List<String> DEPOSIT_MATERIALS =
+        java.util.List.of("PET", "ALUMINIUM", "STEEL", "GLASS");
     public static final String DECLARED = "DECLARED";
     public static final String NOT_APPLICABLE = "NOT_APPLICABLE";
     public static final String EACH = "EACH";

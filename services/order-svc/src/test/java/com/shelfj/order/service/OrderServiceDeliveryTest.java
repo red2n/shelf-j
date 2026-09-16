@@ -60,6 +60,8 @@ class OrderServiceDeliveryTest {
     svc.storeStatusRepo = storeStatusRepo;
     svc.tenants = tenants;
     svc.profiles = profiles;
+    // 09.16: no deposit scheme reaches these sales; a mock answers empty.
+    svc.jurisdictions = org.mockito.Mockito.mock(com.shelfj.service.Jurisdictions.class);
     // The tenant's declared currency, as tenant-svc would answer (SJ-D53).
     org.mockito.Mockito.lenient().when(profiles.requireCurrency(TENANT)).thenReturn("USD");
     when(ctx.requireTenantId()).thenReturn(TENANT);
@@ -132,7 +134,7 @@ class OrderServiceDeliveryTest {
 
   @Test
   void deliveryWithFullAddressIsPersisted() {
-    when(repo.createOrder(any(), anyList(), any(), any(), anyList()))
+    when(repo.createOrder(any(), anyList(), any(), any(), anyList(), anyList()))
         .thenAnswer(inv -> inv.getArgument(0));
 
     Order order =
@@ -150,7 +152,7 @@ class OrderServiceDeliveryTest {
 
   @Test
   void pickupIgnoresAnySuppliedAddressFields() {
-    when(repo.createOrder(any(), anyList(), any(), any(), anyList()))
+    when(repo.createOrder(any(), anyList(), any(), any(), anyList(), anyList()))
         .thenAnswer(inv -> inv.getArgument(0));
 
     // A pickup order should never persist delivery details even if the client sends some

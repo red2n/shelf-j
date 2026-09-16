@@ -6,6 +6,7 @@ import '../../core/network/api_client.dart';
 import '../admin/customer_providers.dart';
 import '../admin/providers/admin_providers.dart';
 import '../../shared/util/short_ref.dart';
+import '../storefront/storefront_providers.dart' show DepositScheme;
 import 'markdown_label.dart';
 
 /// A single scanned line on the POS sale.
@@ -41,6 +42,19 @@ class PosLine {
   /// pricing-svc says the law allows (03.12); null when it allows none.
   final double? originalPrice;
 
+  /// The drinks container the item comes in — PET, ALUMINIUM, STEEL or GLASS —
+  /// when the catalogue records one (09.16). Null for everything else.
+  final String? depositMaterial;
+
+  /// The container's volume in millilitres, with [depositMaterial].
+  final int? depositVolumeMl;
+
+  /// The return-scheme deposit on each container, where a scheme in force at
+  /// this store takes the container back; 0 otherwise. Its own line on the
+  /// receipt, added to what the customer pays, refunded when the empty comes
+  /// back. Never part of the item's price.
+  final double depositEach;
+
   const PosLine({
     required this.variantId,
     required this.sku,
@@ -53,9 +67,15 @@ class PosLine {
     this.weighingInstrumentId,
     this.markdownId,
     this.originalPrice,
+    this.depositMaterial,
+    this.depositVolumeMl,
+    this.depositEach = 0,
   });
 
   bool get measured => soldBy != 'EACH';
+
+  /// The deposit on this line: one per container sold (09.16).
+  double get depositTotal => depositEach > 0 ? depositEach * qty : 0;
 
   /// Priced by a reduced-price sticker rather than the list.
   bool get reduced => markdownId != null;
@@ -88,6 +108,9 @@ class PosLine {
     weighingInstrumentId: weighingInstrumentId ?? this.weighingInstrumentId,
     markdownId: markdownId,
     originalPrice: originalPrice,
+    depositMaterial: depositMaterial,
+    depositVolumeMl: depositVolumeMl,
+    depositEach: depositEach,
   );
 }
 
@@ -178,6 +201,10 @@ class PosCartNotifier extends StateNotifier<List<PosLine>> {
   }
 
   double get total => state.fold(0.0, (s, l) => s + l.lineTotal);
+
+  /// The return-scheme deposits on the sale's containers (09.16): shown as
+  /// their own line, added to what is due, never discounted.
+  double get deposits => state.fold(0.0, (s, l) => s + l.depositTotal);
 }
 
 final posCartProvider = StateNotifierProvider<PosCartNotifier, List<PosLine>>(
@@ -235,6 +262,21 @@ Future<PosLine?> scanMarkdownLabel(WidgetRef ref, String rawCode) async {
   );
 }
 
+/// The deposit return scheme in force where a store trades (09.16), or null.
+/// tenant-svc answers from the register of jurisdictions; the till reads it
+/// once per store and puts the deposit on each container the scheme takes back.
+final posDepositSchemeProvider =
+    FutureProvider.family<DepositScheme?, String>((ref, storeId) async {
+  final resp = await ref
+      .read(apiClientProvider)
+      .dio
+      .get('/${ApiConstants.tenant}/storefront/config',
+          queryParameters: {'store': storeId});
+  final d = resp.data['data'] as Map<String, dynamic>;
+  final scheme = d['depositScheme'];
+  return scheme is Map<String, dynamic> ? DepositScheme.fromJson(scheme) : null;
+});
+
 /// Looks a barcode up in the catalog, resolves its POS price, and returns a
 /// ready-to-add line. Throws on not-found / pricing failures so the UI can show
 /// a clear message.
@@ -259,6 +301,22 @@ Future<PosLine> scanBarcode(WidgetRef ref, String rawCode) async {
   );
   final p = priceResp.data['data'] as Map<String, dynamic>;
 
+  // 3. The return-scheme deposit on the container (09.16): the catalogue says
+  // what the drink comes in, the scheme where this store trades says whether it
+  // takes that container back and for how much. Its own line, never the price.
+  final material = v['depositMaterial'] as String?;
+  final volumeMl = (v['depositVolumeMl'] as num?)?.toInt();
+  final storeId = ref.read(posStoreProvider);
+  DepositScheme? scheme;
+  if (material != null && storeId != null) {
+    try {
+      scheme = await ref.read(posDepositSchemeProvider(storeId).future);
+    } catch (_) {
+      scheme = null;
+    }
+  }
+  final covered = scheme != null && scheme.covers(material, volumeMl);
+
   return PosLine(
     variantId: variantId,
     sku: v['sku'] as String? ?? code,
@@ -266,6 +324,9 @@ Future<PosLine> scanBarcode(WidgetRef ref, String rawCode) async {
     qty: 1,
     unitPrice: (p['unitPrice'] as num?)?.toDouble() ?? 0,
     currency: p['currency'] as String? ?? '',
+    depositMaterial: material,
+    depositVolumeMl: volumeMl,
+    depositEach: covered ? scheme.depositEach : 0,
   );
 }
 

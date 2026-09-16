@@ -87,6 +87,15 @@ const _navItems = [
   ),
   _AdminNavItem(
     destination: AdaptiveNavDestination(
+      label: 'Container deposits',
+      icon: Icons.recycling_outlined,
+      selectedIcon: Icons.recycling,
+    ),
+    route: '/admin/deposits',
+    storekeeperVisible: false,
+  ),
+  _AdminNavItem(
+    destination: AdaptiveNavDestination(
       label: 'Data retention',
       icon: Icons.auto_delete_outlined,
       selectedIcon: Icons.auto_delete,

@@ -177,6 +177,7 @@ class _StorefrontCartScreenState extends ConsumerState<StorefrontCartScreen> {
     final showPrices = ref.watch(storefrontShowPricesProvider);
     final configAsync = ref.watch(storefrontConfigProvider);
     final storeName = configAsync.value?.storeName ?? '-';
+    final scheme = configAsync.value?.depositScheme;
     final currency = cart.isNotEmpty ? cart.first.currency : '';
     final total = cart.fold<double>(0, (s, l) => s + l.lineTotal);
     final enabledMethods = ref.watch(storefrontPaymentMethodsProvider);
@@ -284,6 +285,17 @@ class _StorefrontCartScreenState extends ConsumerState<StorefrontCartScreen> {
                                 ?.copyWith(fontWeight: FontWeight.bold)),
                       ],
                     ),
+                  if (showPrices && scheme != null) ...[
+                    const SizedBox(height: 6),
+                    Text(
+                      key: const Key('deposit-note'),
+                      'Drinks in ${scheme.inWords} carry a refundable deposit of '
+                      '${scheme.currency} ${scheme.depositEach.toStringAsFixed(2)} '
+                      'each, added to the order as its own line. It is paid back '
+                      'when the empty container is returned.',
+                      style: Theme.of(context).textTheme.bodySmall,
+                    ),
+                  ],
                   if (showPrices) const SizedBox(height: 12),
                   SegmentedButton<String>(
                     segments: const [
@@ -708,6 +720,9 @@ class _StorefrontCartScreenState extends ConsumerState<StorefrontCartScreen> {
       final data = resp.data['data'] as Map<String, dynamic>;
       final orderId = data['id'] as String? ?? '';
       final total = (data['total'] as num?)?.toDouble() ?? cartTotal;
+      // 09.16: the server put the return-scheme deposit on the order as its own
+      // line; the shopper sees it and pays the total that carries it.
+      final depositAmount = (data['depositAmount'] as num?)?.toDouble() ?? 0;
 
       // 2. "Pay now" captures payment online immediately (capture → PaymentCaptured → order
       // confirms). "Pay later" — catalog mode, or a priced shop's customer choosing to defer —
@@ -761,6 +776,14 @@ class _StorefrontCartScreenState extends ConsumerState<StorefrontCartScreen> {
                 const SizedBox(height: 6),
                 Text('$currency ${total.toStringAsFixed(2)} paid',
                     style: const TextStyle(fontWeight: FontWeight.bold)),
+              ],
+              if (depositAmount > 0) ...[
+                const SizedBox(height: 6),
+                Text(
+                    key: const Key('deposit-charged'),
+                    'Includes a refundable container deposit of '
+                    '$currency ${depositAmount.toStringAsFixed(2)}',
+                    style: TextStyle(color: Theme.of(ctx).colorScheme.outline)),
               ],
               const SizedBox(height: 6),
               Text(

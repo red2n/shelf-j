@@ -110,6 +110,35 @@ public final class Events {
     }
   }
 
+  /**
+   * Deposits paid back at the till for containers brought back (09.16): payment-svc records the
+   * cash leaving the drawer against the till session, once per event.
+   */
+  static OutboxRow containerDepositRefunded(com.shelfj.order.domain.Domain.ContainerRefund r) {
+    return new OutboxRow(
+        "ContainerDepositRefunded",
+        "shelfj.order.container-deposit-refunded",
+        r.tenantId(),
+        r.id(),
+        "{\"eventType\":\"ContainerDepositRefunded\",\"eventId\":\""
+            + r.id()
+            + "\",\"tenantId\":\""
+            + r.tenantId()
+            + "\",\"storeId\":\""
+            + r.storeId()
+            + "\",\"tillSessionId\":\""
+            + r.tillSessionId()
+            + "\",\"refundedBy\":\""
+            + r.refundedBy()
+            + "\",\"currency\":\""
+            + esc(r.currency())
+            + "\",\"containers\":"
+            + r.containers()
+            + ",\"amount\":"
+            + r.amount().toPlainString()
+            + "}");
+  }
+
   static OutboxRow orderPlaced(
       UUID tenantId, UUID orderId, String channel, UUID customerId, UUID loginId, UUID storeId) {
     String customerPart =

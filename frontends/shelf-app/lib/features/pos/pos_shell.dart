@@ -11,6 +11,7 @@ import '../../shared/widgets/adaptive_nav_shell.dart';
 import 'pos_providers.dart';
 import 'pos_session_providers.dart';
 import 'pos_printer_settings_dialog.dart';
+import 'container_return_dialog.dart';
 
 /// [pending] badges the Pending destination so unsynced sales are visible from
 /// anywhere in the terminal, not only once the cashier goes looking.
@@ -101,6 +102,19 @@ class _PosShellState extends ConsumerState<PosShell> {
         selectedIndex: _selectedIndex,
         onDestinationSelected: (i) => context.go(_routes[i]),
         actions: [
+          if (session != null)
+            TextButton.icon(
+              key: const Key('pos-container-return'),
+              onPressed: () async {
+                final amount = await showContainerReturnDialog(context);
+                if (amount == null || !context.mounted) return;
+                ScaffoldMessenger.of(context).showSnackBar(SnackBar(
+                    content: Text(
+                        'Deposit refunded: hand back ${amount.toStringAsFixed(2)}')));
+              },
+              icon: const Icon(Icons.recycling),
+              label: const Text('Returns'),
+            ),
           if (session != null)
             TextButton.icon(
               onPressed: () async {

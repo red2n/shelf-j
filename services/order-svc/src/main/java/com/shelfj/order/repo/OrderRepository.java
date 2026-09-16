@@ -67,6 +67,20 @@ public class OrderRepository extends BaseOutboxRepository {
       OutboxRow event,
       OrderDiscount discount,
       List<com.shelfj.order.client.PricingClient.AppliedPromotion> appliedPromotions) {
+    return createOrder(order, items, event, discount, appliedPromotions, List.of());
+  }
+
+  /**
+   * @param deposits the return-scheme deposits on the sale's drinks containers (09.16), written
+   *     with the order so a receipt never shows a deposit the order does not carry
+   */
+  public Order createOrder(
+      Order order,
+      List<OrderItem> items,
+      OutboxRow event,
+      OrderDiscount discount,
+      List<com.shelfj.order.client.PricingClient.AppliedPromotion> appliedPromotions,
+      List<com.shelfj.order.domain.Domain.OrderDeposit> deposits) {
     return inTx(
         c -> {
           try (PreparedStatement ps =
@@ -121,6 +135,7 @@ public class OrderRepository extends BaseOutboxRepository {
             throw sqle;
           }
           for (OrderItem item : items) insertOrderItem(c, item);
+          for (var deposit : deposits) DepositRepository.insertDeposit(c, deposit);
           appendStatusHistory(
               c, order.tenantId(), order.id(), null, order.status(), "created", null);
           if (discount != null) insertOrderDiscount(c, discount);

@@ -165,4 +165,50 @@ void main() {
     expect(body['netContentUom'], 'KG');
     expect(body['restrictionCategory'], 'ALCOHOL');
   });
+
+  testWidgets('the drinks container is sent as material and volume (09.16)', (tester) async {
+    final p = await _open(tester);
+    await tester.dragUntilVisible(
+      find.byKey(const Key('deposit-material')),
+      find.byType(SingleChildScrollView).first,
+      const Offset(0, -200),
+    );
+    await tester.tap(find.byKey(const Key('deposit-material')));
+    await tester.pumpAndSettle();
+    await tester.tap(find.text('PET plastic').last);
+    await tester.pumpAndSettle();
+    await tester.enterText(find.byKey(const Key('deposit-volume')), '500');
+    await tester.tap(find.text('Save'));
+    await tester.pumpAndSettle();
+
+    final sent = _json(p.puts['compliance']);
+    expect(sent['depositMaterial'], 'PET');
+    expect(sent['depositVolumeMl'], 500);
+  });
+
+  testWidgets('a recorded container is shown, and clearing it sends neither', (tester) async {
+    final p = await _open(
+        tester,
+        product: _Product()
+          ..compliance =
+              '{"variantId":"v-1","soldBy":"EACH","catchWeight":false,"depositMaterial":"GLASS","depositVolumeMl":330}');
+    await tester.dragUntilVisible(
+      find.byKey(const Key('deposit-material')),
+      find.byType(SingleChildScrollView).first,
+      const Offset(0, -200),
+    );
+    expect(find.text('Glass'), findsOneWidget);
+    expect(find.text('330'), findsOneWidget);
+    await tester.tap(find.byKey(const Key('deposit-material')));
+    await tester.pumpAndSettle();
+    await tester.tap(find.text('Not a drinks container').last);
+    await tester.pumpAndSettle();
+    await tester.enterText(find.byKey(const Key('deposit-volume')), '');
+    await tester.tap(find.text('Save'));
+    await tester.pumpAndSettle();
+
+    final sent = _json(p.puts['compliance']);
+    expect(sent['depositMaterial'], isNull);
+    expect(sent['depositVolumeMl'], isNull);
+  });
 }

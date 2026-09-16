@@ -12,6 +12,7 @@ import com.shelfj.order.domain.Domain.Layaway;
 import com.shelfj.order.domain.Domain.LayawayDeposit;
 import com.shelfj.order.domain.Domain.LayawayItem;
 import com.shelfj.order.domain.Domain.Order;
+import com.shelfj.order.domain.Domain.OrderDeposit;
 import com.shelfj.order.domain.Domain.OrderDiscount;
 import com.shelfj.order.domain.Domain.OrderItem;
 import com.shelfj.order.domain.Domain.OrderReceipt;
@@ -78,6 +79,9 @@ public class OrderService {
   @Inject com.shelfj.order.client.TenantClient tenants;
   @Inject FiscalService fiscal;
   @Inject SalesInvoiceService salesInvoices;
+  @Inject com.shelfj.service.Jurisdictions jurisdictions;
+  @Inject com.shelfj.order.client.ProductClient products;
+  @Inject com.shelfj.order.repo.DepositRepository depositRepo;
 
   // ── Orders ────────────────────────────────────────────────────────────────
 
@@ -445,7 +449,16 @@ public class OrderService {
         quoted == null
             ? BigDecimal.ZERO
             : quoted.basketDiscount().min(subtotal.subtract(disc).max(BigDecimal.ZERO));
-    BigDecimal total = subtotal.add(tax).subtract(disc).subtract(promoDiscount);
+    // 09.16: the deposit a return scheme puts on each drink's container, its own line beside the
+    // item. It is added to what the customer pays and is no part of the subtotal, the tax or any
+    // discount: outside the scope of VAT where the scheme says so, taxed as the drink elsewhere.
+    List<OrderDeposit> containerDeposits =
+        containerDeposits(tenantId, storeId, currency, orderId, items);
+    BigDecimal depositAmount =
+        containerDeposits.stream()
+            .map(OrderDeposit::amount)
+            .reduce(BigDecimal.ZERO, BigDecimal::add);
+    BigDecimal total = subtotal.add(tax).subtract(disc).subtract(promoDiscount).add(depositAmount);
 
     boolean taxExempt = req.taxExempt() != null && req.taxExempt();
     // SJ-D41: a catalog-mode till order is placed without prices and waits for a manager; it is
@@ -493,7 +506,8 @@ public class OrderService {
               items,
               Events.orderPlaced(tenantId, orderId, req.channel(), customerId, loginId, storeId),
               discountAudit,
-              quoted == null ? List.of() : quoted.applied());
+              quoted == null ? List.of() : quoted.applied(),
+              containerDeposits);
       // Spending the coupon is deliberately the last thing, and deliberately outside the order's
       // transaction. A basket is quoted on every change and must not burn a redemption by being
       // looked at; only a placed order spends one. If this call fails the order still stands — a
@@ -2743,5 +2757,240 @@ public class OrderService {
       sb.append(CODE_CHARS.charAt(RNG.nextInt(CODE_CHARS.length())));
     }
     return sb.toString();
+  }
+
+  // ── Deposit return (09.16) ────────────────────────────
+
+  private static final int MAX_REFUND_KINDS = 20;
+  private static final int MAX_REFUND_OF_ONE_KIND = 500;
+  private static final int MAX_REFUND_CONTAINERS = 2000;
+
+  /** The deposit lines of an order; empty for a sale with no container a scheme takes back. */
+  public List<OrderDeposit> depositsOf(UUID tenantId, UUID orderId) {
+    return depositRepo.depositsOf(tenantId, orderId);
+  }
+
+  /**
+   * The deposit a return scheme puts on each drink's container in the sale (09.16): one line per
+   * item sold in a container the scheme covers, by the material and volume the catalogue records.
+   * Nothing where no scheme is in force where the store trades today.
+   */
+  private List<OrderDeposit> containerDeposits(
+      UUID tenantId, UUID storeId, String currency, UUID orderId, List<OrderItem> items) {
+    if (items.isEmpty()) return List.of();
+    java.util.Optional<com.shelfj.service.Jurisdictions.DepositScheme> scheme;
+    try {
+      scheme =
+          jurisdictions.depositScheme(
+              tenantId, storeId, currency, java.time.LocalDate.now(java.time.ZoneOffset.UTC));
+    } catch (ApiException e) {
+      // The register or the business's profile could not be read. A till keeps selling when
+      // tenant-svc is away (the currency is projected for that reason); the deposit not charged is
+      // the business's loss to the scheme, not the customer's, and it is said here.
+      LOG.log(
+          System.Logger.Level.WARNING,
+          "deposit register unavailable for tenant {0}; sale placed without deposit lines: {1}",
+          tenantId,
+          e.getMessage());
+      return List.of();
+    }
+    if (scheme.isEmpty()) return List.of();
+    var s = scheme.get();
+    var facts =
+        products
+            .namesAsSystem(tenantId, items.stream().map(OrderItem::variantId).distinct().toList())
+            .orElse(java.util.Map.of());
+    List<OrderDeposit> out = new java.util.ArrayList<>();
+    for (OrderItem item : items) {
+      var v = facts.get(item.variantId());
+      if (v == null || v.depositMaterial() == null || v.depositVolumeMl() == null) continue;
+      if (!s.covers(v.depositMaterial(), v.depositVolumeMl())) continue;
+      BigDecimal amount =
+          s.depositEach().multiply(item.qty()).setScale(2, java.math.RoundingMode.HALF_UP);
+      // Where the scheme taxes the deposit it is taxed as the drink: the deposit is quoted gross,
+      // so the VAT is the part inside it at the line's rate.
+      BigDecimal vatRate = s.taxed() ? item.vatRate() : null;
+      BigDecimal vat =
+          vatRate == null
+              ? BigDecimal.ZERO.setScale(2)
+              : amount.subtract(
+                  amount.divide(BigDecimal.ONE.add(vatRate), 2, java.math.RoundingMode.HALF_UP));
+      out.add(
+          new OrderDeposit(
+              Ids.newId(),
+              tenantId,
+              orderId,
+              item.id(),
+              item.variantId(),
+              v.depositMaterial(),
+              v.depositVolumeMl(),
+              item.qty(),
+              s.depositEach(),
+              amount,
+              currency,
+              s.vatTreatment(),
+              vatRate,
+              vat,
+              s.scope(),
+              s.citation(),
+              Instant.now()));
+    }
+    return out;
+  }
+
+  /**
+   * Deposits paid back at the till for containers brought back (09.16), at the scheme's amount for
+   * each container it takes back.
+   *
+   * @throws ApiException {@code 400 ORDER_CONTAINER_LINES_INVALID} for no lines or more than 20
+   *     kinds; {@code 400 ORDER_CONTAINER_COUNT_TOO_MANY} for more than 500 of one kind or 2,000 in
+   *     all; {@code 400 ORDER_CONTAINER_NOT_IN_SCHEME} for a container the scheme does not take
+   *     back; {@code 409 ORDER_DEPOSIT_SCHEME_NOT_IN_FORCE} where no scheme is in force where the
+   *     store trades today; {@code 409 STORE_NOT_OPERATIONAL} for a store that is not trading
+   */
+  public com.shelfj.order.domain.Domain.ContainerRefund refundContainers(
+      com.shelfj.order.dto.Dtos.ContainerRefundRequest req,
+      TenantContext ctx,
+      String idempotencyKey) {
+    UUID tenantId = ctx.requireTenantId();
+    UUID storeId = Parsing.uuid(req.storeId(), "storeId");
+    UUID tillSessionId = Parsing.uuid(req.tillSessionId(), "tillSessionId");
+    ctx.requireStoreAccess(storeId);
+    if (!storeStatusRepo.isActive(tenantId, storeId)) {
+      throw ApiException.conflict(
+          "STORE_NOT_OPERATIONAL", "this store is not trading; nothing is paid out at its till");
+    }
+    if (req.lines() == null || req.lines().isEmpty() || req.lines().size() > MAX_REFUND_KINDS) {
+      throw ApiException.badRequest(
+          "ORDER_CONTAINER_LINES_INVALID",
+          "give one to " + MAX_REFUND_KINDS + " kinds of container brought back");
+    }
+    String currency = resolveCurrency(tenantId, null);
+    var scheme =
+        jurisdictions
+            .depositScheme(
+                tenantId, storeId, currency, java.time.LocalDate.now(java.time.ZoneOffset.UTC))
+            .orElseThrow(
+                () ->
+                    ApiException.conflict(
+                        "ORDER_DEPOSIT_SCHEME_NOT_IN_FORCE",
+                        "no deposit return scheme is in force where this store trades"));
+    List<com.shelfj.order.domain.Domain.ContainerRefundLine> lines = new java.util.ArrayList<>();
+    int containers = 0;
+    BigDecimal amount = BigDecimal.ZERO.setScale(2);
+    for (var line : req.lines()) {
+      String material = line.material().trim().toUpperCase(java.util.Locale.ROOT);
+      if (line.count() > MAX_REFUND_OF_ONE_KIND) {
+        throw ApiException.badRequest(
+            "ORDER_CONTAINER_COUNT_TOO_MANY",
+            "at most " + MAX_REFUND_OF_ONE_KIND + " containers of one kind in one refund");
+      }
+      if (!scheme.covers(material, line.volumeMl())) {
+        throw ApiException.badRequest(
+            "ORDER_CONTAINER_NOT_IN_SCHEME",
+            material
+                + " "
+                + line.volumeMl()
+                + " ml is not a container the "
+                + scheme.scope()
+                + " scheme takes back");
+      }
+      containers += line.count();
+      BigDecimal lineAmount =
+          scheme
+              .depositEach()
+              .multiply(BigDecimal.valueOf(line.count()))
+              .setScale(2, java.math.RoundingMode.HALF_UP);
+      amount = amount.add(lineAmount);
+      lines.add(
+          new com.shelfj.order.domain.Domain.ContainerRefundLine(
+              material, line.volumeMl(), line.count(), scheme.depositEach(), lineAmount));
+    }
+    if (containers > MAX_REFUND_CONTAINERS) {
+      throw ApiException.badRequest(
+          "ORDER_CONTAINER_COUNT_TOO_MANY",
+          "at most " + MAX_REFUND_CONTAINERS + " containers in one refund");
+    }
+    var refund =
+        new com.shelfj.order.domain.Domain.ContainerRefund(
+            Ids.newId(),
+            tenantId,
+            storeId,
+            tillSessionId,
+            currency,
+            containers,
+            amount,
+            scheme.scope(),
+            idempotencyKey,
+            ctx.userId(),
+            Instant.now(),
+            List.copyOf(lines));
+    return depositRepo.insertRefund(refund, Events.containerDepositRefunded(refund));
+  }
+
+  /**
+   * A refund by id.
+   *
+   * @throws ApiException {@code 404 ORDER_CONTAINER_REFUND_NOT_FOUND}
+   */
+  public com.shelfj.order.domain.Domain.ContainerRefund containerRefund(UUID tenantId, UUID id) {
+    return depositRepo
+        .refund(tenantId, id)
+        .orElseThrow(
+            () -> ApiException.notFound("ORDER_CONTAINER_REFUND_NOT_FOUND", "refund not found"));
+  }
+
+  /**
+   * Deposits charged on sales that stand and paid back at the till over [from, to) (09.16), by
+   * material; the difference is what the scheme holds unredeemed.
+   *
+   * @throws ApiException {@code 400 ORDER_REPORT_PERIOD_INVALID} when from is not before to
+   */
+  public com.shelfj.order.dto.Dtos.DepositReportResponse depositReport(
+      TenantContext ctx, String storeIdRaw, String fromRaw, String toRaw) {
+    UUID tenantId = ctx.requireTenantId();
+    Instant from = Parsing.instant(fromRaw, "from");
+    Instant to = Parsing.instant(toRaw, "to");
+    if (!from.isBefore(to)) {
+      throw ApiException.badRequest("ORDER_REPORT_PERIOD_INVALID", "from must be before to");
+    }
+    UUID storeId =
+        storeIdRaw == null || storeIdRaw.isBlank() ? null : Parsing.uuid(storeIdRaw, "storeId");
+    if (storeId != null) ctx.requireStoreAccess(storeId);
+    var rows = depositRepo.report(tenantId, storeId, from, to);
+    long chargedContainers = 0;
+    long refundedContainers = 0;
+    BigDecimal chargedAmount = BigDecimal.ZERO.setScale(2);
+    BigDecimal chargedVat = BigDecimal.ZERO.setScale(2);
+    BigDecimal refundedAmount = BigDecimal.ZERO.setScale(2);
+    List<com.shelfj.order.dto.Dtos.DepositReportRowResponse> byMaterial =
+        new java.util.ArrayList<>();
+    for (var r : rows) {
+      chargedContainers += r.chargedContainers();
+      refundedContainers += r.refundedContainers();
+      chargedAmount = chargedAmount.add(r.chargedAmount());
+      chargedVat = chargedVat.add(r.chargedVat());
+      refundedAmount = refundedAmount.add(r.refundedAmount());
+      byMaterial.add(
+          new com.shelfj.order.dto.Dtos.DepositReportRowResponse(
+              r.material(),
+              r.chargedContainers(),
+              r.chargedAmount(),
+              r.chargedVat(),
+              r.refundedContainers(),
+              r.refundedAmount()));
+    }
+    return new com.shelfj.order.dto.Dtos.DepositReportResponse(
+        from.toString(),
+        to.toString(),
+        storeId == null ? null : storeId.toString(),
+        resolveCurrency(tenantId, null),
+        chargedContainers,
+        chargedAmount,
+        chargedVat,
+        refundedContainers,
+        refundedAmount,
+        chargedAmount.subtract(refundedAmount),
+        byMaterial);
   }
 }

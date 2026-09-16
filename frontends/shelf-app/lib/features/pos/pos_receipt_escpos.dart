@@ -100,6 +100,9 @@ class EscPosReceipt {
     _divider(b, '-');
 
     _row(b, 'Subtotal', _money(d.currency, d.subtotal));
+    if (d.deposit > 0) {
+      _row(b, 'Container deposit', _money(d.currency, d.deposit));
+    }
     if (d.discount > 0) _row(b, 'Discount', '-${_money(d.currency, d.discount)}');
     b.add([_esc, 0x45, 1]);
     b.add([_gs, 0x21, 0x10]);
