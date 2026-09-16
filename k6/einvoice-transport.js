@@ -207,9 +207,9 @@ export default function ({ gb, noaddr, cafe, nobody, slow, offline, inbox, inbox
   const deliver = (network, headers, body = issued.body, contentType = 'application/xml') =>
     http.post(`${BASE}${P}/e-invoices/inbound/${network}`, body, { headers: { 'Content-Type': contentType, ...headers }, tags: { name: 'POST /e-invoices/inbound/{network}' } });
   const keyed = { 'X-EInvoice-Key': DELIVERY_KEY };
-  const again = deliver('peppol', { ...keyed, 'X-EInvoice-Reference': 'AP-K6-1' });
-  expect(again, '[+] an access point delivering the same document is told it is already there', 200);
-  truthy('[+] ...by the first receipt\'s id, learning nothing of the receiver\'s own', data(again).alreadyReceived === true && data(again).id === (arrived && arrived.id) && data(again).status === undefined && data(again).supplierId === undefined, data(again));
+  const redelivered = deliver('peppol', { ...keyed, 'X-EInvoice-Reference': 'AP-K6-1' });
+  expect(redelivered, '[+] an access point delivering the same document is told it is already there', 200);
+  truthy('[+] ...by the first receipt\'s id, learning nothing of the receiver\'s own', data(redelivered).alreadyReceived === true && data(redelivered).id === (arrived && arrived.id) && data(redelivered).status === undefined && data(redelivered).supplierId === undefined, data(redelivered));
   expect(deliver('peppol', {}), '[-] a delivery without the key is refused before the document is read', 401, 'PURCHASE_EINVOICE_KEY_REFUSED');
   expect(deliver('peppol', { 'X-EInvoice-Key': 'not-the-key' }), '[-] as is a wrong key', 401, 'PURCHASE_EINVOICE_KEY_REFUSED');
   expect(deliver('peppol', auth(t)), '[abuse] a staff token is not a delivery key', 401, 'PURCHASE_EINVOICE_KEY_REFUSED');
@@ -221,10 +221,10 @@ export default function ({ gb, noaddr, cafe, nobody, slow, offline, inbox, inbox
   expect(deliver('peppol', keyed, ''), '[-] no document at all is refused', 400, 'PURCHASE_EINVOICE_EMPTY');
   expect(deliver('peppol', keyed, '{"invoice":1}', 'application/json'), '[-] JSON is not an e-invoice', 415);
   expect(deliver('peppol', keyed, '<Order/>'), '[-] XML that is not an invoice is refused', 400, 'PURCHASE_EINVOICE_NOT_AN_INVOICE');
-  const before = inboxOf(inboxToken).length;
+  const inboxBefore = inboxOf(inboxToken).length;
   const flood = http.batch(Array.from({ length: 10 }, () => ['POST', `${BASE}${P}/e-invoices/inbound/peppol`, issued.body.replace(home.fullNumber, `${home.fullNumber}-X`), { headers: { 'Content-Type': 'application/xml', ...keyed }, tags: { name: 'POST /e-invoices/inbound/{network}' } }]));
   const oneRow = inboxOf(inboxToken).filter((d) => d.invoiceNumber === `${home.fullNumber}-X`).length;
-  truthy('[abuse] ten deliveries at once of one document make one inbox row, each told so', flood.every((r) => [200, 201, 409].includes(r.status)) && flood.filter((r) => r.status === 201).length <= 1 && oneRow === 1 && inboxOf(inboxToken).length === before + 1, { statuses: flood.map((r) => r.status), oneRow });
+  truthy('[abuse] ten deliveries at once of one document make one inbox row, each told so', flood.every((r) => [200, 201, 409].includes(r.status)) && flood.filter((r) => r.status === 201).length <= 1 && oneRow === 1 && inboxOf(inboxToken).length === inboxBefore + 1, { statuses: flood.map((r) => r.status), oneRow });
 
   // ── the outbox ───────────────────────────────────────────────────────────────────────────────────
   const accepted = outbox('?status=accepted&limit=1');
