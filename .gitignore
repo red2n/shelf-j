@@ -43,3 +43,4 @@ tools/duplo
 
 # Local scratch / sample import data (not part of the app)
 /cat.csv
+tools/kubeconform

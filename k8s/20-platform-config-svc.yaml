@@ -23,9 +23,22 @@ spec:
     spec:
       imagePullSecrets:
         - name: ghcr-creds
+      securityContext:
+        runAsNonRoot: true
+        runAsUser: 10001
+        runAsGroup: 10001
+        seccompProfile: { type: RuntimeDefault }
+      volumes:
+        - { name: tmp, emptyDir: {} }
       containers:
         - name: config
           image: ghcr.io/red2n/shelf-j-config:latest
+          securityContext:
+            allowPrivilegeEscalation: false
+            readOnlyRootFilesystem: true
+            capabilities: { drop: [ALL] }
+          volumeMounts:
+            - { name: tmp, mountPath: /tmp }
           ports: [{ containerPort: 8080 }]
           envFrom:
             - configMapRef: { name: shelfj-common-env }

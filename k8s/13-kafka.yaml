@@ -27,9 +27,19 @@ spec:
   template:
     metadata: { labels: { app: kafka } }
     spec:
+      securityContext:
+        runAsNonRoot: true
+        runAsUser: 1000
+        runAsGroup: 1000
+        fsGroup: 1000
+        seccompProfile: { type: RuntimeDefault }
       containers:
         - name: kafka
           image: confluentinc/cp-kafka:7.6.1
+          securityContext:
+            allowPrivilegeEscalation: false
+            readOnlyRootFilesystem: false
+            capabilities: { drop: [ALL] }
           ports:
             - { containerPort: 29092 }
             - { containerPort: 29093 }

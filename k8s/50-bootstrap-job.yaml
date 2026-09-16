@@ -14,11 +14,25 @@ metadata:
 spec:
   backoffLimit: 3
   template:
+    metadata: { labels: { app: shelfj-bootstrap } } # named by the bootstrap NetworkPolicy
     spec:
       restartPolicy: OnFailure
+      securityContext:
+        runAsNonRoot: true
+        runAsUser: 100
+        runAsGroup: 101
+        seccompProfile: { type: RuntimeDefault }
+      volumes:
+        - { name: tmp, emptyDir: {} }
       containers:
         - name: bootstrap
           image: curlimages/curl:8.7.1
+          securityContext:
+            allowPrivilegeEscalation: false
+            readOnlyRootFilesystem: true
+            capabilities: { drop: [ALL] }
+          volumeMounts:
+            - { name: tmp, mountPath: /tmp }
           env:
             - name: ADMIN_EMAIL
               valueFrom: { secretKeyRef: { name: shelfj-platform-admin, key: PLATFORM_ADMIN_EMAIL } }

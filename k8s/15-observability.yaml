@@ -6,7 +6,7 @@ apiVersion: v1
 kind: Service
 metadata:
   name: node-exporter
-  namespace: shelf-j
+  namespace: shelf-j-nodes
 spec:
   selector: { app: node-exporter }
   ports: [{ port: 9100, targetPort: 9100 }]
@@ -16,16 +16,25 @@ apiVersion: apps/v1
 kind: DaemonSet
 metadata:
   name: node-exporter
-  namespace: shelf-j
+  namespace: shelf-j-nodes
 spec:
   selector: { matchLabels: { app: node-exporter } }
   template:
     metadata: { labels: { app: node-exporter } }
     spec:
       hostPID: true
+      securityContext:
+        runAsNonRoot: true
+        runAsUser: 65534
+        runAsGroup: 65534
+        seccompProfile: { type: RuntimeDefault }
       containers:
         - name: node-exporter
           image: prom/node-exporter:v1.8.1
+          securityContext:
+            allowPrivilegeEscalation: false
+            readOnlyRootFilesystem: true
+            capabilities: { drop: [ALL] }
           args:
             - --path.procfs=/host/proc
             - --path.sysfs=/host/sys
@@ -63,9 +72,22 @@ spec:
   template:
     metadata: { labels: { app: postgres-exporter } }
     spec:
+      securityContext:
+        runAsNonRoot: true
+        runAsUser: 65534
+        runAsGroup: 65534
+        seccompProfile: { type: RuntimeDefault }
+      volumes:
+        - { name: tmp, emptyDir: {} }
       containers:
         - name: postgres-exporter
           image: prometheuscommunity/postgres-exporter:v0.15.0
+          securityContext:
+            allowPrivilegeEscalation: false
+            readOnlyRootFilesystem: true
+            capabilities: { drop: [ALL] }
+          volumeMounts:
+            - { name: tmp, mountPath: /tmp }
           env:
             - name: DATA_SOURCE_NAME
               value: "postgresql://shelfj:$(POSTGRES_PASSWORD)@postgres:5432/shelfj?sslmode=disable"
@@ -98,9 +120,22 @@ spec:
   template:
     metadata: { labels: { app: redis-exporter } }
     spec:
+      securityContext:
+        runAsNonRoot: true
+        runAsUser: 59000
+        runAsGroup: 59000
+        seccompProfile: { type: RuntimeDefault }
+      volumes:
+        - { name: tmp, emptyDir: {} }
       containers:
         - name: redis-exporter
           image: oliver006/redis_exporter:v1.62.0
+          securityContext:
+            allowPrivilegeEscalation: false
+            readOnlyRootFilesystem: true
+            capabilities: { drop: [ALL] }
+          volumeMounts:
+            - { name: tmp, mountPath: /tmp }
           env:
             - { name: REDIS_ADDR, value: "redis:6379" }
             - name: REDIS_PASSWORD
@@ -133,15 +168,26 @@ spec:
   template:
     metadata: { labels: { app: prometheus } }
     spec:
+      securityContext:
+        runAsNonRoot: true
+        runAsUser: 65534
+        runAsGroup: 65534
+        fsGroup: 65534
+        seccompProfile: { type: RuntimeDefault }
       containers:
         - name: prometheus
           image: prom/prometheus:v2.53.0
+          securityContext:
+            allowPrivilegeEscalation: false
+            readOnlyRootFilesystem: true
+            capabilities: { drop: [ALL] }
           args:
             - --config.file=/etc/prometheus/prometheus.yml
             - --storage.tsdb.retention.time=15d
             - --web.enable-lifecycle
           ports: [{ containerPort: 9090 }]
           volumeMounts:
+            - { name: tmp, mountPath: /tmp }
             - { name: config, mountPath: /etc/prometheus/prometheus.yml, subPath: prometheus.yml }
             - { name: data, mountPath: /prometheus }
           readinessProbe:
@@ -156,6 +202,7 @@ spec:
             requests: { cpu: 200m, memory: 256Mi }
             limits: { cpu: 500m, memory: 512Mi }
       volumes:
+        - { name: tmp, emptyDir: {} }
         - { name: config, configMap: { name: shelfj-prometheus-config } }
         - { name: data, persistentVolumeClaim: { claimName: prometheus-data } }
 
@@ -193,9 +240,19 @@ spec:
   template:
     metadata: { labels: { app: grafana } }
     spec:
+      securityContext:
+        runAsNonRoot: true
+        runAsUser: 472
+        runAsGroup: 472
+        fsGroup: 472
+        seccompProfile: { type: RuntimeDefault }
       containers:
         - name: grafana
           image: grafana/grafana-oss:11.1.0
+          securityContext:
+            allowPrivilegeEscalation: false
+            readOnlyRootFilesystem: false
+            capabilities: { drop: [ALL] }
           env:
             - name: GF_SECURITY_ADMIN_USER
               valueFrom: { secretKeyRef: { name: shelfj-grafana, key: GF_SECURITY_ADMIN_USER } }

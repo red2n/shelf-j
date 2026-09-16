@@ -34,9 +34,22 @@ spec:
     spec:
       imagePullSecrets:
         - name: ghcr-creds
+      securityContext:
+        runAsNonRoot: true
+        runAsUser: 10001
+        runAsGroup: 10001
+        seccompProfile: { type: RuntimeDefault }
+      volumes:
+        - { name: tmp, emptyDir: {} }
       containers:
         - name: iam-svc
           image: ghcr.io/red2n/shelf-j-iam-svc:latest
+          securityContext:
+            allowPrivilegeEscalation: false
+            readOnlyRootFilesystem: true
+            capabilities: { drop: [ALL] }
+          volumeMounts:
+            - { name: tmp, mountPath: /tmp }
           ports: [{ containerPort: 8080 }]
           envFrom:
             - configMapRef: { name: shelfj-common-env }
@@ -85,9 +98,22 @@ spec:
     spec:
       imagePullSecrets:
         - name: ghcr-creds
+      securityContext:
+        runAsNonRoot: true
+        runAsUser: 10001
+        runAsGroup: 10001
+        seccompProfile: { type: RuntimeDefault }
+      volumes:
+        - { name: tmp, emptyDir: {} }
       containers:
         - name: tenant-svc
           image: ghcr.io/red2n/shelf-j-tenant-svc:latest
+          securityContext:
+            allowPrivilegeEscalation: false
+            readOnlyRootFilesystem: true
+            capabilities: { drop: [ALL] }
+          volumeMounts:
+            - { name: tmp, mountPath: /tmp }
           ports: [{ containerPort: 8080 }]
           envFrom:
             - configMapRef: { name: shelfj-common-env }
@@ -135,9 +161,22 @@ spec:
     spec:
       imagePullSecrets:
         - name: ghcr-creds
+      securityContext:
+        runAsNonRoot: true
+        runAsUser: 10001
+        runAsGroup: 10001
+        seccompProfile: { type: RuntimeDefault }
+      volumes:
+        - { name: tmp, emptyDir: {} }
       containers:
         - name: inventory-svc
           image: ghcr.io/red2n/shelf-j-inventory-svc:latest
+          securityContext:
+            allowPrivilegeEscalation: false
+            readOnlyRootFilesystem: true
+            capabilities: { drop: [ALL] }
+          volumeMounts:
+            - { name: tmp, mountPath: /tmp }
           ports: [{ containerPort: 8080 }]
           envFrom:
             - configMapRef: { name: shelfj-common-env }
@@ -185,9 +224,22 @@ spec:
     spec:
       imagePullSecrets:
         - name: ghcr-creds
+      securityContext:
+        runAsNonRoot: true
+        runAsUser: 10001
+        runAsGroup: 10001
+        seccompProfile: { type: RuntimeDefault }
+      volumes:
+        - { name: tmp, emptyDir: {} }
       containers:
         - name: order-svc
           image: ghcr.io/red2n/shelf-j-order-svc:latest
+          securityContext:
+            allowPrivilegeEscalation: false
+            readOnlyRootFilesystem: true
+            capabilities: { drop: [ALL] }
+          volumeMounts:
+            - { name: tmp, mountPath: /tmp }
           ports: [{ containerPort: 8080 }]
           envFrom:
             - configMapRef: { name: shelfj-common-env }
@@ -242,9 +294,22 @@ spec:
     spec:
       imagePullSecrets:
         - name: ghcr-creds
+      securityContext:
+        runAsNonRoot: true
+        runAsUser: 10001
+        runAsGroup: 10001
+        seccompProfile: { type: RuntimeDefault }
+      volumes:
+        - { name: tmp, emptyDir: {} }
       containers:
         - name: purchase-svc
           image: ghcr.io/red2n/shelf-j-purchase-svc:latest
+          securityContext:
+            allowPrivilegeEscalation: false
+            readOnlyRootFilesystem: true
+            capabilities: { drop: [ALL] }
+          volumeMounts:
+            - { name: tmp, mountPath: /tmp }
           ports: [{ containerPort: 8080 }]
           envFrom:
             - configMapRef: { name: shelfj-common-env }
@@ -292,9 +357,22 @@ spec:
     spec:
       imagePullSecrets:
         - name: ghcr-creds
+      securityContext:
+        runAsNonRoot: true
+        runAsUser: 10001
+        runAsGroup: 10001
+        seccompProfile: { type: RuntimeDefault }
+      volumes:
+        - { name: tmp, emptyDir: {} }
       containers:
         - name: cart-svc
           image: ghcr.io/red2n/shelf-j-cart-svc:latest
+          securityContext:
+            allowPrivilegeEscalation: false
+            readOnlyRootFilesystem: true
+            capabilities: { drop: [ALL] }
+          volumeMounts:
+            - { name: tmp, mountPath: /tmp }
           ports: [{ containerPort: 8080 }]
           envFrom:
             - configMapRef: { name: shelfj-common-env }
@@ -345,9 +423,22 @@ spec:
     spec:
       imagePullSecrets:
         - name: ghcr-creds
+      securityContext:
+        runAsNonRoot: true
+        runAsUser: 10001
+        runAsGroup: 10001
+        seccompProfile: { type: RuntimeDefault }
+      volumes:
+        - { name: tmp, emptyDir: {} }
       containers:
         - name: pricing-svc
           image: ghcr.io/red2n/shelf-j-pricing-svc:latest
+          securityContext:
+            allowPrivilegeEscalation: false
+            readOnlyRootFilesystem: true
+            capabilities: { drop: [ALL] }
+          volumeMounts:
+            - { name: tmp, mountPath: /tmp }
           ports: [{ containerPort: 8080 }]
           envFrom:
             - configMapRef: { name: shelfj-common-env }
@@ -395,9 +486,22 @@ spec:
     spec:
       imagePullSecrets:
         - name: ghcr-creds
+      securityContext:
+        runAsNonRoot: true
+        runAsUser: 10001
+        runAsGroup: 10001
+        seccompProfile: { type: RuntimeDefault }
+      volumes:
+        - { name: tmp, emptyDir: {} }
       containers:
         - name: payment-svc
           image: ghcr.io/red2n/shelf-j-payment-svc:latest
+          securityContext:
+            allowPrivilegeEscalation: false
+            readOnlyRootFilesystem: true
+            capabilities: { drop: [ALL] }
+          volumeMounts:
+            - { name: tmp, mountPath: /tmp }
           ports: [{ containerPort: 8080 }]
           envFrom:
             - configMapRef: { name: shelfj-common-env }
@@ -445,9 +549,22 @@ spec:
     spec:
       imagePullSecrets:
         - name: ghcr-creds
+      securityContext:
+        runAsNonRoot: true
+        runAsUser: 10001
+        runAsGroup: 10001
+        seccompProfile: { type: RuntimeDefault }
+      volumes:
+        - { name: tmp, emptyDir: {} }
       containers:
         - name: product-svc
           image: ghcr.io/red2n/shelf-j-product-svc:latest
+          securityContext:
+            allowPrivilegeEscalation: false
+            readOnlyRootFilesystem: true
+            capabilities: { drop: [ALL] }
+          volumeMounts:
+            - { name: tmp, mountPath: /tmp }
           ports: [{ containerPort: 8080 }]
           envFrom:
             - configMapRef: { name: shelfj-common-env }
@@ -498,9 +615,22 @@ spec:
     spec:
       imagePullSecrets:
         - name: ghcr-creds
+      securityContext:
+        runAsNonRoot: true
+        runAsUser: 10001
+        runAsGroup: 10001
+        seccompProfile: { type: RuntimeDefault }
+      volumes:
+        - { name: tmp, emptyDir: {} }
       containers:
         - name: customer-svc
           image: ghcr.io/red2n/shelf-j-customer-svc:latest
+          securityContext:
+            allowPrivilegeEscalation: false
+            readOnlyRootFilesystem: true
+            capabilities: { drop: [ALL] }
+          volumeMounts:
+            - { name: tmp, mountPath: /tmp }
           ports: [{ containerPort: 8080 }]
           envFrom:
             - configMapRef: { name: shelfj-common-env }
@@ -548,9 +678,22 @@ spec:
     spec:
       imagePullSecrets:
         - name: ghcr-creds
+      securityContext:
+        runAsNonRoot: true
+        runAsUser: 10001
+        runAsGroup: 10001
+        seccompProfile: { type: RuntimeDefault }
+      volumes:
+        - { name: tmp, emptyDir: {} }
       containers:
         - name: notification-svc
           image: ghcr.io/red2n/shelf-j-notification-svc:latest
+          securityContext:
+            allowPrivilegeEscalation: false
+            readOnlyRootFilesystem: true
+            capabilities: { drop: [ALL] }
+          volumeMounts:
+            - { name: tmp, mountPath: /tmp }
           ports: [{ containerPort: 8080 }]
           envFrom:
             - configMapRef: { name: shelfj-common-env }
@@ -598,9 +741,22 @@ spec:
     spec:
       imagePullSecrets:
         - name: ghcr-creds
+      securityContext:
+        runAsNonRoot: true
+        runAsUser: 10001
+        runAsGroup: 10001
+        seccompProfile: { type: RuntimeDefault }
+      volumes:
+        - { name: tmp, emptyDir: {} }
       containers:
         - name: reporting-svc
           image: ghcr.io/red2n/shelf-j-reporting-svc:latest
+          securityContext:
+            allowPrivilegeEscalation: false
+            readOnlyRootFilesystem: true
+            capabilities: { drop: [ALL] }
+          volumeMounts:
+            - { name: tmp, mountPath: /tmp }
           ports: [{ containerPort: 8080 }]
           envFrom:
             - configMapRef: { name: shelfj-common-env }
