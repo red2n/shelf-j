@@ -409,6 +409,12 @@ public class AdminAuthorizationFilter implements ContainerRequestFilter {
         // is the entire security boundary of this path: without it, anyone could mark any order
         // paid by POSTing a plausible body.
         || path.startsWith("/payments/webhooks/")
+        // A network delivering a supplier's e-invoice (07.13, the transport seam). Public for the
+        // same reason as the webhooks: the access point carries no JWT and no tenant. It is
+        // authenticated by the deployment's delivery key, which purchase-svc holds against the one
+        // presented before it reads a byte, and the receiver is the business the document names —
+        // never a header. The upload route beside it, /e-invoices, stays staff-gated.
+        || path.startsWith("/e-invoices/inbound/")
         // Internal checkout stock hold: order-svc calls inventory-svc service-to-service (only
         // X-Tenant-Id, no staff role) to hold stock when ANY caller places an ONLINE order —
         // mirrors /prices/resolve. A customer with no staff role can already tie up stock for the

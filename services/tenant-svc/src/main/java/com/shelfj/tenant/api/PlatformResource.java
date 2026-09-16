@@ -66,6 +66,41 @@ public class PlatformResource {
   }
 
   /**
+   * The business a network's delivery lands with (07.13, the transport seam).
+   *
+   * <p>purchase-svc asks this, platform-wide, when an access point delivers an e-invoice: the
+   * document names its buyer by electronic address and VAT identifier, and only one active business
+   * may hold what it names.
+   *
+   * @param scheme the address's EAS scheme, with {@code id}
+   * @param id the identifier within the scheme
+   * @param vatNumber the buyer's VAT identifier, read when no address is given
+   * @return the business
+   * @throws com.shelfj.web.ApiException {@code 400} for half an address or nothing named; {@code
+   *     403} when the caller is not a {@code PLATFORM_ADMIN}; {@code 404} when no active business
+   *     holds it; {@code 409} when more than one does
+   */
+  @Operation(
+      summary = "Which business holds an e-invoicing address",
+      description =
+          "By scheme and id (a Peppol participant identifier), else by vatNumber. The one active"
+              + " business holding it; 404 when none does, 409 when more than one does, since a"
+              + " delivery to a shared address lands nowhere. Requires PLATFORM_ADMIN.")
+  @APIResponse(responseCode = "400", description = "Half an address, or nothing named")
+  @APIResponse(responseCode = "403", description = "Caller is not a PLATFORM_ADMIN")
+  @APIResponse(responseCode = "404", description = "No active business holds it")
+  @APIResponse(responseCode = "409", description = "More than one active business holds it")
+  @GET
+  @Path("/tenants/by-einvoice-address")
+  public ApiResponse<TenantResponse> receiver(
+      @QueryParam("scheme") String scheme,
+      @QueryParam("id") String id,
+      @QueryParam("vatNumber") String vatNumber) {
+    ctx.requireAnyRole("PLATFORM_ADMIN");
+    return ApiResponse.ok(Mappers.toTenant(service.receiver(scheme, id, vatNumber)));
+  }
+
+  /**
    * Suspends or reactivates a tenant.
    *
    * <p>Publishes {@code TenantStatusChanged} so the effect reaches the services that must act on it

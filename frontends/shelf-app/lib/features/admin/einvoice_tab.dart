@@ -428,6 +428,7 @@ class _EInvoiceCard extends StatelessWidget {
         AppFormat.money(inv.payableAmount!, currencyCode: inv.currency),
       if (inv.issueDate != null) inv.issueDate!,
       inv.container == 'PDF' ? '${inv.syntax} in a PDF' : inv.syntax,
+      if (inv.arrivedBy != null) inv.arrivedBy!,
     ].join(' · ');
     return Card(
       child: ListTile(
@@ -706,6 +707,8 @@ class _EInvoiceDialogState extends ConsumerState<EInvoiceDialog> {
               [
                 inv.container == 'PDF' ? '${inv.syntax} in a PDF' : inv.syntax,
                 if (inv.issueDate != null) 'issued ${inv.issueDate}',
+                if (inv.arrivedBy != null) inv.arrivedBy!,
+                if (inv.deliveryRef != null) 'ref ${inv.deliveryRef}',
               ].join(' · '),
               style: outline,
             ),

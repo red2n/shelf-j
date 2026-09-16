@@ -11,10 +11,13 @@ import static org.hamcrest.MatcherAssert.assertThat;
 import static org.hamcrest.Matchers.anyOf;
 import static org.hamcrest.Matchers.containsString;
 import static org.hamcrest.Matchers.is;
+import static org.hamcrest.Matchers.not;
+import static org.hamcrest.Matchers.nullValue;
 import static org.junit.jupiter.api.Assertions.assertArrayEquals;
 
 import com.shelfj.einvoice.EInvoices;
 import com.shelfj.einvoice.Invoice;
+import com.shelfj.ids.Ids;
 import com.shelfj.test.PostgresSupport;
 import com.shelfj.test.TenantSvcStub;
 import com.shelfj.test.WebTargets;
@@ -52,12 +55,24 @@ class SupplierEInvoiceIT {
   /** This business, as its e-invoices name it. */
   private static final String OUR_VAT = "GB123456789";
 
+  /** The key every network presents when it delivers (the transport seam). */
+  private static final String DELIVERY_KEY = "it-delivery-key";
+
+  /** A third business, holding the same address as the second: a delivery to it lands nowhere. */
+  private static final String T3 = Ids.newId().toString();
+
+  private static final String SHARED_GLN = "5790000435975";
+
   static {
     System.setProperty("shelfj.purchase.approval.limits", "");
+    System.setProperty("shelfj.einvoice.inbound.key", DELIVERY_KEY);
     TenantSvcStub.start()
         .with(T, "GBP", "GB")
-        .withIdentity(T, OUR_VAT, null, null)
-        .with(T2, "GBP", "GB");
+        .withIdentity(T, OUR_VAT, "9932", OUR_VAT)
+        .with(T2, "GBP", "GB")
+        .withIdentity(T2, "GB222222222", "0088", SHARED_GLN)
+        .with(T3, "GBP", "GB")
+        .withIdentity(T3, "GB333333333", "0088", SHARED_GLN);
   }
 
   @Inject WebTarget target;
@@ -465,6 +480,186 @@ class SupplierEInvoiceIT {
     assertCode(get("/e-invoices?status=LOST", T, "OWNER"), 400, "PURCHASE_EINVOICE_STATUS_INVALID");
   }
 
+  // ── delivered by a network (the transport seam) ───────────────────────────────
+
+  @Test
+  void aNetworkDeliversToTheBusinessTheDocumentNamesAndLearnsOnlyTheId() {
+    String supplier = supplier("Acme Wholesale", "GB999999973", null, null);
+    String po = receivedOrder(supplier, 10, "2.50");
+    byte[] doc =
+        ubl(
+            invoice(
+                "AP-100",
+                "GB999999973",
+                null,
+                OUR_VAT,
+                po,
+                "380",
+                null,
+                line("Apples", "A-1", "1", "10", "2.50")));
+
+    JsonObject ack =
+        data(deliver("peppol", DELIVERY_KEY, "AP-MSG-77", doc, "application/xml"), 201);
+    assertThat(ack.toString(), ack.getString("network"), is("PEPPOL"));
+    assertThat(ack.getString("reference"), is("AP-MSG-77"));
+    assertThat(ack.getBoolean("alreadyReceived"), is(false));
+    assertThat(
+        "the network learns nothing of the receiver's own",
+        ack.containsKey("status") || ack.containsKey("supplierId") || ack.containsKey("lines"),
+        is(false));
+
+    // Inside, it went through the intake as an upload does: matched to its order and captured, by
+    // nobody, with the network as its channel and the network's reference kept.
+    String id = ack.getString("id");
+    JsonObject kept = data(get("/e-invoices/" + id, T, "OWNER"), 200);
+    assertThat(kept.toString(), kept.getString("channel"), is("PEPPOL"));
+    assertThat(kept.getString("deliveryRef"), is("AP-MSG-77"));
+    assertThat(kept.getString("status"), is("CAPTURED"));
+    assertThat(count("supplier_invoices"), is(1));
+    assertThat(receivedBy(id), nullValue());
+
+    JsonObject again =
+        data(deliver("PEPPOL", DELIVERY_KEY, "AP-MSG-78", doc, "application/xml"), 200);
+    assertThat(again.getString("id"), is(id));
+    assertThat(again.getBoolean("alreadyReceived"), is(true));
+    assertThat(text(get("/e-invoices", T2, "OWNER"), 200), not(containsString(id)));
+  }
+
+  @Test
+  void aDocumentNamingItsBuyerByVatNumberAloneLandsAndWaitsForItsSupplier() {
+    byte[] doc =
+        withoutBuyerEndpoint(
+            ubl(
+                invoice(
+                    "PDP-1",
+                    "FR99999999901",
+                    null,
+                    OUR_VAT,
+                    null,
+                    "380",
+                    null,
+                    line("Pommes", "P-1", null, "10", "2.50"))));
+    JsonObject ack = data(deliver("fr_pdp", DELIVERY_KEY, null, doc, "application/xml"), 201);
+    JsonObject kept = data(get("/e-invoices/" + ack.getString("id"), T, "OWNER"), 200);
+    assertThat(kept.toString(), kept.getString("channel"), is("FR_PDP"));
+    assertThat(kept.containsKey("deliveryRef") && !kept.isNull("deliveryRef"), is(false));
+    // It lands where its VAT number says; what it then is, the rules say: a document claiming
+    // Peppol BIS with no buyer endpoint breaks PEPPOL-EN16931-R010, and is kept, not captured.
+    assertThat(kept.getString("status"), is("NOT_COMPLIANT"));
+    assertThat(kept.toString(), containsString("PEPPOL-EN16931-R010"));
+  }
+
+  @Test
+  void aDeliveryWithoutTheKeyOrToNobodyIsRefusedBeforeAnythingIsKept() {
+    byte[] doc =
+        ubl(
+            invoice(
+                "AP-200",
+                "GB999999973",
+                null,
+                OUR_VAT,
+                null,
+                "380",
+                null,
+                line("Apples", "A-1", null, "10", "2.50")));
+    String xml = "application/xml";
+    assertCode(deliver("peppol", null, null, doc, xml), 401, "PURCHASE_EINVOICE_KEY_REFUSED");
+    assertCode(
+        deliver("peppol", "not-the-key", null, doc, xml), 401, "PURCHASE_EINVOICE_KEY_REFUSED");
+    // Identity headers make nobody a network: without the key they are not even read.
+    assertCode(
+        deliver("peppol", null, null, doc, xml, "X-Tenant-Id", T, "X-Roles", "OWNER"),
+        401,
+        "PURCHASE_EINVOICE_KEY_REFUSED");
+    assertCode(
+        deliver("fax", DELIVERY_KEY, null, doc, xml), 400, "PURCHASE_EINVOICE_NETWORK_UNKNOWN");
+    assertCode(
+        deliver("ksef", DELIVERY_KEY, null, doc, xml), 400, "PURCHASE_EINVOICE_NETWORK_UNKNOWN");
+    assertCode(
+        deliver("upload", DELIVERY_KEY, null, doc, xml), 400, "PURCHASE_EINVOICE_NETWORK_UNKNOWN");
+    assertCode(
+        deliver("peppol", DELIVERY_KEY, "x".repeat(201), doc, xml),
+        400,
+        "PURCHASE_EINVOICE_REFERENCE_TOO_LONG");
+    assertCode(
+        deliver("peppol", DELIVERY_KEY, null, new byte[0], xml), 400, "PURCHASE_EINVOICE_EMPTY");
+    assertThat(deliver("peppol", DELIVERY_KEY, null, doc, "application/json").getStatus(), is(415));
+    String xxe =
+        "<?xml version=\"1.0\"?><!DOCTYPE Invoice [<!ENTITY x SYSTEM \"file:///etc/passwd\">]>"
+            + "<Invoice xmlns=\"urn:oasis:names:specification:ubl:schema:xsd:Invoice-2\">&x;</Invoice>";
+    assertCode(
+        deliver("peppol", DELIVERY_KEY, null, xxe.getBytes(StandardCharsets.UTF_8), xml),
+        400,
+        "PURCHASE_EINVOICE_DTD_REFUSED");
+
+    byte[] stranger =
+        ubl(
+            invoice(
+                "AP-201",
+                "GB999999973",
+                null,
+                "GB000000001",
+                null,
+                "380",
+                null,
+                line("Apples", "A-1", null, "10", "2.50")));
+    assertCode(
+        deliver("peppol", DELIVERY_KEY, null, stranger, xml),
+        404,
+        "PURCHASE_EINVOICE_RECEIVER_UNKNOWN");
+    byte[] nobody = withoutBuyerEndpoint(doc, "<cbc:CompanyID>" + OUR_VAT + "</cbc:CompanyID>");
+    assertCode(
+        deliver("peppol", DELIVERY_KEY, null, nobody, xml),
+        422,
+        "PURCHASE_EINVOICE_RECEIVER_UNNAMED");
+    byte[] shared =
+        new String(doc, StandardCharsets.UTF_8)
+            .replace(
+                "<cbc:EndpointID schemeID=\"9932\">" + OUR_VAT + "</cbc:EndpointID>",
+                "<cbc:EndpointID schemeID=\"0088\">" + SHARED_GLN + "</cbc:EndpointID>")
+            .getBytes(StandardCharsets.UTF_8);
+    assertCode(
+        deliver("peppol", DELIVERY_KEY, null, shared, xml),
+        409,
+        "PURCHASE_EINVOICE_RECEIVER_SHARED");
+    assertThat(count("supplier_einvoices"), is(0));
+  }
+
+  @Test
+  void identityHeadersOnADeliveryChooseNothing() {
+    byte[] doc =
+        ubl(
+            invoice(
+                "AP-300",
+                "GB999999973",
+                null,
+                OUR_VAT,
+                null,
+                "380",
+                null,
+                line("Apples", "A-1", null, "10", "2.50")));
+    JsonObject ack =
+        data(
+            deliver(
+                "simulated",
+                DELIVERY_KEY,
+                "SIM-1",
+                doc,
+                "application/xml",
+                "X-Tenant-Id",
+                T2,
+                "X-User-Id",
+                USER,
+                "X-Roles",
+                "OWNER"),
+            201);
+    String id = ack.getString("id");
+    assertThat(
+        data(get("/e-invoices/" + id, T, "OWNER"), 200).getString("channel"), is("SIMULATED"));
+    assertCode(get("/e-invoices/" + id, T2, "OWNER"), 404, "PURCHASE_EINVOICE_NOT_FOUND");
+    assertThat("written by nobody, not the header's user", receivedBy(id), nullValue());
+  }
+
   @Test
   void tenPeopleMatchingOneInvoiceAtOnceMakeOneInvoice() throws Exception {
     String supplier = supplier("Busy Ltd", "GB999999973", null, null);
@@ -528,6 +723,40 @@ class SupplierEInvoiceIT {
 
   private Response send(byte[] document, String type, String tenant, String role) {
     return as("/e-invoices", tenant, role).post(Entity.entity(document, type));
+  }
+
+  /** A network's delivery: no identity, the key and reference as headers, plus any extra pairs. */
+  private Response deliver(
+      String network, String key, String reference, byte[] document, String type, String... extra) {
+    Invocation.Builder b = WebTargets.at(target, "/e-invoices/inbound/" + network).request();
+    if (key != null) b = b.header("X-EInvoice-Key", key);
+    if (reference != null) b = b.header("X-EInvoice-Reference", reference);
+    for (int i = 0; i + 1 < extra.length; i += 2) b = b.header(extra[i], extra[i + 1]);
+    return b.post(Entity.entity(document, type));
+  }
+
+  /** The document with its buyer's electronic address taken out, and any other elements named. */
+  private static byte[] withoutBuyerEndpoint(byte[] ubl, String... alsoWithout) {
+    String xml =
+        new String(ubl, StandardCharsets.UTF_8)
+            .replace("<cbc:EndpointID schemeID=\"9932\">" + OUR_VAT + "</cbc:EndpointID>", "");
+    for (String element : alsoWithout) xml = xml.replace(element, "");
+    return xml.getBytes(StandardCharsets.UTF_8);
+  }
+
+  private String receivedBy(String id) {
+    try (var c = DriverManager.getConnection(PG.jdbcUrl(), PG.username(), PG.password());
+        var ps =
+            c.prepareStatement(
+                "SELECT received_by FROM purchase.supplier_einvoices WHERE id = ?")) {
+      ps.setObject(1, UUID.fromString(id));
+      try (var rs = ps.executeQuery()) {
+        if (!rs.next()) throw new AssertionError("no document " + id);
+        return rs.getString(1);
+      }
+    } catch (java.sql.SQLException e) {
+      throw new AssertionError(e);
+    }
   }
 
   private String supplier(String name, String vat, String scheme, String endpoint) {

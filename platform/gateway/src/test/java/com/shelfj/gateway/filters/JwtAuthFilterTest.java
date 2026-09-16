@@ -78,6 +78,56 @@ class JwtAuthFilterTest {
     verify(requestContext).abortWith(any());
   }
 
+  // ── E-invoice deliveries (07.13, the transport seam) ──────────────────────
+  // A network's access point delivers a supplier's e-invoice with no JWT; purchase-svc checks the
+  // delivery key. The shape is exact: the network is one segment, and the upload route beside it
+  // — a person's, with a token — is not the delivery route.
+
+  @Test
+  void eInvoiceDeliveryBypassesTokenValidation() throws IOException {
+    when(requestContext.getMethod()).thenReturn("POST");
+    when(uriInfo.getPath()).thenReturn("api/purchase-svc/e-invoices/inbound/peppol");
+
+    filter.filter(requestContext);
+
+    verify(requestContext, never()).abortWith(any());
+  }
+
+  @Test
+  void versionedEInvoiceDeliveryAlsoBypasses() throws IOException {
+    when(requestContext.getMethod()).thenReturn("POST");
+    when(uriInfo.getPath()).thenReturn("/api/v1/purchase-svc/e-invoices/inbound/fr_pdp/");
+
+    filter.filter(requestContext);
+
+    verify(requestContext, never()).abortWith(any());
+  }
+
+  @Test
+  void eInvoiceDeliveryExemptionIsPostOnlyAndExact() throws IOException {
+    when(requestContext.getMethod()).thenReturn("GET");
+    when(uriInfo.getPath()).thenReturn("api/purchase-svc/e-invoices/inbound/peppol");
+    filter.filter(requestContext);
+    verify(requestContext).abortWith(any());
+
+    // The upload route a person uses, and anything deeper than one network, keep needing a token.
+    for (String path :
+        new String[] {
+          "api/purchase-svc/e-invoices",
+          "api/purchase-svc/e-invoices/inbound",
+          "api/purchase-svc/e-invoices/inbound/peppol/again",
+          "api/purchase-svc/e-invoices/inbound-replay/peppol"
+        }) {
+      org.mockito.Mockito.reset(requestContext);
+      lenient().when(requestContext.getUriInfo()).thenReturn(uriInfo);
+      lenient().when(requestContext.getHeaders()).thenReturn(headers);
+      when(requestContext.getMethod()).thenReturn("POST");
+      when(uriInfo.getPath()).thenReturn(path);
+      filter.filter(requestContext);
+      verify(requestContext, org.mockito.Mockito.description(path)).abortWith(any());
+    }
+  }
+
   /**
    * The exemption is for exactly one segment after /webhooks/. Anything deeper, or a route that
    * merely starts with the same characters, still needs a token — the same trap the public-suffix

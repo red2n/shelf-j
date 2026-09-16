@@ -68,13 +68,18 @@ public class GatewayConfig {
 
   /**
    * Routes that take a document rather than JSON, each with its own cap, as {@code path=bytes}
-   * separated by commas: a supplier's e-invoice PDF may be 20 MB (07.13). {@code
-   * server.max-payload-size} must be at least the largest.
+   * separated by commas: a supplier's e-invoice PDF may be 20 MB (07.13), uploaded by a person or
+   * delivered by a network — each network's delivery route is its own entry, since the cap matches
+   * a path exactly. {@code server.max-payload-size} must be at least the largest.
    */
   @Inject
   @ConfigProperty(
       name = "shelfj.gateway.upload-routes",
-      defaultValue = "/api/purchase-svc/e-invoices=21000000")
+      defaultValue =
+          "/api/purchase-svc/e-invoices=21000000,"
+              + "/api/purchase-svc/e-invoices/inbound/peppol=21000000,"
+              + "/api/purchase-svc/e-invoices/inbound/fr_pdp=21000000,"
+              + "/api/purchase-svc/e-invoices/inbound/simulated=21000000")
   String uploadRoutes;
 
   @Inject

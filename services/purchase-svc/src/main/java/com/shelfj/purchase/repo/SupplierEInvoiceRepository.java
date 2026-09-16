@@ -31,7 +31,8 @@ public class SupplierEInvoiceRepository extends BaseOutboxRepository {
           + "document_sha256,customization_id,type_code,invoice_number,issue_date,currency,seller_name,"
           + "seller_vat_id,seller_endpoint,buyer_vat_id,buyer_endpoint,order_reference,preceding_invoice,"
           + "net_amount,vat_amount,gross_amount,payable_amount,violations,status,problem,supplier_id,po_id,"
-          + "supplier_invoice_id,vendor_return_id,decided_at,decided_by,decision_reason,updated_at";
+          + "supplier_invoice_id,vendor_return_id,decided_at,decided_by,decision_reason,updated_at,"
+          + "delivery_ref";
 
   static final String LINE_COLUMNS =
       "id,tenant_id,einvoice_id,position,line_id,item_name,sellers_item_id,buyers_item_id,"
@@ -65,7 +66,7 @@ public class SupplierEInvoiceRepository extends BaseOutboxRepository {
                   "INSERT INTO supplier_einvoices ("
                       + COLUMNS
                       + ",document) VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,"
-                      + "?::jsonb,?,?,?,?,?,?,?,?,?,?,?)"
+                      + "?::jsonb,?,?,?,?,?,?,?,?,?,?,?,?)"
                       + " ON CONFLICT (tenant_id, document_sha256) DO NOTHING")) {
             ps.setObject(1, d.id());
             ps.setObject(2, d.tenantId());
@@ -104,7 +105,8 @@ public class SupplierEInvoiceRepository extends BaseOutboxRepository {
             ps.setObject(35, d.decidedBy());
             ps.setString(36, d.decisionReason());
             ps.setObject(37, odt(d.updatedAt()));
-            ps.setBytes(38, bytes);
+            ps.setString(38, d.deliveryRef());
+            ps.setBytes(39, bytes);
             if (ps.executeUpdate() == 0) return false;
           }
           try (PreparedStatement ps =
@@ -403,6 +405,7 @@ public class SupplierEInvoiceRepository extends BaseOutboxRepository {
         instant(rs, "received_at"),
         rs.getObject("received_by", UUID.class),
         rs.getString("channel"),
+        rs.getString("delivery_ref"),
         rs.getString("content_type"),
         rs.getString("container"),
         rs.getString("syntax"),

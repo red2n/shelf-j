@@ -33,6 +33,10 @@ import java.util.UUID;
 @ApplicationScoped
 public class TenantRepository extends BaseOutboxRepository {
 
+  private static final String TENANT_SELECT =
+      "SELECT id, name, legal_name, status, plan_id, owner_user_id, country, currency,"
+          + " created_at, updated_at, vat_number, einvoice_scheme, einvoice_id FROM tenants";
+
   // ─────────────────────────────────────────────── create (atomic with outbox)
 
   /**
@@ -136,6 +140,39 @@ public class TenantRepository extends BaseOutboxRepository {
             + " created_at, updated_at, vat_number, einvoice_scheme, einvoice_id FROM tenants WHERE id = ?",
         tenantId,
         TenantRepository::mapTenant);
+  }
+
+  /**
+   * Every business holding an e-invoicing address, oldest first (07.13, the transport seam).
+   *
+   * @param scheme the EAS scheme of the address
+   * @param id the identifier within it, matched without regard to case
+   * @return the tenants, active or not; empty when none holds it
+   */
+  public List<Tenant> findTenantsByEinvoiceAddress(String scheme, String id) {
+    return query(
+        TENANT_SELECT
+            + " WHERE einvoice_scheme = ? AND lower(einvoice_id) = lower(?) ORDER BY created_at",
+        ps -> {
+          ps.setString(1, scheme);
+          ps.setString(2, id);
+        },
+        TenantRepository::mapTenant,
+        "tenants by e-invoicing address");
+  }
+
+  /**
+   * Every business holding a VAT identifier, oldest first (07.13, the transport seam).
+   *
+   * @param vatNumber the identifier with its country prefix, upper-cased with no spaces
+   * @return the tenants, active or not; empty when none holds it
+   */
+  public List<Tenant> findTenantsByVatNumber(String vatNumber) {
+    return query(
+        TENANT_SELECT + " WHERE upper(replace(vat_number, ' ', '')) = ? ORDER BY created_at",
+        ps -> ps.setString(1, vatNumber),
+        TenantRepository::mapTenant,
+        "tenants by VAT number");
   }
 
   /**

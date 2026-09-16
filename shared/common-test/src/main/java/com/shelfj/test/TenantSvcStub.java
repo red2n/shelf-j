@@ -48,6 +48,42 @@ public final class TenantSvcStub implements AutoCloseable {
                   ? "{\"error\":{\"code\":\"TENANT_NOT_FOUND\",\"message\":\"no such tenant\"}}"
                   : body);
         });
+    // Which business holds an e-invoicing address (07.13, the transport seam): tenant-svc's
+    // platform-wide lookup, answered from the identities registered here. By scheme and id, else
+    // by VAT number; 404 when none holds it, 409 when more than one does.
+    server.createContext(
+        "/platform/tenants/by-einvoice-address",
+        exchange -> {
+          stub.requests.incrementAndGet();
+          Map<String, String> q = JsonStub.query(exchange.getRequestURI().getRawQuery());
+          String scheme = q.get("scheme");
+          String id = q.get("id");
+          String vat = q.get("vatNumber");
+          java.util.List<String> holders =
+              stub.profiles.values().stream()
+                  .filter(
+                      json ->
+                          scheme != null
+                              ? holds(json, "einvoiceScheme", scheme)
+                                  && holds(json, "einvoiceId", id)
+                              : vat != null && holds(json, "vatNumber", vat))
+                  .toList();
+          if (holders.size() == 1) {
+            JsonStub.reply(exchange, 200, holders.get(0));
+          } else if (holders.isEmpty()) {
+            JsonStub.reply(
+                exchange,
+                404,
+                "{\"error\":{\"code\":\"TENANT_NOT_FOUND\",\"message\":\"nobody holds it\"}}");
+          } else {
+            JsonStub.reply(
+                exchange,
+                409,
+                "{\"error\":{\"code\":\"TENANT_EINVOICE_ADDRESS_SHARED\",\"message\":\""
+                    + holders.size()
+                    + " businesses hold it\"}}");
+          }
+        });
     // The longer context wins, so the obligations route is not answered as a profile.
     server.createContext(
         "/admin/tenant/obligations",
@@ -150,6 +186,13 @@ public final class TenantSvcStub implements AutoCloseable {
     profiles.computeIfPresent(
         tenantId, (id, json) -> json.substring(0, json.length() - 2) + fields + "}}");
     return this;
+  }
+
+  /** Whether a registered profile carries the field with the value, case aside. */
+  private static boolean holds(String json, String field, String value) {
+    return value != null
+        && json.toLowerCase(java.util.Locale.ROOT)
+            .contains(("\"" + field + "\":\"" + value + "\"").toLowerCase(java.util.Locale.ROOT));
   }
 
   private static String field(String name, String value) {

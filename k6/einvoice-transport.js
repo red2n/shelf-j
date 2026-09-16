@@ -9,7 +9,12 @@
 // credentials, Peppol for a business with no address, an account too long, sending what was
 // delivered, sending with no network chosen, a status that does not exist, a cashier choosing or
 // reading. Abuse: ten sends at once for one document sending once, another tenant's reads and sends,
-// a path that is not an id.
+// a path that is not an id. Delivery in: a sale to a business on this platform is delivered into
+// that business's inbox, where it waits for its supplier by the network it came over with the
+// network's reference; the delivery route itself, as an access point calls it, is tried with the
+// same document (already there), without the key, with a wrong one, with a staff token instead,
+// for a network that does not deliver in, for a buyer nobody holds, with no document, and ten
+// times at once.
 //
 //   k6/run.sh einvoice-transport
 import http from 'k6/http';
@@ -40,6 +45,9 @@ export const options = {
 const O = '/api/order-svc';
 const TRANSPORT = `${O}/admin/einvoicing/transport`;
 const BUYER_VAT = 'GB555555555';
+const P = '/api/purchase-svc';
+// The key every network presents when it delivers; docker-compose's default unless the stack sets one.
+const DELIVERY_KEY = __ENV.SHELFJ_EINVOICE_INBOUND_KEY || 'dev-einvoice-inbound-key';
 
 // A GLN (GS1 GTIN-13) with its check digit, as Peppol's 0088 scheme requires.
 const gln = (first12) => {
@@ -58,7 +66,7 @@ const identity = (tenant, body) => {
   );
 };
 
-const customer = (tenant, label, endpointId) => {
+const customer = (tenant, label, endpointId, { scheme = '9932', vatNumber = BUYER_VAT } = {}) => {
   const token = tenant.owner.token;
   const run = Date.now().toString(36);
   const c = must(
@@ -67,8 +75,8 @@ const customer = (tenant, label, endpointId) => {
     `customer ${label}`
   );
   must(call('POST', `/api/customer-svc/customers/${c.id}/addresses`, { token, body: { type: 'BILLING', line1: '2 Mill Lane', city: 'Leeds', country: 'GB', pincode: 'LS1 4AB' } }), 201, `address ${label}`);
-  const vat = { customerId: c.id, vatRegistered: true, vatNumber: BUYER_VAT, countryCode: 'GB', legalName: `${label} Ltd` };
-  if (endpointId) Object.assign(vat, { einvoiceScheme: '9932', einvoiceId: endpointId });
+  const vat = { customerId: c.id, vatRegistered: true, vatNumber, countryCode: 'GB', legalName: `${label} Ltd` };
+  if (endpointId) Object.assign(vat, { einvoiceScheme: scheme, einvoiceId: endpointId });
   must(call('POST', '/api/pricing-svc/customer-vat-status', { token, body: vat }), [200, 201], `vat status ${label}`);
   return c.id;
 };
@@ -83,10 +91,17 @@ export function setup() {
   const nobody = customer(gb.tenant, 'nobody', `${BUYER_VAT}REJECT`);
   const slow = customer(gb.tenant, 'slow', `${BUYER_VAT}LATER`);
   const offline = customer(gb.tenant, 'offline', null);
-  return { gb, noaddr, cafe, nobody, slow, offline };
+  // A business on this platform, with its own address and VAT number: what the simulated network
+  // delivers to is its inbox.
+  const inbox = sellingTenant('einvoice-tx-inbox', { price: '10.00' });
+  const inboxGln = gln(`5790001${String((Date.now() + 7) % 100000).padStart(5, '0')}`);
+  const INBOX_VAT = 'GB444444444';
+  identity(inbox.tenant, { vatNumber: INBOX_VAT, einvoiceScheme: '0088', einvoiceId: inboxGln });
+  const neighbour = customer(gb.tenant, 'neighbour', inboxGln, { scheme: '0088', vatNumber: INBOX_VAT });
+  return { gb, noaddr, cafe, nobody, slow, offline, inbox, inboxGln, neighbour };
 }
 
-export default function ({ gb, noaddr, cafe, nobody, slow, offline }) {
+export default function ({ gb, noaddr, cafe, nobody, slow, offline, inbox, inboxGln, neighbour }) {
   const t = gb.tenant.owner.token;
   const auth = (token) => ({ Authorization: `Bearer ${token}` });
   const settings = (token = t) => call('GET', TRANSPORT, { token });
@@ -173,6 +188,43 @@ export default function ({ gb, noaddr, cafe, nobody, slow, offline }) {
   const nowhere = invoiced(offline);
   expect(send(nowhere.id), '[-] a buyer with no electronic address has nowhere to receive', 409, 'EINVOICE_RECEIVER_ADDRESS_MISSING');
   truthy('[-] ...and nothing was queued for it', !documentOf(nowhere.id).transmission, documentOf(nowhere.id));
+
+  // ── delivered into a business on this platform ────────────────────────────────────────────────────
+  const home = invoiced(neighbour);
+  const landed = transmissionOf(home.id, ['ACCEPTED']);
+  truthy('[+] a sale to a business on this platform is delivered into that business\'s inbox', landed && /inbox on this platform/.test(landed.detail), landed);
+  const inboxToken = inbox.tenant.owner.token;
+  const inboxOf = (token) => data(call('GET', `${P}/e-invoices?limit=100`, { token })) || [];
+  let arrived;
+  poll(30, () => (arrived = inboxOf(inboxToken).find((d) => d.invoiceNumber === home.fullNumber)));
+  truthy('[+] ...where it waits for its supplier, by the network it came over, with the network\'s reference', arrived && arrived.channel === 'SIMULATED' && arrived.status === 'NEEDS_SUPPLIER' && arrived.sellerVatId === 'GB123456789' && arrived.deliveryRef === landed.providerRef, arrived);
+  truthy('[+] ...and the sender\'s own inbox has nothing of it', !inboxOf(t).find((d) => d.invoiceNumber === home.fullNumber), 'sender inbox');
+  const original = call('GET', `${P}/e-invoices/${arrived && arrived.id}/document`, { token: inboxToken });
+  const issued = call('GET', `${O}/admin/sales-invoices/${home.id}/document?format=UBL`, { token: t });
+  truthy('[+] ...byte for byte the document the seller issued', original.status === 200 && issued.status === 200 && original.body === issued.body, [original.status, issued.status]);
+
+  // The delivery route itself, as an access point would call it.
+  const deliver = (network, headers, body = issued.body, contentType = 'application/xml') =>
+    http.post(`${BASE}${P}/e-invoices/inbound/${network}`, body, { headers: { 'Content-Type': contentType, ...headers }, tags: { name: 'POST /e-invoices/inbound/{network}' } });
+  const keyed = { 'X-EInvoice-Key': DELIVERY_KEY };
+  const again = deliver('peppol', { ...keyed, 'X-EInvoice-Reference': 'AP-K6-1' });
+  expect(again, '[+] an access point delivering the same document is told it is already there', 200);
+  truthy('[+] ...by the first receipt\'s id, learning nothing of the receiver\'s own', data(again).alreadyReceived === true && data(again).id === (arrived && arrived.id) && data(again).status === undefined && data(again).supplierId === undefined, data(again));
+  expect(deliver('peppol', {}), '[-] a delivery without the key is refused before the document is read', 401, 'PURCHASE_EINVOICE_KEY_REFUSED');
+  expect(deliver('peppol', { 'X-EInvoice-Key': 'not-the-key' }), '[-] as is a wrong key', 401, 'PURCHASE_EINVOICE_KEY_REFUSED');
+  expect(deliver('peppol', auth(t)), '[abuse] a staff token is not a delivery key', 401, 'PURCHASE_EINVOICE_KEY_REFUSED');
+  expect(deliver('peppol', { ...auth(gb.rival.owner.token), 'X-Tenant-Id': gb.rival.tenant.id }), '[abuse] nor a rival\'s token with a tenant header', 401, 'PURCHASE_EINVOICE_KEY_REFUSED');
+  expect(deliver('ksef', keyed), '[-] KSeF does not deliver in: a Polish buyer pulls', 400, 'PURCHASE_EINVOICE_NETWORK_UNKNOWN');
+  expect(deliver('fax', keyed), '[-] nor a network that does not exist', 400, 'PURCHASE_EINVOICE_NETWORK_UNKNOWN');
+  const stranger = issued.body.split(inboxGln).join(gln('579000199999')).split('GB444444444').join('GB000000001');
+  expect(deliver('peppol', keyed, stranger), '[-] a document naming a buyer nobody on this platform holds lands nowhere', 404, 'PURCHASE_EINVOICE_RECEIVER_UNKNOWN');
+  expect(deliver('peppol', keyed, ''), '[-] no document at all is refused', 400, 'PURCHASE_EINVOICE_EMPTY');
+  expect(deliver('peppol', keyed, '{"invoice":1}', 'application/json'), '[-] JSON is not an e-invoice', 415);
+  expect(deliver('peppol', keyed, '<Order/>'), '[-] XML that is not an invoice is refused', 400, 'PURCHASE_EINVOICE_NOT_AN_INVOICE');
+  const before = inboxOf(inboxToken).length;
+  const flood = http.batch(Array.from({ length: 10 }, () => ['POST', `${BASE}${P}/e-invoices/inbound/peppol`, issued.body.replace(home.fullNumber, `${home.fullNumber}-X`), { headers: { 'Content-Type': 'application/xml', ...keyed }, tags: { name: 'POST /e-invoices/inbound/{network}' } }]));
+  const oneRow = inboxOf(inboxToken).filter((d) => d.invoiceNumber === `${home.fullNumber}-X`).length;
+  truthy('[abuse] ten deliveries at once of one document make one inbox row, each told so', flood.every((r) => [200, 201, 409].includes(r.status)) && flood.filter((r) => r.status === 201).length <= 1 && oneRow === 1 && inboxOf(inboxToken).length === before + 1, { statuses: flood.map((r) => r.status), oneRow });
 
   // ── the outbox ───────────────────────────────────────────────────────────────────────────────────
   const accepted = outbox('?status=accepted&limit=1');

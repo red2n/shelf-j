@@ -121,9 +121,10 @@ public final class ServiceReader {
     Reply last = new Reply(0, null);
     for (int attempt = 1; attempt <= attempts; attempt++) {
       HttpClientRequest request =
-          web.get(base + path)
-              .header(HeaderNames.create(HttpHeaders.TENANT_ID), tenantId.toString())
-              .header(HeaderNames.create(HttpHeaders.ROLES), role);
+          web.get(base + path).header(HeaderNames.create(HttpHeaders.ROLES), role);
+      if (tenantId != null) {
+        request = request.header(HeaderNames.create(HttpHeaders.TENANT_ID), tenantId.toString());
+      }
       for (Map.Entry<String, String> param : query.entrySet()) {
         request = request.queryParam(param.getKey(), param.getValue());
       }

@@ -532,6 +532,58 @@ public class TenantService {
   }
 
   /**
+   * The one active business a network's delivery addressed this way lands with (07.13, the
+   * transport seam).
+   *
+   * <p>By electronic address when one is named — the participant identifier an access point
+   * delivered to — else by VAT identifier, as a document with no address names its buyer. A
+   * suspended business receives nothing; and an address two active businesses both claim places
+   * nothing, since the platform cannot tell which of them the document is for.
+   *
+   * @param scheme the address's EAS scheme, with {@code id}; both or neither
+   * @param id the identifier within the scheme
+   * @param vatNumber the buyer's VAT identifier, read when no address is given
+   * @return the business
+   * @throws ApiException {@code 400 TENANT_EINVOICE_ADDRESS_INVALID} for half an address, {@code
+   *     400 TENANT_RECEIVER_UNNAMED} for neither an address nor a VAT number, {@code 404
+   *     TENANT_NOT_FOUND} when no active business holds it, {@code 409
+   *     TENANT_EINVOICE_ADDRESS_SHARED} when more than one does
+   */
+  public Tenant receiver(String scheme, String id, String vatNumber) {
+    String named;
+    List<Tenant> holders;
+    if (present(scheme) || present(id)) {
+      if (!present(scheme) || !present(id)) {
+        throw ApiException.badRequest(
+            "TENANT_EINVOICE_ADDRESS_INVALID", "an address is a scheme and an id together");
+      }
+      named = scheme.strip() + ":" + id.strip();
+      holders = repo.findTenantsByEinvoiceAddress(scheme.strip(), id.strip());
+    } else if (present(vatNumber)) {
+      named = vatNumber.replace(" ", "").toUpperCase(Locale.ROOT);
+      holders = repo.findTenantsByVatNumber(named);
+    } else {
+      throw ApiException.badRequest(
+          "TENANT_RECEIVER_UNNAMED", "name an electronic address (scheme and id) or a VAT number");
+    }
+    List<Tenant> active =
+        holders.stream().filter(t -> Tenant.STATUS_ACTIVE.equals(t.status())).toList();
+    if (active.isEmpty()) {
+      throw ApiException.notFound("TENANT_NOT_FOUND", "no active business holds " + named);
+    }
+    if (active.size() > 1) {
+      throw ApiException.conflict(
+          "TENANT_EINVOICE_ADDRESS_SHARED",
+          active.size() + " businesses hold " + named + ", so a delivery to it lands nowhere");
+    }
+    return active.get(0);
+  }
+
+  private static boolean present(String s) {
+    return s != null && !s.isBlank();
+  }
+
+  /**
    * Every store in the tenant, unpaginated.
    *
    * <p>For internal use where the whole set is wanted at once; the API list uses the cursor-paged

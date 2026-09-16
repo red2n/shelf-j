@@ -167,6 +167,19 @@ public final class JsonStub implements AutoCloseable {
     reply(exchange, answer.status(), answer.body());
   }
 
+  /** A raw query string as its parameters, decoded; the last value wins a repeated name. */
+  public static Map<String, String> query(String rawQuery) {
+    Map<String, String> out = new java.util.HashMap<>();
+    for (String pair : rawQuery == null ? new String[0] : rawQuery.split("&")) {
+      int eq = pair.indexOf('=');
+      if (eq <= 0) continue;
+      out.put(
+          java.net.URLDecoder.decode(pair.substring(0, eq), StandardCharsets.UTF_8),
+          java.net.URLDecoder.decode(pair.substring(eq + 1), StandardCharsets.UTF_8));
+    }
+    return out;
+  }
+
   /** A loopback server on a free port, answering on daemon threads. */
   static HttpServer serve(String threadName) {
     try {

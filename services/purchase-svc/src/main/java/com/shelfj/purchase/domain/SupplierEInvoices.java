@@ -3,12 +3,29 @@ package com.shelfj.purchase.domain;
 import java.math.BigDecimal;
 import java.time.Instant;
 import java.time.LocalDate;
+import java.util.List;
 import java.util.UUID;
 
 /** A supplier e-invoice as purchase-svc keeps it (07.13): the document, its lines, the original. */
 public final class SupplierEInvoices {
 
   public static final String CHANNEL_UPLOAD = "UPLOAD";
+
+  /** Delivered by a Peppol access point. */
+  public static final String CHANNEL_PEPPOL = "PEPPOL";
+
+  /** Delivered by France's approved platform. */
+  public static final String CHANNEL_FR_PDP = "FR_PDP";
+
+  /** Delivered by the platform itself, standing in for a network (the simulated provider). */
+  public static final String CHANNEL_SIMULATED = "SIMULATED";
+
+  /**
+   * The networks that deliver in, as {@code POST /e-invoices/inbound/{network}} names them. KSeF is
+   * pulled by the buyer and India's portal delivers nothing, so neither is here.
+   */
+  public static final List<String> NETWORKS =
+      List.of(CHANNEL_PEPPOL, CHANNEL_FR_PDP, CHANNEL_SIMULATED);
 
   private SupplierEInvoices() {}
 
@@ -22,6 +39,7 @@ public final class SupplierEInvoices {
       Instant receivedAt,
       UUID receivedBy,
       String channel,
+      String deliveryRef,
       String contentType,
       String container,
       String syntax,
