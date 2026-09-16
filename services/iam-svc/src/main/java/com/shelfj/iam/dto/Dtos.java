@@ -23,7 +23,7 @@ public final class Dtos {
       @Schema(description = "Unique login email.") @Email @NotBlank String email,
       @Schema(description = "Plaintext password (hashed server-side before storage).")
           @NotBlank
-          @Size(min = 8, max = 100)
+          @Size(min = 8, max = 128)
           String password,
       @Schema(description = "Optional contact phone number.") String phone) {}
 
@@ -44,7 +44,7 @@ public final class Dtos {
                   "Initial password, shared with the new staff member out-of-band. Never echoed"
                       + " back in the response.")
           @NotBlank
-          @Size(min = 8, max = 100)
+          @Size(min = 8, max = 128)
           String password) {}
 
   /** Result of staff provisioning: the userId to assign a store role to. */
@@ -106,7 +106,7 @@ public final class Dtos {
   public record ChangePasswordRequest(
       @Schema(description = "The user's current password, re-verified before the change.") @NotBlank
           String currentPassword,
-      @Schema(description = "The new password to set.") @NotBlank @Size(min = 8, max = 100)
+      @Schema(description = "The new password to set.") @NotBlank @Size(min = 8, max = 128)
           String newPassword) {}
 
   /** Current principal (GET /auth/me). */

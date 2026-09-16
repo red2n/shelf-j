@@ -61,7 +61,7 @@ export default function ({ tenant, customerId, token }) {
   );
   expect(call('GET', '/api/tenant-svc/storefront/stores', { storefront: tenant.tenantId }), 'the rest of the storefront is unaffected', 200);
   expect(
-    call('POST', '/api/iam-svc/auth/register', { body: { email: `after-token-lockout-${Date.now()}@k6.shelfj.test`, password: 'K6-Passw0rd!' } }),
+    call('POST', '/api/iam-svc/auth/register', { body: { email: `after-token-lockout-${Date.now()}@k6.shelfj.test`, password: 'K6-Passw0rd! for shelf-j' } }),
     'registration is unaffected: the lockout is per path',
     201
   );
