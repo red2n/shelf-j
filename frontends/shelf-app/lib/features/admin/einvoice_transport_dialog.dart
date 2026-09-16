@@ -24,16 +24,19 @@ class _TransportSettingsDialogState
   late String? _provider = widget.current.provider;
   late final _account =
       TextEditingController(text: widget.current.providerAccount ?? '');
+  final _secret = TextEditingController();
   bool _busy = false;
   String? _error;
 
   @override
   void dispose() {
     _account.dispose();
+    _secret.dispose();
     super.dispose();
   }
 
   List<String> get _deployed => widget.current.providers[_network] ?? const [];
+  bool get _needsSecret => widget.current.needsSecret(_network, _provider);
   List<String> get _available => widget.current.available[_network] ?? const [];
 
   Future<void> _save() async {
@@ -41,6 +44,11 @@ class _TransportSettingsDialogState
     if (_network != 'NONE' && (_provider == null || _provider!.isEmpty)) {
       setState(
           () => _error = 'Choose a provider for ${networkLabel(_network)}.');
+      return;
+    }
+    if (_needsSecret && _secret.text.isEmpty && !widget.current.hasSecret) {
+      setState(() => _error = "This provider signs in with the business's own "
+          'credential: enter it.');
       return;
     }
     setState(() {
@@ -53,6 +61,8 @@ class _TransportSettingsDialogState
         network: _network,
         provider: _network == 'NONE' ? null : _provider,
         providerAccount: _network == 'NONE' ? null : _account.text,
+        providerSecret:
+            _network == 'NONE' || !_needsSecret ? null : _secret.text,
       );
       ref.invalidate(transportSettingsProvider);
       if (mounted) Navigator.of(context).pop();
@@ -156,6 +166,26 @@ class _TransportSettingsDialogState
                     counterText: '',
                   ),
                 ),
+                if (_needsSecret) ...[
+                  const SizedBox(height: 4),
+                  TextField(
+                    key: const Key('einvoice-transport-secret'),
+                    controller: _secret,
+                    enabled: !_busy,
+                    obscureText: true,
+                    maxLength: 200,
+                    decoration: InputDecoration(
+                      labelText: _provider == 'NIC'
+                          ? 'Portal password'
+                          : 'Credential at the provider',
+                      helperText: c.hasSecret
+                          ? 'One is kept, sealed. Leave blank to keep it.'
+                          : 'Kept sealed on the server and never shown again.',
+                      helperMaxLines: 2,
+                      counterText: '',
+                    ),
+                  ),
+                ],
                 if (_network == 'PEPPOL' && c.senderAddress == null)
                   Padding(
                     padding: const EdgeInsets.only(top: 8),
@@ -195,6 +225,8 @@ class _TransportSettingsDialogState
   static String _providerLabel(String p) => switch (p) {
         'SIMULATED' => 'Simulated — nothing leaves the platform',
         'ACCESS_POINT' => 'Peppol access point',
+        'PDP' => 'Approved platform',
+        'NIC' => 'Invoice Registration Portal (NIC)',
         _ => p,
       };
 }

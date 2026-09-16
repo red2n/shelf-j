@@ -76,7 +76,9 @@ class PeppolAccessPointTransportTest {
         receiver,
         "<Invoice>7</Invoice>",
         null,
-        "LE-1");
+        "GB123456789",
+        "LE-1",
+        null);
   }
 
   private static String lastBody() {

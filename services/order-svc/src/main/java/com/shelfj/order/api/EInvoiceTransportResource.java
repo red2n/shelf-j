@@ -82,7 +82,10 @@ public class EInvoiceTransportResource {
                     svc.setSettings(
                         ctx.requireTenantId(),
                         new EInvoiceTransportService.SettingsChange(
-                            req.network(), req.provider(), req.providerAccount()),
+                            req.network(),
+                            req.provider(),
+                            req.providerAccount(),
+                            req.providerSecret()),
                         ctx.userId()))))
         .build();
   }

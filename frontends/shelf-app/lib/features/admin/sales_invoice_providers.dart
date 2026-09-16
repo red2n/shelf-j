@@ -185,7 +185,8 @@ Future<SalesInvoice> issueInvoice(Dio dio, String orderId) async {
 Future<TransmissionSummary> sendInvoice(Dio dio, String id) async {
   final resp = await dio
       .post('/${ApiConstants.order}/admin/sales-invoices/$id/transmissions');
-  return TransmissionSummary.fromJson(resp.data['data'] as Map<String, dynamic>);
+  return TransmissionSummary.fromJson(
+      resp.data['data'] as Map<String, dynamic>);
 }
 
 /// The document as bytes, in the format asked for.
@@ -301,24 +302,33 @@ class TransportSettings {
   final String network;
   final String? provider;
   final String? providerAccount;
+  final bool hasSecret;
   final String? senderAddress;
   final String? suggestedNetwork;
   final List<String> networks;
   final Map<String, List<String>> providers;
   final Map<String, List<String>> available;
+  final Map<String, List<String>> needingSecret;
 
   const TransportSettings({
     required this.network,
     this.provider,
     this.providerAccount,
+    this.hasSecret = false,
     this.senderAddress,
     this.suggestedNetwork,
     this.networks = const ['PEPPOL', 'FR_PDP', 'KSEF', 'IRP'],
     this.providers = const {},
     this.available = const {},
+    this.needingSecret = const {},
   });
 
   bool get sending => network != 'NONE';
+
+  /// Whether the provider signs in with the business's own credential.
+  bool needsSecret(String network, String? provider) =>
+      provider != null &&
+      (needingSecret[network] ?? const []).contains(provider);
 
   factory TransportSettings.fromJson(Map<String, dynamic> j) {
     Map<String, List<String>> lists(Object? o) => {
@@ -331,14 +341,16 @@ class TransportSettings {
       network: j['network'] as String? ?? 'NONE',
       provider: j['provider'] as String?,
       providerAccount: j['providerAccount'] as String?,
+      hasSecret: j['hasSecret'] as bool? ?? false,
       senderAddress: j['senderAddress'] as String?,
       suggestedNetwork: j['suggestedNetwork'] as String?,
-      networks:
-          ((j['networks'] as List?) ?? const ['PEPPOL', 'FR_PDP', 'KSEF', 'IRP'])
-              .map((e) => e.toString())
-              .toList(),
+      networks: ((j['networks'] as List?) ??
+              const ['PEPPOL', 'FR_PDP', 'KSEF', 'IRP'])
+          .map((e) => e.toString())
+          .toList(),
       providers: lists(j['providers']),
       available: lists(j['available']),
+      needingSecret: lists(j['needingSecret']),
     );
   }
 }
@@ -368,13 +380,17 @@ Future<TransportSettings> saveTransportSettings(
   required String network,
   String? provider,
   String? providerAccount,
+  String? providerSecret,
 }) async {
+  // The credential is sent only when typed: left out, the one kept stays.
   final body = <String, dynamic>{
     'network': network,
     if (provider != null && provider.trim().isNotEmpty)
       'provider': provider.trim(),
     if (providerAccount != null && providerAccount.trim().isNotEmpty)
       'providerAccount': providerAccount.trim(),
+    if (providerSecret != null && providerSecret.isNotEmpty)
+      'providerSecret': providerSecret,
   };
   final resp = await dio
       .put('/${ApiConstants.order}/admin/einvoicing/transport', data: body);

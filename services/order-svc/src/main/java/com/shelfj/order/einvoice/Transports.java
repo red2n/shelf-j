@@ -70,6 +70,22 @@ public class Transports {
     return out;
   }
 
+  /** The providers that take the business's own credentials, by network. */
+  public Map<String, List<String>> needingSecret() {
+    Map<String, List<String>> out = new TreeMap<>();
+    for (String network : EInvoiceTransports.NETWORKS) {
+      out.put(
+          network,
+          byKey.entrySet().stream()
+              .filter(e -> e.getKey().startsWith(network + ":"))
+              .filter(e -> e.getValue().needsSecret())
+              .map(e -> e.getValue().name())
+              .sorted()
+              .toList());
+    }
+    return out;
+  }
+
   private static String key(String network, String provider) {
     return network.toUpperCase(Locale.ROOT) + ":" + provider.trim().toUpperCase(Locale.ROOT);
   }

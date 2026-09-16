@@ -37,6 +37,8 @@ class EInvoiceTransportsTest {
         receiver,
         "<Invoice/>",
         null,
+        null,
+        null,
         null);
   }
 

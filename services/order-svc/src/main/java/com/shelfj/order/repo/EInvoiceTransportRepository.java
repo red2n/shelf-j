@@ -20,7 +20,7 @@ import java.util.UUID;
 public class EInvoiceTransportRepository extends BaseJdbcRepository {
 
   private static final String SETTINGS_COLUMNS =
-      "tenant_id, network, provider, provider_account, updated_at, updated_by";
+      "tenant_id, network, provider, provider_account, provider_secret, updated_at, updated_by";
 
   private static final String COLUMNS =
       "id, tenant_id, invoice_id, network, provider, status, attempts, next_attempt_at, receiver,"
@@ -32,9 +32,10 @@ public class EInvoiceTransportRepository extends BaseJdbcRepository {
 
   private static final String UPSERT_SETTINGS =
       "INSERT INTO einvoice_transport_settings (tenant_id, network, provider, provider_account,"
-          + " updated_by) VALUES (?,?,?,?,?) ON CONFLICT (tenant_id) DO UPDATE SET"
-          + " network = EXCLUDED.network, provider = EXCLUDED.provider,"
-          + " provider_account = EXCLUDED.provider_account, updated_by = EXCLUDED.updated_by,"
+          + " provider_secret, updated_by) VALUES (?,?,?,?,?,?) ON CONFLICT (tenant_id) DO UPDATE"
+          + " SET network = EXCLUDED.network, provider = EXCLUDED.provider,"
+          + " provider_account = EXCLUDED.provider_account,"
+          + " provider_secret = EXCLUDED.provider_secret, updated_by = EXCLUDED.updated_by,"
           + " updated_at = now()";
 
   private static final String INSERT =
@@ -97,7 +98,8 @@ public class EInvoiceTransportRepository extends BaseJdbcRepository {
           ps.setString(2, s.network());
           ps.setString(3, s.provider());
           ps.setString(4, s.providerAccount());
-          ps.setObject(5, s.updatedBy());
+          ps.setString(5, s.providerSecret());
+          ps.setObject(6, s.updatedBy());
         },
         "upsert e-invoice transport settings");
   }
@@ -247,6 +249,7 @@ public class EInvoiceTransportRepository extends BaseJdbcRepository {
         rs.getString("network"),
         rs.getString("provider"),
         rs.getString("provider_account"),
+        rs.getString("provider_secret"),
         instant(rs, "updated_at"),
         rs.getObject("updated_by", UUID.class));
   }

@@ -20,6 +20,8 @@ public final class EInvoiceTransportDtos {
       @Schema(description = "SIMULATED, or a real provider's name; null with NONE.")
           String provider,
       String providerAccount,
+      @Schema(description = "Whether a credential is kept for the provider; never shown.")
+          boolean hasSecret,
       String updatedAt,
       @Schema(description = "The business's own electronic address, scheme:identifier, or null.")
           String senderAddress,
@@ -29,7 +31,9 @@ public final class EInvoiceTransportDtos {
       @Schema(description = "The providers deployed, by network.")
           Map<String, List<String>> providers,
       @Schema(description = "The providers that can be chosen here, by network: configured.")
-          Map<String, List<String>> available) {}
+          Map<String, List<String>> available,
+      @Schema(description = "The providers that take the business's own credential, by network.")
+          Map<String, List<String>> needingSecret) {}
 
   @Schema(name = "SetEInvoiceTransportRequest")
   public record SetTransportRequest(
@@ -39,7 +43,14 @@ public final class EInvoiceTransportDtos {
               description =
                   "The business at the provider: a legal-entity id, a NIP, a portal user.")
           @Size(max = 120)
-          String providerAccount) {}
+          String providerAccount,
+      @Schema(
+              description =
+                  "The business's own credential at the provider — a portal password, a token."
+                      + " Kept sealed and never shown; leave out to keep the one stored, blank to"
+                      + " remove it.")
+          @Size(max = 200)
+          String providerSecret) {}
 
   @Schema(
       name = "EInvoiceTransmission",

@@ -1,5 +1,6 @@
 package com.shelfj.order;
 
+import static com.shelfj.order.support.InvoicingStubs.V_GST;
 import static com.shelfj.order.support.InvoicingStubs.V_STD;
 import static com.shelfj.order.support.InvoicingStubs.basket;
 import static com.shelfj.order.support.InvoicingStubs.business;
@@ -11,14 +12,17 @@ import static com.shelfj.order.support.InvoicingStubs.eventually;
 import static com.shelfj.order.support.InvoicingStubs.only;
 import static com.shelfj.order.support.InvoicingStubs.services;
 import static org.hamcrest.MatcherAssert.assertThat;
+import static org.hamcrest.Matchers.anyOf;
 import static org.hamcrest.Matchers.containsString;
 import static org.hamcrest.Matchers.greaterThanOrEqualTo;
 import static org.hamcrest.Matchers.hasSize;
 import static org.hamcrest.Matchers.is;
 import static org.hamcrest.Matchers.notNullValue;
+import static org.hamcrest.Matchers.nullValue;
 import static org.hamcrest.Matchers.startsWith;
 
 import com.shelfj.ids.Ids;
+import com.shelfj.order.support.IrpPortalStub;
 import com.shelfj.order.support.Till;
 import com.shelfj.test.Concurrency;
 import com.shelfj.test.JsonStub;
@@ -63,6 +67,13 @@ class EInvoiceTransportIT {
   private static final String C_REJECT = Ids.newId().toString();
   private static final String C_LATER = Ids.newId().toString();
   private static final String C_NOADDR = Ids.newId().toString();
+  private static final String T_IN = Ids.newId().toString();
+  private static final String S_IN = Ids.newId().toString();
+  private static final String C_IN = Ids.newId().toString();
+  private static final String T_FR = Ids.newId().toString();
+  private static final String S_FR = Ids.newId().toString();
+  private static final String C_FR = Ids.newId().toString();
+  private static final String C_FR_REFUSE = Ids.newId().toString();
 
   private static final String[] LEEDS = {"2 Mill Lane", "Leeds", "LS1 4AB"};
 
@@ -75,6 +86,7 @@ class EInvoiceTransportIT {
   private static final PostgresSupport PG;
   private static final TenantSvcStub TENANTS;
   private static final JsonStub SERVICES;
+  private static final IrpPortalStub PORTAL;
 
   static {
     PG = PostgresSupport.start();
@@ -92,6 +104,14 @@ class EInvoiceTransportIT {
             .withIdentity(T_OTHER, "GB111111111", "9932", "GB111111111")
             .withLegalName(T_OTHER, "Someone Else Ltd")
             .withStore(T_OTHER, S_OTHER, "GB", "1 Other Street", "Hull", "HU1 1AA")
+            .with(T_IN, "INR", "IN")
+            .withIdentity(T_IN, "27AAPFU0939F1ZV", null, null)
+            .withLegalName(T_IN, "Kiran Traders Pvt Ltd")
+            .withStore(T_IN, S_IN, "IN", "12 Marine Drive", "Mumbai", "400002")
+            .with(T_FR, "EUR", "FR")
+            .withIdentity(T_FR, "FR32123456789", null, null)
+            .withLegalName(T_FR, "Épicerie du Port SARL")
+            .withStore(T_FR, S_FR, "FR", "3 rue du Port", "Paris", "75001")
             // As if the mandate were in force: what the settings suggest.
             .withObligation("GB", "E_INVOICING_B2B", "COUNTRY", "2020-01-01", null);
     SERVICES = services();
@@ -101,6 +121,52 @@ class EInvoiceTransportIT {
         SERVICES, C_REJECT, "Nobody Ltd", "GB555555555", "GB", "9932", "GB555555555REJECT", LEEDS);
     business(SERVICES, C_LATER, "Slow Ltd", "GB555555555", "GB", "9932", "GB555555555LATER", LEEDS);
     business(SERVICES, C_NOADDR, "Offline Ltd", "GB222222222", "GB", null, null, LEEDS);
+    business(
+        SERVICES,
+        C_IN,
+        "Bengaluru Stores Pvt Ltd",
+        "29AAGCB7383J1Z4",
+        "IN",
+        null,
+        null,
+        new String[] {"4 Residency Road", "Bengaluru", "560025"});
+    String[] paris = {"8 rue de Rivoli", "Paris", "75004"};
+    business(
+        SERVICES,
+        C_FR,
+        "Boulangerie Martin SAS",
+        "FR03552081317",
+        "FR",
+        "0009",
+        "55208131700013",
+        paris);
+    business(
+        SERVICES,
+        C_FR_REFUSE,
+        "Grincheux SAS",
+        "FR03552081317",
+        "FR",
+        "0009",
+        "55208131700013REFUSE",
+        paris);
+    // India's portal, doing its own cryptography; France's platform, answering by the buyer.
+    PORTAL = IrpPortalStub.on(SERVICES, "user1", "pass1");
+    SERVICES.on("POST", "/pdp/invoices", EInvoiceTransportIT::platformDeposit);
+    SERVICES.on(
+        "GET",
+        "/pdp/invoices/F-1/lifecycle",
+        200,
+        "{\"status\":{\"code\":209,\"label\":\"Reçue par la plateforme\"}}");
+    System.setProperty("shelfj.einvoice.irp.base-url", SERVICES.baseUrl());
+    System.setProperty("shelfj.einvoice.irp.auth-path", IrpPortalStub.AUTH_PATH);
+    System.setProperty("shelfj.einvoice.irp.invoice-path", IrpPortalStub.INVOICE_PATH);
+    System.setProperty("shelfj.einvoice.irp.client-id", "cid");
+    System.setProperty("shelfj.einvoice.irp.client-secret", "csec");
+    System.setProperty("shelfj.einvoice.irp.public-key", PORTAL.publicKeyBase64());
+    System.setProperty("shelfj.einvoice.fr-pdp.base-url", SERVICES.baseUrl() + "/pdp");
+    System.setProperty("shelfj.einvoice.fr-pdp.api-key", "pdp-key");
+    System.setProperty(
+        "shelfj.einvoice.secrets-key", java.util.Base64.getEncoder().encodeToString(new byte[32]));
     // The access point's facade: one document id, answered as MODE says.
     SERVICES.on("POST", "/documents", EInvoiceTransportIT::accessPointSend);
     SERVICES.on("GET", "/documents/AP-1", EInvoiceTransportIT::accessPointStatus);
@@ -133,7 +199,16 @@ class EInvoiceTransportIT {
             "shelfj.order.einvoice-transport.interval-seconds",
             "shelfj.order.einvoice-transport.retry-base-seconds",
             "shelfj.order.einvoice-transport.poll-seconds",
-            "shelfj.order.einvoice-transport.max-attempts")) {
+            "shelfj.order.einvoice-transport.max-attempts",
+            "shelfj.einvoice.irp.base-url",
+            "shelfj.einvoice.irp.auth-path",
+            "shelfj.einvoice.irp.invoice-path",
+            "shelfj.einvoice.irp.client-id",
+            "shelfj.einvoice.irp.client-secret",
+            "shelfj.einvoice.irp.public-key",
+            "shelfj.einvoice.fr-pdp.base-url",
+            "shelfj.einvoice.fr-pdp.api-key",
+            "shelfj.einvoice.secrets-key")) {
       System.clearProperty(p);
     }
     SERVICES.close();
@@ -151,6 +226,17 @@ class EInvoiceTransportIT {
       case "down" -> new JsonStub.Answer(503, "{\"message\":\"maintenance\"}");
       default -> new JsonStub.Answer(201, "{\"id\":\"AP-1\",\"status\":\"DELIVERED\"}");
     };
+  }
+
+  /** The platform deposits every document but the one addressed to a buyer who refuses. */
+  private static JsonStub.Answer platformDeposit(JsonStub.Call call) {
+    if (call.body().contains("REFUSE")) {
+      return new JsonStub.Answer(
+          201,
+          "{\"id\":\"F-2\",\"status\":{\"code\":210,\"label\":\"Refusée\",\"reason\":\"bon de commande inconnu\"}}");
+    }
+    return new JsonStub.Answer(
+        201, "{\"id\":\"F-1\",\"status\":{\"code\":200,\"label\":\"Déposée\"}}");
   }
 
   private static JsonStub.Answer accessPointStatus(JsonStub.Call call) {
@@ -177,21 +263,39 @@ class EInvoiceTransportIT {
 
   /** Sells to the customer and waits for the invoice; the document with its newest transmission. */
   private JsonObject invoiced(String customer) {
-    String order = till().sell(basket(S, customer, "GBP", V_STD, "1"), T);
-    return only(till().documentsOf(order, T, 1), "INVOICE");
+    return invoiced(T, S, "GBP", customer);
+  }
+
+  private JsonObject invoiced(String tenant, String store, String currency, String customer) {
+    return invoiced(tenant, store, currency, customer, V_STD);
+  }
+
+  /** An Indian sale needs an item with an HSN code, or the portal's document is never written. */
+  private JsonObject invoiced(
+      String tenant, String store, String currency, String customer, String variant) {
+    String order = till().sell(basket(store, customer, currency, variant, "1"), tenant);
+    return only(till().documentsOf(order, tenant, 1), "INVOICE");
   }
 
   private JsonObject document(String id) {
-    return data(till().get("/admin/sales-invoices/" + id, T));
+    return document(T, id);
+  }
+
+  private JsonObject document(String tenant, String id) {
+    return data(till().get("/admin/sales-invoices/" + id, tenant));
   }
 
   /** The document's newest transmission once it is in one of the states. */
   private JsonObject transmissionOf(String id, String... states) {
+    return transmissionIn(T, id, states);
+  }
+
+  private JsonObject transmissionIn(String tenant, String id, String... states) {
     List<String> wanted = List.of(states);
     JsonObject t =
         eventually(
             () -> {
-              JsonObject d = document(id);
+              JsonObject d = document(tenant, id);
               if (!d.containsKey("transmission") || d.isNull("transmission")) return null;
               JsonObject tr = d.getJsonObject("transmission");
               return wanted.contains(tr.getString("status")) ? tr : null;
@@ -335,7 +439,8 @@ class EInvoiceTransportIT {
               });
       assertThat(waiting, notNullValue());
       assertThat(waiting.getString("detail"), containsString("trying again"));
-      assertThat(waiting.getString("status"), is("QUEUED"));
+      // Caught between attempts, or in one: still trying either way.
+      assertThat(waiting.getString("status"), anyOf(is("QUEUED"), is("SENDING")));
       // Back up, but slow to deliver: taken, then asked after until it says delivered.
       MODE.set("accept");
       JsonObject done = transmissionOf(id, "ACCEPTED");
@@ -463,5 +568,92 @@ class EInvoiceTransportIT {
     assertThat(code(nothing), is("EINVOICE_TRANSPORT_NOT_SET"));
     JsonObject after = data(till().get("/admin/einvoicing/transport", T));
     assertThat(!after.containsKey("provider") || after.isNull("provider"), is(true));
+  }
+
+  // ── India's portal, and France's platform ─────────────────────────────────
+
+  @Test
+  @DisplayName(
+      "An Indian business signs in to the portal with its own credential, kept sealed, and registers its invoices")
+  void irp() {
+    JsonObject offered = data(till().get("/admin/einvoicing/transport", T_IN));
+    assertThat(offered.getString("suggestedNetwork", null), nullValue());
+    assertThat(
+        offered.getJsonObject("needingSecret").getJsonArray("IRP").toString(), is("[\"NIC\"]"));
+    assertThat(
+        offered.getJsonObject("available").getJsonArray("IRP").toString(), containsString("NIC"));
+
+    Response noSecret =
+        setTransport(
+            T_IN, "{\"network\":\"IRP\",\"provider\":\"NIC\",\"providerAccount\":\"user1\"}");
+    assertThat(noSecret.getStatus(), is(409));
+    assertThat(code(noSecret), is("EINVOICE_PROVIDER_SECRET_REQUIRED"));
+    Response chosen =
+        setTransport(
+            T_IN,
+            "{\"network\":\"IRP\",\"provider\":\"NIC\",\"providerAccount\":\"user1\",\"providerSecret\":\"pass1\"}");
+    assertThat(chosen.readEntity(String.class), chosen.getStatus(), is(200));
+    Response read = till().get("/admin/einvoicing/transport", T_IN);
+    String body = read.readEntity(String.class);
+    assertThat(body, containsString("\"hasSecret\":true"));
+    assertThat(body.contains("pass1"), is(false));
+
+    JsonObject inv = invoiced(T_IN, S_IN, "INR", C_IN, V_GST);
+    JsonObject registered =
+        transmissionIn(T_IN, inv.getString("id"), "ACCEPTED", "REJECTED", "FAILED");
+    assertThat(registered.toString(), registered.getString("status"), is("ACCEPTED"));
+    assertThat(registered.getString("providerRef").length(), is(64));
+    assertThat(registered.getString("detail"), startsWith("registered: IRN "));
+    assertThat(PORTAL.lastInvoice(), containsString("\"Gstin\":\"27AAPFU0939F1ZV\""));
+
+    // Changing the account keeps the credential; removing it means the provider cannot be kept.
+    Response kept =
+        setTransport(
+            T_IN, "{\"network\":\"IRP\",\"provider\":\"NIC\",\"providerAccount\":\"user1\"}");
+    assertThat(kept.getStatus(), is(200));
+    assertThat(kept.readEntity(String.class), containsString("\"hasSecret\":true"));
+    Response removed =
+        setTransport(
+            T_IN,
+            "{\"network\":\"IRP\",\"provider\":\"NIC\",\"providerAccount\":\"user1\",\"providerSecret\":\"\"}");
+    assertThat(removed.getStatus(), is(409));
+    assertThat(code(removed), is("EINVOICE_PROVIDER_SECRET_REQUIRED"));
+
+    // A wrong password is the portal's refusal, not something to try again.
+    assertThat(
+        setTransport(
+                T_IN,
+                "{\"network\":\"IRP\",\"provider\":\"NIC\",\"providerAccount\":\"user1\",\"providerSecret\":\"wrong\"}")
+            .getStatus(),
+        is(200));
+    JsonObject refused = invoiced(T_IN, S_IN, "INR", C_IN, V_GST);
+    JsonObject rejected = transmissionIn(T_IN, refused.getString("id"), "REJECTED", "FAILED");
+    assertThat(rejected.getString("status"), is("REJECTED"));
+    assertThat(rejected.getString("detail"), containsString("refused the business's credentials"));
+  }
+
+  @Test
+  @DisplayName(
+      "A French business deposits with its platform, and hears back as the reform's statuses")
+  void frenchPlatform() {
+    Response chosen =
+        setTransport(
+            T_FR,
+            "{\"network\":\"FR_PDP\",\"provider\":\"PDP\",\"providerAccount\":\"123456789\"}");
+    assertThat(chosen.readEntity(String.class), chosen.getStatus(), is(200));
+    JsonObject inv = invoiced(T_FR, S_FR, "EUR", C_FR);
+    JsonObject delivered =
+        transmissionIn(T_FR, inv.getString("id"), "ACCEPTED", "REJECTED", "FAILED");
+    assertThat(delivered.toString(), delivered.getString("status"), is("ACCEPTED"));
+    assertThat(delivered.getString("providerRef"), is("F-1"));
+    assertThat(delivered.getString("receiver"), is("0009:55208131700013"));
+    assertThat(
+        "deposited, then asked after", delivered.getInt("attempts"), greaterThanOrEqualTo(2));
+    assertThat(delivered.getString("detail"), containsString("with the buyer's platform"));
+
+    JsonObject unwanted = invoiced(T_FR, S_FR, "EUR", C_FR_REFUSE);
+    JsonObject refused = transmissionIn(T_FR, unwanted.getString("id"), "REJECTED", "FAILED");
+    assertThat(refused.getString("status"), is("REJECTED"));
+    assertThat(refused.getString("detail"), is("refused by the buyer: bon de commande inconnu"));
   }
 }

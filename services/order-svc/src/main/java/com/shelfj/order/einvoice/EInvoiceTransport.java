@@ -31,6 +31,14 @@ public interface EInvoiceTransport {
   }
 
   /**
+   * Whether the provider takes the business's own credentials — a portal user and password, an
+   * authorisation token — which the settings keep sealed and never show again.
+   */
+  default boolean needsSecret() {
+    return false;
+  }
+
+  /**
    * A document to send.
    *
    * @param documentKind {@code Invoice} or {@code CreditNote}
@@ -39,7 +47,9 @@ public interface EInvoiceTransport {
    * @param receiver the buyer's, when the network addresses documents
    * @param ubl the document as issued, the UBL text
    * @param irpJson India's INV-01, when the business is Indian and the portal would take it
+   * @param sellerVatId the business's VAT number — its GSTIN in India, which the portal signs in by
    * @param providerAccount the business at the provider, as the settings name it
+   * @param providerSecret the business's own credential at the provider, opened; null when none
    */
   record Outbound(
       UUID tenantId,
@@ -50,7 +60,9 @@ public interface EInvoiceTransport {
       String receiver,
       String ubl,
       String irpJson,
-      String providerAccount) {}
+      String sellerVatId,
+      String providerAccount,
+      String providerSecret) {}
 
   /**
    * What the network said.

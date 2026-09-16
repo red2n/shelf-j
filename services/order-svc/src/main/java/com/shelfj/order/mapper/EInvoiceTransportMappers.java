@@ -17,12 +17,14 @@ public final class EInvoiceTransportMappers {
         s.network(),
         s.provider(),
         s.providerAccount(),
+        s.hasSecret(),
         str(s.updatedAt()),
         v.senderAddress(),
         v.suggested(),
         v.networks(),
         v.providers(),
-        v.available());
+        v.available(),
+        v.needingSecret());
   }
 
   public static TransmissionResponse toDto(Transmission t) {
