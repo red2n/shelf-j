@@ -58,7 +58,7 @@ export default function ({ admin, india, shopper, kid }) {
   const before = pub('?language=hi');
   expect(before, '[+] the notice is read before signing up, without a token', 200);
   const b = data(before);
-  truthy('[+] ...none published yet: English and the Eighth Schedule\'s twenty-two offered, four purposes named', b.notice === null && b.languages.length === 23 && b.purposes.length === 4 && b.requested === 'hi', b);
+  truthy('[+] ...none published yet: English and the Eighth Schedule\'s twenty-two offered, four purposes named', b.notice == null && b.languages.length === 23 && b.purposes.length === 4 && b.requested === 'hi', b);
   truthy('[+] ...and the Act\'s date is told: it binds this business from 13 May 2027', b.dpdp === false && b.dpdpFrom === '2027-05-13', [b.dpdp, b.dpdpFrom]);
   expect(pub('?language=fr'), '[-] a language not offered is refused', 400, 'PRIVACY_LANGUAGE_UNKNOWN');
 
@@ -131,6 +131,8 @@ export default function ({ admin, india, shopper, kid }) {
   const after = data(me(kid.token, ''));
   truthy('[+] ...and marketing fell with it while loyalty stands', after.consents.find((c) => c.purpose === 'MARKETING').granted === false && after.consents.find((c) => c.purpose === 'LOYALTY').granted === true && after.canTrack === false, after);
   expect(call('DELETE', `${C}/customers/${kidId}/privacy/guardian`, { token: owner }), '[-] withdrawn twice is not found', 404, 'PRIVACY_GUARDIAN_CONSENT_NOT_FOUND');
+  // The adult's own date of birth is what makes them an adult; a person who gave none is not refused a parent.
+  expect(call('PUT', `${C}/customers/me`, { token: shopper.token, storefront: sf, body: { firstName: 'Asha', lastName: 'R', dob: '1990-06-01' } }), '[+] the adult shopper gives a date of birth', 200);
   expect(call('POST', `${C}/customers/${shopperId}/privacy/guardian`, { token: owner, body: { guardianName: 'Someone', verification: 'DETAILS_HELD' } }), '[-] an adult\'s consent is theirs alone', 409, 'PRIVACY_NOT_A_CHILD');
 
   // ── requests ─────────────────────────────────────────────────────────────────────────────────────
@@ -187,7 +189,7 @@ export default function ({ admin, india, shopper, kid }) {
   expect(staff(cashier, '/breach-intimations', 'POST', { subject: 's', body: 'b' }), '[-] a cashier does not send one', 403);
   truthy('[abuse] another business sees no notice of it', !(data(call('GET', NOTICES, { token: rival })) || []).some((n) => n.incidentId === incident.id), 'rival notices');
   expect(call('GET', `${C}/customers/${shopperId}/privacy`, { token: shopper.token, storefront: sf }), '[abuse] a shopper cannot read a record by id: that is the staff route', 403);
-  truthy('[abuse] another business has no notice published', data(call('GET', `${PRIVACY}/notice`, { storefront: india.rival.tenantId })).notice === null, 'rival notice');
+  truthy('[abuse] another business has no notice published', data(call('GET', `${PRIVACY}/notice`, { storefront: india.rival.tenantId })).notice == null, 'rival notice');
   expect(http.get(`${BASE}${MINE}`, { headers: { 'X-Storefront-Tenant': sf } }), '[abuse] my consents need a signed-in shopper', 401);
 
   completed.add(1);

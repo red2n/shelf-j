@@ -195,7 +195,13 @@ public final class Dtos {
       String deliveryRecipientName,
       String deliveryRecipientPhone,
       String contactPhone,
-      @Schema(description = "CASH, CARD, UPI, or WALLET.") String paymentMethod) {}
+      @Schema(description = "CASH, CARD, UPI, or WALLET.") String paymentMethod,
+      @Schema(
+              description =
+                  "The return-scheme deposits on the sale's drinks containers, added to total"
+                      + " (09.16). Absent on shapes that do not carry them.")
+          BigDecimal depositAmount,
+      List<OrderDepositResponse> deposits) {}
 
   @Schema(name = "OrderStatusHistoryResponse", description = "Append-only order status transition.")
   public record OrderStatusHistoryResponse(
@@ -869,4 +875,84 @@ public final class Dtos {
                       + " cancel came from, a return's refund method, the supervisor who"
                       + " authorised a no-sale.")
           String detail) {}
+
+  // ── Deposit return (09.16) ────────────────────────────
+
+  @Schema(
+      name = "OrderDepositResponse",
+      description = "The deposit a return scheme put on one line's drinks containers.")
+  public record OrderDepositResponse(
+      String variantId,
+      @Schema(description = "PET, ALUMINIUM, STEEL or GLASS.") String material,
+      int volumeMl,
+      BigDecimal qty,
+      BigDecimal depositEach,
+      @Schema(description = "qty × depositEach, as charged.") BigDecimal amount,
+      @Schema(description = "OUTSIDE_SCOPE (VATA 1994 s.55B) or STANDARD (taxed as the drink).")
+          String vatTreatment,
+      BigDecimal vatRate,
+      @Schema(description = "The VAT inside amount; 0 when outside the scope of VAT.")
+          BigDecimal vatAmount,
+      @Schema(description = "The scheme's country.") String schemeScope,
+      String citation) {}
+
+  @Schema(name = "ContainerRefundLineRequest")
+  public record ContainerRefundLineRequest(
+      @Schema(description = "PET, ALUMINIUM, STEEL or GLASS.") @NotBlank String material,
+      @NotNull @Positive Integer volumeMl,
+      @Schema(description = "How many containers of this kind came back.") @NotNull @Positive
+          Integer count) {}
+
+  @Schema(
+      name = "ContainerRefundRequest",
+      description = "Containers brought back to the till, for the deposit paid back on them.")
+  public record ContainerRefundRequest(
+      @NotBlank String storeId,
+      @Schema(description = "The till session the cash leaves.") @NotBlank String tillSessionId,
+      @NotNull @Valid List<ContainerRefundLineRequest> lines) {}
+
+  @Schema(name = "ContainerRefundLineResponse")
+  public record ContainerRefundLineResponse(
+      String material, int volumeMl, int count, BigDecimal depositEach, BigDecimal amount) {}
+
+  @Schema(name = "ContainerRefundResponse")
+  public record ContainerRefundResponse(
+      String id,
+      String storeId,
+      String tillSessionId,
+      String currency,
+      int containers,
+      BigDecimal amount,
+      String schemeScope,
+      String refundedBy,
+      String createdAt,
+      List<ContainerRefundLineResponse> lines) {}
+
+  @Schema(name = "DepositReportRowResponse")
+  public record DepositReportRowResponse(
+      String material,
+      long chargedContainers,
+      BigDecimal chargedAmount,
+      BigDecimal chargedVat,
+      long refundedContainers,
+      BigDecimal refundedAmount) {}
+
+  @Schema(
+      name = "DepositReportResponse",
+      description =
+          "Deposits charged on sales that stand and paid back at the till over a period; the"
+              + " difference is what the scheme holds unredeemed (09.16).")
+  public record DepositReportResponse(
+      String from,
+      String to,
+      String storeId,
+      String currency,
+      long chargedContainers,
+      BigDecimal chargedAmount,
+      @Schema(description = "The VAT inside the deposits charged, where the scheme taxes them.")
+          BigDecimal chargedVat,
+      long refundedContainers,
+      BigDecimal refundedAmount,
+      BigDecimal unredeemedAmount,
+      List<DepositReportRowResponse> byMaterial) {}
 }

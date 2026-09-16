@@ -511,10 +511,16 @@ public class AdminResource {
             .map(s -> com.shelfj.web.Parsing.uuid(s, "ids"))
             .toList();
     java.util.Map<UUID, String> hsn = service.hsnCodes(tenantId, idList);
+    var containers = service.depositContainers(tenantId, idList);
     return ApiResponse.ok(
         service.resolveVariants(tenantId, idList).stream()
             .map(
-                vp -> Mappers.toVariantScan(vp.variant(), vp.product(), hsn.get(vp.variant().id())))
+                vp ->
+                    Mappers.toVariantScan(
+                        vp.variant(),
+                        vp.product(),
+                        hsn.get(vp.variant().id()),
+                        containers.get(vp.variant().id())))
             .toList());
   }
 

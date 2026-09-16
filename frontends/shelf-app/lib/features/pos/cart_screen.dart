@@ -1313,7 +1313,8 @@ class _TotalsBar extends ConsumerWidget {
         .watch(posDiscountProvider)
         .clamp(0, subtotal)
         .toDouble();
-    final net = subtotal - discount;
+    final deposits = ref.watch(posCartProvider.notifier).deposits;
+    final net = subtotal - discount + deposits;
     final tt = Theme.of(context).textTheme;
     final qty = items.fold<int>(0, (s, l) => s + l.itemCount);
 
@@ -1375,6 +1376,20 @@ class _TotalsBar extends ConsumerWidget {
               ),
             ],
           ),
+          if (deposits > 0) ...[
+            const SizedBox(height: 2),
+            Row(
+              key: const Key('pos-deposit-row'),
+              children: [
+                Text('Container deposit (refundable)', style: tt.bodyMedium),
+                const Spacer(),
+                Text(
+                  '$currency ${deposits.toStringAsFixed(2)}',
+                  style: tt.bodyMedium,
+                ),
+              ],
+            ),
+          ],
           const SizedBox(height: 2),
           Row(
             children: [

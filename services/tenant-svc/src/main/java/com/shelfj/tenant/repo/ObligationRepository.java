@@ -2,6 +2,7 @@ package com.shelfj.tenant.repo;
 
 import com.shelfj.service.BaseJdbcRepository;
 import com.shelfj.tenant.domain.Domain.CashLimit;
+import com.shelfj.tenant.domain.Domain.DepositScheme;
 import com.shelfj.tenant.domain.Domain.LegalObligation;
 import jakarta.enterprise.context.ApplicationScoped;
 import java.time.LocalDate;
@@ -19,6 +20,42 @@ public class ObligationRepository extends BaseJdbcRepository {
    * window narrowed to the membership. A window that closes before it opens is returned as such,
    * for the caller to drop.
    */
+  /** The deposit return schemes that reach a country, its own and its regimes' (09.16). */
+  public List<DepositScheme> depositSchemesFor(String country) {
+    return query(
+        "SELECT d.scope_kind, d.scope, d.currency, d.deposit_each, d.materials, d.min_volume_ml,"
+            + " d.max_volume_ml, d.vat_treatment, d.citation, d.summary,"
+            + " GREATEST(d.effective_from, COALESCE(m.member_from, d.effective_from)) AS eff_from,"
+            + " CASE WHEN m.member_to IS NULL THEN d.effective_to"
+            + "      WHEN d.effective_to IS NULL THEN m.member_to"
+            + "      ELSE LEAST(d.effective_to, m.member_to) END AS eff_to"
+            + " FROM deposit_schemes d"
+            + " LEFT JOIN jurisdiction_members m"
+            + "   ON d.scope_kind = 'REGIME' AND m.regime_code = d.scope AND m.country = ?"
+            + " WHERE (d.scope_kind = 'COUNTRY' AND d.scope = ?)"
+            + "    OR (d.scope_kind = 'REGIME' AND m.country IS NOT NULL)"
+            + " ORDER BY eff_from",
+        ps -> {
+          ps.setString(1, country);
+          ps.setString(2, country);
+        },
+        rs ->
+            new DepositScheme(
+                rs.getString("scope_kind"),
+                rs.getString("scope"),
+                rs.getString("currency"),
+                rs.getBigDecimal("deposit_each"),
+                List.of(rs.getString("materials").split(",")),
+                rs.getInt("min_volume_ml"),
+                rs.getInt("max_volume_ml"),
+                rs.getString("vat_treatment"),
+                rs.getObject("eff_from", java.time.LocalDate.class),
+                rs.getObject("eff_to", java.time.LocalDate.class),
+                rs.getString("citation"),
+                rs.getString("summary")),
+        "deposit schemes for a country");
+  }
+
   /** The cash limits that reach a country, its own and its regimes' (09.17). */
   public List<CashLimit> cashLimitsFor(String country) {
     return query(

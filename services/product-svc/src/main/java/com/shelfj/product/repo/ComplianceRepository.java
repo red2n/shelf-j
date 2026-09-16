@@ -182,7 +182,7 @@ public class ComplianceRepository extends BaseOutboxRepository {
         query(
             "SELECT id, country_of_origin, origin_detail, restriction_category, allergen_status,"
                 + " ingredients, hsn_code, sold_by, net_content, net_content_uom, tare_weight,"
-                + " catch_weight"
+                + " catch_weight, deposit_material, deposit_volume_ml"
                 + " FROM product_variants WHERE tenant_id = ? AND id = ?",
             ps -> {
               ps.setObject(1, tenantId);
@@ -208,7 +208,8 @@ public class ComplianceRepository extends BaseOutboxRepository {
                   "UPDATE product_variants SET country_of_origin = ?, origin_detail = ?,"
                       + " restriction_category = ?, ingredients = ?, hsn_code = ?, sold_by = ?,"
                       + " net_content = ?, net_content_uom = ?, tare_weight = ?,"
-                      + " catch_weight = ?, measure_version = measure_version + 1,"
+                      + " catch_weight = ?, deposit_material = ?, deposit_volume_ml = ?,"
+                      + " measure_version = measure_version + 1,"
                       + " updated_at = now()"
                       + " WHERE tenant_id = ? AND id = ? RETURNING measure_version")) {
             st.setString(1, v.countryOfOrigin());
@@ -221,8 +222,10 @@ public class ComplianceRepository extends BaseOutboxRepository {
             st.setString(8, v.netContentUom());
             st.setBigDecimal(9, v.tareWeight());
             st.setBoolean(10, v.catchWeight());
-            st.setObject(11, tenantId);
-            st.setObject(12, v.variantId());
+            st.setString(11, v.depositMaterial());
+            st.setObject(12, v.depositVolumeMl());
+            st.setObject(13, tenantId);
+            st.setObject(14, v.variantId());
             try (ResultSet rs = st.executeQuery()) {
               if (!rs.next()) return false;
               insertOutbox(c, eventFor.apply(rs.getLong(1)));
@@ -435,7 +438,39 @@ public class ComplianceRepository extends BaseOutboxRepository {
         rs.getBigDecimal(9),
         rs.getString(10),
         rs.getBigDecimal(11),
-        rs.getBoolean(12));
+        rs.getBoolean(12),
+        rs.getString(13),
+        rs.getObject(14, Integer.class));
+  }
+
+  /**
+   * The drinks containers recorded for a set of variants (09.16): the material and volume a deposit
+   * scheme reads to price the deposit. Variants sold in no container are absent from the map.
+   *
+   * @param tenantId owning tenant; the first condition of the query
+   * @param variantIds the variants to look up
+   * @return container by variant id
+   */
+  public java.util.Map<UUID, com.shelfj.product.domain.Domain.DepositContainer> depositContainers(
+      UUID tenantId, java.util.Collection<UUID> variantIds) {
+    if (variantIds.isEmpty()) return java.util.Map.of();
+    java.util.Map<UUID, com.shelfj.product.domain.Domain.DepositContainer> out =
+        new java.util.HashMap<>();
+    for (var row :
+        query(
+            "SELECT id, deposit_material, deposit_volume_ml FROM product_variants"
+                + " WHERE tenant_id = ? AND id = ANY (?) AND deposit_material IS NOT NULL",
+            ps -> {
+              ps.setObject(1, tenantId);
+              ps.setArray(2, ps.getConnection().createArrayOf("uuid", variantIds.toArray()));
+            },
+            rs ->
+                new com.shelfj.product.domain.Domain.DepositContainer(
+                    (UUID) rs.getObject(1), rs.getString(2), rs.getInt(3)),
+            "deposit containers")) {
+      out.put(row.variantId(), row);
+    }
+    return out;
   }
 
   /**

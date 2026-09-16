@@ -134,4 +134,70 @@ class OrderEventHandlerTest {
 
     assertEquals(0, service.calls);
   }
+
+  // ── container deposit refunds (09.16) ──────────────────────────────
+
+  /** Captures what the handler asks the drawer to record. */
+  static final class CapturingCashMovements extends com.shelfj.payment.repo.CashMovementRepository {
+    final java.util.List<String> recorded = new java.util.ArrayList<>();
+
+    @Override
+    public com.shelfj.payment.dto.Dtos.CashMovementResponse insertMovement(
+        UUID tenantId,
+        UUID storeId,
+        UUID tillSessionId,
+        String direction,
+        BigDecimal amount,
+        String reason,
+        UUID authorisedBy,
+        UUID recordedBy,
+        String idempotencyKey) {
+      recorded.add(direction + " " + amount + " " + tillSessionId + " " + idempotencyKey);
+      return null;
+    }
+  }
+
+  private static String containerRefund(String amount) {
+    return "{\"eventType\":\"ContainerDepositRefunded\",\"eventId\":\""
+        + EVENT
+        + "\",\"tenantId\":\""
+        + TENANT
+        + "\",\"storeId\":\""
+        + Ids.newId()
+        + "\",\"tillSessionId\":\"01a090ae-611e-7035-a4da-400bf673cfe8\",\"refundedBy\":\""
+        + Ids.newId()
+        + "\",\"currency\":\"EUR\",\"containers\":3,\"amount\":"
+        + amount
+        + "}";
+  }
+
+  @Test
+  void containerRefundLeavesTheDrawerAsAPayOutKeyedOnTheEvent() {
+    var drawer = new CapturingCashMovements();
+    handler.cashMovements = drawer;
+    handler.handle(containerRefund("0.75"));
+    assertEquals(1, drawer.recorded.size());
+    assertEquals(
+        "PAY_OUT 0.75 01a090ae-611e-7035-a4da-400bf673cfe8 deposit-refund:" + EVENT,
+        drawer.recorded.get(0));
+    assertNull(service.eventId, "a deposit refund is no order refund");
+  }
+
+  @Test
+  void aZeroOrNegativeContainerRefundRecordsNothing() {
+    var drawer = new CapturingCashMovements();
+    handler.cashMovements = drawer;
+    handler.handle(containerRefund("0"));
+    handler.handle(containerRefund("-1.00"));
+    assertEquals(0, drawer.recorded.size());
+  }
+
+  @Test
+  void aMalformedContainerRefundIsSkippedNotThrown() {
+    var drawer = new CapturingCashMovements();
+    handler.cashMovements = drawer;
+    handler.handle("{\"eventType\":\"ContainerDepositRefunded\",\"amount\":\"lots\"}");
+    handler.handle("{\"eventType\":\"ContainerDepositRefunded\"}");
+    assertEquals(0, drawer.recorded.size());
+  }
 }

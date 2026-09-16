@@ -62,6 +62,8 @@ class OrderServicePricingTest {
     svc.tenantStatusRepo = tenantStatusRepo;
     svc.storeStatusRepo = storeStatusRepo;
     svc.profiles = profiles;
+    // 09.16: no deposit scheme reaches these sales; a mock answers empty.
+    svc.jurisdictions = org.mockito.Mockito.mock(com.shelfj.service.Jurisdictions.class);
     // The tenant's declared currency, as tenant-svc would answer (SJ-D53).
     org.mockito.Mockito.lenient().when(profiles.requireCurrency(TENANT)).thenReturn("USD");
     when(ctx.requireTenantId()).thenReturn(TENANT);
@@ -121,7 +123,7 @@ class OrderServicePricingTest {
             quoted(
                 new PricingClient.QuotedLine(
                     new BigDecimal("7.77"), new BigDecimal("7.77"), BigDecimal.ZERO)));
-    when(repo.createOrder(any(), anyList(), any(), any(), anyList()))
+    when(repo.createOrder(any(), anyList(), any(), any(), anyList(), anyList()))
         .thenAnswer(inv -> inv.getArgument(0));
 
     // client claims the item costs 0.01 — the server-resolved 7.77 must win
@@ -130,7 +132,8 @@ class OrderServicePricingTest {
     assertEquals(new BigDecimal("7.77"), order.subtotal());
     @SuppressWarnings("unchecked")
     ArgumentCaptor<List<OrderItem>> items = ArgumentCaptor.forClass(List.class);
-    org.mockito.Mockito.verify(repo).createOrder(any(), items.capture(), any(), any(), anyList());
+    org.mockito.Mockito.verify(repo)
+        .createOrder(any(), items.capture(), any(), any(), anyList(), anyList());
     assertEquals(new BigDecimal("7.77"), items.getValue().get(0).unitPrice());
   }
 
@@ -151,7 +154,7 @@ class OrderServicePricingTest {
   @Test
   void enforcementOffTrustsClientPrice() {
     when(config.pricingEnforce()).thenReturn(false);
-    when(repo.createOrder(any(), anyList(), any(), any(), anyList()))
+    when(repo.createOrder(any(), anyList(), any(), any(), anyList(), anyList()))
         .thenAnswer(inv -> inv.getArgument(0));
 
     Order order = svc.placeOrder(request(new BigDecimal("5.00"), null), ctx, null);
@@ -237,7 +240,7 @@ class OrderServicePricingTest {
             quoted(
                 new PricingClient.QuotedLine(
                     new BigDecimal("10.00"), new BigDecimal("10.00"), new BigDecimal("2.00"))));
-    when(repo.createOrder(any(), anyList(), any(), any(), anyList()))
+    when(repo.createOrder(any(), anyList(), any(), any(), anyList(), anyList()))
         .thenAnswer(inv -> inv.getArgument(0));
 
     Order order =
@@ -289,7 +292,7 @@ class OrderServicePricingTest {
             quoted(
                 new PricingClient.QuotedLine(
                     new BigDecimal("10.00"), new BigDecimal("10.00"), BigDecimal.ZERO)));
-    when(repo.createOrder(any(), anyList(), any(), any(), anyList()))
+    when(repo.createOrder(any(), anyList(), any(), any(), anyList(), anyList()))
         .thenAnswer(inv -> inv.getArgument(0));
 
     // 3.00 off 10.00 is 30%: over CASHIER's ceiling, within MANAGER's.
@@ -298,7 +301,7 @@ class OrderServicePricingTest {
     ArgumentCaptor<Domain.OrderDiscount> audit =
         ArgumentCaptor.forClass(Domain.OrderDiscount.class);
     org.mockito.Mockito.verify(repo)
-        .createOrder(any(), anyList(), any(), audit.capture(), anyList());
+        .createOrder(any(), anyList(), any(), audit.capture(), anyList(), anyList());
     assertEquals("MANAGER", audit.getValue().grantedRole());
     assertEquals(new BigDecimal("30.000"), audit.getValue().discountPct());
     assertEquals("damaged", audit.getValue().reason());
@@ -371,7 +374,7 @@ class OrderServicePricingTest {
             quoted(
                 new PricingClient.QuotedLine(
                     new BigDecimal("2.00"), new BigDecimal("4.00"), BigDecimal.ZERO)));
-    when(repo.createOrder(any(), anyList(), any(), any(), anyList()))
+    when(repo.createOrder(any(), anyList(), any(), any(), anyList(), anyList()))
         .thenAnswer(inv -> inv.getArgument(0));
 
     Order order = svc.placeOrder(stickered(), ctx, null);
@@ -384,7 +387,8 @@ class OrderServicePricingTest {
     assertEquals(MARKDOWN, asked.getValue().get(0).markdownId());
     @SuppressWarnings("unchecked")
     ArgumentCaptor<List<OrderItem>> items = ArgumentCaptor.forClass(List.class);
-    org.mockito.Mockito.verify(repo).createOrder(any(), items.capture(), any(), any(), anyList());
+    org.mockito.Mockito.verify(repo)
+        .createOrder(any(), items.capture(), any(), any(), anyList(), anyList());
     assertEquals(MARKDOWN, items.getValue().get(0).markdownId());
     org.mockito.Mockito.verify(pricing)
         .recordMarkdownRedemptionsQuietly(eq(TENANT), any(), eq(items.getValue()));
@@ -411,7 +415,7 @@ class OrderServicePricingTest {
             quoted(
                 new PricingClient.QuotedLine(
                     new BigDecimal("7.77"), new BigDecimal("7.77"), BigDecimal.ZERO)));
-    when(repo.createOrder(any(), anyList(), any(), any(), anyList()))
+    when(repo.createOrder(any(), anyList(), any(), any(), anyList(), anyList()))
         .thenAnswer(inv -> inv.getArgument(0));
 
     svc.placeOrder(request(new BigDecimal("0.01"), null), ctx, null);

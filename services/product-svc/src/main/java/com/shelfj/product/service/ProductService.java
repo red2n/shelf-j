@@ -647,6 +647,36 @@ public class ProductService {
    * @param ids the variants
    * @return codes by variant; unclassified variants are absent
    */
+  /**
+   * The drinks container a variant is sold in, as a deposit return scheme reads it (09.16): a
+   * material the schemes name and a volume in millilitres, both or neither.
+   */
+  static String depositContainerOf(String material, Integer volumeMl) {
+    String m = trimUpperToNull(material);
+    if (m == null && volumeMl == null) return null;
+    if (m == null || volumeMl == null) {
+      throw ApiException.badRequest(
+          "PRODUCT_DEPOSIT_CONTAINER_INCOMPLETE",
+          "depositMaterial and depositVolumeMl go together: give both or neither");
+    }
+    if (!Domain.VariantCompliance.DEPOSIT_MATERIALS.contains(m)) {
+      throw ApiException.badRequest(
+          "PRODUCT_DEPOSIT_MATERIAL_UNKNOWN",
+          "depositMaterial must be one of " + Domain.VariantCompliance.DEPOSIT_MATERIALS);
+    }
+    if (volumeMl < 1 || volumeMl > 10_000) {
+      throw ApiException.badRequest(
+          "PRODUCT_DEPOSIT_VOLUME_OUT_OF_RANGE", "depositVolumeMl must be 1 to 10000");
+    }
+    return m;
+  }
+
+  /** The drinks containers of variants, by id, for the deposit a scheme puts on them (09.16). */
+  public java.util.Map<UUID, Domain.DepositContainer> depositContainers(
+      UUID tenantId, java.util.Collection<UUID> variantIds) {
+    return complianceRepo.depositContainers(tenantId, variantIds);
+  }
+
   public java.util.Map<UUID, String> hsnCodes(UUID tenantId, java.util.List<UUID> ids) {
     return complianceRepo.hsnCodes(tenantId, ids);
   }
@@ -973,6 +1003,7 @@ public class ProductService {
     }
 
     var current = complianceRepo.findCompliance(tenantId, variantId);
+    String depositMaterial = depositContainerOf(req.depositMaterial(), req.depositVolumeMl());
     var updated =
         new Domain.VariantCompliance(
             variantId,
@@ -986,7 +1017,9 @@ public class ProductService {
             req.netContent(),
             uom,
             req.tareWeight(),
-            catchWeight);
+            catchWeight,
+            depositMaterial,
+            req.depositVolumeMl());
     // 03.13: the unit price is computed from this measure. Food is always sold in a quantity, so
     // where unit pricing is law a food item must say how much its price buys — a single loose item
     // states 1 EA — rather than leave the shopper a price with no unit price and no reason why.

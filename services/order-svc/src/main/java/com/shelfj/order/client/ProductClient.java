@@ -58,7 +58,18 @@ public class ProductClient {
   }
 
   /** What a line prints: the product's name, its SKU and its unit. */
-  public record VariantName(String productName, String sku, String unit) {}
+  public record VariantName(
+      String productName,
+      String sku,
+      String unit,
+      /** PET, ALUMINIUM, STEEL or GLASS when sold in a drinks container (09.16); else null. */
+      String depositMaterial,
+      /** The container's volume in millilitres, with {@code depositMaterial}. */
+      Integer depositVolumeMl) {
+    public VariantName(String productName, String sku, String unit) {
+      this(productName, sku, unit, null, null);
+    }
+  }
 
   /**
    * The printable names of a set of variants.
@@ -97,14 +108,19 @@ public class ProductClient {
     if (ids.isEmpty()) {
       return Optional.of(Map.of());
     }
-    ServiceInstance instance = registry.resolve(PRODUCT_SERVICE).orElse(null);
-    if (instance == null) {
+    // A configured address first, for a deployment without discovery and for a test that stands a
+    // stub where product-svc would be (09.16); otherwise the registry.
+    String base =
+        com.shelfj.service.ServiceReader.configuredUrl(PRODUCT_SERVICE)
+            .orElseGet(
+                () -> registry.resolve(PRODUCT_SERVICE).map(ServiceInstance::baseUri).orElse(null));
+    if (base == null) {
       return Optional.empty();
     }
     String joined = ids.stream().map(UUID::toString).collect(Collectors.joining(","));
     var req =
         webClient
-            .get(instance.baseUri() + "/admin/products/variants/resolve")
+            .get(base + "/admin/products/variants/resolve")
             .queryParam("ids", joined)
             .header(HeaderNames.create(HttpHeaders.TENANT_ID), tenantId.toString())
             .header(HeaderNames.create(HttpHeaders.ROLES), roles);
@@ -132,7 +148,11 @@ public class ProductClient {
                   new VariantName(
                       v.getString("productName", null),
                       v.getString("sku", null),
-                      v.getString("unit", null)));
+                      v.getString("unit", null),
+                      v.getString("depositMaterial", null),
+                      v.containsKey("depositVolumeMl") && !v.isNull("depositVolumeMl")
+                          ? v.getInt("depositVolumeMl")
+                          : null));
             }
           }
         }

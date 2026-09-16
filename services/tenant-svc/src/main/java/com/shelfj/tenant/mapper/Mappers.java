@@ -292,7 +292,26 @@ public final class Mappers {
                         l.citation(),
                         l.summary(),
                         l.status(sheet.on())))
-            .toList());
+            .toList(),
+        sheet.depositSchemes().stream().map(d -> toDepositScheme(d, sheet.on())).toList());
+  }
+
+  /** A deposit scheme in wire form, its status on a day (09.16). */
+  public static com.shelfj.tenant.dto.Dtos.DepositSchemeResponse toDepositScheme(
+      com.shelfj.tenant.domain.Domain.DepositScheme d, java.time.LocalDate on) {
+    return new com.shelfj.tenant.dto.Dtos.DepositSchemeResponse(
+        d.scope(),
+        d.currency(),
+        d.depositEach(),
+        d.materials(),
+        d.minVolumeMl(),
+        d.maxVolumeMl(),
+        d.vatTreatment(),
+        d.effectiveFrom().toString(),
+        d.effectiveTo() == null ? null : d.effectiveTo().toString(),
+        d.citation(),
+        d.summary(),
+        d.status(on));
   }
 
   // ── Security incidents (21.15) ────────────────────────────────────────────

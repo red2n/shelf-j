@@ -276,11 +276,82 @@ class StorefrontConfig {
   /// Drives which payment options checkout offers.
   final List<String> enabledPaymentMethods;
 
+  /// The deposit return scheme in force where this store trades (09.16), or
+  /// null. The deposit is put on the order by the server as its own line.
+  final DepositScheme? depositScheme;
+
   const StorefrontConfig({
     required this.showPrices,
     this.storeName = '-',
     this.enabledPaymentMethods = const ['CASH', 'CARD'],
+    this.depositScheme,
   });
+}
+
+/// A deposit return scheme (09.16): the deposit on each drinks container of
+/// the named materials within the volume band, paid back on the empty.
+class DepositScheme {
+  final String scope;
+  final String currency;
+  final double depositEach;
+  final List<String> materials;
+  final int minVolumeMl;
+  final int maxVolumeMl;
+  final String vatTreatment;
+  final String citation;
+  final String summary;
+  const DepositScheme({
+    required this.scope,
+    required this.currency,
+    required this.depositEach,
+    required this.materials,
+    required this.minVolumeMl,
+    required this.maxVolumeMl,
+    required this.vatTreatment,
+    required this.citation,
+    required this.summary,
+  });
+
+  /// Whether the scheme takes this container back.
+  bool covers(String? material, int? volumeMl) =>
+      material != null &&
+      volumeMl != null &&
+      materials.contains(material) &&
+      volumeMl >= minVolumeMl &&
+      volumeMl <= maxVolumeMl;
+
+  /// The materials and band in words: "PET, aluminium or steel, 150 ml to 3 l".
+  String get inWords {
+    final names = materials.map(_materialName).toList();
+    final list = names.length <= 1
+        ? names.join()
+        : '${names.sublist(0, names.length - 1).join(', ')} or ${names.last}';
+    return '$list, $minVolumeMl ml to ${_litres(maxVolumeMl)}';
+  }
+
+  static String _litres(int ml) =>
+      ml % 1000 == 0 ? '${ml ~/ 1000} l' : '$ml ml';
+  static String _materialName(String code) => switch (code) {
+        'PET' => 'PET',
+        'ALUMINIUM' => 'aluminium',
+        'STEEL' => 'steel',
+        'GLASS' => 'glass',
+        _ => code.toLowerCase(),
+      };
+
+  factory DepositScheme.fromJson(Map<String, dynamic> j) => DepositScheme(
+        scope: j['scope'] as String? ?? '',
+        currency: j['currency'] as String? ?? '',
+        depositEach: (j['depositEach'] as num?)?.toDouble() ?? 0,
+        materials: [
+          for (final m in (j['materials'] as List?) ?? const []) m.toString()
+        ],
+        minVolumeMl: (j['minVolumeMl'] as num?)?.toInt() ?? 0,
+        maxVolumeMl: (j['maxVolumeMl'] as num?)?.toInt() ?? 0,
+        vatTreatment: j['vatTreatment'] as String? ?? '',
+        citation: j['citation'] as String? ?? '',
+        summary: j['summary'] as String? ?? '',
+      );
 }
 
 /// A tenant store, for the storefront's store switcher.
@@ -338,9 +409,13 @@ final storefrontConfigProvider =
     final resp = await dio.get('/${ApiConstants.tenant}/storefront/config',
         queryParameters: {'store': store});
     final d = resp.data['data'] as Map<String, dynamic>;
+    final scheme = d['depositScheme'];
     return StorefrontConfig(
       showPrices: d['showPrices'] as bool? ?? true,
       storeName: d['storeName'] as String? ?? '-',
+      depositScheme: scheme is Map<String, dynamic>
+          ? DepositScheme.fromJson(scheme)
+          : null,
       enabledPaymentMethods: (d['enabledPaymentMethods'] as List?)
               ?.map((e) => e.toString().toUpperCase())
               .toList() ??

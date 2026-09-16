@@ -7,10 +7,11 @@ import java.util.List;
 import org.eclipse.microprofile.config.inject.ConfigProperty;
 
 /**
- * Kafka infrastructure for the automatic-refund path. Polls {@code shelfj.order.order-returned} and
- * {@code shelfj.order.order-cancelled} and dispatches each record to {@link OrderEventHandler}.
- * Consumer lifecycle is inherited from {@link BaseKafkaConsumer}; all business logic lives in the
- * handler (SRP).
+ * Kafka infrastructure for the automatic-refund path. Polls {@code shelfj.order.order-returned},
+ * {@code shelfj.order.order-cancelled} and {@code shelfj.order.container-deposit-refunded} (09.16:
+ * the deposit paid back at the till leaves the drawer) and dispatches each record to {@link
+ * OrderEventHandler}. Consumer lifecycle is inherited from {@link BaseKafkaConsumer}; all business
+ * logic lives in the handler (SRP).
  */
 @ApplicationScoped
 class OrderEventConsumer extends BaseKafkaConsumer {
@@ -29,9 +30,15 @@ class OrderEventConsumer extends BaseKafkaConsumer {
       defaultValue = "shelfj.order.order-cancelled")
   String cancelledTopic;
 
+  @Inject
+  @ConfigProperty(
+      name = "shelfj.kafka.topics.container-deposit-refunded",
+      defaultValue = "shelfj.order.container-deposit-refunded")
+  String containerRefundTopic;
+
   @Override
   protected List<String> topics() {
-    return List.of(returnedTopic, cancelledTopic);
+    return List.of(returnedTopic, cancelledTopic, containerRefundTopic);
   }
 
   @Override

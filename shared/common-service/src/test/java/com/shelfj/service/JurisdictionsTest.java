@@ -52,6 +52,47 @@ class JurisdictionsTest {
           + "{\"scope\":\"FR\",\"currency\":\"EUR\",\"fromAmount\":1000.00,\"effectiveFrom\":\"2015-09-01\",\"citation\":\"CMF L112-6\"},"
           + "{\"scope\":\"FR\",\"currency\":\"USD\",\"fromAmount\":1,\"effectiveFrom\":\"2000-01-01\",\"effectiveTo\":\"2001-01-01\",\"citation\":\"old\"}]}}";
 
+  private static final String SCHEMES =
+      "{\"data\":{\"country\":\"DE\",\"obligations\":[],\"cashLimits\":[],\"depositSchemes\":["
+          + "{\"scope\":\"DE\",\"currency\":\"EUR\",\"depositEach\":0.25,\"materials\":[\"PET\",\"ALUMINIUM\",\"STEEL\",\"GLASS\"],"
+          + "\"minVolumeMl\":100,\"maxVolumeMl\":3000,\"vatTreatment\":\"STANDARD\",\"effectiveFrom\":\"2003-01-01\",\"citation\":\"VerpackG §31\"},"
+          + "{\"scope\":\"GB\",\"currency\":\"GBP\",\"depositEach\":0.20,\"materials\":[\"PET\",\"ALUMINIUM\",\"STEEL\"],"
+          + "\"minVolumeMl\":150,\"maxVolumeMl\":3000,\"vatTreatment\":\"OUTSIDE_SCOPE\",\"effectiveFrom\":\"2027-10-01\",\"citation\":\"SI 2025/67\"}]}}";
+
+  @Test
+  @DisplayName(
+      "The deposit scheme in force where the store trades, in the currency, covers a container by material and volume")
+  void theDepositSchemeInForceCoversAContainer() {
+    var j = Jurisdictions.forTest(profiles("DE"), (t, c) -> Optional.of(SCHEMES), new Hands());
+    var scheme = j.depositScheme(TENANT, null, "eur", LocalDate.of(2026, 9, 16));
+    assertTrue(scheme.isPresent());
+    assertEquals("DE", scheme.get().scope());
+    assertEquals(0, scheme.get().depositEach().compareTo(new java.math.BigDecimal("0.25")));
+    assertTrue(scheme.get().taxed(), "Germany taxes the Pfand as the drink");
+    assertTrue(scheme.get().covers("pet", 500));
+    assertTrue(scheme.get().covers("GLASS", 3000));
+    assertTrue(!scheme.get().covers("GLASS", 5000), "a five-litre jar is outside the band");
+    assertTrue(!scheme.get().covers("PET", 50), "a miniature is below it");
+    assertTrue(!scheme.get().covers("CARDBOARD", 500), "a carton is not a material it names");
+    assertTrue(!scheme.get().covers(null, 500));
+    assertTrue(
+        j.depositScheme(TENANT, null, "GBP", LocalDate.of(2026, 9, 16)).isEmpty(),
+        "the sheet's German scheme is not in pounds");
+    assertEquals(2, j.depositSchemes(TENANT, "DE").size());
+    var uk = j.depositSchemes(TENANT, "DE").get(1);
+    assertTrue(!uk.inForceOn(LocalDate.of(2027, 9, 30)));
+    assertTrue(uk.inForceOn(LocalDate.of(2027, 10, 1)));
+    assertTrue(!uk.taxed(), "the UK deposit is outside the scope of VAT");
+  }
+
+  @Test
+  @DisplayName("A sheet without deposit schemes has none")
+  void aSheetWithoutSchemesHasNone() {
+    var j = Jurisdictions.forTest(profiles("GB"), (t, c) -> Optional.of(RULES), new Hands());
+    assertTrue(j.depositSchemes(TENANT, "GB").isEmpty());
+    assertTrue(j.depositScheme(TENANT, null, "GBP", LocalDate.of(2026, 9, 16)).isEmpty());
+  }
+
   @Test
   @DisplayName("The cash limit is the lowest in force in the currency where the store trades")
   void theLowestCashLimitInForceInTheCurrencyBinds() {

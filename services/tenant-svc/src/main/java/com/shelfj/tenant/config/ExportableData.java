@@ -20,27 +20,39 @@ public class ExportableData extends TenantDataSpec {
 
   @Override
   public Map<String, String> excludedTables() {
-    return Map.of(
-        "incident_reporting_stages",
-        "the platform's reference data: the law as recorded for every business",
-        "breach_duties",
-        "the platform's reference data: the law as recorded for every business",
-        "cash_limits",
-        "the platform's reference data: the law as recorded for every business",
-        "jurisdiction_members",
-        "the platform's reference data: the law as recorded for every business",
-        "jurisdiction_regimes",
-        "the platform's reference data: the law as recorded for every business",
-        "legal_obligations",
-        "the platform's reference data: the law as recorded for every business",
-        "retention_classes",
-        "the platform's reference data: the law as recorded for every business",
-        "retention_floors",
-        "the platform's reference data: the law as recorded for every business",
-        "security_incident_events",
-        "the platform's own incident register; what the business was told is in security_notices",
-        "security_incidents",
-        "the platform's own incident register; what the business was told is in security_notices");
+    return Map.ofEntries(
+        Map.entry(
+            "incident_reporting_stages",
+            "the platform's reference data: the law as recorded for every business"),
+        Map.entry(
+            "breach_duties",
+            "the platform's reference data: the law as recorded for every business"),
+        Map.entry(
+            "cash_limits", "the platform's reference data: the law as recorded for every business"),
+        Map.entry(
+            "deposit_schemes",
+            "the platform's reference data: the law as recorded for every business"),
+        Map.entry(
+            "jurisdiction_members",
+            "the platform's reference data: the law as recorded for every business"),
+        Map.entry(
+            "jurisdiction_regimes",
+            "the platform's reference data: the law as recorded for every business"),
+        Map.entry(
+            "legal_obligations",
+            "the platform's reference data: the law as recorded for every business"),
+        Map.entry(
+            "retention_classes",
+            "the platform's reference data: the law as recorded for every business"),
+        Map.entry(
+            "retention_floors",
+            "the platform's reference data: the law as recorded for every business"),
+        Map.entry(
+            "security_incident_events",
+            "the platform's own incident register; what the business was told is in security_notices"),
+        Map.entry(
+            "security_incidents",
+            "the platform's own incident register; what the business was told is in security_notices"));
   }
 
   @Override

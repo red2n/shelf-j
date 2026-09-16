@@ -6,6 +6,7 @@ import static org.hamcrest.Matchers.containsString;
 import static org.hamcrest.Matchers.is;
 import static org.hamcrest.Matchers.not;
 
+import com.shelfj.ids.Ids;
 import com.shelfj.test.PostgresSupport;
 import io.helidon.microprofile.testing.junit5.HelidonTest;
 import jakarta.inject.Inject;
@@ -111,6 +112,97 @@ class ObligationIT {
     String gb = onboard("GB", "GBP");
     assertThat(
         "Britain sets no cash limit", sheet(gb, null, null), containsString("\"cashLimits\":[]"));
+  }
+
+  /** The one deposit scheme object carrying this scope. */
+  private static String depositScheme(String body, String scope) {
+    int start = body.indexOf("\"depositSchemes\":[");
+    if (start < 0) throw new AssertionError("no depositSchemes in " + body);
+    int at = body.indexOf("\"scope\":\"" + scope + "\"", start);
+    if (at < 0) throw new AssertionError(scope + " has no deposit scheme in " + body);
+    return body.substring(body.lastIndexOf('{', at), body.indexOf('}', at) + 1);
+  }
+
+  /** A store in the tenant's country, for the storefront config that names the scheme there. */
+  private String store(String tenant, String country, String timezone) {
+    Response r =
+        target
+            .path("/admin/stores")
+            .request(MediaType.APPLICATION_JSON)
+            .header("X-Tenant-Id", tenant)
+            .header("X-Roles", "OWNER")
+            .post(
+                jakarta.ws.rs.client.Entity.entity(
+                    "{\"name\":\"Main\",\"code\":\"MAIN-"
+                        + Ids.newId().toString().substring(0, 8)
+                        + "\",\"line1\":\"1 Main St\",\"country\":\""
+                        + country
+                        + "\",\"city\":\"Town\",\"postcode\":\"10117\",\"timezone\":\""
+                        + timezone
+                        + "\"}",
+                    MediaType.APPLICATION_JSON));
+    String body = r.readEntity(String.class);
+    assertThat(body, r.getStatus(), is(201));
+    int at = body.indexOf("\"id\":\"");
+    return body.substring(at + 6, at + 42);
+  }
+
+  private String storefrontConfig(String tenant, String store) {
+    Response r =
+        target
+            .path("/storefront/config")
+            .queryParam("store", store)
+            .request(MediaType.APPLICATION_JSON)
+            .header("X-Tenant-Id", tenant)
+            .get();
+    String body = r.readEntity(String.class);
+    assertThat(body, r.getStatus(), is(200));
+    return body;
+  }
+
+  @Test
+  @DisplayName(
+      "The deposit return schemes that reach a country come with the sheet, and the storefront config names the one in force at the store")
+  void depositSchemesComeWithTheSheet() {
+    String de = onboard("DE", "EUR");
+    String germany = sheet(de, null, null);
+    String pfand = depositScheme(germany, "DE");
+    assertThat(pfand, containsString("\"currency\":\"EUR\""));
+    assertThat(pfand, containsString("\"depositEach\":0.25"));
+    assertThat(pfand, containsString("\"vatTreatment\":\"STANDARD\""));
+    assertThat(pfand, containsString("\"status\":\"IN_FORCE\""));
+    assertThat(pfand, containsString("GLASS"));
+    assertThat(pfand, containsString("\"minVolumeMl\":100"));
+    assertThat(pfand, containsString("Verpackungsgesetz"));
+    String config = storefrontConfig(de, store(de, "DE", "Europe/Berlin"));
+    assertThat(config, containsString("\"depositScheme\":{"));
+    assertThat(config, containsString("\"scope\":\"DE\""));
+
+    String gb = onboard("GB", "GBP");
+    String britain = sheet(gb, null, null);
+    String uk = depositScheme(britain, "GB");
+    assertThat(uk, containsString("\"currency\":\"GBP\""));
+    assertThat(uk, containsString("\"depositEach\":0.20"));
+    assertThat(uk, containsString("\"vatTreatment\":\"OUTSIDE_SCOPE\""));
+    assertThat(uk, containsString("\"effectiveFrom\":\"2027-10-01\""));
+    assertThat(uk, containsString("\"status\":\"UPCOMING\""));
+    assertThat("glass is outside the UK scheme", uk, not(containsString("GLASS")));
+    assertThat(uk, containsString("2025/67"));
+    assertThat(
+        "from the day it starts, in force",
+        depositScheme(sheet(gb, null, "2027-10-01"), "GB"),
+        containsString("\"status\":\"IN_FORCE\""));
+    assertThat(
+        "nothing in force at a British store today",
+        storefrontConfig(gb, store(gb, "GB", "Europe/London")),
+        not(containsString("\"depositScheme\"")));
+
+    String fr = onboard("FR", "EUR");
+    String france = sheet(fr, null, null);
+    assertThat(
+        "France has no scheme in the register",
+        france.substring(france.indexOf("\"depositSchemes\":[")),
+        containsString("\"depositSchemes\":[]"));
   }
 
   private static String cashLimit(String body, String scope) {

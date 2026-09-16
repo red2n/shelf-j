@@ -787,4 +787,58 @@ public final class Domain {
     public static final java.util.List<String> TYPES =
         java.util.List.of(TYPE_DISCOUNT, TYPE_VOID, TYPE_NO_SALE, TYPE_CANCEL, TYPE_RETURN);
   }
+
+  // ── Deposit return (09.16) ────────────────────────────
+
+  /** The deposit a return scheme put on one line's drinks containers at the sale (09.16). */
+  public record OrderDeposit(
+      UUID id,
+      UUID tenantId,
+      UUID orderId,
+      UUID orderItemId,
+      UUID variantId,
+      String material,
+      int volumeMl,
+      BigDecimal qty,
+      BigDecimal depositEach,
+      BigDecimal amount,
+      String currency,
+      /** OUTSIDE_SCOPE (VATA 1994 s.55B) or STANDARD (taxed as the drink, VerpackG §31). */
+      String vatTreatment,
+      BigDecimal vatRate,
+      BigDecimal vatAmount,
+      String schemeScope,
+      String citation,
+      java.time.Instant createdAt) {
+    public static final String VAT_OUTSIDE_SCOPE = "OUTSIDE_SCOPE";
+    public static final String VAT_STANDARD = "STANDARD";
+  }
+
+  /** One kind of container handed back at the till (09.16). */
+  public record ContainerRefundLine(
+      String material, int volumeMl, int count, BigDecimal depositEach, BigDecimal amount) {}
+
+  /** Deposits paid back at the till for containers brought back (09.16). */
+  public record ContainerRefund(
+      UUID id,
+      UUID tenantId,
+      UUID storeId,
+      UUID tillSessionId,
+      String currency,
+      int containers,
+      BigDecimal amount,
+      String schemeScope,
+      String idempotencyKey,
+      UUID refundedBy,
+      java.time.Instant createdAt,
+      java.util.List<ContainerRefundLine> lines) {}
+
+  /** Deposits charged and refunded over a period, by material (09.16). */
+  public record DepositReportRow(
+      String material,
+      long chargedContainers,
+      BigDecimal chargedAmount,
+      BigDecimal chargedVat,
+      long refundedContainers,
+      BigDecimal refundedAmount) {}
 }

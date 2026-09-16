@@ -1,6 +1,7 @@
 package com.shelfj.tenant.service;
 
 import com.shelfj.tenant.domain.Domain.CashLimit;
+import com.shelfj.tenant.domain.Domain.DepositScheme;
 import com.shelfj.tenant.domain.Domain.LegalObligation;
 import com.shelfj.tenant.domain.Domain.ObligationSheet;
 import com.shelfj.tenant.repo.ObligationRepository;
@@ -82,7 +83,29 @@ public class ObligationService {
                     .thenComparing(CashLimit::effectiveFrom)
                     .thenComparing(CashLimit::fromAmount))
             .toList();
-    return new ObligationSheet(cc, day, rows, limits);
+    List<DepositScheme> schemes =
+        repo.depositSchemesFor(cc).stream()
+            .filter(d -> !d.endedBefore(day))
+            .sorted(
+                Comparator.comparing((DepositScheme d) -> d.effectiveFrom().isAfter(day))
+                    .thenComparing(DepositScheme::effectiveFrom))
+            .toList();
+    return new ObligationSheet(cc, day, rows, limits, schemes);
+  }
+
+  /**
+   * The deposit scheme in force on a day where a store trades, in a currency (09.16): the one a
+   * public storefront tells its shoppers about.
+   *
+   * @return the scheme, or empty when none binds in that currency
+   */
+  public java.util.Optional<DepositScheme> depositScheme(
+      String country, String currency, LocalDate day) {
+    String cc = country == null ? "" : country.trim().toUpperCase(Locale.ROOT);
+    if (!COUNTRIES.contains(cc)) return java.util.Optional.empty();
+    return repo.depositSchemesFor(cc).stream()
+        .filter(d -> d.inForceOn(day) && d.currency().equalsIgnoreCase(currency))
+        .findFirst();
   }
 
   private LocalDate day(String on) {

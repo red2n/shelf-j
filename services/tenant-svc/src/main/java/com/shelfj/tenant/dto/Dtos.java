@@ -213,7 +213,11 @@ public final class Dtos {
       String city,
       String country,
       String pincode,
-      String phone) {}
+      String phone,
+      @Schema(
+              description =
+                  "The deposit return scheme in force where this store trades, or null (09.16).")
+          DepositSchemeResponse depositScheme) {}
 
   @Schema(name = "ZoneResponse")
   public record ZoneResponse(
@@ -458,7 +462,31 @@ public final class Dtos {
       String on,
       java.util.List<ObligationResponse> obligations,
       @Schema(description = "The cash payment limits that reach the country (09.17).")
-          java.util.List<CashLimitResponse> cashLimits) {}
+          java.util.List<CashLimitResponse> cashLimits,
+      @Schema(description = "The deposit return schemes that reach the country (09.16).")
+          java.util.List<DepositSchemeResponse> depositSchemes) {}
+
+  @Schema(
+      name = "DepositScheme",
+      description =
+          "A deposit return scheme: a drink in an in-scope container carries depositEach, in the"
+              + " currency the law names, refunded when the container comes back.")
+  public record DepositSchemeResponse(
+      @Schema(description = "EU for a regime's law, or the country's own code.") String scope,
+      String currency,
+      java.math.BigDecimal depositEach,
+      @Schema(description = "PET, ALUMINIUM, STEEL, GLASS.") java.util.List<String> materials,
+      int minVolumeMl,
+      int maxVolumeMl,
+      @Schema(
+              description =
+                  "OUTSIDE_SCOPE: no VAT on the deposit at the sale; STANDARD: taxed as the drink.")
+          String vatTreatment,
+      String effectiveFrom,
+      String effectiveTo,
+      String citation,
+      String summary,
+      @Schema(description = "IN_FORCE or UPCOMING on the day asked about.") String status) {}
 
   @Schema(
       name = "CashLimit",

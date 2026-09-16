@@ -166,7 +166,9 @@ public final class Mappers {
         c.netContent(),
         c.netContentUom(),
         c.tareWeight(),
-        c.catchWeight());
+        c.catchWeight(),
+        c.depositMaterial(),
+        c.depositVolumeMl());
   }
 
   /**
@@ -206,6 +208,20 @@ public final class Mappers {
    * @return its API representation
    */
   public static VariantScanResponse toVariantScan(Variant v, Product p, String hsnCode) {
+    return toVariantScan(v, p, hsnCode, null);
+  }
+
+  /**
+   * Converts a variant and its product to the scan form, with its HSN code and drinks container.
+   *
+   * @param v the variant
+   * @param p its product
+   * @param hsnCode the code recorded for the variant, or null
+   * @param container the drinks container it is sold in, or null (09.16)
+   * @return its API representation
+   */
+  public static VariantScanResponse toVariantScan(
+      Variant v, Product p, String hsnCode, Domain.DepositContainer container) {
     return new VariantScanResponse(
         v.id().toString(),
         p.id().toString(),
@@ -218,7 +234,9 @@ public final class Mappers {
         v.status(),
         ts(v.createdAt()),
         ts(v.updatedAt()),
-        hsnCode);
+        hsnCode,
+        container == null ? null : container.material(),
+        container == null ? null : container.volumeMl());
   }
 
   /**

@@ -47,7 +47,12 @@ class _TenderScreenState extends ConsumerState<TenderScreen> {
     return ref.read(posDiscountProvider).clamp(0, subtotal).toDouble();
   }
 
-  double get _due => ref.read(posCartProvider.notifier).total - _discount;
+  /// Goods less the discount, plus the return-scheme deposits on the sale's
+  /// containers (09.16): the deposit is due in full whatever the discount.
+  double get _due =>
+      ref.read(posCartProvider.notifier).total -
+      _discount +
+      ref.read(posCartProvider.notifier).deposits;
 
   double get _paid => _tenders.fold(0.0, (s, t) => s + t.amount);
   double get _remaining => (_due - _paid).clamp(0.0, double.infinity);
@@ -451,6 +456,7 @@ class _TenderScreenState extends ConsumerState<TenderScreen> {
     FiscalStamp? fiscalStamp,
   }) {
     final subtotal = cartSnapshot.fold<double>(0, (s, l) => s + l.lineTotal);
+    final deposit = cartSnapshot.fold<double>(0, (s, l) => s + l.depositTotal);
     final storeId = ref.read(posStoreProvider);
     final stores = ref.read(posStoresProvider).value ?? [];
     final store = stores.firstWhere(
@@ -476,6 +482,7 @@ class _TenderScreenState extends ConsumerState<TenderScreen> {
       items: cartSnapshot,
       subtotal: subtotal,
       discount: discount,
+      deposit: deposit,
       total: total,
       currency: currency,
       tenders: tenderSnapshot,

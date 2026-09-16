@@ -22,6 +22,7 @@ public final class TenantSvcStub implements AutoCloseable {
   private final Map<String, String> profiles = new ConcurrentHashMap<>();
   private final Map<String, java.util.List<String>> obligations = new ConcurrentHashMap<>();
   private final Map<String, java.util.List<String>> cashLimits = new ConcurrentHashMap<>();
+  private final Map<String, java.util.List<String>> depositSchemes = new ConcurrentHashMap<>();
   private final Map<String, java.util.List<String>> stores = new ConcurrentHashMap<>();
   private final java.util.Map<String, String> retention =
       new java.util.concurrent.ConcurrentHashMap<>();
@@ -104,6 +105,8 @@ public final class TenantSvcStub implements AutoCloseable {
                   + String.join(",", stub.obligations.getOrDefault(country, java.util.List.of()))
                   + "],\"cashLimits\":["
                   + String.join(",", stub.cashLimits.getOrDefault(country, java.util.List.of()))
+                  + "],\"depositSchemes\":["
+                  + String.join(",", stub.depositSchemes.getOrDefault(country, java.util.List.of()))
                   + "]}}");
         });
     // A tenant's retention schedule (21.16), as registered; a tenant with none has an empty one.
@@ -200,6 +203,54 @@ public final class TenantSvcStub implements AutoCloseable {
 
   private static String field(String name, String value) {
     return value == null ? "" : ",\"" + name + "\":\"" + value + "\"";
+  }
+
+  /**
+   * Registers a deposit return scheme that reaches a country (09.16), as tenant-svc's {@code GET
+   * /admin/tenant/obligations} lists it under {@code depositSchemes}.
+   *
+   * @param materials comma-separated, e.g. {@code PET,ALUMINIUM,STEEL}
+   * @param vatTreatment OUTSIDE_SCOPE or STANDARD
+   */
+  public TenantSvcStub withDepositScheme(
+      String country,
+      String scope,
+      String currency,
+      String depositEach,
+      String materials,
+      int minVolumeMl,
+      int maxVolumeMl,
+      String vatTreatment,
+      String effectiveFrom,
+      String citation) {
+    StringBuilder mats = new StringBuilder();
+    for (String m : materials.split(",")) {
+      if (mats.length() > 0) mats.append(',');
+      mats.append('"').append(m.trim()).append('"');
+    }
+    depositSchemes
+        .computeIfAbsent(country, c -> new java.util.concurrent.CopyOnWriteArrayList<>())
+        .add(
+            "{\"scope\":\""
+                + scope
+                + "\",\"currency\":\""
+                + currency
+                + "\",\"depositEach\":"
+                + depositEach
+                + ",\"materials\":["
+                + mats
+                + "],\"minVolumeMl\":"
+                + minVolumeMl
+                + ",\"maxVolumeMl\":"
+                + maxVolumeMl
+                + ",\"vatTreatment\":\""
+                + vatTreatment
+                + "\",\"effectiveFrom\":\""
+                + effectiveFrom
+                + "\",\"citation\":\""
+                + citation
+                + "\",\"summary\":\"stubbed\",\"status\":\"IN_FORCE\"}");
+    return this;
   }
 
   /**

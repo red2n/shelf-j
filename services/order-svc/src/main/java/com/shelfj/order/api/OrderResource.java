@@ -217,7 +217,11 @@ public class OrderResource {
     }
     var order = svc.placeOrder(req, ctx, effectiveKey);
     var items = svc.getOrderItems(order.tenantId(), order.id());
-    return Response.status(201).entity(ApiResponse.ok(Mappers.toDto(order, items))).build();
+    return Response.status(201)
+        .entity(
+            ApiResponse.ok(
+                Mappers.toDto(order, items, svc.depositsOf(order.tenantId(), order.id()))))
+        .build();
   }
 
   /**
@@ -242,7 +246,10 @@ public class OrderResource {
   public Response get(@PathParam("id") String id) {
     var order = svc.getOrder(ctx.tenantId(), Parsing.uuid(id, "id"), ctx);
     var items = svc.getOrderItems(ctx.tenantId(), order.id());
-    return Response.ok(ApiResponse.ok(Mappers.toDto(order, items))).build();
+    return Response.ok(
+            ApiResponse.ok(
+                Mappers.toDto(order, items, svc.depositsOf(order.tenantId(), order.id()))))
+        .build();
   }
 
   /**
@@ -264,7 +271,10 @@ public class OrderResource {
   public Response confirm(@PathParam("id") String id) {
     var order = svc.confirmOrder(ctx.tenantId(), Parsing.uuid(id, "id"), ctx.userId());
     var items = svc.getOrderItems(ctx.tenantId(), order.id());
-    return Response.ok(ApiResponse.ok(Mappers.toDto(order, items))).build();
+    return Response.ok(
+            ApiResponse.ok(
+                Mappers.toDto(order, items, svc.depositsOf(order.tenantId(), order.id()))))
+        .build();
   }
 
   /**
@@ -304,7 +314,10 @@ public class OrderResource {
             req != null ? req.reason() : null,
             ctx.userId());
     var items = svc.getOrderItems(ctx.tenantId(), order.id());
-    return Response.ok(ApiResponse.ok(Mappers.toDto(order, items))).build();
+    return Response.ok(
+            ApiResponse.ok(
+                Mappers.toDto(order, items, svc.depositsOf(order.tenantId(), order.id()))))
+        .build();
   }
 
   /**
@@ -331,7 +344,10 @@ public class OrderResource {
     com.shelfj.web.Validations.validate(req);
     var order = svc.priceOrder(ctx.tenantId(), Parsing.uuid(id, "id"), req, ctx.userId(), ctx);
     var items = svc.getOrderItems(ctx.tenantId(), order.id());
-    return Response.ok(ApiResponse.ok(Mappers.toDto(order, items))).build();
+    return Response.ok(
+            ApiResponse.ok(
+                Mappers.toDto(order, items, svc.depositsOf(order.tenantId(), order.id()))))
+        .build();
   }
 
   /** Parses the optional fulfil body; a JAX-RS String entity keeps an absent body legal. */
@@ -377,7 +393,10 @@ public class OrderResource {
     }
     var order = svc.fulfilOrder(ctx.tenantId(), Parsing.uuid(id, "id"), req, ctx.userId(), ctx);
     var items = svc.getOrderItems(ctx.tenantId(), order.id());
-    return Response.ok(ApiResponse.ok(Mappers.toDto(order, items))).build();
+    return Response.ok(
+            ApiResponse.ok(
+                Mappers.toDto(order, items, svc.depositsOf(order.tenantId(), order.id()))))
+        .build();
   }
 
   /**

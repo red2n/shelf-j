@@ -138,6 +138,14 @@ public final class Dtos {
           Boolean catchWeight,
       @Schema(
               description =
+                  "PET, ALUMINIUM, STEEL or GLASS when the variant is a drink sold in a container"
+                      + " a deposit return scheme may reach (09.16); with depositVolumeMl, or"
+                      + " neither.")
+          String depositMaterial,
+      @Schema(description = "The container's volume in millilitres, 1 to 10000 (09.16).")
+          Integer depositVolumeMl,
+      @Schema(
+              description =
                   "Whether this is a food product. true moves an item from NOT_APPLICABLE to"
                       + " UNDECLARED, so it is listed on allergen-gaps until declared; false makes it"
                       + " NOT_APPLICABLE and removes any declaration. Omit to leave it as it is.")
@@ -156,7 +164,11 @@ public final class Dtos {
       BigDecimal netContent,
       String netContentUom,
       BigDecimal tareWeight,
-      boolean catchWeight) {}
+      boolean catchWeight,
+      @Schema(description = "PET, ALUMINIUM, STEEL or GLASS for a drinks container (09.16).")
+          String depositMaterial,
+      @Schema(description = "The container's volume in millilitres (09.16).")
+          Integer depositVolumeMl) {}
 
   @Schema(
       name = "AgeCheckResponse",
@@ -295,7 +307,13 @@ public final class Dtos {
       @Schema(description = "ACTIVE or DELISTED.") String status,
       String createdAt,
       String updatedAt,
-      @Schema(description = "The HSN or SAC code, when one is recorded (18.9).") String hsnCode) {}
+      @Schema(description = "The HSN or SAC code, when one is recorded (18.9).") String hsnCode,
+      @Schema(
+              description =
+                  "PET, ALUMINIUM, STEEL or GLASS when sold in a drinks container (09.16).")
+          String depositMaterial,
+      @Schema(description = "The container's volume in millilitres (09.16).")
+          Integer depositVolumeMl) {}
 
   // ── UOM ──────────────────────────────────────────────────────────────────
 

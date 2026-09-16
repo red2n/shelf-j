@@ -30,8 +30,13 @@ class OrderEventHandler {
   static final String REFUND_METHOD_ORIGINAL = "ORIGINAL";
 
   @Inject PaymentService service;
+  @Inject com.shelfj.payment.repo.CashMovementRepository cashMovements;
 
   void handle(String json) {
+    if (json.contains("\"ContainerDepositRefunded\"")) {
+      handleContainerRefund(json);
+      return;
+    }
     String eventType;
     UUID eventId;
     UUID tenantId;
@@ -61,5 +66,42 @@ class OrderEventHandler {
 
     String reason = requestedAmount == null ? "Order cancelled" : "Return refund";
     service.refundForOrderEvent(eventId, CONSUMER_NAME, tenantId, orderId, requestedAmount, reason);
+  }
+
+  /**
+   * A deposit refunded at the till for containers brought back (09.16): the cash left the drawer,
+   * so the till session carries a pay-out for it, once per event.
+   */
+  void handleContainerRefund(String json) {
+    UUID eventId;
+    UUID tenantId;
+    UUID storeId;
+    UUID tillSessionId;
+    UUID refundedBy;
+    BigDecimal amount;
+    try (var reader = Json.createReader(new StringReader(json))) {
+      JsonObject obj = reader.readObject();
+      if (!"ContainerDepositRefunded".equals(obj.getString("eventType", null))) return;
+      eventId = UUID.fromString(obj.getString("eventId"));
+      tenantId = UUID.fromString(obj.getString("tenantId"));
+      storeId = UUID.fromString(obj.getString("storeId"));
+      tillSessionId = UUID.fromString(obj.getString("tillSessionId"));
+      refundedBy = UUID.fromString(obj.getString("refundedBy"));
+      amount = obj.getJsonNumber("amount").bigDecimalValue();
+    } catch (RuntimeException e) {
+      LOG.log(Level.WARNING, "Malformed container refund event skipped: " + e.getMessage());
+      return;
+    }
+    if (amount.signum() <= 0) return;
+    cashMovements.insertMovement(
+        tenantId,
+        storeId,
+        tillSessionId,
+        "PAY_OUT",
+        amount,
+        "Container deposit refund",
+        null,
+        refundedBy,
+        "deposit-refund:" + eventId);
   }
 }

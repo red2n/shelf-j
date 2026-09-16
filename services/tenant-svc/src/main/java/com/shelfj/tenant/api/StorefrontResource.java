@@ -33,6 +33,7 @@ import org.eclipse.microprofile.openapi.annotations.tags.Tag;
 public class StorefrontResource {
 
   @Inject TenantService service;
+  @Inject com.shelfj.tenant.service.ObligationService obligations;
   @Inject TenantContext ctx;
 
   /**
@@ -67,7 +68,7 @@ public class StorefrontResource {
       throw new ApiException(400, "INVALID_STORE", "store must be a UUID", java.util.List.of(), e);
     }
     Store s = service.getStore(tenantId, storeId);
-    return ApiResponse.ok(StorefrontResource.toStorefrontConfig(s));
+    return ApiResponse.ok(toStorefrontConfig(s, service.getTenant(tenantId).currency()));
   }
 
   /**
@@ -123,15 +124,25 @@ public class StorefrontResource {
   @Path("/stores")
   public ApiResponse<List<StorefrontConfigResponse>> stores() {
     UUID tenantId = ctx.requireTenantId();
+    String currency = service.getTenant(tenantId).currency();
     List<StorefrontConfigResponse> items =
         service.listStores(tenantId).stream()
             .filter(s -> "ACTIVE".equalsIgnoreCase(s.status()))
-            .map(StorefrontResource::toStorefrontConfig)
+            .map(s -> toStorefrontConfig(s, currency))
             .toList();
     return ApiResponse.ok(items);
   }
 
-  private static StorefrontConfigResponse toStorefrontConfig(Store s) {
+  /**
+   * A store's public configuration, with the deposit return scheme in force where it trades, in the
+   * business's currency (09.16): what a shopper is told a drink's deposit will be.
+   */
+  private StorefrontConfigResponse toStorefrontConfig(Store s, String currency) {
+    java.time.LocalDate today = java.time.LocalDate.now(java.time.ZoneOffset.UTC);
+    var scheme =
+        s.country() == null
+            ? java.util.Optional.<com.shelfj.tenant.domain.Domain.DepositScheme>empty()
+            : obligations.depositScheme(s.country(), currency, today);
     return new StorefrontConfigResponse(
         s.id().toString(),
         s.name(),
@@ -142,6 +153,7 @@ public class StorefrontResource {
         s.city(),
         s.country(),
         s.pincode(),
-        null);
+        null,
+        scheme.map(d -> com.shelfj.tenant.mapper.Mappers.toDepositScheme(d, today)).orElse(null));
   }
 }
