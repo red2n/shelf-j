@@ -112,11 +112,11 @@ public class TenantProfiles {
 
   @PostConstruct
   void init() {
-    TenantSvcClient client = new TenantSvcClient(settings, tenantSvcUrl);
-    fetch = tenantId -> client.get(tenantId, "/admin/tenant", Map.of());
+    ServiceReader client = ServiceReader.tenantSvc(settings, tenantSvcUrl);
+    fetch = tenantId -> client.body(tenantId, "/admin/tenant", Map.of());
     storesFetch =
         (tenantId, after) ->
-            client.get(
+            client.body(
                 tenantId,
                 "/admin/stores",
                 after == null ? Map.of("limit", "100") : Map.of("limit", "100", "after", after));

@@ -4,6 +4,7 @@ import com.shelfj.discovery.ConsulClient;
 import com.shelfj.discovery.ServiceInstance;
 import com.shelfj.discovery.ServiceRegistry;
 import com.shelfj.order.config.ServiceConfig;
+import com.shelfj.service.ServiceReader;
 import com.shelfj.web.ApiException;
 import com.shelfj.web.HttpHeaders;
 import io.helidon.http.HeaderNames;
@@ -23,6 +24,7 @@ import java.math.BigDecimal;
 import java.time.Duration;
 import java.util.ArrayList;
 import java.util.List;
+import java.util.Optional;
 import java.util.UUID;
 import org.eclipse.microprofile.faulttolerance.CircuitBreaker;
 import org.eclipse.microprofile.faulttolerance.Retry;
@@ -72,6 +74,15 @@ public class PricingClient {
   }
 
   /**
+   * pricing-svc's address: {@code shelfj.clients.pricing-svc.url} when that is set, for a
+   * deployment without discovery and for integration tests, else what discovery resolves.
+   */
+  private Optional<String> locate() {
+    return ServiceReader.configuredUrl(PRICING_SERVICE)
+        .or(() -> registry.resolve(PRICING_SERVICE).map(ServiceInstance::baseUri));
+  }
+
+  /**
    * The pricing-svc-resolved figures for one order line: {@code unitPrice} already has any active
    * promotion discount applied, and {@code vatAmount} is the per-unit tax pricing-svc computed from
    * the variant's VAT category. Both are authoritative — never overridden by client input when
@@ -103,9 +114,8 @@ public class PricingClient {
       skipOn = {ApiException.class})
   public ResolvedLine resolveLine(
       UUID tenantId, UUID variantId, UUID storeId, String channel, BigDecimal qty) {
-    ServiceInstance instance =
-        registry
-            .resolve(PRICING_SERVICE)
+    String pricingBase =
+        locate()
             .orElseThrow(() -> unavailable("no healthy pricing-svc instance in discovery", null));
 
     JsonObjectBuilder payload = Json.createObjectBuilder().add("variantId", variantId.toString());
@@ -115,7 +125,7 @@ public class PricingClient {
 
     try (HttpClientResponse res =
         webClient
-            .post(instance.baseUri() + "/prices/resolve")
+            .post(pricingBase + "/prices/resolve")
             .header(HeaderNames.create(HttpHeaders.TENANT_ID), tenantId.toString())
             .header(HeaderNames.CONTENT_TYPE, "application/json")
             .submit(payload.build().toString())) {
@@ -204,7 +214,19 @@ public class PricingClient {
    *     counts
    * @param lineVat VAT for the whole line, already multiplied out (SJ-D20)
    */
-  public record QuotedLine(BigDecimal unitPrice, BigDecimal lineNet, BigDecimal lineVat) {}
+  public record QuotedLine(
+      BigDecimal unitPrice,
+      BigDecimal lineNet,
+      BigDecimal lineVat,
+      /** The VAT code the quote applied; null from a pricing-svc that did not say (18.9). */
+      String vatCode,
+      /** The rate it applied, as a fraction; null from a pricing-svc that did not say (18.9). */
+      BigDecimal vatRate) {
+
+    public QuotedLine(BigDecimal unitPrice, BigDecimal lineNet, BigDecimal lineVat) {
+      this(unitPrice, lineNet, lineVat, null, null);
+    }
+  }
 
   public record QuotedBasket(
       List<QuotedLine> lines,
@@ -250,9 +272,8 @@ public class PricingClient {
       List<String> couponCodes) {
     if (lines.isEmpty())
       return new QuotedBasket(List.of(), BigDecimal.ZERO, List.of(), java.util.Map.of());
-    ServiceInstance instance =
-        registry
-            .resolve(PRICING_SERVICE)
+    String pricingBase =
+        locate()
             .orElseThrow(() -> unavailable("no healthy pricing-svc instance in discovery", null));
 
     JsonArrayBuilder linesArray = Json.createArrayBuilder();
@@ -275,7 +296,7 @@ public class PricingClient {
 
     try (HttpClientResponse res =
         webClient
-            .post(instance.baseUri() + "/prices/quote")
+            .post(pricingBase + "/prices/quote")
             .header(HeaderNames.create(HttpHeaders.TENANT_ID), tenantId.toString())
             .header(HeaderNames.create(HttpHeaders.ROLES), INTERNAL_ROLE)
             .header(HeaderNames.CONTENT_TYPE, "application/json")
@@ -336,7 +357,13 @@ public class PricingClient {
           qty.signum() == 0
               ? BigDecimal.ZERO
               : afterLineDiscount.divide(qty, 2, java.math.RoundingMode.HALF_UP);
-      lines.add(new QuotedLine(unit, afterLineDiscount, num(o, "vatAmount", BigDecimal.ZERO)));
+      lines.add(
+          new QuotedLine(
+              unit,
+              afterLineDiscount,
+              num(o, "vatAmount", BigDecimal.ZERO),
+              o.containsKey("vatCode") && !o.isNull("vatCode") ? o.getString("vatCode") : null,
+              num(o, "vatRate", null)));
     }
 
     List<AppliedPromotion> applied = new ArrayList<>();
@@ -379,8 +406,8 @@ public class PricingClient {
       List<AppliedPromotion> applied,
       String currency) {
     try {
-      ServiceInstance instance = registry.resolve(PRICING_SERVICE).orElse(null);
-      if (instance == null) {
+      String pricingBase = locate().orElse(null);
+      if (pricingBase == null) {
         LOG.log(
             System.Logger.Level.WARNING,
             "No pricing-svc instance to record promotion redemptions for order {0}",
@@ -409,7 +436,7 @@ public class PricingClient {
 
       try (HttpClientResponse res =
           webClient
-              .post(instance.baseUri() + "/prices/redemptions")
+              .post(pricingBase + "/prices/redemptions")
               .header(HeaderNames.create(HttpHeaders.TENANT_ID), tenantId.toString())
               .header(HeaderNames.create(HttpHeaders.ROLES), INTERNAL_ROLE)
               .header(HeaderNames.CONTENT_TYPE, "application/json")
@@ -454,8 +481,8 @@ public class PricingClient {
         stickered++;
       }
       if (stickered == 0) return;
-      ServiceInstance instance = registry.resolve(PRICING_SERVICE).orElse(null);
-      if (instance == null) {
+      String pricingBase = locate().orElse(null);
+      if (pricingBase == null) {
         LOG.log(
             System.Logger.Level.WARNING,
             "No pricing-svc instance to record markdown redemptions for order {0}",
@@ -466,7 +493,7 @@ public class PricingClient {
           Json.createObjectBuilder().add("orderId", orderId.toString()).add("lines", arr).build();
       try (HttpClientResponse res =
           webClient
-              .post(instance.baseUri() + "/prices/markdown-redemptions")
+              .post(pricingBase + "/prices/markdown-redemptions")
               .header(HeaderNames.create(HttpHeaders.TENANT_ID), tenantId.toString())
               .header(HeaderNames.create(HttpHeaders.ROLES), INTERNAL_ROLE)
               .header(HeaderNames.CONTENT_TYPE, "application/json")
@@ -536,9 +563,8 @@ public class PricingClient {
   public List<ResolvedLine> resolveLines(
       UUID tenantId, List<LineRequest> lines, UUID storeId, String channel) {
     if (lines.isEmpty()) return List.of();
-    ServiceInstance instance =
-        registry
-            .resolve(PRICING_SERVICE)
+    String pricingBase =
+        locate()
             .orElseThrow(() -> unavailable("no healthy pricing-svc instance in discovery", null));
 
     JsonArrayBuilder linesArray = Json.createArrayBuilder();
@@ -554,7 +580,7 @@ public class PricingClient {
 
     try (HttpClientResponse res =
         webClient
-            .post(instance.baseUri() + "/prices/resolve-batch")
+            .post(pricingBase + "/prices/resolve-batch")
             .header(HeaderNames.create(HttpHeaders.TENANT_ID), tenantId.toString())
             .header(HeaderNames.CONTENT_TYPE, "application/json")
             .submit(payload)) {

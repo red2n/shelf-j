@@ -77,6 +77,7 @@ public class OrderService {
   @Inject com.shelfj.order.client.NotificationClient notifications;
   @Inject com.shelfj.order.client.TenantClient tenants;
   @Inject FiscalService fiscal;
+  @Inject SalesInvoiceService salesInvoices;
 
   // ── Orders ────────────────────────────────────────────────────────────────
 
@@ -341,6 +342,8 @@ public class OrderService {
       BigDecimal unitPrice;
       BigDecimal quotedLineNet = null;
       BigDecimal quotedLineVat = null;
+      String quotedVatCode = null;
+      BigDecimal quotedVatRate = null;
       if (enforcePricing) {
         var resolved = resolvedLines.get(i);
         unitPrice = resolved.unitPrice();
@@ -356,6 +359,10 @@ public class OrderService {
         // reproduce it: three units of a £100 line quote at 33.33 each and rebuild as 99.99. Taking
         // the quoted figure keeps the order's subtotal equal to the quote the customer was shown.
         quotedLineNet = resolved.lineNet();
+        // And the code and rate it was taxed at (18.9): an invoice states the rate, and a rounded
+        // amount on a small line cannot say what it was.
+        quotedVatCode = resolved.vatCode();
+        quotedVatRate = resolved.vatRate();
       } else {
         if (ir.unitPrice() == null)
           throw ApiException.badRequest(
@@ -381,7 +388,9 @@ public class OrderService {
               instrumentId,
               BigDecimal.ZERO,
               quotedLineVat,
-              Parsing.optionalUuid(ir.markdownId(), "markdownId")));
+              Parsing.optionalUuid(ir.markdownId(), "markdownId"),
+              quotedVatCode,
+              quotedVatRate));
     }
 
     // Hold stock for ONLINE orders before persisting, so a short line rejects the checkout with
@@ -794,6 +803,9 @@ public class OrderService {
     // counter only moves when a receipt row is written. POST /admin/orders/{id}/fiscal-receipt
     // issues it later if this fails.
     issueReceiptQuietly(confirmed, userId);
+    // A sale to a VAT-registered business is invoiced too (18.9), in the background: the customer's
+    // status is pricing-svc's to say, and a till does not wait on it.
+    salesInvoices.issueInvoiceLater(confirmed, userId);
     return confirmed;
   }
 
@@ -1348,23 +1360,27 @@ public class OrderService {
         req.recallNoticeId() == null || req.recallNoticeId().isBlank()
             ? null
             : Parsing.uuid(req.recallNoticeId(), "recallNoticeId");
-    return repo.createReturn(
-        ret,
-        returnItems,
-        Events.orderReturned(
-            tenantId,
-            orderId,
-            returnId,
-            order.storeId(),
+    Return created =
+        repo.createReturn(
+            ret,
             returnItems,
-            totalRefund,
-            method,
-            order.currency()),
-        noticeId == null
-            ? null
-            : c ->
-                RecallNoticeRepository.resolveByReturnTx(
-                    c, tenantId, noticeId, orderId, returnId, ctx.userId()));
+            Events.orderReturned(
+                tenantId,
+                orderId,
+                returnId,
+                order.storeId(),
+                returnItems,
+                totalRefund,
+                method,
+                order.currency()),
+            noticeId == null
+                ? null
+                : c ->
+                    RecallNoticeRepository.resolveByReturnTx(
+                        c, tenantId, noticeId, orderId, returnId, ctx.userId()));
+    // A return against an invoiced sale is credited (18.9), in the background.
+    salesInvoices.issueCreditNoteLater(tenantId, orderId, created.id(), ctx.userId());
+    return created;
   }
 
   /**
@@ -1812,7 +1828,13 @@ public class OrderService {
     // calls — and so numbered the sales a manager confirmed by hand and almost none of the ones
     // rung up at a till, which are the ones fiscal law is written about.
     if (completed) {
-      repo.findOrder(tenantId, orderId).ifPresent(o -> issueReceiptQuietly(o, null));
+      repo.findOrder(tenantId, orderId)
+          .ifPresent(
+              o -> {
+                issueReceiptQuietly(o, null);
+                // And the invoice a business buyer is owed (18.9), for the same reason.
+                salesInvoices.issueInvoiceLater(o, null);
+              });
     }
   }
 

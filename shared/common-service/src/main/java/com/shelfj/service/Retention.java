@@ -200,8 +200,8 @@ public class Retention {
 
   @PostConstruct
   void init() {
-    TenantSvcClient client = new TenantSvcClient(settings, tenantSvcUrl);
-    fetch = tenantId -> client.get(tenantId, "/admin/tenant/retention", Map.of());
+    ServiceReader client = ServiceReader.tenantSvc(settings, tenantSvcUrl);
+    fetch = tenantId -> client.body(tenantId, "/admin/tenant/retention", Map.of());
   }
 
   /** For tests: a stand-in fetch and a clock. */

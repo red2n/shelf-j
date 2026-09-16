@@ -1,25 +1,22 @@
 package com.shelfj.test;
 
 import com.sun.net.httpserver.HttpServer;
-import java.io.IOException;
-import java.io.UncheckedIOException;
-import java.net.InetAddress;
-import java.net.InetSocketAddress;
-import java.nio.charset.StandardCharsets;
 import java.util.Map;
 import java.util.concurrent.ConcurrentHashMap;
 
 /**
- * A stand-in for tenant-svc's {@code GET /admin/tenant}, {@code GET /admin/tenant/obligations} and
- * {@code GET /admin/stores} in a service's integration tests, where discovery is off. Each tenant
- * answers with the currency and country it was registered with; an unregistered tenant is {@code
- * 404}, so a test that forgets to register one sees the refusal a real unknown tenant would get
- * rather than a borrowed default.
+ * A stand-in for tenant-svc's {@code GET /admin/tenant}, {@code GET /admin/tenant/obligations},
+ * {@code GET /admin/stores} and {@code GET /admin/stores/{id}} in a service's integration tests,
+ * where discovery is off. Each tenant answers with the currency and country it was registered with;
+ * an unregistered tenant is {@code 404}, so a test that forgets to register one sees the refusal a
+ * real unknown tenant would get rather than a borrowed default.
  *
  * <p>Start it in the test's static initialiser, before Helidon boots: it points {@code
  * shelfj.clients.tenant-svc.url} at itself.
  */
 public final class TenantSvcStub implements AutoCloseable {
+
+  private static final String STORES = "/admin/stores";
 
   private final HttpServer server;
   private final Map<String, String> profiles = new ConcurrentHashMap<>();
@@ -36,88 +33,85 @@ public final class TenantSvcStub implements AutoCloseable {
 
   /** Starts the stub on a free local port and points the client property at it. */
   public static TenantSvcStub start() {
-    try {
-      HttpServer server =
-          HttpServer.create(new InetSocketAddress(InetAddress.getLoopbackAddress(), 0), 0);
-      TenantSvcStub stub = new TenantSvcStub(server);
-      server.createContext(
-          "/admin/tenant",
-          exchange -> {
-            stub.requests.incrementAndGet();
-            String tenant = exchange.getRequestHeaders().getFirst("X-Tenant-Id");
-            String body = tenant == null ? null : stub.profiles.get(tenant);
-            reply(
+    HttpServer server = JsonStub.serve("tenant-svc-stub");
+    TenantSvcStub stub = new TenantSvcStub(server);
+    server.createContext(
+        "/admin/tenant",
+        exchange -> {
+          stub.requests.incrementAndGet();
+          String tenant = exchange.getRequestHeaders().getFirst("X-Tenant-Id");
+          String body = tenant == null ? null : stub.profiles.get(tenant);
+          JsonStub.reply(
+              exchange,
+              body == null ? 404 : 200,
+              body == null
+                  ? "{\"error\":{\"code\":\"TENANT_NOT_FOUND\",\"message\":\"no such tenant\"}}"
+                  : body);
+        });
+    // The longer context wins, so the obligations route is not answered as a profile.
+    server.createContext(
+        "/admin/tenant/obligations",
+        exchange -> {
+          stub.requests.incrementAndGet();
+          String query = exchange.getRequestURI().getRawQuery();
+          String country = "";
+          for (String pair : query == null ? new String[0] : query.split("&")) {
+            if (pair.startsWith("country=")) country = pair.substring(8);
+          }
+          JsonStub.reply(
+              exchange,
+              200,
+              "{\"data\":{\"country\":\""
+                  + country
+                  + "\",\"obligations\":["
+                  + String.join(",", stub.obligations.getOrDefault(country, java.util.List.of()))
+                  + "]}}");
+        });
+    // A tenant's retention schedule (21.16), as registered; a tenant with none has an empty one.
+    server.createContext(
+        "/admin/tenant/retention",
+        exchange -> {
+          stub.requests.incrementAndGet();
+          String tenant = exchange.getRequestHeaders().getFirst("X-Tenant-Id");
+          String body = tenant == null ? null : stub.retention.get(tenant);
+          JsonStub.reply(
+              exchange,
+              200,
+              body != null
+                  ? body
+                  : "{\"data\":{\"country\":\"GB\",\"countries\":[\"GB\"],\"classes\":[],"
+                      + "\"holds\":[]}}");
+        });
+    // A tenant's stores, one page; a tenant with none registered has none. Under it, one of them
+    // by id, and 404 for a store that is not the tenant's.
+    server.createContext(
+        STORES,
+        exchange -> {
+          String tenant = exchange.getRequestHeaders().getFirst("X-Tenant-Id");
+          java.util.List<String> own =
+              tenant == null
+                  ? java.util.List.of()
+                  : stub.stores.getOrDefault(tenant, java.util.List.of());
+          String rest = exchange.getRequestURI().getPath().substring(STORES.length());
+          if (rest.length() > 1) {
+            String opening = "{\"id\":\"" + rest.substring(1) + "\"";
+            String found = own.stream().filter(s -> s.startsWith(opening)).findFirst().orElse(null);
+            JsonStub.reply(
                 exchange,
-                body == null ? 404 : 200,
-                body == null
-                    ? "{\"error\":{\"code\":\"TENANT_NOT_FOUND\",\"message\":\"no such tenant\"}}"
-                    : body);
-          });
-      // The longer context wins, so the obligations route is not answered as a profile.
-      server.createContext(
-          "/admin/tenant/obligations",
-          exchange -> {
-            stub.requests.incrementAndGet();
-            String query = exchange.getRequestURI().getRawQuery();
-            String country = "";
-            for (String pair : query == null ? new String[0] : query.split("&")) {
-              if (pair.startsWith("country=")) country = pair.substring(8);
-            }
-            reply(
-                exchange,
-                200,
-                "{\"data\":{\"country\":\""
-                    + country
-                    + "\",\"obligations\":["
-                    + String.join(",", stub.obligations.getOrDefault(country, java.util.List.of()))
-                    + "]}}");
-          });
-      // A tenant's retention schedule (21.16), as registered; a tenant with none has an empty one.
-      server.createContext(
-          "/admin/tenant/retention",
-          exchange -> {
-            stub.requests.incrementAndGet();
-            String tenant = exchange.getRequestHeaders().getFirst("X-Tenant-Id");
-            String body = tenant == null ? null : stub.retention.get(tenant);
-            reply(
-                exchange,
-                200,
-                body != null
-                    ? body
-                    : "{\"data\":{\"country\":\"GB\",\"countries\":[\"GB\"],\"classes\":[],"
-                        + "\"holds\":[]}}");
-          });
-      // A tenant's stores, one page; a tenant with none registered has none.
-      server.createContext(
-          "/admin/stores",
-          exchange -> {
-            String tenant = exchange.getRequestHeaders().getFirst("X-Tenant-Id");
-            reply(
-                exchange,
-                200,
-                "{\"data\":["
-                    + String.join(
-                        ",",
-                        tenant == null
-                            ? java.util.List.of()
-                            : stub.stores.getOrDefault(tenant, java.util.List.of()))
-                    + "],\"meta\":{\"nextCursor\":null}}");
-          });
-      server.setExecutor(
-          java.util.concurrent.Executors.newCachedThreadPool(
-              r -> {
-                Thread t = new Thread(r, "tenant-svc-stub");
-                t.setDaemon(true);
-                return t;
-              }));
-      server.start();
-      System.setProperty(
-          "shelfj.clients.tenant-svc.url",
-          "http://" + server.getAddress().getHostString() + ":" + server.getAddress().getPort());
-      return stub;
-    } catch (IOException e) {
-      throw new UncheckedIOException(e);
-    }
+                found == null ? 404 : 200,
+                found == null
+                    ? "{\"error\":{\"code\":\"TENANT_STORE_NOT_FOUND\",\"message\":\"no such store\"}}"
+                    : "{\"data\":" + found + "}");
+            return;
+          }
+          JsonStub.reply(
+              exchange,
+              200,
+              "{\"data\":[" + String.join(",", own) + "],\"meta\":{\"nextCursor\":null}}");
+        });
+    server.start();
+    System.setProperty("shelfj.clients.tenant-svc.url", JsonStub.baseOf(server));
+    return stub;
   }
 
   /** Registers a tenant's declared currency and country. */
@@ -140,14 +134,21 @@ public final class TenantSvcStub implements AutoCloseable {
    */
   public TenantSvcStub withIdentity(
       String tenantId, String vatNumber, String einvoiceScheme, String einvoiceId) {
-    profiles.computeIfPresent(
+    return extend(
         tenantId,
-        (id, json) ->
-            json.substring(0, json.length() - 2)
-                + field("vatNumber", vatNumber)
-                + field("einvoiceScheme", einvoiceScheme)
-                + field("einvoiceId", einvoiceId)
-                + "}}");
+        field("vatNumber", vatNumber)
+            + field("einvoiceScheme", einvoiceScheme)
+            + field("einvoiceId", einvoiceId));
+  }
+
+  /** Gives a registered tenant the legal name {@code GET /admin/tenant} returns (18.9). */
+  public TenantSvcStub withLegalName(String tenantId, String legalName) {
+    return extend(tenantId, field("legalName", legalName));
+  }
+
+  private TenantSvcStub extend(String tenantId, String fields) {
+    profiles.computeIfPresent(
+        tenantId, (id, json) -> json.substring(0, json.length() - 2) + fields + "}}");
     return this;
   }
 
@@ -215,6 +216,15 @@ public final class TenantSvcStub implements AutoCloseable {
    * @param country the store's country, or null when it records none
    */
   public TenantSvcStub withStore(String tenantId, String storeId, String country) {
+    return withStore(tenantId, storeId, country, null, null, null);
+  }
+
+  /**
+   * Registers one of a tenant's stores with the postal address an invoice prints (18.9). Nulls
+   * leave a field out.
+   */
+  public TenantSvcStub withStore(
+      String tenantId, String storeId, String country, String line1, String city, String pincode) {
     stores
         .computeIfAbsent(tenantId, t -> new java.util.concurrent.CopyOnWriteArrayList<>())
         .add(
@@ -222,18 +232,11 @@ public final class TenantSvcStub implements AutoCloseable {
                 + storeId
                 + "\",\"country\":"
                 + (country == null ? "null" : "\"" + country + "\"")
+                + field("line1", line1)
+                + field("city", city)
+                + field("pincode", pincode)
                 + "}");
     return this;
-  }
-
-  private static void reply(com.sun.net.httpserver.HttpExchange exchange, int status, String body)
-      throws IOException {
-    byte[] bytes = body.getBytes(StandardCharsets.UTF_8);
-    exchange.getResponseHeaders().add("Content-Type", "application/json");
-    exchange.sendResponseHeaders(status, bytes.length);
-    try (var out = exchange.getResponseBody()) {
-      out.write(bytes);
-    }
   }
 
   /** How many profile reads have reached the stub, to show a cache holding. */

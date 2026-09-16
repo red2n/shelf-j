@@ -11,6 +11,7 @@ import '../../core/theme.dart';
 import '../../shared/widgets/error_view.dart';
 import '../../shared/widgets/loading_view.dart';
 import 'customer_providers.dart';
+import 'sales_invoices_dialog.dart';
 import 'send_text_dialog.dart';
 import 'providers/customers_pagination.dart';
 
@@ -406,6 +407,10 @@ class _CustomerDetailDialog extends ConsumerWidget {
               ),
               const SizedBox(height: 16),
               _AddressesSection(customerId: customer.id),
+              const SizedBox(height: 16),
+              // 18.9: a business buyer's registration decides whether its sales are
+              // invoiced, and what the invoice names it as.
+              VatRegistrationSection(customerId: customer.id),
               const SizedBox(height: 16),
               Text('Loyalty ledger',
                   style: Theme.of(context).textTheme.labelLarge),

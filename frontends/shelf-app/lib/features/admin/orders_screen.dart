@@ -12,6 +12,7 @@ import '../../core/format.dart';
 import '../../core/theme.dart';
 import 'providers/admin_providers.dart';
 import 'providers/orders_pagination.dart';
+import 'sales_invoices_dialog.dart';
 import '../../shared/util/short_ref.dart';
 
 /// The body of a cancel. The reason is optional, and the server takes "no
@@ -77,6 +78,9 @@ class _AdminOrdersScreenState extends ConsumerState<AdminOrdersScreen> {
     final auth = ref.watch(authNotifierProvider).value;
     final canVoid =
         auth is AuthAuthenticated && auth.isManager && auth.hasPermission('sales.void');
+    // Invoices to business buyers are management's too (18.9): the same filter refuses
+    // everyone else.
+    final management = auth is AuthAuthenticated && auth.isManager;
 
     return Column(
       crossAxisAlignment: CrossAxisAlignment.start,
@@ -263,6 +267,7 @@ class _AdminOrdersScreenState extends ConsumerState<AdminOrdersScreen> {
                               channel: o.channel,
                               paymentMethod: o.paymentMethod,
                               canVoid: canVoid,
+                              canInvoice: management,
                               onAction: (a) => _action(o, a),
                             ),
                           ],
@@ -346,6 +351,14 @@ class _AdminOrdersScreenState extends ConsumerState<AdminOrdersScreen> {
             ref.invalidate(recentOrdersProvider);
           },
         ),
+      );
+      return;
+    }
+    if (action == 'invoices') {
+      // 18.9: the invoice a sale to a business was given, and its credit notes.
+      await showDialog<void>(
+        context: context,
+        builder: (_) => OrderInvoicesDialog(orderId: o.id),
       );
       return;
     }
@@ -778,6 +791,9 @@ class OrderActionsMenu extends StatelessWidget {
   final String channel;
   final String? paymentMethod;
   final bool canVoid;
+
+  /// Whether the caller may see and issue invoices to business buyers (18.9).
+  final bool canInvoice;
   final void Function(String action) onAction;
   const OrderActionsMenu({
     super.key,
@@ -785,6 +801,7 @@ class OrderActionsMenu extends StatelessWidget {
     this.channel = '',
     this.paymentMethod,
     this.canVoid = false,
+    this.canInvoice = false,
     required this.onAction,
   });
 
@@ -863,6 +880,25 @@ class OrderActionsMenu extends StatelessWidget {
             Icon(Icons.assignment_return_outlined, size: 18),
             SizedBox(width: 8),
             Text('Return / Refund'),
+          ])));
+    }
+    // A completed sale to a business has an invoice, or can be given one (18.9). A
+    // basket that was never paid for has nothing to invoice, and a cancelled or voided
+    // sale is not a sale.
+    const sold = {
+      'CONFIRMED',
+      'FULFILLED',
+      'PARTIALLY_FULFILLED',
+      'PARTIALLY_REFUNDED',
+      'REFUNDED',
+    };
+    if (canInvoice && sold.contains(s)) {
+      items.add(const PopupMenuItem(
+          value: 'invoices',
+          child: Row(children: [
+            Icon(Icons.receipt_long_outlined, size: 18),
+            SizedBox(width: 8),
+            Text('Invoices'),
           ])));
     }
     items.add(const PopupMenuItem(

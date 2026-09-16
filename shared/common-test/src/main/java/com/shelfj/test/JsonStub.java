@@ -1,0 +1,142 @@
+package com.shelfj.test;
+
+import com.sun.net.httpserver.HttpExchange;
+import com.sun.net.httpserver.HttpServer;
+import java.io.IOException;
+import java.io.InputStream;
+import java.io.UncheckedIOException;
+import java.net.InetAddress;
+import java.net.InetSocketAddress;
+import java.nio.charset.StandardCharsets;
+import java.util.List;
+import java.util.Map;
+import java.util.concurrent.ConcurrentHashMap;
+import java.util.concurrent.CopyOnWriteArrayList;
+import java.util.concurrent.Executors;
+import java.util.function.Function;
+
+/**
+ * A stand-in for the services a service reads, in its integration tests, where discovery is off:
+ * one local server answering the paths it is told to, with {@code shelfj.clients.<service>.url}
+ * pointed at it for each service named. A path nobody routed is {@code 404}, as a record a real
+ * service does not have is.
+ *
+ * <p>Start it in the test's static initialiser, before Helidon boots, and close it when the class
+ * is done: closing clears the properties, so the next class does not call a server that is gone.
+ */
+public final class JsonStub implements AutoCloseable {
+
+  /** A request as the stub received it. */
+  public record Call(String method, String path, String query, String tenantId, String body) {}
+
+  /** What a route answers. */
+  public record Answer(int status, String body) {
+
+    /** {@code 200} with the envelope around {@code data}, which is JSON. */
+    public static Answer ok(String data) {
+      return new Answer(200, "{\"data\":" + data + "}");
+    }
+  }
+
+  private final HttpServer server;
+  private final List<String> services;
+  private final Map<String, Function<Call, Answer>> routes = new ConcurrentHashMap<>();
+  private final List<Call> calls = new CopyOnWriteArrayList<>();
+
+  private JsonStub(HttpServer server, List<String> services) {
+    this.server = server;
+    this.services = services;
+  }
+
+  /**
+   * Starts the stub on a free local port, standing for every service named.
+   *
+   * @param services the names the client properties know them by, e.g. {@code pricing-svc}
+   */
+  public static JsonStub start(String... services) {
+    HttpServer server = serve("json-stub");
+    JsonStub stub = new JsonStub(server, List.of(services));
+    server.createContext("/", stub::handle);
+    server.start();
+    for (String service : services) {
+      System.setProperty("shelfj.clients." + service + ".url", baseOf(server));
+    }
+    return stub;
+  }
+
+  /** Routes an exact method and path to a fixed answer. */
+  public JsonStub on(String method, String path, int status, String body) {
+    return on(method, path, call -> new Answer(status, body));
+  }
+
+  /** Routes an exact method and path to an answer worked out from the request. */
+  public JsonStub on(String method, String path, Function<Call, Answer> answer) {
+    routes.put(method + " " + path, answer);
+    return this;
+  }
+
+  /** Every request received so far, oldest first. */
+  public List<Call> calls() {
+    return List.copyOf(calls);
+  }
+
+  private void handle(HttpExchange exchange) throws IOException {
+    String body;
+    try (InputStream in = exchange.getRequestBody()) {
+      body = new String(in.readAllBytes(), StandardCharsets.UTF_8);
+    }
+    Call call =
+        new Call(
+            exchange.getRequestMethod(),
+            exchange.getRequestURI().getPath(),
+            exchange.getRequestURI().getRawQuery(),
+            exchange.getRequestHeaders().getFirst("X-Tenant-Id"),
+            body);
+    calls.add(call);
+    Function<Call, Answer> route = routes.get(call.method() + " " + call.path());
+    Answer answer =
+        route == null
+            ? new Answer(404, "{\"error\":{\"code\":\"NOT_FOUND\",\"message\":\"no such record\"}}")
+            : route.apply(call);
+    reply(exchange, answer.status(), answer.body());
+  }
+
+  /** A loopback server on a free port, answering on daemon threads. */
+  static HttpServer serve(String threadName) {
+    try {
+      HttpServer server =
+          HttpServer.create(new InetSocketAddress(InetAddress.getLoopbackAddress(), 0), 0);
+      server.setExecutor(
+          Executors.newCachedThreadPool(
+              r -> {
+                Thread t = new Thread(r, threadName);
+                t.setDaemon(true);
+                return t;
+              }));
+      return server;
+    } catch (IOException e) {
+      throw new UncheckedIOException(e);
+    }
+  }
+
+  static String baseOf(HttpServer server) {
+    return "http://" + server.getAddress().getHostString() + ":" + server.getAddress().getPort();
+  }
+
+  static void reply(HttpExchange exchange, int status, String body) throws IOException {
+    byte[] bytes = body.getBytes(StandardCharsets.UTF_8);
+    exchange.getResponseHeaders().add("Content-Type", "application/json");
+    exchange.sendResponseHeaders(status, bytes.length);
+    try (var out = exchange.getResponseBody()) {
+      out.write(bytes);
+    }
+  }
+
+  @Override
+  public void close() {
+    server.stop(0);
+    for (String service : services) {
+      System.clearProperty("shelfj.clients." + service + ".url");
+    }
+  }
+}
