@@ -40,8 +40,15 @@ Map<String, dynamic> _settings({String network = 'NONE', String? provider}) => {
         'PEPPOL': ['SIMULATED'],
         'FR_PDP': ['SIMULATED'],
         'KSEF': ['SIMULATED'],
-        'IRP': ['SIMULATED'],
+        'IRP': ['NIC', 'SIMULATED'],
       },
+      'needingSecret': {
+        'PEPPOL': <String>[],
+        'FR_PDP': <String>[],
+        'KSEF': <String>[],
+        'IRP': ['NIC'],
+      },
+      'hasSecret': false,
     };
 
 Map<String, dynamic> _doc(String id, {Map<String, dynamic>? transmission}) => {
@@ -256,6 +263,54 @@ void main() {
       await tester.tap(find.byKey(const Key('einvoice-transport-save')));
       await tester.pumpAndSettle();
       expect(_body(_of(server, 'PUT').single), {'network': 'NONE'});
+    });
+  });
+
+  group("a provider with the business's own credential", () {
+    testWidgets(
+        'asks for it, sends it once, and never needs it again while one is kept',
+        (tester) async {
+      final server = await _pumpTile(tester);
+      await tester.tap(find.byKey(const Key('einvoice-transport-edit')));
+      await tester.pumpAndSettle();
+      await tester.tap(find.byKey(const Key('einvoice-transport-network')));
+      await tester.pumpAndSettle();
+      await tester.tap(find.text('India — Invoice Registration Portal').last);
+      await tester.pumpAndSettle();
+      await tester.tap(find.byKey(const Key('einvoice-transport-provider')));
+      await tester.pumpAndSettle();
+      await tester.tap(find.text('Invoice Registration Portal (NIC)').last);
+      await tester.pumpAndSettle();
+      expect(
+          find.byKey(const Key('einvoice-transport-secret')), findsOneWidget);
+      await tester.enterText(
+          find.byKey(const Key('einvoice-transport-account')), 'gst-user');
+      // Without the credential nothing is sent.
+      await tester.tap(find.byKey(const Key('einvoice-transport-save')));
+      await tester.pumpAndSettle();
+      expect(_of(server, 'PUT'), isEmpty);
+      expect(find.textContaining('signs in with the business'), findsOneWidget);
+      await tester.enterText(
+          find.byKey(const Key('einvoice-transport-secret')), 'pass1');
+      await tester.tap(find.byKey(const Key('einvoice-transport-save')));
+      await tester.pumpAndSettle();
+      expect(_body(_of(server, 'PUT').single), {
+        'network': 'IRP',
+        'provider': 'NIC',
+        'providerAccount': 'gst-user',
+        'providerSecret': 'pass1',
+      });
+    });
+
+    testWidgets('a simulated provider never asks for one', (tester) async {
+      await _pumpTile(tester);
+      await tester.tap(find.byKey(const Key('einvoice-transport-edit')));
+      await tester.pumpAndSettle();
+      await tester.tap(find.byKey(const Key('einvoice-transport-network')));
+      await tester.pumpAndSettle();
+      await tester.tap(find.text('Poland — KSeF').last);
+      await tester.pumpAndSettle();
+      expect(find.byKey(const Key('einvoice-transport-secret')), findsNothing);
     });
   });
 

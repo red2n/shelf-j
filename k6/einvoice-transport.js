@@ -126,6 +126,7 @@ export default function ({ gb, noaddr, cafe, nobody, slow, offline }) {
   const s0 = data(offered);
   truthy('[+] ...no network yet, four to choose from, the simulated provider on each', s0.network === 'NONE' && s0.networks.join() === 'PEPPOL,FR_PDP,KSEF,IRP' && ['PEPPOL', 'FR_PDP', 'KSEF', 'IRP'].every((n) => (s0.providers[n] || []).includes('SIMULATED')), s0);
   truthy('[+] ...the Peppol access point deployed but not choosable: this stack holds no credentials', (s0.providers.PEPPOL || []).includes('ACCESS_POINT') && !(s0.available.PEPPOL || []).includes('ACCESS_POINT'), s0);
+  truthy("[+] ...France's platform and India's portal likewise, and the portal takes the business's own credential", (s0.providers.FR_PDP || []).includes('PDP') && !(s0.available.FR_PDP || []).includes('PDP') && (s0.providers.IRP || []).includes('NIC') && !(s0.available.IRP || []).includes('NIC') && (s0.needingSecret.IRP || []).join() === 'NIC' && s0.hasSecret === false, s0);
   truthy('[+] ...and the business\'s own electronic address', typeof s0.senderAddress === 'string' && s0.senderAddress.startsWith('0088:'), s0.senderAddress);
 
   // ── refusals ─────────────────────────────────────────────────────────────────────────────────────
@@ -135,6 +136,9 @@ export default function ({ gb, noaddr, cafe, nobody, slow, offline }) {
   expect(choose({ network: 'PEPPOL' }), '[-] a network needs a provider', 400, 'EINVOICE_PROVIDER_REQUIRED');
   expect(choose({ network: 'KSEF', provider: 'ACCESS_POINT' }), '[-] a provider that does not serve the network is refused', 400, 'EINVOICE_PROVIDER_UNKNOWN');
   expect(choose({ network: 'PEPPOL', provider: 'ACCESS_POINT' }), '[-] the access point cannot be chosen without its credentials', 409, 'EINVOICE_PROVIDER_NOT_CONFIGURED');
+  expect(choose({ network: 'FR_PDP', provider: 'PDP' }), "[-] nor France's platform", 409, 'EINVOICE_PROVIDER_NOT_CONFIGURED');
+  expect(choose({ network: 'IRP', provider: 'NIC', providerAccount: 'user', providerSecret: 'pass' }), "[-] nor India's portal", 409, 'EINVOICE_PROVIDER_NOT_CONFIGURED');
+  expect(choose({ network: 'PEPPOL', provider: 'SIMULATED', providerSecret: 'a-password' }), '[-] a credential cannot be kept on a deployment with no secrets key', 409, 'EINVOICE_SECRETS_KEY_MISSING');
   expect(choose({ network: 'PEPPOL', provider: 'SIMULATED' }, noaddr.tenant.owner.token), '[-] Peppol needs the business\'s own electronic address', 409, 'EINVOICE_SENDER_ADDRESS_MISSING');
   expect(choose({ network: 'PEPPOL', provider: 'SIMULATED', providerAccount: 'x'.repeat(121) }), '[-] an account name too long is refused', 400);
   expect(choose({ network: 'KSEF', provider: 'SIMULATED' }, noaddr.tenant.owner.token), '[+] KSeF needs no address: the network takes the sender\'s own', 200);

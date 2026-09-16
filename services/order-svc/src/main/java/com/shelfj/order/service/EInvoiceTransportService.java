@@ -12,6 +12,7 @@ import com.shelfj.order.einvoice.EInvoiceTransport.Dispatch;
 import com.shelfj.order.einvoice.EInvoiceTransport.Outbound;
 import com.shelfj.order.einvoice.EInvoiceTransport.Outcome;
 import com.shelfj.order.einvoice.EInvoiceTransport.TransportException;
+import com.shelfj.order.einvoice.Secrets;
 import com.shelfj.order.einvoice.Transports;
 import com.shelfj.order.repo.EInvoiceTransportRepository;
 import com.shelfj.order.repo.SalesInvoiceRepository;
@@ -50,6 +51,7 @@ public class EInvoiceTransportService {
   @Inject Transports transports;
   @Inject TenantProfiles profiles;
   @Inject Jurisdictions jurisdictions;
+  @Inject Secrets secrets;
 
   @Inject
   @ConfigProperty(name = "shelfj.order.einvoice-transport.retry-base-seconds", defaultValue = "30")
@@ -69,11 +71,18 @@ public class EInvoiceTransportService {
       List<String> networks,
       Map<String, List<String>> providers,
       Map<String, List<String>> available,
+      Map<String, List<String>> needingSecret,
       String suggested,
       String senderAddress) {}
 
-  /** What a manager asks for. */
-  public record SettingsChange(String network, String provider, String providerAccount) {}
+  /**
+   * What a manager asks for.
+   *
+   * @param providerSecret the business's credential at the provider; null keeps the one stored,
+   *     blank removes it
+   */
+  public record SettingsChange(
+      String network, String provider, String providerAccount, String providerSecret) {}
 
   // ── settings ─────────────────────────────────────────────────────────────────
 
@@ -92,7 +101,7 @@ public class EInvoiceTransportService {
   public SettingsView setSettings(UUID tenantId, SettingsChange c, UUID userId) {
     String network = c.network() == null ? "" : c.network().strip().toUpperCase(Locale.ROOT);
     if (EInvoiceTransports.NETWORK_NONE.equals(network)) {
-      Settings none = new Settings(tenantId, network, null, null, null, userId);
+      Settings none = new Settings(tenantId, network, null, null, null, null, userId);
       repo.upsertSettings(none);
       return settings(tenantId);
     }
@@ -133,12 +142,34 @@ public class EInvoiceTransportService {
       throw ApiException.badRequest(
           "EINVOICE_PROVIDER_ACCOUNT_INVALID", "providerAccount is at most 120 characters");
     }
+    // The credential: kept when not mentioned, removed when blank, sealed when given.
+    String sealed = repo.findSettings(tenantId).map(Settings::providerSecret).orElse(null);
+    if (c.providerSecret() != null) {
+      String secret = c.providerSecret().strip();
+      if (secret.isEmpty()) {
+        sealed = null;
+      } else {
+        if (!secrets.isConfigured()) {
+          throw ApiException.conflict(
+              "EINVOICE_SECRETS_KEY_MISSING",
+              "this deployment has no shelfj.einvoice.secrets-key, so a provider credential"
+                  + " cannot be kept");
+        }
+        sealed = secrets.seal(secret);
+      }
+    }
+    if (transport.needsSecret() && sealed == null) {
+      throw ApiException.conflict(
+          "EINVOICE_PROVIDER_SECRET_REQUIRED",
+          provider + " signs in with the business's own credential: give providerSecret");
+    }
     repo.upsertSettings(
         new Settings(
             tenantId,
             network,
             provider,
             account == null || account.isBlank() ? null : account,
+            sealed,
             null,
             userId));
     return settings(tenantId);
@@ -150,8 +181,14 @@ public class EInvoiceTransportService {
         EInvoiceTransports.NETWORKS,
         transports.providers(),
         transports.available(),
+        transports.needingSecret(),
         suggested(s.tenantId()),
         senderAddress(s.tenantId()));
+  }
+
+  /** The business's VAT number — its GSTIN in India — or null. */
+  String sellerVatId(UUID tenantId) {
+    return profiles.identity(tenantId).map(i -> i.vatNumber()).filter(v -> present(v)).orElse(null);
   }
 
   /** The business's own electronic address, {@code scheme:identifier}, or null. */
@@ -343,17 +380,35 @@ public class EInvoiceTransportService {
           now);
       return;
     }
-    Outbound out =
-        new Outbound(
-            s.tenantId(),
-            s.id(),
-            s.creditNote() ? "CreditNote" : "Invoice",
-            s.fullNumber(),
-            senderAddress(s.tenantId()),
-            t.receiver(),
-            s.document(),
-            s.irpPayload(),
-            st.providerAccount());
+    Outbound out;
+    try {
+      out =
+          new Outbound(
+              s.tenantId(),
+              s.id(),
+              s.creditNote() ? "CreditNote" : "Invoice",
+              s.fullNumber(),
+              senderAddress(s.tenantId()),
+              t.receiver(),
+              s.document(),
+              s.irpPayload(),
+              sellerVatId(s.tenantId()),
+              st.providerAccount(),
+              st.hasSecret() ? secrets.open(st.providerSecret()) : null);
+    } catch (IllegalStateException e) {
+      // The credential cannot be opened: the deployment's key changed, or the row was altered.
+      repo.settle(
+          t.tenantId(),
+          t.id(),
+          EInvoiceTransports.STATUS_FAILED,
+          now,
+          null,
+          "the business's credential could not be opened: " + e.getMessage(),
+          null,
+          null,
+          now);
+      return;
+    }
     try {
       String ref = t.providerRef();
       Outcome o;

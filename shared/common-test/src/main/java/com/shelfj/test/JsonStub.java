@@ -26,8 +26,55 @@ import java.util.function.Function;
  */
 public final class JsonStub implements AutoCloseable {
 
-  /** A request as the stub received it. */
-  public record Call(String method, String path, String query, String tenantId, String body) {}
+  /** A request as the stub received it: what was asked, and of whom. */
+  public static final class Call {
+    private final String method;
+    private final String path;
+    private final String query;
+    private final String tenantId;
+    private final String body;
+    private final Map<String, String> headers;
+
+    Call(
+        String method,
+        String path,
+        String query,
+        String tenantId,
+        String body,
+        Map<String, String> headers) {
+      this.method = method;
+      this.path = path;
+      this.query = query;
+      this.tenantId = tenantId;
+      this.body = body;
+      this.headers = Map.copyOf(headers);
+    }
+
+    public String method() {
+      return method;
+    }
+
+    public String path() {
+      return path;
+    }
+
+    public String query() {
+      return query;
+    }
+
+    public String tenantId() {
+      return tenantId;
+    }
+
+    public String body() {
+      return body;
+    }
+
+    /** A request header by name, case-insensitive, or null. */
+    public String header(String name) {
+      return headers.get(name.toLowerCase(java.util.Locale.ROOT));
+    }
+  }
 
   /** What a route answers. */
   public record Answer(int status, String body) {
@@ -95,13 +142,22 @@ public final class JsonStub implements AutoCloseable {
     try (InputStream in = exchange.getRequestBody()) {
       body = new String(in.readAllBytes(), StandardCharsets.UTF_8);
     }
+    Map<String, String> headers = new java.util.HashMap<>();
+    exchange
+        .getRequestHeaders()
+        .forEach(
+            (name, values) -> {
+              if (!values.isEmpty())
+                headers.put(name.toLowerCase(java.util.Locale.ROOT), values.get(0));
+            });
     Call call =
         new Call(
             exchange.getRequestMethod(),
             exchange.getRequestURI().getPath(),
             exchange.getRequestURI().getRawQuery(),
             exchange.getRequestHeaders().getFirst("X-Tenant-Id"),
-            body);
+            body,
+            headers);
     calls.add(call);
     Function<Call, Answer> route = routes.get(call.method() + " " + call.path());
     Answer answer =

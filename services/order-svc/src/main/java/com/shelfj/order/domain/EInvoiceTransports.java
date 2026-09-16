@@ -54,17 +54,26 @@ public final class EInvoiceTransports {
 
   private EInvoiceTransports() {}
 
-  /** A business's choice of network and provider. */
+  /**
+   * A business's choice of network and provider.
+   *
+   * @param providerSecret the business's own credential at the provider, sealed; never shown
+   */
   public record Settings(
       UUID tenantId,
       String network,
       String provider,
       String providerAccount,
+      String providerSecret,
       Instant updatedAt,
       UUID updatedBy) {
 
     public static Settings none(UUID tenantId) {
-      return new Settings(tenantId, NETWORK_NONE, null, null, null, null);
+      return new Settings(tenantId, NETWORK_NONE, null, null, null, null, null);
+    }
+
+    public boolean hasSecret() {
+      return providerSecret != null && !providerSecret.isBlank();
     }
 
     /** Whether documents leave at all. */
