@@ -1,6 +1,7 @@
 package com.shelfj.tenant.domain;
 
 import java.time.Instant;
+import java.util.List;
 import java.util.UUID;
 
 /** Domain records for tenant-svc (Tenant → Stores → Zones). */
@@ -314,4 +315,47 @@ public final class Domain {
 
   /** What issuing notices did: how many were new, how many exist, how many are acknowledged. */
   public record NoticeIssue(int issued, int total, int acknowledged) {}
+
+  /**
+   * One duty a business owes when told of a personal data breach, by the regime that binds it
+   * (13.12): reference data with its citation, as the platform's own reporting stages are.
+   */
+  public record BreachDuty(
+      String regime,
+      String duty,
+      String anchor,
+      String dueAfter,
+      int position,
+      String citation,
+      String summary) {}
+
+  /** What a business recorded it did about one duty on one notice. */
+  public record NoticeReport(
+      UUID id,
+      UUID tenantId,
+      UUID noticeId,
+      String duty,
+      Instant doneAt,
+      String reference,
+      String note,
+      UUID recordedBy,
+      Instant recordedAt) {}
+
+  /** One duty as it stands on one notice: its clock from the notice, and what was recorded. */
+  public record DutyState(
+      String duty,
+      String citation,
+      String summary,
+      Instant dueAt,
+      String state,
+      NoticeReport report) {}
+
+  /** A notice's duties under the regime that binds the business, and from when it binds. */
+  public record NoticeDuties(
+      String regime, boolean binding, java.time.LocalDate bindsFrom, List<DutyState> duties) {
+
+    public static NoticeDuties none() {
+      return new NoticeDuties(null, false, null, List.of());
+    }
+  }
 }

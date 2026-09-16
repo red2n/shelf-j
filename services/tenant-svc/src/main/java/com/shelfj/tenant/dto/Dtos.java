@@ -548,5 +548,39 @@ public final class Dtos {
       String body,
       String issuedAt,
       String acknowledgedAt,
-      boolean acknowledged) {}
+      boolean acknowledged,
+      @Schema(
+              description =
+                  "DPDP or GDPR for a breach; null for a notice of anything else (13.12).")
+          String regime,
+      @Schema(description = "Whether that regime binds the business today.") boolean binding,
+      @Schema(description = "The day it starts to, when the register names one.") String bindsFrom,
+      List<NoticeDutyResponse> duties) {}
+
+  @Schema(
+      name = "NoticeDuty",
+      description = "One duty the business owes on a breach notice, and what it recorded.")
+  public record NoticeDutyResponse(
+      String duty,
+      String citation,
+      String summary,
+      @Schema(description = "When the clock runs out, from the notice; null for 'without delay'.")
+          String dueAt,
+      @Schema(description = "DONE, DUE, OVERDUE or WAITING.") String state,
+      String doneAt,
+      String reference,
+      String note,
+      String recordedBy) {}
+
+  @Schema(name = "RecordNoticeDutyRequest")
+  public record RecordDutyRequest(
+      @NotBlank
+          @Schema(
+              description =
+                  "A duty of the regime: PRINCIPALS_TOLD, BOARD_INTIMATED, BOARD_REPORTED, AUTHORITY_NOTIFIED or SUBJECTS_TOLD.")
+          String duty,
+      @Schema(description = "When it was done, ISO-8601; now when absent.") String doneAt,
+      @Schema(description = "The Board's or authority's reference, or the intimation's id.")
+          String reference,
+      String note) {}
 }

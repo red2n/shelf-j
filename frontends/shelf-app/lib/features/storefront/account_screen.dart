@@ -20,6 +20,7 @@ class MyCustomer {
   final String? phone;
   final String firstName;
   final String lastName;
+  final String? dob;
 
   const MyCustomer({
     required this.id,
@@ -27,6 +28,7 @@ class MyCustomer {
     this.phone,
     required this.firstName,
     required this.lastName,
+    this.dob,
   });
 
   factory MyCustomer.fromJson(Map<String, dynamic> j) => MyCustomer(
@@ -35,6 +37,7 @@ class MyCustomer {
         phone: j['phone'] as String?,
         firstName: j['firstName'] as String? ?? '',
         lastName: j['lastName'] as String? ?? '',
+        dob: j['dob'] as String?,
       );
 
   String get fullName => '$firstName $lastName'.trim();
@@ -384,12 +387,14 @@ class _ProfileCardState extends State<ProfileCard> {
   late final _first = TextEditingController(text: widget.customer.firstName);
   late final _last = TextEditingController(text: widget.customer.lastName);
   late final _phone = TextEditingController(text: widget.customer.phone ?? '');
+  late final _dob = TextEditingController(text: widget.customer.dob ?? '');
 
   @override
   void dispose() {
     _first.dispose();
     _last.dispose();
     _phone.dispose();
+    _dob.dispose();
     super.dispose();
   }
 
@@ -426,6 +431,22 @@ class _ProfileCardState extends State<ProfileCard> {
                 keyboardType: TextInputType.phone,
                 decoration: const InputDecoration(labelText: 'Phone', counterText: ''),
               ),
+              TextFormField(
+                key: const Key('profile-dob'),
+                controller: _dob,
+                maxLength: 10,
+                keyboardType: TextInputType.datetime,
+                decoration: const InputDecoration(
+                  labelText: 'Date of birth (YYYY-MM-DD)',
+                  counterText: '',
+                  helperText: 'Under 18, a parent or guardian consents for you.',
+                ),
+                validator: (v) {
+                  final t = (v ?? '').trim();
+                  if (t.isEmpty) return null;
+                  return RegExp(r'^\d{4}-\d{2}-\d{2}$').hasMatch(t) ? null : 'YYYY-MM-DD';
+                },
+              ),
               const SizedBox(height: 8),
               TextField(
                 enabled: false,
@@ -445,10 +466,12 @@ class _ProfileCardState extends State<ProfileCard> {
                       : () {
                           if (!(_form.currentState?.validate() ?? false)) return;
                           final phone = _phone.text.trim();
+                          final dob = _dob.text.trim();
                           widget.onSave({
                             'firstName': _first.text.trim(),
                             'lastName': _last.text.trim(),
                             'phone': phone.isEmpty ? null : phone,
+                            'dob': dob.isEmpty ? null : dob,
                           });
                         },
                   child: const Text('Save'),

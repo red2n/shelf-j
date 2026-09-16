@@ -8,6 +8,7 @@ import '../../core/network/api_error.dart';
 import '../../core/spacing.dart';
 import '../../shared/widgets/error_view.dart';
 import '../../shared/widgets/loading_view.dart';
+import 'privacy_screen.dart';
 
 // ---------------------------------------------------------------------------
 // Security notices the platform has sent this business (21.15).
@@ -21,6 +22,48 @@ import '../../shared/widgets/loading_view.dart';
 String _notices([String suffix = '']) =>
     '/${ApiConstants.tenant}/admin/tenant/security-notices$suffix';
 
+/// One duty the business owes on a breach notice (13.12), and what it recorded.
+class NoticeDuty {
+  final String duty;
+  final String citation;
+  final String summary;
+  final String? dueAt;
+  final String state;
+  final String? doneAt;
+  final String? reference;
+  const NoticeDuty({
+    required this.duty,
+    required this.citation,
+    required this.summary,
+    this.dueAt,
+    required this.state,
+    this.doneAt,
+    this.reference,
+  });
+  bool get done => state == 'DONE';
+  factory NoticeDuty.fromJson(Map<String, dynamic> j) => NoticeDuty(
+        duty: j['duty'] as String? ?? '',
+        citation: j['citation'] as String? ?? '',
+        summary: j['summary'] as String? ?? '',
+        dueAt: j['dueAt'] as String?,
+        state: j['state'] as String? ?? 'WAITING',
+        doneAt: j['doneAt'] as String?,
+        reference: j['reference'] as String?,
+      );
+}
+
+const _dutyLabels = <String, String>{
+  'PRINCIPALS_TOLD': 'Each affected person told',
+  'BOARD_INTIMATED': 'The Data Protection Board told',
+  'BOARD_REPORTED': 'Reported to the Board',
+  'AUTHORITY_NOTIFIED': 'The supervisory authority notified',
+  'SUBJECTS_TOLD': 'The people affected told',
+};
+
+/// The duties that mean telling customers: done through the privacy screen's
+/// intimation, whose id becomes the reference.
+const _tellingDuties = {'PRINCIPALS_TOLD', 'SUBJECTS_TOLD'};
+
 class SecurityNotice {
   final String id;
   final String incidentId;
@@ -28,7 +71,10 @@ class SecurityNotice {
   final String body;
   final String issuedAt;
   final String? acknowledgedAt;
-
+  final String? regime;
+  final bool binding;
+  final String? bindsFrom;
+  final List<NoticeDuty> duties;
   const SecurityNotice({
     required this.id,
     required this.incidentId,
@@ -36,10 +82,12 @@ class SecurityNotice {
     required this.body,
     required this.issuedAt,
     this.acknowledgedAt,
+    this.regime,
+    this.binding = true,
+    this.bindsFrom,
+    this.duties = const [],
   });
-
   bool get acknowledged => acknowledgedAt != null;
-
   factory SecurityNotice.fromJson(Map<String, dynamic> j) => SecurityNotice(
         id: j['id'] as String? ?? '',
         incidentId: j['incidentId'] as String? ?? '',
@@ -47,6 +95,13 @@ class SecurityNotice {
         body: j['body'] as String? ?? '',
         issuedAt: j['issuedAt'] as String? ?? '',
         acknowledgedAt: j['acknowledgedAt'] as String?,
+        regime: j['regime'] as String?,
+        binding: j['binding'] != false,
+        bindsFrom: j['bindsFrom'] as String?,
+        duties: [
+          for (final d in (j['duties'] as List?) ?? const [])
+            NoticeDuty.fromJson(d as Map<String, dynamic>)
+        ],
       );
 }
 
@@ -133,10 +188,95 @@ class _SecurityNoticesScreenState extends ConsumerState<SecurityNoticesScreen> {
                     icon: const Icon(Icons.task_alt),
                     label: const Text('Acknowledge'),
                   ),
+            if (n.regime != null) ...[
+              const SizedBox(height: AppSpacing.md),
+              Text(
+                n.regime == 'DPDP'
+                    ? "Your own duties under India's DPDP Act"
+                        '${n.binding ? '' : ' (from ${n.bindsFrom})'}'
+                    : 'Your own duties under the GDPR',
+                key: Key('duties-${n.id}'),
+                style: theme.textTheme.titleSmall,
+              ),
+              for (final d in n.duties) _duty(context, n, d),
+            ],
           ],
         ),
       ),
     );
+  }
+
+  Widget _duty(BuildContext context, SecurityNotice n, NoticeDuty d) {
+    final theme = Theme.of(context);
+    final cs = theme.colorScheme;
+    final overdue = d.state == 'OVERDUE';
+    final when = d.done
+        ? 'Done ${AppFormat.dateTime(d.doneAt)}'
+            '${d.reference != null ? ' · ${d.reference}' : ''}'
+        : d.dueAt != null
+            ? '${overdue ? 'Overdue: was due' : 'Due'} ${AppFormat.dateTime(d.dueAt)}'
+            : 'Without delay';
+    return ListTile(
+      key: Key('duty-${n.id}-${d.duty}'),
+      dense: true,
+      contentPadding: EdgeInsets.zero,
+      leading: Icon(
+        d.done ? Icons.task_alt : Icons.radio_button_unchecked,
+        color: d.done ? null : (overdue ? cs.error : null),
+      ),
+      title: Text(_dutyLabels[d.duty] ?? d.duty),
+      subtitle: Text('$when\n${d.summary} — ${d.citation}'),
+      isThreeLine: true,
+      trailing: d.done
+          ? null
+          : TextButton(
+              key: Key('record-${n.id}-${d.duty}'),
+              onPressed: _busy.contains(n.id) ? null : () => _record(n, d),
+              child: Text(_tellingDuties.contains(d.duty) ? 'Tell customers' : 'Record'),
+            ),
+    );
+  }
+
+  /// Records a duty done; a telling duty first sends the intimation and keeps
+  /// its id as the reference.
+  Future<void> _record(SecurityNotice n, NoticeDuty d) async {
+    String? reference;
+    String? note;
+    if (_tellingDuties.contains(d.duty)) {
+      reference = await showDialog<String>(
+        context: context,
+        builder: (_) => BreachIntimationDialog(noticeId: n.id),
+      );
+      if (reference == null) return;
+      note = 'Every reachable customer told through the platform.';
+    } else {
+      final r = await showDialog<(String?, String?)>(
+        context: context,
+        builder: (_) => _RecordDutyDialog(label: _dutyLabels[d.duty] ?? d.duty),
+      );
+      if (r == null) return;
+      reference = r.$1;
+      note = r.$2;
+    }
+    setState(() => _busy.add(n.id));
+    try {
+      await ref.read(apiClientProvider).dio.post(
+        _notices('/${n.id}/reports'),
+        data: {
+          'duty': d.duty,
+          if (reference != null && reference.isNotEmpty) 'reference': reference,
+          if (note != null && note.isNotEmpty) 'note': note,
+        },
+      );
+      ref.invalidate(securityNoticesProvider);
+    } catch (e) {
+      if (mounted) {
+        ScaffoldMessenger.of(context).showSnackBar(SnackBar(
+            content: Text(friendlyError(e, fallback: 'Could not record that.'))));
+      }
+    } finally {
+      if (mounted) setState(() => _busy.remove(n.id));
+    }
   }
 
   Future<void> _acknowledge(SecurityNotice n) async {
@@ -153,5 +293,63 @@ class _SecurityNoticesScreenState extends ConsumerState<SecurityNoticesScreen> {
     } finally {
       if (mounted) setState(() => _busy.remove(n.id));
     }
+  }
+}
+
+/// The reference and note for a duty done outside the platform.
+class _RecordDutyDialog extends StatefulWidget {
+  const _RecordDutyDialog({required this.label});
+  final String label;
+
+  @override
+  State<_RecordDutyDialog> createState() => _RecordDutyDialogState();
+}
+
+class _RecordDutyDialogState extends State<_RecordDutyDialog> {
+  final _reference = TextEditingController();
+  final _note = TextEditingController();
+
+  @override
+  void dispose() {
+    _reference.dispose();
+    _note.dispose();
+    super.dispose();
+  }
+
+  @override
+  Widget build(BuildContext context) {
+    return AlertDialog(
+      title: Text(widget.label),
+      content: Column(
+        mainAxisSize: MainAxisSize.min,
+        children: [
+          TextField(
+            key: const Key('duty-reference'),
+            controller: _reference,
+            maxLength: 120,
+            decoration: const InputDecoration(
+                labelText: "The Board's or authority's reference", counterText: ''),
+          ),
+          TextField(
+            key: const Key('duty-note'),
+            controller: _note,
+            maxLines: 3,
+            maxLength: 2000,
+            decoration: const InputDecoration(labelText: 'Note', counterText: ''),
+          ),
+        ],
+      ),
+      actions: [
+        TextButton(
+            onPressed: () => Navigator.of(context).pop(),
+            child: const Text('Cancel')),
+        FilledButton(
+          key: const Key('duty-save'),
+          onPressed: () => Navigator.of(context)
+              .pop((_reference.text.trim(), _note.text.trim())),
+          child: const Text('Record'),
+        ),
+      ],
+    );
   }
 }

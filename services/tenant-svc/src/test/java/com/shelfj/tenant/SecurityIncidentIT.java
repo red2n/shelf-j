@@ -101,6 +101,10 @@ class SecurityIncidentIT {
   private record Business(String id, String owner) {}
 
   private Business onboard(String name) {
+    return onboardIn(name, "gb", "gbp");
+  }
+
+  private Business onboardIn(String name, String country, String currency) {
     String owner = Ids.newId().toString();
     Response r =
         target
@@ -113,9 +117,19 @@ class SecurityIncidentIT {
                         + name
                         + " "
                         + Ids.newId()
-                        + "\",\"country\":\"gb\",\"currency\":\"gbp\"}"));
+                        + "\",\"country\":\""
+                        + country
+                        + "\",\"currency\":\""
+                        + currency
+                        + "\"}"));
     assertThat(r.getStatus(), is(201));
     return new Business(data(r).getString("id"), owner);
+  }
+
+  private static JsonObject data(Response r, int status) {
+    String body = r.readEntity(String.class);
+    assertThat(body, r.getStatus(), is(status));
+    return Json.createReader(new StringReader(body)).readObject().getJsonObject("data");
   }
 
   private static Instant ago(Duration d) {
@@ -262,6 +276,161 @@ class SecurityIncidentIT {
   }
 
   // ── notices ────────────────────────────────────────────────────────────────
+
+  @Test
+  @DisplayName(
+      "A breach notice carries the business's own duties, by regime, recorded once each (13.12)")
+  void aBreachNoticeCarriesTheBusinessesDuties() {
+    Business british = onboard("Kent Grocers");
+    Business indian = onboardIn("Chennai Provisions", "IN", "INR");
+    Business quiet = onboard("Untouched");
+    Instant aware = ago(Duration.ofHours(1));
+    String id =
+        opened("PERSONAL_DATA_BREACH", aware, "[\"" + british.id() + "\",\"" + indian.id() + "\"]")
+            .getString("id");
+    data(
+        platform(BASE + "/" + id + "/notices")
+            .post(Entity.json("{\"message\":\"Names and emails were read.\"}")));
+
+    JsonObject gb = notice(british);
+    assertThat(gb.getString("regime"), is("GDPR"));
+    assertThat(gb.getBoolean("binding"), is(true));
+    JsonArray gbDuties = gb.getJsonArray("duties");
+    assertThat(gbDuties.size(), is(2));
+    JsonObject authority = duty(gb, "AUTHORITY_NOTIFIED");
+    assertThat(authority.getString("state"), is("DUE"));
+    assertThat(
+        "72 hours from the notice, not from the platform's awareness",
+        authority.getString("dueAt"),
+        is(Instant.parse(gb.getString("issuedAt")).plus(Duration.ofHours(72)).toString()));
+    assertThat(duty(gb, "SUBJECTS_TOLD").getString("state"), is("WAITING"));
+    assertThat(absent(duty(gb, "SUBJECTS_TOLD"), "dueAt"), is(true));
+
+    JsonObject in = notice(indian);
+    assertThat(in.getString("regime"), is("DPDP"));
+    assertThat("the Act's duties bind from 13 May 2027", in.getBoolean("binding"), is(false));
+    assertThat(in.getString("bindsFrom"), is("2027-05-13"));
+    assertThat(in.getJsonArray("duties").size(), is(3));
+    assertThat(duty(in, "PRINCIPALS_TOLD").getString("citation"), containsString("r.7(1)"));
+    assertThat(duty(in, "BOARD_REPORTED").getString("state"), is("DUE"));
+
+    String noticeId = in.getString("id");
+    JsonObject recorded =
+        data(
+            as(
+                    "/admin/tenant/security-notices/" + noticeId + "/reports",
+                    "MANAGER",
+                    indian.id(),
+                    indian.owner())
+                .post(
+                    Entity.json(
+                        "{\"duty\":\"board_intimated\",\"reference\":\"DPB-2026-0042\",\"note\":\"By the portal.\"}")),
+            201);
+    JsonObject done = duty(recorded, "BOARD_INTIMATED");
+    assertThat(done.getString("state"), is("DONE"));
+    assertThat(done.getString("reference"), is("DPB-2026-0042"));
+    assertThat(done.getString("recordedBy"), is(indian.owner()));
+    assertThat(duty(recorded, "BOARD_REPORTED").getString("state"), is("DUE"));
+    assertThat(
+        "the list shows it too",
+        duty(notice(indian), "BOARD_INTIMATED").getString("state"),
+        is("DONE"));
+
+    Response twice =
+        as(
+                "/admin/tenant/security-notices/" + noticeId + "/reports",
+                "OWNER",
+                indian.id(),
+                indian.owner())
+            .post(Entity.json("{\"duty\":\"BOARD_INTIMATED\"}"));
+    assertThat(twice.getStatus(), is(409));
+    assertThat(twice.readEntity(String.class), containsString("SECURITY_NOTICE_DUTY_DONE"));
+    Response wrongRegime =
+        as(
+                "/admin/tenant/security-notices/" + noticeId + "/reports",
+                "OWNER",
+                indian.id(),
+                indian.owner())
+            .post(Entity.json("{\"duty\":\"AUTHORITY_NOTIFIED\"}"));
+    assertThat(wrongRegime.getStatus(), is(400));
+    assertThat(
+        wrongRegime.readEntity(String.class), containsString("SECURITY_NOTICE_DUTY_UNKNOWN"));
+    Response future =
+        as(
+                "/admin/tenant/security-notices/" + noticeId + "/reports",
+                "OWNER",
+                indian.id(),
+                indian.owner())
+            .post(
+                Entity.json("{\"duty\":\"PRINCIPALS_TOLD\",\"doneAt\":\"2099-01-01T00:00:00Z\"}"));
+    assertThat(future.getStatus(), is(400));
+    assertThat(
+        as(
+                "/admin/tenant/security-notices/" + noticeId + "/reports",
+                "CASHIER",
+                indian.id(),
+                Ids.newId().toString())
+            .post(Entity.json("{\"duty\":\"PRINCIPALS_TOLD\"}"))
+            .getStatus(),
+        is(403));
+    Response theirs =
+        as(
+                "/admin/tenant/security-notices/" + noticeId + "/reports",
+                "OWNER",
+                british.id(),
+                british.owner())
+            .post(Entity.json("{\"duty\":\"SUBJECTS_TOLD\"}"));
+    assertThat(theirs.getStatus(), is(404));
+    assertThat(
+        as("/admin/tenant/security-notices", "OWNER", quiet.id(), quiet.owner()).get(String.class),
+        containsString("\"data\":[]"));
+
+    // A notice of anything but a breach carries no duties.
+    String vuln =
+        opened("EXPLOITED_VULNERABILITY", aware, "[\"" + british.id() + "\"]").getString("id");
+    data(
+        platform(BASE + "/" + vuln + "/notices").post(Entity.json("{\"message\":\"Patch now.\"}")));
+    JsonObject plain =
+        notices(british).stream()
+            .map(JsonObject.class::cast)
+            .filter(n -> n.getString("incidentId").equals(vuln))
+            .findFirst()
+            .orElseThrow();
+    assertThat(absent(plain, "regime"), is(true));
+    assertThat(plain.getJsonArray("duties").size(), is(0));
+    Response noDuties =
+        as(
+                "/admin/tenant/security-notices/" + plain.getString("id") + "/reports",
+                "OWNER",
+                british.id(),
+                british.owner())
+            .post(Entity.json("{\"duty\":\"SUBJECTS_TOLD\"}"));
+    assertThat(noDuties.readEntity(String.class), containsString("SECURITY_NOTICE_NO_DUTIES"));
+  }
+
+  private JsonArray notices(Business b) {
+    Response r = as("/admin/tenant/security-notices", "OWNER", b.id(), b.owner()).get();
+    String body = r.readEntity(String.class);
+    assertThat(body, r.getStatus(), is(200));
+    return Json.createReader(new StringReader(body)).readObject().getJsonArray("data");
+  }
+
+  private JsonObject notice(Business b) {
+    return notices(b).getJsonObject(0);
+  }
+
+  /** JSON-B leaves a null field out, so absent and null are the same answer. */
+  private static boolean absent(JsonObject o, String field) {
+    return !o.containsKey(field) || o.isNull(field);
+  }
+
+  private static JsonObject duty(JsonObject notice, String duty) {
+    return notice.getJsonArray("duties").stream()
+        .map(JsonObject.class::cast)
+        .filter(d -> d.getString("duty").equals(duty))
+        .findFirst()
+        .orElseThrow(() -> new AssertionError(duty + " not in " + notice));
+  }
 
   @Test
   @DisplayName("A breach reaches only the business it affects, which acknowledges it once")

@@ -2,8 +2,10 @@ package com.shelfj.tenant.repo;
 
 import com.shelfj.ids.Ids;
 import com.shelfj.service.BaseJdbcRepository;
+import com.shelfj.tenant.domain.Domain.BreachDuty;
 import com.shelfj.tenant.domain.Domain.IncidentEvent;
 import com.shelfj.tenant.domain.Domain.NoticeIssue;
+import com.shelfj.tenant.domain.Domain.NoticeReport;
 import com.shelfj.tenant.domain.Domain.ReportingStage;
 import com.shelfj.tenant.domain.Domain.SecurityIncident;
 import com.shelfj.tenant.domain.Domain.SecurityNotice;
@@ -39,6 +41,8 @@ public class SecurityIncidentRepository extends BaseJdbcRepository {
   private static final String NOTICE_COLUMNS =
       "id, tenant_id, incident_id, title, body, issued_at, issued_by, acknowledged_at,"
           + " acknowledged_by";
+  private static final String REPORT_COLUMNS =
+      "id, tenant_id, notice_id, duty, done_at, reference, note, recorded_by, recorded_at";
 
   /** The statutory stages for a kind of incident, in order. */
   public List<ReportingStage> stages(String kind) {
@@ -223,6 +227,82 @@ public class SecurityIncidentRepository extends BaseJdbcRepository {
         "issue security notices");
   }
 
+  /** The duties a regime puts on a business told of a breach, in order (13.12). */
+  public List<BreachDuty> breachDuties(String regime) {
+    return query(
+        "SELECT regime, duty, anchor, due_after, position, citation, summary"
+            + " FROM breach_duties WHERE regime = ? ORDER BY position",
+        ps -> ps.setString(1, regime),
+        rs ->
+            new BreachDuty(
+                rs.getString("regime"),
+                rs.getString("duty"),
+                rs.getString("anchor"),
+                rs.getString("due_after"),
+                rs.getInt("position"),
+                rs.getString("citation"),
+                rs.getString("summary")),
+        "breach duties");
+  }
+
+  /** What a business recorded on one notice, by duty. */
+  public List<NoticeReport> reportsFor(UUID tenantId, UUID noticeId) {
+    return query(
+        "SELECT "
+            + REPORT_COLUMNS
+            + " FROM security_notice_reports"
+            + " WHERE tenant_id = ? AND notice_id = ? ORDER BY recorded_at",
+        ps -> {
+          ps.setObject(1, tenantId);
+          ps.setObject(2, noticeId);
+        },
+        SecurityIncidentRepository::report,
+        "notice reports");
+  }
+
+  /**
+   * Records a duty done, once per duty per notice.
+   *
+   * @return whether it was new; false when that duty was recorded already
+   */
+  public boolean recordReport(NoticeReport r) {
+    return inTx(
+        c -> {
+          try (PreparedStatement ps =
+              c.prepareStatement(
+                  "INSERT INTO security_notice_reports ("
+                      + REPORT_COLUMNS
+                      + ") VALUES (?,?,?,?,?,?,?,?,?)"
+                      + " ON CONFLICT (tenant_id, notice_id, duty) DO NOTHING")) {
+            ps.setObject(1, r.id());
+            ps.setObject(2, r.tenantId());
+            ps.setObject(3, r.noticeId());
+            ps.setString(4, r.duty());
+            ps.setObject(5, utc(r.doneAt()));
+            ps.setString(6, r.reference());
+            ps.setString(7, r.note());
+            ps.setObject(8, r.recordedBy());
+            ps.setObject(9, utc(r.recordedAt()));
+            return ps.executeUpdate() == 1;
+          }
+        },
+        "record notice report");
+  }
+
+  /** One of a business's notices, or empty for another business's. */
+  public Optional<SecurityNotice> noticeOf(UUID tenantId, UUID noticeId) {
+    return query(
+            "SELECT " + NOTICE_COLUMNS + " FROM security_notices WHERE tenant_id = ? AND id = ?",
+            ps -> {
+              ps.setObject(1, tenantId);
+              ps.setObject(2, noticeId);
+            },
+            SecurityIncidentRepository::notice,
+            "one security notice")
+        .stream()
+        .findFirst();
+  }
+
   /** A business's own notices, newest first. */
   public List<SecurityNotice> noticesFor(UUID tenantId) {
     return query(
@@ -391,6 +471,19 @@ public class SecurityIncidentRepository extends BaseJdbcRepository {
         return rs.next() ? new int[] {rs.getInt(1), rs.getInt(2)} : new int[] {0, 0};
       }
     }
+  }
+
+  private static NoticeReport report(ResultSet rs) throws SQLException {
+    return new NoticeReport(
+        rs.getObject("id", UUID.class),
+        rs.getObject("tenant_id", UUID.class),
+        rs.getObject("notice_id", UUID.class),
+        rs.getString("duty"),
+        instant(rs, "done_at"),
+        rs.getString("reference"),
+        rs.getString("note"),
+        rs.getObject("recorded_by", UUID.class),
+        instant(rs, "recorded_at"));
   }
 
   private static SecurityNotice notice(ResultSet rs) throws SQLException {

@@ -11,6 +11,7 @@ export 'recalls_screen.dart';
 export 'age_checks_screen.dart';
 export 'obligations_screen.dart';
 export 'retention_screen.dart';
+export 'privacy_screen.dart';
 export 'tenant_data_screen.dart';
 export 'security_notices_screen.dart';
 export 'audit_trail_screen.dart';

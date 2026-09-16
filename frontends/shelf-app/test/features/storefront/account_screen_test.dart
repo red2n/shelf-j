@@ -127,7 +127,7 @@ void main() {
     await tester.pumpAndSettle();
     final put = _last(recorder, 'PUT');
     expect(put.path, endsWith('/customers/me'));
-    expect(put.data, {'firstName': 'Christopher', 'lastName': 'Carter', 'phone': null});
+    expect(put.data, {'firstName': 'Christopher', 'lastName': 'Carter', 'phone': null, 'dob': null});
     expect((put.data as Map).containsKey('email'), isFalse);
     expect(find.text('Saved.'), findsOneWidget);
   });

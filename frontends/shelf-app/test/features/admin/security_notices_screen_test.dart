@@ -64,7 +64,54 @@ String _notice(String id, {String? acknowledgedAt}) => '{"id":"$id","incidentId"
     '"issuedAt":"2026-09-14T08:00:00Z","acknowledgedAt":${acknowledgedAt == null ? 'null' : '"$acknowledgedAt"'},'
     '"acknowledged":${acknowledgedAt != null}}';
 
+String _breach(String id, {bool boardDone = false}) => '{"id":"$id","incidentId":"i-$id",'
+    '"title":"Security notice: names read","body":"Names and emails were read.",'
+    '"issuedAt":"2026-09-14T08:00:00Z","acknowledgedAt":null,"acknowledged":false,'
+    '"regime":"DPDP","binding":false,"bindsFrom":"2027-05-13","duties":['
+    '{"duty":"PRINCIPALS_TOLD","citation":"DPDP Rules 2025 r.7(1)","summary":"Each affected person told without delay","dueAt":null,"state":"WAITING"},'
+    '{"duty":"BOARD_INTIMATED","citation":"DPDP Rules 2025 r.7(2)(a)","summary":"The Board told without delay","dueAt":null,"state":"${boardDone ? 'DONE' : 'WAITING'}"${boardDone ? ',"doneAt":"2026-09-14T09:00:00Z","reference":"DPB-0042"' : ''}},'
+    '{"duty":"BOARD_REPORTED","citation":"DPDP Rules 2025 r.7(2)(b)","summary":"Reported within seventy-two hours","dueAt":"2026-09-17T08:00:00Z","state":"OVERDUE"}]}';
+
 void main() {
+  // ── 13.12: the business's own duties on a breach ───────────────────────────
+
+  testWidgets('a breach notice lists the DPDP duties with their clocks, and the date the Act binds from',
+      (tester) async {
+    await _pump(tester, (t) => t.list = '{"data":[${_breach('b1', boardDone: true)}]}');
+    expect(find.textContaining("duties under India's DPDP Act (from 2027-05-13)"), findsOneWidget);
+    expect(find.byKey(const Key('duty-b1-PRINCIPALS_TOLD')), findsOneWidget);
+    expect(find.textContaining('Without delay'), findsWidgets);
+    expect(find.textContaining('Overdue: was due'), findsOneWidget);
+    expect(find.textContaining('DPB-0042'), findsOneWidget);
+    expect(find.byKey(const Key('record-b1-BOARD_INTIMATED')), findsNothing, reason: 'done is done');
+    expect(find.text('Tell customers'), findsOneWidget);
+    expect(find.text('Record'), findsOneWidget);
+  });
+
+  testWidgets('recording a duty posts it once with the reference and note', (tester) async {
+    final tenant = await _pump(tester, (t) {
+      t.list = '{"data":[${_breach('b1')}]}';
+      t.ackBody = '{"data":${_breach('b1', boardDone: true)}}';
+    });
+    await tester.tap(find.byKey(const Key('record-b1-BOARD_REPORTED')));
+    await tester.pumpAndSettle();
+    await tester.enterText(find.byKey(const Key('duty-reference')), 'DPB-0042');
+    await tester.enterText(find.byKey(const Key('duty-note')), 'Filed on the portal.');
+    await tester.tap(find.byKey(const Key('duty-save')));
+    await tester.pumpAndSettle();
+    final posts = tenant.requests.where((r) => r.method == 'POST').toList();
+    expect(posts.single.path, '/tenant-svc/admin/tenant/security-notices/b1/reports');
+    expect((posts.single.data as Map)['duty'], 'BOARD_REPORTED');
+    expect((posts.single.data as Map)['reference'], 'DPB-0042');
+    expect((posts.single.data as Map)['note'], 'Filed on the portal.');
+  });
+
+  testWidgets('a notice of anything but a breach carries no duties', (tester) async {
+    await _pump(tester, (t) => t.list = '{"data":[${_notice('n1')}]}');
+    expect(find.byKey(const Key('duties-n1')), findsNothing);
+    expect(find.text('Record'), findsNothing);
+  });
+
   setUpAll(initializeDateFormatting);
 
   testWidgets('an unread notice offers Acknowledge; a read one says when', (tester) async {

@@ -288,8 +288,8 @@ Staff/customer auth, JWT issuance, and POS cashier session lifecycle.
 
 ### tenant-svc — Tenants, Stores, Zones, Staff
 Owns the Tenant→Store→Zone hierarchy and tenant onboarding (see §1).
-- **API:** `/onboarding` self-serve signup + tenant/store creation + status checklist; `/admin` tenant/store/zone CRUD + status, staff assign/list/remove, inventory-config; `/platform` cross-tenant list + suspend/reactivate + which business holds an e-invoicing address (the receiver of a network's delivery); `/storefront` public config/store lookup.
-- **Tables:** `tenants`, `stores`, `zones`, `staff_assignments`, `tenant_inventory_config`, `tenant_switches` and `tenant_erasure_evidence` (21.14: a business's notice to leave and what each service erased, both kept at erasure).
+- **API:** `/onboarding` self-serve signup + tenant/store creation + status checklist; `/admin` tenant/store/zone CRUD + status, staff assign/list/remove, inventory-config; `/platform` cross-tenant list + suspend/reactivate + which business holds an e-invoicing address (the receiver of a network's delivery); `/admin/tenant/security-notices` with the business's own breach duties and what it recorded; `/storefront` public config/store lookup.
+- **Tables:** `tenants`, `stores`, `zones`, `staff_assignments`, `tenant_inventory_config`, `tenant_switches` and `tenant_erasure_evidence` (21.14: a business's notice to leave and what each service erased, both kept at erasure), `breach_duties` (reference data: what a business owes when told of a breach, by regime) and `security_notice_reports` (13.12: what it recorded doing, once per duty).
 - **Events:** publishes `TenantCreated`, `TenantStatusChanged`, `StoreCreated`, `StoreStatusChanged`, `ZoneCreated`, `StaffAssigned`, `UserRoleGranted`; consumes `RetentionRunCompleted` from order-svc, customer-svc and notification-svc (21.16: the one register of every purge, keyed by event id).
 - **Notable:** source of truth for store/zone data every other service projects locally.
 
@@ -344,7 +344,7 @@ Suppliers, purchase orders, goods receipts, and finance-adjacent intercompany in
 ### customer-svc — Customers, Loyalty, Store Credit
 Customer profiles, addresses, and two append-only ledgers.
 - **API:** `/customers` CRUD (+anonymize-on-delete), addresses CRUD; `/{id}/loyalty` earn/redeem/adjust/ledger; `/{id}/store-credit` issue/redeem.
-- **Tables:** `customers`, `customer_addresses`, `loyalty_accounts`, `loyalty_ledger` (append-only), `store_credit_accounts`, `store_credit_ledger` (append-only).
+- **Tables:** `customers`, `customer_addresses`, `loyalty_accounts`, `loyalty_ledger` (append-only), `store_credit_accounts`, `store_credit_ledger` (append-only), `marketing_preferences`, `marketing_consent_log` (append-only), `privacy_settings`, `privacy_notices` (versioned per language), `purpose_consents`, `purpose_consent_log` (append-only), `guardian_consents`, `privacy_requests`, `breach_intimations` (13.12: a person's privacy under India's DPDP Act).
 - **Events:** publishes `CustomerRegistered`, `LoyaltyEarned/Redeemed/Adjusted` (each with its own `eventId`; an accrual carries the sale's `orderTotal` and `orderTaxAmount`, which purchase-svc defers the points' share of, 17.11), `StoreCreditIssued/Redeemed`; consumes `OrderConfirmed` (auto-accrues loyalty points, deduped by event id).
 - **Notable:** GDPR-style anonymize-on-delete; both ledgers are auditable balances, never mutable counters.
 

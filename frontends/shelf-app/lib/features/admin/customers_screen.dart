@@ -14,6 +14,7 @@ import 'customer_providers.dart';
 import 'sales_invoices_dialog.dart';
 import 'send_text_dialog.dart';
 import 'providers/customers_pagination.dart';
+import 'guardian_consent_section.dart';
 
 class CustomersScreen extends ConsumerStatefulWidget {
   const CustomersScreen({super.key});
@@ -411,6 +412,8 @@ class _CustomerDetailDialog extends ConsumerWidget {
               // 18.9: a business buyer's registration decides whether its sales are
               // invoiced, and what the invoice names it as.
               VatRegistrationSection(customerId: customer.id),
+              const SizedBox(height: 12),
+              GuardianConsentSection(customerId: customer.id),
               const SizedBox(height: 16),
               Text('Loyalty ledger',
                   style: Theme.of(context).textTheme.labelLarge),

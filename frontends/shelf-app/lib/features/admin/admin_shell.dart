@@ -103,6 +103,14 @@ const _navItems = [
   ),
   _AdminNavItem(
     destination: AdaptiveNavDestination(
+      label: 'Privacy',
+      icon: Icons.privacy_tip_outlined,
+      selectedIcon: Icons.privacy_tip,
+    ),
+    route: '/admin/privacy',
+  ),
+  _AdminNavItem(
+    destination: AdaptiveNavDestination(
       label: 'Security notices',
       icon: Icons.shield_outlined,
       selectedIcon: Icons.shield,

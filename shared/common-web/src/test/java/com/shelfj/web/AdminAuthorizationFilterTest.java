@@ -273,6 +273,29 @@ class AdminAuthorizationFilterTest {
   }
 
   /**
+   * The shopper's own privacy (13.12) is theirs without a staff role, as /customers/me is; the
+   * notice is public; the business's settings, notices, queue and a customer's record are staff.
+   */
+  @Test
+  void theShoppersOwnPrivacyIsOpenAndTheBusinessesSideIsStaff() throws Exception {
+    assertNotAborted(invoke("GET", "/customers/privacy/notice"));
+    assertNotAborted(invoke("GET", "/customers/me/privacy"));
+    assertNotAborted(invoke("PUT", "/customers/me/privacy/consents"));
+    assertNotAborted(invoke("DELETE", "/customers/me/privacy/consents"));
+    assertNotAborted(invoke("GET", "/customers/me/privacy/requests"));
+    assertNotAborted(invoke("POST", "/customers/me/privacy/requests"));
+    assertAborted(invoke("GET", "/customers/privacy/settings"), 403);
+    assertAborted(invoke("PUT", "/customers/privacy/settings"), 403);
+    assertAborted(invoke("POST", "/customers/privacy/notices"), 403);
+    assertAborted(invoke("GET", "/customers/privacy/requests"), 403);
+    assertAborted(invoke("POST", "/customers/privacy/breach-intimations"), 403);
+    assertAborted(invoke("GET", "/customers/01a09509-72ec-72e9-9f08-94a93df26a36/privacy"), 403);
+    assertAborted(
+        invoke("POST", "/customers/01a09509-72ec-72e9-9f08-94a93df26a36/privacy/guardian"), 403);
+    assertAborted(invoke("GET", "/customers/privacy/notice/extra"), 403);
+  }
+
+  /**
    * A network delivering an e-invoice reaches purchase-svc with no JWT and no tenant, like a
    * webhook; the delivery key is checked there. A person's upload beside it needs a staff role.
    */

@@ -1,15 +1,22 @@
 package com.shelfj.tenant.service;
 
 import com.shelfj.ids.Ids;
+import com.shelfj.tenant.domain.Domain.BreachDuty;
+import com.shelfj.tenant.domain.Domain.DutyState;
 import com.shelfj.tenant.domain.Domain.IncidentEvent;
 import com.shelfj.tenant.domain.Domain.IncidentSheet;
+import com.shelfj.tenant.domain.Domain.LegalObligation;
+import com.shelfj.tenant.domain.Domain.NoticeDuties;
 import com.shelfj.tenant.domain.Domain.NoticeIssue;
+import com.shelfj.tenant.domain.Domain.NoticeReport;
 import com.shelfj.tenant.domain.Domain.ReportingStage;
 import com.shelfj.tenant.domain.Domain.SecurityIncident;
 import com.shelfj.tenant.domain.Domain.SecurityNotice;
 import com.shelfj.tenant.dto.Dtos.CreateIncidentRequest;
 import com.shelfj.tenant.dto.Dtos.IssueNoticesRequest;
+import com.shelfj.tenant.dto.Dtos.RecordDutyRequest;
 import com.shelfj.tenant.dto.Dtos.RecordIncidentEventRequest;
+import com.shelfj.tenant.repo.ObligationRepository;
 import com.shelfj.tenant.repo.SecurityIncidentRepository;
 import com.shelfj.web.ApiException;
 import com.shelfj.web.Parsing;
@@ -17,7 +24,10 @@ import jakarta.enterprise.context.ApplicationScoped;
 import jakarta.inject.Inject;
 import java.time.Clock;
 import java.time.Instant;
+import java.time.LocalDate;
+import java.time.ZoneOffset;
 import java.time.temporal.ChronoUnit;
+import java.util.ArrayList;
 import java.util.HashMap;
 import java.util.List;
 import java.util.Locale;
@@ -40,7 +50,14 @@ public class SecurityIncidentService {
   private static final int MAX_NOTE = 2000;
   private static final int MAX_MESSAGE = 4000;
 
+  static final String KIND_BREACH = "PERSONAL_DATA_BREACH";
+  static final String REGIME_DPDP = "DPDP";
+  static final String REGIME_GDPR = "GDPR";
+  static final String REGIME_DPDP_OBLIGATION = "DPDP";
+
   @Inject SecurityIncidentRepository repo;
+  @Inject ObligationRepository obligations;
+  @Inject TenantService tenants;
 
   Clock clock = Clock.systemUTC();
 
@@ -218,6 +235,108 @@ public class SecurityIncidentService {
   /** A business's own notices, newest first. */
   public List<SecurityNotice> notices(UUID tenantId) {
     return repo.noticesFor(tenantId);
+  }
+
+  /**
+   * What a business owes on a notice of a personal data breach, under the regime its country puts
+   * it under (13.12): India's DPDP Act where the register carries it, binding or upcoming; the GDPR
+   * elsewhere. A notice of anything but a breach carries no duties.
+   */
+  public NoticeDuties duties(UUID tenantId, SecurityNotice notice) {
+    SecurityIncident incident = repo.find(notice.incidentId()).orElse(null);
+    if (incident == null || !KIND_BREACH.equals(incident.kind())) {
+      return NoticeDuties.none();
+    }
+    String country = tenants.getTenant(tenantId).country();
+    LocalDate today = LocalDate.ofInstant(clock.instant(), ZoneOffset.UTC);
+    LegalObligation dpdp =
+        obligations.forCountry(country).stream()
+            .filter(o -> REGIME_DPDP_OBLIGATION.equals(o.code()))
+            .findFirst()
+            .orElse(null);
+    String regime = dpdp == null ? REGIME_GDPR : REGIME_DPDP;
+    boolean binding =
+        dpdp == null
+            || (!dpdp.effectiveFrom().isAfter(today)
+                && (dpdp.effectiveTo() == null || !dpdp.effectiveTo().isBefore(today)));
+    Map<String, NoticeReport> reports = new HashMap<>();
+    for (NoticeReport r : repo.reportsFor(tenantId, notice.id())) reports.put(r.duty(), r);
+    Instant now = clock.instant();
+    List<DutyState> states = new ArrayList<>();
+    for (BreachDuty d : repo.breachDuties(regime)) {
+      Instant dueAt =
+          d.dueAfter() == null ? null : IncidentRules.plus(notice.issuedAt(), d.dueAfter());
+      NoticeReport report = reports.get(d.duty());
+      String state;
+      if (report != null) state = IncidentRules.DONE;
+      else if (dueAt == null) state = IncidentRules.WAITING;
+      else state = dueAt.isBefore(now) ? IncidentRules.OVERDUE : IncidentRules.DUE;
+      states.add(new DutyState(d.duty(), d.citation(), d.summary(), dueAt, state, report));
+    }
+    return new NoticeDuties(regime, binding, dpdp == null ? null : dpdp.effectiveFrom(), states);
+  }
+
+  /**
+   * Records a duty done on a business's notice, once.
+   *
+   * @throws ApiException 404 {@code SECURITY_NOTICE_NOT_FOUND}; 400 {@code
+   *     SECURITY_NOTICE_DUTY_UNKNOWN} for a duty the regime does not put on the business, or {@code
+   *     SECURITY_NOTICE_NO_DUTIES} for a notice that is not of a breach; 409 {@code
+   *     SECURITY_NOTICE_DUTY_DONE} when that duty was recorded already
+   */
+  public NoticeDuties report(UUID tenantId, UUID noticeId, RecordDutyRequest req, UUID actor) {
+    SecurityNotice notice =
+        repo.noticeOf(tenantId, noticeId)
+            .orElseThrow(
+                () ->
+                    ApiException.notFound(
+                        "SECURITY_NOTICE_NOT_FOUND", "This business has no such security notice"));
+    NoticeDuties duties = duties(tenantId, notice);
+    if (duties.regime() == null) {
+      throw ApiException.badRequest(
+          "SECURITY_NOTICE_NO_DUTIES", "this notice is not of a personal data breach");
+    }
+    String duty = upper(req.duty());
+    if (duties.duties().stream().noneMatch(d -> d.duty().equals(duty))) {
+      throw ApiException.badRequest(
+          "SECURITY_NOTICE_DUTY_UNKNOWN",
+          "under "
+              + duties.regime()
+              + " the duties are "
+              + String.join(", ", duties.duties().stream().map(DutyState::duty).toList()));
+    }
+    Instant now = clock.instant().truncatedTo(ChronoUnit.MICROS);
+    Instant doneAt =
+        req.doneAt() == null || req.doneAt().isBlank()
+            ? now
+            : Parsing.instant(req.doneAt(), "doneAt");
+    if (doneAt.isAfter(now.plus(5, ChronoUnit.MINUTES))) {
+      throw ApiException.badRequest("SECURITY_NOTICE_DONE_AT_FUTURE", "doneAt is in the future");
+    }
+    NoticeReport r =
+        new NoticeReport(
+            Ids.newId(),
+            tenantId,
+            noticeId,
+            duty,
+            doneAt,
+            req.reference() == null || req.reference().isBlank()
+                ? null
+                : text(
+                    req.reference(),
+                    MAX_REFERENCE,
+                    "SECURITY_NOTICE_REFERENCE_INVALID",
+                    "reference"),
+            req.note() == null || req.note().isBlank()
+                ? null
+                : text(req.note(), MAX_NOTE, "SECURITY_NOTICE_NOTE_INVALID", "note"),
+            actor,
+            now);
+    if (!repo.recordReport(r)) {
+      throw ApiException.conflict(
+          "SECURITY_NOTICE_DUTY_DONE", duty + " was recorded on this notice already");
+    }
+    return duties(tenantId, notice);
   }
 
   /**
