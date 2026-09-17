@@ -189,7 +189,10 @@ export default function ({ tenant, rival, storeA, storeB, variantId, cigs, cashi
     const deSheet = sheet(deCashier.token);
     truthy('a German business inherits EU law and its own', data(deSheet).country === 'DE' && find(deSheet, 'GPSR_ONLINE_OFFER').scope === 'EU' && find(deSheet, 'E_INVOICING_RECEIVE').status === 'IN_FORCE' && find(deSheet, 'UNIT_PRICING').scope === 'EU', list(deSheet).map((o) => o.code));
     const ptSheet = sheet(pt.owner.token);
-    truthy("a Portuguese business gets EU law, its own, and not Germany's", find(ptSheet, 'GDPR').code && find(ptSheet, 'CERTIFIED_BILLING').code && !find(ptSheet, 'FISCAL_TSE').code, list(ptSheet).map((o) => o.code));
+    // Asked for on its own: an empty sheet and a refused request both read as "no laws" otherwise,
+    // and which of the two it was is the whole difference between a bug and a blip.
+    expect(ptSheet, 'the Portuguese owner reads their laws', 200);
+    truthy("a Portuguese business gets EU law, its own, and not Germany's", find(ptSheet, 'GDPR').code && find(ptSheet, 'CERTIFIED_BILLING').code && !find(ptSheet, 'FISCAL_TSE').code, { status: ptSheet.status, country: (data(ptSheet) || {}).country, codes: list(ptSheet).map((o) => o.code), body: String(ptSheet.body).slice(0, 200) });
     truthy('while a member, EU law reached a British business, with the day it stopped', find(sheet(owner, '?on=2019-06-01'), 'GDPR').effectiveTo === '2020-01-31');
     truthy('on 1 Jan 2027 the tobacco ban is in force', find(sheet(owner, '?on=2027-01-01'), 'TOBACCO_BIRTH_COHORT').status === 'IN_FORCE');
     truthy("asked about France, a British business sees France's", find(sheet(owner, '?country=FR'), 'E_INVOICING_RECEIVE').effectiveFrom === '2026-09-01');
