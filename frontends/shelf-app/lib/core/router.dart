@@ -4,6 +4,9 @@ import 'package:go_router/go_router.dart';
 import 'auth/auth_notifier.dart';
 import 'auth/auth_state.dart';
 import '../features/auth/login_screen.dart';
+import '../features/auth/second_factor_screen.dart';
+import '../features/auth/second_factor_setup_screen.dart';
+import '../features/auth/security_screen.dart';
 import '../features/platform/platform_login_screen.dart';
 import '../features/onboarding/onboarding_wizard.dart';
 import '../features/admin/admin_shell.dart';
@@ -34,6 +37,11 @@ final routerProvider = Provider<GoRouter>((ref) {
       // (separate) customer session and tenant-from-URL context.
       if (loc.startsWith('/store')) return null;
 
+      // A sign-in between its password and its session (20.12): the second step,
+      // or the set-up of one, and nowhere else until that is done or given up.
+      if (auth is AuthSecondFactorOwed) return loc == '/mfa' ? null : '/mfa';
+      if (auth is AuthEnrolmentOwed) return loc == '/mfa/setup' ? null : '/mfa/setup';
+
       if (auth is AuthUnauthenticated) {
         if (loc == '/login' || loc == '/platform/login') return null;
         // /platform/* (other than the login page) has no unauthenticated access —
@@ -43,9 +51,11 @@ final routerProvider = Provider<GoRouter>((ref) {
 
       if (auth is AuthAuthenticated) {
         // send logged-in users away from login/root
-        if (loc == '/login' || loc == '/platform/login' || loc == '/') {
+        if (loc == '/login' || loc == '/platform/login' || loc == '/' || loc.startsWith('/mfa')) {
           return auth.homeRoute;
         }
+        // Every login's own sign-in security, whichever shell it works in.
+        if (loc == '/account/security') return null;
         // force incomplete-onboarding users to the wizard
         if (auth.needsOnboarding && loc != '/onboarding') return '/onboarding';
         // once onboarded, keep them out of the wizard
@@ -84,6 +94,9 @@ final routerProvider = Provider<GoRouter>((ref) {
     routes: [
       GoRoute(path: '/login', builder: (_, _) => const LoginScreen()),
       GoRoute(path: '/platform/login', builder: (_, _) => const PlatformLoginScreen()),
+      GoRoute(path: '/mfa', builder: (_, _) => const SecondFactorScreen()),
+      GoRoute(path: '/mfa/setup', builder: (_, _) => const SecondFactorSetupScreen()),
+      GoRoute(path: '/account/security', builder: (_, _) => const SecurityScreen()),
       GoRoute(path: '/onboarding', builder: (_, _) => const OnboardingWizard()),
 
       // ── Platform admin shell (PLATFORM_ADMIN only) ─────────────────────────

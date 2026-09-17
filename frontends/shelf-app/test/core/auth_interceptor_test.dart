@@ -103,6 +103,23 @@ void main() {
     return dio;
   }
 
+  test('a caller that names its own credential keeps it (20.12)', () async {
+    // A login that owes a second factor sets one up with an enrolment token it
+    // holds in memory; the stored session — here an expired one — must not be
+    // sent in its place.
+    final adapter = _FakeAdapter()..currentValidAccess = 'ENROL-ONLY';
+    final dio = buildDio(adapter);
+
+    final resp = await dio.post(
+      '/iam-svc/auth/mfa/totp',
+      options: Options(headers: {'Authorization': 'Bearer ENROL-ONLY'}),
+    );
+
+    expect(resp.statusCode, 200);
+    expect(adapter.protectedOkResponses, 1);
+    expect(adapter.refreshCalls, 0);
+  });
+
   test('concurrent 401s trigger exactly one refresh and all recover', () async {
     final adapter = _FakeAdapter();
     final dio = buildDio(adapter);

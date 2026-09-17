@@ -44,6 +44,12 @@ class PlatformShell extends ConsumerWidget {
       onDestinationSelected: (i) => context.go(_routes[i]),
       actions: [
         IconButton(
+          key: const Key('platform-security'),
+          icon: const Icon(Icons.verified_user_outlined),
+          tooltip: 'Sign-in security',
+          onPressed: () => context.push('/account/security'),
+        ),
+        IconButton(
           icon: const Icon(Icons.logout),
           tooltip: 'Sign out',
           onPressed: () => ref.read(authNotifierProvider.notifier).logout(),

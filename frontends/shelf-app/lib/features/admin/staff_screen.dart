@@ -1,3 +1,4 @@
+import 'mfa_policy_dialog.dart';
 import 'package:dio/dio.dart';
 import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
@@ -60,6 +61,13 @@ class _PeopleTab extends ConsumerWidget {
           child: Row(
             children: [
               const Spacer(),
+              OutlinedButton.icon(
+                key: const Key('mfa-policy-open'),
+                onPressed: () => showDialog<bool>(context: context, builder: (_) => const MfaPolicyDialog()),
+                icon: const Icon(Icons.verified_user_outlined),
+                label: const Text('Second step'),
+              ),
+              const SizedBox(width: 8),
               FilledButton.icon(
                 onPressed: () => _showAssignDialog(context, ref),
                 icon: const Icon(Icons.person_add),
@@ -148,10 +156,20 @@ class _PeopleTab extends ConsumerWidget {
                         style:
                             const TextStyle(fontFamily: 'monospace', fontSize: 11),
                       ),
-                      trailing: IconButton(
-                        icon: Icon(Icons.delete_outline, color: cs.error),
-                        tooltip: 'Remove',
-                        onPressed: () => _removeStaff(context, ref, m),
+                      trailing: Row(
+                        mainAxisSize: MainAxisSize.min,
+                        children: [
+                          IconButton(
+                            icon: const Icon(Icons.phonelink_erase_outlined),
+                            tooltip: 'Reset second step (lost phone)',
+                            onPressed: () => resetSecondFactor(context, ref, m.userId, 'this member of staff'),
+                          ),
+                          IconButton(
+                            icon: Icon(Icons.delete_outline, color: cs.error),
+                            tooltip: 'Remove',
+                            onPressed: () => _removeStaff(context, ref, m),
+                          ),
+                        ],
                       ),
                     ),
                   );

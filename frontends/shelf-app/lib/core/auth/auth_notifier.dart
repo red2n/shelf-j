@@ -1,9 +1,11 @@
 import 'dart:convert';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 import '../constants.dart';
+import '../network/api_error.dart';
 import '../network/api_client.dart';
 import '../storage/app_storage.dart';
 import 'auth_state.dart';
+import 'passkeys.dart';
 
 final authNotifierProvider =
     AsyncNotifierProvider<AuthNotifier, AuthState>(AuthNotifier.new);
@@ -28,7 +30,7 @@ class AuthNotifier extends AsyncNotifier<AuthState> {
         '/${ApiConstants.iam}/auth/login',
         data: {'email': email, 'password': password},
       );
-      return _saveAndDecode(resp.data['data'] as Map<String, dynamic>);
+      return _afterPassword(resp.data['data'] as Map<String, dynamic>, platform: false);
     });
   }
 
@@ -42,8 +44,83 @@ class AuthNotifier extends AsyncNotifier<AuthState> {
         '/${ApiConstants.iam}/auth/platform-login',
         data: {'email': email, 'password': password},
       );
-      return _saveAndDecode(resp.data['data'] as Map<String, dynamic>);
+      return _afterPassword(resp.data['data'] as Map<String, dynamic>, platform: true);
     });
+  }
+
+  /// What a right password leads to (20.12): the session, a second factor owed,
+  /// or a factor that has to be set up first.
+  Future<AuthState> _afterPassword(Map<String, dynamic> data, {required bool platform}) async {
+    if (data['mfaRequired'] == true) {
+      return AuthSecondFactorOwed(
+        mfaToken: data['mfaToken'] as String,
+        methods: (data['mfaMethods'] as List<dynamic>? ?? const []).map((m) => m.toString()).toList(),
+        platform: platform,
+      );
+    }
+    if (data['mfaEnrolmentRequired'] == true) {
+      return AuthEnrolmentOwed(enrolmentToken: data['accessToken'] as String, platform: platform);
+    }
+    return _saveAndDecode(data);
+  }
+
+  /// Answers the second factor of a waiting sign-in with a code from an
+  /// authenticator app or a recovery code. A wrong answer keeps the wait open
+  /// and says so; an ended wait goes back to the password.
+  Future<void> answerSecondFactor(String method, String code) =>
+      _answer({'method': method, 'code': code.trim()});
+
+  /// Answers it with a passkey: the server's challenge, the browser's ceremony,
+  /// the assertion back.
+  Future<void> answerWithPasskey() async {
+    final owed = state.value;
+    if (owed is! AuthSecondFactorOwed) return;
+    try {
+      final options = await ref.read(apiClientProvider).dio.post(
+        '/${ApiConstants.iam}/auth/mfa/login/passkey-options',
+        data: {'mfaToken': owed.mfaToken},
+      );
+      final assertion = await passkeys.get(options.data['data'] as Map<String, dynamic>);
+      await _answer({'method': 'PASSKEY', 'assertion': assertion});
+    } on PasskeyCancelled {
+      state = AsyncValue.data(owed.withError(null));
+    } catch (e) {
+      state = AsyncValue.data(owed.withError(_secondFactorError(e)));
+    }
+  }
+
+  Future<void> _answer(Map<String, dynamic> answer) async {
+    final owed = state.value;
+    if (owed is! AuthSecondFactorOwed) return;
+    try {
+      final resp = await ref.read(apiClientProvider).dio.post(
+        '/${ApiConstants.iam}/auth/mfa/login',
+        data: {'mfaToken': owed.mfaToken, ...answer},
+      );
+      state = AsyncValue.data(await _saveAndDecode(resp.data['data'] as Map<String, dynamic>));
+    } catch (e) {
+      if (apiErrorCode(e) == 'MFA_CHALLENGE_EXPIRED') {
+        // The wait is over — too many wrong answers, or too long: the password again.
+        state = const AsyncValue.data(AuthUnauthenticated());
+        return;
+      }
+      state = AsyncValue.data(owed.withError(_secondFactorError(e)));
+    }
+  }
+
+  String _secondFactorError(Object e) => switch (apiErrorCode(e)) {
+        'MFA_CODE_INVALID' => 'That did not match. Try the next code.',
+        'MFA_LOCKED' => 'Too many wrong answers. Wait a quarter of an hour and sign in again.',
+        'LOGIN_LOCKED' => 'Too many failed sign-ins from here. Try again later.',
+        _ => friendlyError(e),
+      };
+
+  /// Gives up on a waiting sign-in, or on a set-up that was owed.
+  void cancelSecondFactor() => state = const AsyncValue.data(AuthUnauthenticated());
+
+  /// The session a set-up answered with, once its owner has seen the recovery codes.
+  Future<void> completeEnrolment(Map<String, dynamic> tokens) async {
+    state = AsyncValue.data(await _saveAndDecode(tokens));
   }
 
   Future<void> register(String email, String password, String? phone) async {

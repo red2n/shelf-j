@@ -40,9 +40,13 @@ class AuthInterceptor extends Interceptor {
     RequestOptions options,
     RequestInterceptorHandler handler,
   ) async {
-    final token = await _storage.read(key: StorageKeys.accessToken);
-    if (token != null) {
-      options.headers['Authorization'] = 'Bearer $token';
+    // A caller that names its own credential keeps it: a login that owes a second
+    // factor sets one up with an enrolment token, never with a stored session (20.12).
+    if (!options.headers.containsKey('Authorization')) {
+      final token = await _storage.read(key: StorageKeys.accessToken);
+      if (token != null) {
+        options.headers['Authorization'] = 'Bearer $token';
+      }
     }
     handler.next(options);
   }

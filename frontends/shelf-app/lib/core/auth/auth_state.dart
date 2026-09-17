@@ -10,6 +10,46 @@ class AuthUnauthenticated extends AuthState {
   const AuthUnauthenticated();
 }
 
+/// The password was right and a second factor is owed (20.12): no tokens exist
+/// yet, only the name of the waiting sign-in. Nothing is stored — closing the
+/// app ends the wait, as does a handful of wrong answers.
+class AuthSecondFactorOwed extends AuthState {
+  final String mfaToken;
+
+  /// What this login can answer with: TOTP, PASSKEY, RECOVERY_CODE.
+  final List<String> methods;
+
+  /// Whether the sign-in came from the platform console's login.
+  final bool platform;
+
+  /// Why the last answer was refused, to show above the field.
+  final String? error;
+
+  const AuthSecondFactorOwed({
+    required this.mfaToken,
+    required this.methods,
+    required this.platform,
+    this.error,
+  });
+
+  AuthSecondFactorOwed withError(String? message) => AuthSecondFactorOwed(
+        mfaToken: mfaToken,
+        methods: methods,
+        platform: platform,
+        error: message,
+      );
+}
+
+/// This login must have a second factor and has none (20.12). The token says who
+/// they are and reaches only the routes that set a factor up; it is held in
+/// memory, never stored, and the real session comes back from the set-up itself.
+class AuthEnrolmentOwed extends AuthState {
+  final String enrolmentToken;
+  final bool platform;
+
+  const AuthEnrolmentOwed({required this.enrolmentToken, required this.platform});
+}
+
 class AuthAuthenticated extends AuthState {
   final String accessToken;
   final String refreshToken;

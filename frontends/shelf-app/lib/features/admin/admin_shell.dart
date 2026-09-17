@@ -243,6 +243,8 @@ class AdminShell extends ConsumerWidget {
             if (v == 'password') {
               showDialog(
                   context: context, builder: (_) => const ChangePasswordDialog());
+            } else if (v == 'security') {
+              context.push('/account/security');
             } else if (v == 'logout') {
               ref.read(authNotifierProvider.notifier).logout();
             }
@@ -254,6 +256,13 @@ class AdminShell extends ConsumerWidget {
                   Icon(Icons.lock_outline, size: 18),
                   SizedBox(width: 8),
                   Text('Change password'),
+                ])),
+            PopupMenuItem(
+                value: 'security',
+                child: Row(children: [
+                  Icon(Icons.verified_user_outlined, size: 18),
+                  SizedBox(width: 8),
+                  Text('Sign-in security'),
                 ])),
             PopupMenuItem(
                 value: 'logout',
