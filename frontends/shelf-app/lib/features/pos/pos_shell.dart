@@ -12,6 +12,8 @@ import 'pos_providers.dart';
 import 'pos_session_providers.dart';
 import 'pos_printer_settings_dialog.dart';
 import 'container_return_dialog.dart';
+import 'customer_display.dart';
+import 'customer_display_channel.dart';
 
 /// [pending] badges the Pending destination so unsynced sales are visible from
 /// anywhere in the terminal, not only once the cashier goes looking.
@@ -83,10 +85,30 @@ class _PosShellState extends ConsumerState<PosShell> {
               ? 1
               : 0;
 
+  /// Tells the customer-facing display what the till shows: the sale as it
+  /// is rung up, or nothing between customers.
+  void _tellDisplay() {
+    final channel = ref.read(customerDisplayChannelProvider);
+    if (!channel.supported) return;
+    final lines = ref.read(posCartProvider);
+    final storeId = ref.read(posStoreProvider);
+    final stores = ref.read(posStoresProvider).value ?? const [];
+    final store = stores.where((s) => s.id == storeId).toList();
+    channel.post(customerDisplaySale(
+      storeName: store.isEmpty ? '' : store.first.name,
+      currency: lines.isEmpty ? '' : lines.first.currency,
+      lines: lines,
+      discount: ref.read(posDiscountProvider),
+    ));
+  }
+
   @override
   Widget build(BuildContext context) {
     final session = ref.watch(posSessionProvider);
     final pending = ref.watch(offlineQueueCountProvider);
+    ref.listen(posCartProvider, (_, _) => _tellDisplay());
+    ref.listen(posDiscountProvider, (_, _) => _tellDisplay());
+    ref.listen(posStoreProvider, (_, _) => _tellDisplay());
 
     // Scope the amber channel accent (app bar, primary actions, nav indicator)
     // to the whole POS subtree via the theme system, rather than threading the
@@ -102,6 +124,17 @@ class _PosShellState extends ConsumerState<PosShell> {
         selectedIndex: _selectedIndex,
         onDestinationSelected: (i) => context.go(_routes[i]),
         actions: [
+          if (session != null &&
+              ref.read(customerDisplayChannelProvider).supported)
+            IconButton(
+              key: const Key('pos-customer-display'),
+              tooltip: "Customer display: a second window for the customer's side of the counter",
+              icon: const Icon(Icons.desktop_windows_outlined),
+              onPressed: () {
+                ref.read(customerDisplayChannelProvider).openWindow();
+                _tellDisplay();
+              },
+            ),
           if (session != null)
             TextButton.icon(
               key: const Key('pos-container-return'),

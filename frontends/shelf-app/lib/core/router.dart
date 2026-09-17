@@ -273,6 +273,15 @@ final routerProvider = Provider<GoRouter>((ref) {
       ),
 
       // ── POS shell ──────────────────────────────────────────────────────────
+      // The customer-facing display: a second window of the till, on the
+      // customer's side of the counter, without the till's own chrome.
+      GoRoute(
+        path: '/pos/display',
+        builder: (_, _) => DeferredWidget(
+          libraryLoader: pos_lib.loadLibrary,
+          builder: (_) => pos_lib.CustomerDisplayScreen(),
+        ),
+      ),
       ShellRoute(
         builder: (context, state, child) =>
             PosShell(currentLocation: state.matchedLocation, child: child),

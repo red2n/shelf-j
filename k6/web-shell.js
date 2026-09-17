@@ -84,6 +84,21 @@ export default function () {
 
   const missing = headersOn('a missing file', http.get(`${WEB}/no-such-bundle.js`));
   truthy('[-] a missing bundle file is a 404, never the page served as script', missing.status === 404 && !/flutter_bootstrap/.test(missing.body), missing.status);
+
+  // The customer-facing display (a second window of the till) is a route of the same bundle: the
+  // image serves it if some script the inventory lists carries the route and its words.
+  const inventory = http.get(`${WEB}/script-inventory.json`);
+  const parts = inventory.status === 200 ? (inventory.json().scripts || []).map((x) => x.path).filter((p) => /^main\.dart\.js/.test(p)) : [];
+  let displayRoute = false;
+  let displayWords = false;
+  for (const p of parts) {
+    const body = String(http.get(`${WEB}/${p}`).body || '');
+    displayRoute = displayRoute || body.includes('/pos/display');
+    displayWords = displayWords || body.includes('Container deposit (refundable)');
+    if (displayRoute && displayWords) break;
+  }
+  truthy('[+] the customer display ships in the bundle: its route', displayRoute, parts.length);
+  truthy('[+] ...and the rows it shows the customer', displayWords, parts.length);
   const manifest = headersOn('the manifest', http.get(`${WEB}/manifest.json`));
   let icons = [];
   try {

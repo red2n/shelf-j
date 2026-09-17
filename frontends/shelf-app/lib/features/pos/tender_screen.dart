@@ -18,6 +18,8 @@ import 'pos_receipt.dart';
 import 'pos_receipt_printer.dart';
 import 'pos_session_providers.dart';
 import '../../shared/util/short_ref.dart';
+import 'customer_display.dart';
+import 'customer_display_channel.dart';
 
 /// Multi-tender payment screen: a sale can be split across cash, card, gift card
 /// and store credit. The cashier stages tenders until the balance is cleared,
@@ -305,6 +307,15 @@ class _TenderScreenState extends ConsumerState<TenderScreen> {
       // The receipt comes out the way this till is set up to (09.12): the
       // browser's dialog, a thermal printer, a file. A cash sale may open the drawer.
       await _produceReceipt(receiptData, kickDrawer: true);
+
+      // The customer's side of the counter: what was paid and the change due.
+      ref.read(customerDisplayChannelProvider).post(customerDisplayPaid(
+            storeName: receiptData.storeName,
+            currency: currency,
+            total: receiptData.total,
+            paid: receiptData.tenders.fold<double>(0, (s, t) => s + t.amount),
+            change: change,
+          ));
 
       await _showReceiptDialog(
         orderId,
