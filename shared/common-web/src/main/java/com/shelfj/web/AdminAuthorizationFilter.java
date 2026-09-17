@@ -301,6 +301,9 @@ public class AdminAuthorizationFilter implements ContainerRequestFilter {
         || "/promotions".equals(path)
         // The caller's own principal — it describes the caller, so it leaks nothing new.
         || "/auth/me".equals(path)
+        // Where the caller's own login stands with second factors (20.12): a shopper's as much as
+        // a member of staff's, and the login comes from the token.
+        || "/auth/mfa".equals(path)
         // Own cart, mirroring the /cart mutation carve-out. Object-level authorization (owning
         // session or customer) lives in CartService, not here.
         || pathEqualsOrUnder(path, "/cart")
@@ -358,6 +361,11 @@ public class AdminAuthorizationFilter implements ContainerRequestFilter {
    */
   private static boolean isOpenMutation(String path) {
     return IDENTITY_PATHS.contains(path)
+        // Second factors (20.12): answering one at sign-in (no token yet — the mfaToken in the
+        // body is the capability) and a login setting up or removing its own, shopper or staff.
+        // The login comes from the token; a business's rule and the lost-phone reset are under
+        // /auth/admin/ and stay with management.
+        || path.startsWith("/auth/mfa/")
         // One-shot platform bootstrap: creates the very first PLATFORM_ADMIN before any JWT exists.
         || "/bootstrap/admin".equals(path)
         // Bootstrap carve-out: tenant creation AND first-store creation are performed by a freshly
@@ -473,6 +481,10 @@ public class AdminAuthorizationFilter implements ContainerRequestFilter {
     // Day-to-day warehouse/till surfaces — gated by requiresStaffAdmin instead.
     if (requiresStaffAdmin(path, method)) return false;
     if (path.startsWith("/admin/")) return true;
+    // iam-svc's management routes live under /auth/admin/ — staff provisioning, the signing key
+    // register, a business's second-factor rule, the lost-phone reset. Each resource asserts its
+    // own role as well; this makes the tier hold even if one forgot to.
+    if (path.startsWith("/auth/admin/")) return true;
     if (path.endsWith("/refunds") && "POST".equalsIgnoreCase(method)) return true;
     if (path.endsWith("/void") && "POST".equalsIgnoreCase(method)) return true;
     return false;

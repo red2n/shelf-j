@@ -321,6 +321,9 @@ public class ProxyResource {
           HttpHeaders.ROLES,
           HttpHeaders.STORE_IDS,
           HttpHeaders.PERMISSIONS,
+          // What a limited token is good for (20.12): stamped by JwtAuthFilter from the token's
+          // scope, never taken from the client.
+          HttpHeaders.AUTH_SCOPE,
           // Client-controlled, not identity — forwarded so downstream writes can dedupe retries
           // (golden rule #11). Not stripped/overwritten: the client owns this value.
           HttpHeaders.IDEMPOTENCY_KEY,

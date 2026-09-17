@@ -147,10 +147,14 @@ if secret_exists shelfj-platform-admin; then
 else
   kubectl -n "$NAMESPACE" create secret generic shelfj-platform-admin \
     --from-literal=PLATFORM_ADMIN_EMAIL="admin@storeql.com" \
-    --from-literal=PLATFORM_ADMIN_PASSWORD="$(randpass)"
+    --from-literal=PLATFORM_ADMIN_PASSWORD="$(randpass)" \
+    --from-literal=PLATFORM_ADMIN_TOTP_SECRET="$(head -c 20 /dev/urandom | base32 | tr -d '=')"
   echo "Generated shelfj-platform-admin."
 fi
 
 echo
 echo "Done. Retrieve a generated password later with, e.g.:"
 echo "  kubectl -n $NAMESPACE get secret shelfj-platform-admin -o jsonpath='{.data.PLATFORM_ADMIN_PASSWORD}' | base64 -d; echo"
+echo "The platform administrator signs in with a code from an authenticator app as well (20.12);"
+echo "read its secret back, once, and add it to the app:"
+echo "  kubectl -n $NAMESPACE get secret shelfj-platform-admin -o jsonpath='{.data.PLATFORM_ADMIN_TOTP_SECRET}' | base64 -d; echo"

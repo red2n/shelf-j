@@ -59,7 +59,7 @@ lan_ip() { ip -4 route get 1.1.1.1 2>/dev/null | awk '/src/{for(i=1;i<=NF;i++) i
 # ── 0. Bootstrap .env + required secrets ─────────────────────────────────────
 # On a brand-new checkout (fresh VPS, CI runner, etc.) there is no .env at all, and
 # docker-compose.yml hard-refuses to start (`${VAR:?...}`) without SHELFJ_JWT_SECRET,
-# SHELFJ_CONFIG_TOKEN, MQTT_PUBLISHER_PASSWORD and PLATFORM_ADMIN_PASSWORD. Generate whichever of these are
+# SHELFJ_CONFIG_TOKEN, MQTT_PUBLISHER_PASSWORD, PLATFORM_ADMIN_PASSWORD and PLATFORM_ADMIN_TOTP_SECRET. Generate whichever of these are
 # missing so `redeploy.sh` works standalone on a machine that has never seen this
 # repo before — no manual `cp .env.example .env` + editing required.
 ENV_FILE="$ROOT/.env"
@@ -109,6 +109,15 @@ if [ -z "$PLATFORM_ADMIN_PASSWORD" ] || $WIPE_DATA; then
   env_set PLATFORM_ADMIN_PASSWORD "$PLATFORM_ADMIN_PASSWORD"
   env_set PLATFORM_ADMIN_EMAIL "$PLATFORM_ADMIN_EMAIL"
   cyan "Generated a fresh platform admin password (saved to .env)."
+fi
+
+# The platform administrator's authenticator secret (20.12): generated with the password and on
+# the same terms — once, and again only when the data (and so the account) is wiped.
+PLATFORM_ADMIN_TOTP_SECRET="$(env_get PLATFORM_ADMIN_TOTP_SECRET)"
+if [ -z "$PLATFORM_ADMIN_TOTP_SECRET" ] || $WIPE_DATA; then
+  PLATFORM_ADMIN_TOTP_SECRET="$(head -c 20 /dev/urandom | base32 | tr -d '=')"
+  env_set PLATFORM_ADMIN_TOTP_SECRET "$PLATFORM_ADMIN_TOTP_SECRET"
+  cyan "Generated PLATFORM_ADMIN_TOTP_SECRET (saved to .env) — add it to an authenticator app."
 fi
 
 # ── 1. Tear down ─────────────────────────────────────────────────────────────
@@ -243,6 +252,7 @@ REDIS_P=$(cport redis 6379); REDIS_P=${REDIS_P:-6379}
 
 cyan "Testing cheat sheet:"
 echo "  Platform admin login     http://localhost:${UI:-8088}/#/platform/login      (${PLATFORM_ADMIN_EMAIL} / ${PLATFORM_ADMIN_PASSWORD})"
+echo "    its authenticator      otpauth://totp/Shelf-J:${PLATFORM_ADMIN_EMAIL}?secret=${PLATFORM_ADMIN_TOTP_SECRET}&issuer=Shelf-J   (paste into an authenticator app, or: oathtool --totp -b ${PLATFORM_ADMIN_TOTP_SECRET})"
 echo "  Admin / tenant login     http://localhost:${UI:-8088}/#/login               (owner/manager — same screen, lands on /admin/dashboard)"
 echo "  Store staff / POS login  http://localhost:${UI:-8088}/#/login               (cashier/manager — same screen, lands on /pos, then clock in to a store)"
 echo "  Storefront (guest)       http://localhost:${UI:-8088}/?tenant=<tenantId>#/store/products   (online shop, no login)"

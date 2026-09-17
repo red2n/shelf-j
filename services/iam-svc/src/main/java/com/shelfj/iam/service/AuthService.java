@@ -19,6 +19,7 @@ import jakarta.enterprise.context.ApplicationScoped;
 import jakarta.inject.Inject;
 import jakarta.json.Json;
 import java.time.Instant;
+import java.util.List;
 import java.util.Set;
 import java.util.UUID;
 
@@ -41,6 +42,7 @@ public class AuthService {
   @Inject RefreshTokenRepository refreshTokens;
   @Inject MqttSessionRevoker mqttSessions;
   @Inject TenantStatusRepository tenantStatus;
+  @Inject MfaService mfa;
 
   /** Customer self-signup → creates a CUSTOMER (global, tenantId null) and returns a token pair. */
   public TokenResponse register(String email, String password, String phone) {
@@ -69,7 +71,7 @@ public class AuthService {
     users.createUserWithOutbox(user, "CUSTOMER", outbox);
     users.audit(null, userId, "USER_REGISTERED", email);
 
-    return issueTokens(user);
+    return issueTokens(user, PASSWORD_ONLY);
   }
 
   /**
@@ -156,7 +158,7 @@ public class AuthService {
               "TENANT_INACTIVE", "This business account is suspended. Contact support.");
         }
         users.audit(user.tenantId(), user.id(), "LOGIN_OK", email);
-        return issueTokens(user);
+        return afterPassword(user);
       }
     }
     if (candidates.isEmpty()) {
@@ -186,7 +188,7 @@ public class AuthService {
       if (passwords.verify(user.passwordHash(), password)
           && users.rolesOf(user.id()).contains("PLATFORM_ADMIN")) {
         users.audit(null, user.id(), "PLATFORM_LOGIN_OK", email);
-        return issueTokens(user);
+        return afterPassword(user);
       }
     }
     if (candidates.isEmpty()) {
@@ -207,7 +209,7 @@ public class AuthService {
     refreshTokens.ownerOfActive(hash).flatMap(users::findById).ifPresent(this::requireTenantActive);
     // Atomic consume: validate + revoke in one statement, so a token can be rotated exactly once
     // even under concurrent requests.
-    UUID userId =
+    RefreshTokenRepository.Session session =
         refreshTokens
             .consume(hash)
             .orElseThrow(
@@ -231,12 +233,66 @@ public class AuthService {
                 });
     User user =
         users
-            .findById(userId)
+            .findById(session.userId())
             .orElseThrow(
                 () -> ApiException.unauthorized("INVALID_REFRESH", "User no longer exists"));
     // Again after the consume: the tenant may have been suspended since the check above.
     requireTenantActive(user);
-    return issueTokens(user);
+    List<String> amr = amrOf(session.amr());
+    // A business that has required a second factor since this session began: a session that was
+    // only ever a password's is not renewed — its holder signs in again and is walked through
+    // setting a factor up. Without this the rule would not bite for a fortnight.
+    if (amr.size() < 2 && mfa.required(user.tenantId(), users.rolesOf(user.id()))) {
+      throw ApiException.unauthorized(
+          "MFA_REQUIRED", "A second factor is now required of this login: sign in again");
+    }
+    return issueTokens(user, amr);
+  }
+
+  /**
+   * The password was right. A login that holds a second factor owes it before any token exists; one
+   * that must hold one and does not gets a token good only for setting one up; anyone else is in.
+   */
+  private TokenResponse afterPassword(User user) {
+    List<String> methods = mfa.methods(user.id());
+    if (!methods.isEmpty()) {
+      return TokenResponse.secondFactorOwed(mfa.openLogin(user.id()), methods);
+    }
+    if (mfa.required(user.tenantId(), users.rolesOf(user.id()))) {
+      users.audit(user.tenantId(), user.id(), "MFA_ENROLMENT_REQUIRED", null);
+      return TokenResponse.enrolmentOwed(
+          jwt.issueEnrolmentToken(user.id(), user.type(), user.email()),
+          JwtService.ENROLMENT_TTL_SECONDS);
+    }
+    return issueTokens(user, PASSWORD_ONLY);
+  }
+
+  /** The second factor of a waiting sign-in, judged; the token pair if it held. */
+  public TokenResponse completeMfaLogin(com.shelfj.iam.dto.MfaDtos.MfaLoginRequest req) {
+    MfaService.Proved proved = mfa.verifyLogin(req);
+    return issueAfterSecondFactor(proved.userId(), proved.amr());
+  }
+
+  /**
+   * The token pair for a login that has just set up the factor it owed, or answered one: the
+   * account and its business are checked again, because minutes have passed since the password.
+   */
+  public TokenResponse issueAfterSecondFactor(UUID userId, String amr) {
+    User user =
+        users
+            .findById(userId)
+            .filter(u -> User.STATUS_ACTIVE.equals(u.status()))
+            .orElseThrow(
+                () -> ApiException.unauthorized("INVALID_CREDENTIALS", "User no longer exists"));
+    requireTenantActive(user);
+    return issueTokens(user, List.of("pwd", amr));
+  }
+
+  private static final List<String> PASSWORD_ONLY = List.of("pwd");
+
+  private static List<String> amrOf(String stored) {
+    if (stored == null || stored.isBlank()) return PASSWORD_ONLY;
+    return List.of(stored.split(","));
   }
 
   /**
@@ -267,8 +323,12 @@ public class AuthService {
   /**
    * One-shot bootstrap: creates the first PLATFORM_ADMIN. Rejects if one already exists so the
    * endpoint is safe to leave enabled after first use.
+   *
+   * @param totpSecret the administrator's authenticator secret in base 32, or null (20.12). Given
+   *     with the account, the most powerful login on the platform never exists with a password
+   *     alone; left out, its first sign-in is made to set a factor up.
    */
-  public UUID bootstrapAdmin(String email, String rawPassword) {
+  public UUID bootstrapAdmin(String email, String rawPassword, String totpSecret) {
     if (users.platformAdminExists()) {
       throw new ApiException(
           409,
@@ -277,9 +337,16 @@ public class AuthService {
           java.util.List.of(),
           null);
     }
+    // Judged before the account exists: a secret refused after it would leave behind exactly the
+    // password-only administrator the secret is given to prevent.
+    byte[] secondFactor =
+        totpSecret == null || totpSecret.isBlank() ? null : mfa.parseSecret(totpSecret);
     User user = newStaffLogin(email, rawPassword);
     UUID userId = user.id();
     users.createPlatformAdmin(user);
+    if (secondFactor != null) {
+      mfa.provisionTotp(userId, secondFactor);
+    }
     users.audit(null, userId, "PLATFORM_ADMIN_BOOTSTRAPPED", email);
     return userId;
   }
@@ -363,7 +430,7 @@ public class AuthService {
         now);
   }
 
-  private TokenResponse issueTokens(User user) {
+  private TokenResponse issueTokens(User user, List<String> amr) {
     // Read again, and all at once (SJ-D63). The row in hand was read before the password was
     // checked, and that check takes long enough for a staff removal to commit meanwhile: the old
     // row's tenant beside the new roles made a token naming a business the login had just left.
@@ -384,11 +451,15 @@ public class AuthService {
             who.email(),
             who.roles(),
             who.storeIds(),
-            permissions);
+            permissions,
+            amr);
 
     String refresh = Tokens.newOpaqueToken();
     refreshTokens.store(
-        user.id(), Tokens.hash(refresh), Instant.now().plusSeconds(config.refreshTtlSeconds()));
+        user.id(),
+        Tokens.hash(refresh),
+        Instant.now().plusSeconds(config.refreshTtlSeconds()),
+        String.join(",", amr));
 
     return TokenResponse.bearer(access, refresh, config.accessTtlSeconds());
   }

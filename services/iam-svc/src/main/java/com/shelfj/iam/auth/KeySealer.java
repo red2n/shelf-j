@@ -27,6 +27,17 @@ public final class KeySealer {
    * @param secret the deployment's sealing secret, at least 32 characters
    */
   public KeySealer(String secret) {
+    this(secret, "shelfj-signing-key-seal:");
+  }
+
+  /**
+   * A sealer for another kind of secret (20.12: authenticator secrets): the same deployment secret,
+   * a different derived key, so what seals one kind never opens another.
+   *
+   * @param secret the deployment's sealing secret, at least 32 characters
+   * @param purpose what the derived key is for; part of the derivation
+   */
+  public KeySealer(String secret, String purpose) {
     if (secret == null || secret.trim().length() < 32) {
       throw new IllegalStateException(
           "shelfj.jwt.secret must be set and at least 32 characters: it seals the token signing"
@@ -35,7 +46,7 @@ public final class KeySealer {
     try {
       byte[] digest =
           MessageDigest.getInstance("SHA-256")
-              .digest(("shelfj-signing-key-seal:" + secret).getBytes(StandardCharsets.UTF_8));
+              .digest((purpose + secret).getBytes(StandardCharsets.UTF_8));
       this.key = new SecretKeySpec(digest, "AES");
     } catch (GeneralSecurityException e) {
       throw new IllegalStateException(e);

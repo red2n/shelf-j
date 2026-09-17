@@ -40,7 +40,14 @@ public class BootstrapResource {
   public record BootstrapRequest(
       @Schema(description = "Email for the first platform administrator.") @NotBlank String email,
       @Schema(description = "Initial password for the account.") @NotBlank @Size(min = 8, max = 100)
-          String password) {}
+          String password,
+      @Schema(
+              description =
+                  "The administrator's authenticator secret, base 32 (20.12): the account is born"
+                      + " with its second factor. Optional; without it the first sign-in must set"
+                      + " one up.")
+          @Size(max = 128)
+          String totpSecret) {}
 
   @Schema(name = "BootstrapResponse")
   public record BootstrapResponse(String userId, String email, String role) {}
@@ -66,7 +73,7 @@ public class BootstrapResource {
   @Path("/admin")
   public Response createPlatformAdmin(BootstrapRequest req) {
     Validations.validate(req);
-    UUID userId = svc.bootstrapAdmin(req.email(), req.password());
+    UUID userId = svc.bootstrapAdmin(req.email(), req.password(), req.totpSecret());
     return Response.status(Response.Status.CREATED)
         .entity(
             ApiResponse.ok(new BootstrapResponse(userId.toString(), req.email(), "PLATFORM_ADMIN")))
