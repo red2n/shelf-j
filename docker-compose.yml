@@ -619,7 +619,9 @@ services:
     depends_on:
       consul: { condition: service_healthy }
     healthcheck:
-      test: ["CMD-SHELL", "curl -fsS -o /dev/null http://localhost:8080/health || exit 1"]
+      # /health/ready, not the aggregate /health: what depends_on waits for is "can it serve",
+      # and a probe pointed at the aggregate takes on every check a service ever registers.
+      test: ["CMD-SHELL", "curl -fsS -o /dev/null http://localhost:8080/health/ready || exit 1"]
       interval: 10s
       timeout: 5s
       retries: 12
@@ -977,7 +979,9 @@ services:
       tenant-svc: { condition: service_healthy }
       redis:      { condition: service_healthy }
     healthcheck:
-      test: ["CMD-SHELL", "curl -fsS -o /dev/null http://localhost:8080/health || exit 1"]
+      # /health/ready, not the aggregate /health: what depends_on waits for is "can it serve",
+      # and a probe pointed at the aggregate takes on every check a service ever registers.
+      test: ["CMD-SHELL", "curl -fsS -o /dev/null http://localhost:8080/health/ready || exit 1"]
       interval: 10s
       timeout: 5s
       retries: 12

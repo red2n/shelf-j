@@ -2,24 +2,57 @@ package com.shelfj.service;
 
 import jakarta.enterprise.context.ApplicationScoped;
 import jakarta.inject.Inject;
-import java.sql.Connection;
 import java.util.Set;
-import javax.sql.DataSource;
 import org.eclipse.microprofile.health.HealthCheck;
 import org.eclipse.microprofile.health.HealthCheckResponse;
 import org.eclipse.microprofile.health.Liveness;
 import org.eclipse.microprofile.health.Readiness;
 
 /**
- * Shared health probes: liveness = process alive; readiness = DB reachable (so services start in
- * any order — docs/ARCHITECTURE.md §17). Liveness deliberately does NOT check the DB (a DB outage
- * must not get the pod killed).
+ * The three probes every service answers, and the rule that separates them.
+ *
+ * <p><b>Liveness answers one question: is this process wedged?</b> Nothing else. It never looks at
+ * the database, at Kafka, at another service or at anything across a network, because the only
+ * remedy the cluster has for a failing liveness probe is to kill the container — and killing a
+ * healthy process because its database is slow turns a database problem into a restart storm, with
+ * every replacement pod hitting the same slow database and dying in turn. So {@code /health/live}
+ * is a 200 with no dependency behind it.
+ *
+ * <p><b>Readiness answers a different question: can I serve a request right now?</b> Failing it
+ * takes the replica out of the load balancer and nothing more, so it may look at the database — and
+ * does, through {@link DatabaseProbe}, which asks in the background precisely so a readiness probe
+ * never queues behind real traffic for a connection. A pool that is merely busy keeps the replica
+ * in rotation; see that class for why.
+ *
+ * <p><b>Startup answers when the other two may begin.</b> Nothing registers a startup check here,
+ * so {@code /health/started} is UP as soon as the HTTP server answers, which is what the startup
+ * probe is for: it holds liveness off until the process is listening, however long boot takes.
+ *
+ * <p>Which endpoint a probe must call therefore matters, and the aggregate is the wrong one:
+ *
+ * <ul>
+ *   <li>{@code /health/live} — this class's {@link ProcessLiveness} alone. What a liveness probe
+ *       calls.
+ *   <li>{@code /health/ready} — the database and the Kafka consumers. What a readiness probe calls.
+ *   <li>{@code /health/started} — what a startup probe calls.
+ *   <li>{@code /health} — <b>every</b> check, the database included. For a dashboard or a human.
+ *       <b>Never for a liveness probe:</b> pointing liveness here silently makes the database a
+ *       reason to kill the pod, which is the exact failure the split above exists to prevent.
+ * </ul>
+ *
+ * <p>A deeper look — a round trip made on demand, with the pool's own figures — is {@link
+ * DeepHealthResource}, which no probe calls.
+ *
+ * <p>Services start in any order and gate on readiness: docs/ARCHITECTURE.md §17.
  */
 public final class HealthChecks {
 
   private HealthChecks() {}
 
-  /** Liveness probe: always UP once the CDI container is up — never checks external deps. */
+  /**
+   * Liveness probe: always UP once the CDI container is up — never checks external deps, and must
+   * stay that way. See the class doc.
+   */
   @Liveness
   @ApplicationScoped
   public static class ProcessLiveness implements HealthCheck {
@@ -34,29 +67,27 @@ public final class HealthChecks {
     }
   }
 
-  /** Readiness probe: DOWN when the DB pool can't produce a valid connection. */
+  /**
+   * Readiness probe: DOWN when the database has stopped answering — never when it is merely busy.
+   */
   @Readiness
   @ApplicationScoped
   public static class DatabaseReadiness implements HealthCheck {
-    @Inject DataSource dataSource;
+    @Inject DatabaseProbe probe;
 
     /**
-     * @return {@code "database"} UP if a pooled connection can be acquired and passes {@link
-     *     Connection#isValid(int)} within 2 seconds; otherwise DOWN with the failure message
-     *     attached as data (server-side diagnostic only — this response is not client-facing API
+     * @return {@code "database"} as {@link DatabaseProbe#verdict()} has it, with the reason
+     *     attached as data (a server-side diagnostic — this response is not client-facing API
      *     output, so it's exempt from the "never leak" rule that applies to {@link
      *     com.shelfj.web.ApiResponse})
      */
     @Override
     public HealthCheckResponse call() {
-      try (Connection c = dataSource.getConnection()) {
-        return HealthCheckResponse.named("database").status(c.isValid(2)).build();
-      } catch (Exception e) {
-        return HealthCheckResponse.named("database")
-            .down()
-            .withData("error", String.valueOf(e.getMessage()))
-            .build();
-      }
+      DatabaseProbe.Verdict verdict = probe.verdict();
+      return HealthCheckResponse.named("database")
+          .status(verdict.up())
+          .withData("detail", verdict.detail())
+          .build();
     }
   }
 

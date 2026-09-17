@@ -47,14 +47,23 @@ spec:
             - { name: JAVA_TOOL_OPTIONS, value: "-Xms64m -Xmx256m -XX:+UseG1GC" }
           # config-svc's health endpoint is /health (not /health/live like the business
           # services + gateway) — see docker-compose.yml's config service healthcheck.
+          # The 3-endpoint model, as the business services use it. /health is the aggregate of
+          # every check a service registers, so a liveness probe pointed at it makes any
+          # dependency a reason to kill the pod — a slow dependency becomes a restart storm.
+          # config-svc registers nothing but a process check today; the endpoint it is asked
+          # is what keeps that true when somebody adds one. See shared/common-service
+          # HealthChecks for the rule.
+          startupProbe:
+            httpGet: { path: /health/started, port: 8080 }
+            periodSeconds: 5
+            failureThreshold: 20
           readinessProbe:
-            httpGet: { path: /health, port: 8080 }
-            initialDelaySeconds: 15
+            httpGet: { path: /health/ready, port: 8080 }
             periodSeconds: 10
             timeoutSeconds: 5
             failureThreshold: 12
           livenessProbe:
-            httpGet: { path: /health, port: 8080 }
+            httpGet: { path: /health/live, port: 8080 }
             initialDelaySeconds: 30
             periodSeconds: 15
             timeoutSeconds: 5

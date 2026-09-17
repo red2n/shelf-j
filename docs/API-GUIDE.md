@@ -23,6 +23,19 @@ Every call goes through one public entry point and lands on one of 12 independen
 
 ---
 
+## Health, on every service
+
+Four endpoints, and which one a caller wants depends on what it would do with the answer.
+
+- `GET /health/live` — is this process wedged? One check, no dependency, ever. **This is what a Kubernetes liveness probe calls**, because the only remedy for a failing liveness probe is to kill the container, and killing a healthy process because its database is slow turns a database problem into a restart storm.
+- `GET /health/ready` — can it serve right now? The database and the Kafka consumers. Failing it takes the replica out of the load balancer and nothing else. The database answer comes from a background prober, so the probe never queues behind real traffic for a connection, and a pool that is merely **busy** keeps the replica in rotation — pulling a saturated replica moves its traffic to its neighbours and empties their pools next.
+- `GET /health/started` — has it finished booting? Holds liveness off while the JVM and the inline Flyway migration start.
+- `GET /health` — every check at once, the database included. For a dashboard or a person. **Never for a liveness probe.**
+
+Probes are not published: through the gateway these need a token like any other path.
+
+- `GET /admin/health` (PLATFORM_ADMIN, OWNER, MANAGER) — the deep check, and **no probe calls it**. Makes a real round trip to the database and times it, reports the Kafka consumers, prints the connection pool's own figures (`active`, `idle`, `total`, `max`, `waiting`) and what readiness is currently saying. The two failures that look identical from a probe and want opposite remedies are told apart here: a database that is down fails the round trip, while a pool that is empty shows a fast round trip with `active` at `max` and `waiting` above zero — the fix for which is a bigger pool or fewer callers, never a restart.
+
 ## The gateway (the one public door)
 
 The gateway is the single public door to the whole platform — nothing else is internet-reachable. Every call comes in as `/api/{service}/{path...}` (an equivalent `/api/v1/{service}/{path...}` form exists too; the version prefix is currently informational, and the unversioned alias is marked `Deprecation`/`Link`-to-`/api/v1` on every response to steer clients forward). The gateway only proxies to the 12 declared business services (an explicit allowlist — `iam-svc, tenant-svc, product-svc, inventory-svc, pricing-svc, cart-svc, order-svc, payment-svc, purchase-svc, customer-svc, notification-svc, reporting-svc`); anything else, even if it happens to be registered in service discovery, is unreachable. It terminates and verifies the JWT, strips any client-supplied identity headers, and re-stamps `X-Tenant-Id` / `X-User-Id` / `X-User-Email` / `X-Roles` / `X-Store-Ids` / `X-Permissions` from the verified token so every business service can trust those headers unconditionally (`ProxyResource.FORWARDED_HEADERS` is the one list of what reaches a service — a header stamped but not listed is dropped, which is how `X-Store-Ids` went missing for as long as it did, SJ-D46); it also forwards `Idempotency-Key` and the real `Content-Type` (so binary uploads like product images pass through intact) untouched.
@@ -846,7 +859,7 @@ The platform's price list. A plan is written as a draft, priced, given its allow
 ### What a business is allowed (`/admin/tenant/plan`; 21.8)
 - `GET /admin/tenant/plan` (OWNER, MANAGER) — the plan it is on, with each limit against what it is using. `used` is absent where the owning service holds the count, and is shown as unknown rather than guessed at. A business on no plan carries no `plan` and a `note` saying so; it is unrestricted.
 - `GET /admin/tenant/plan/available` (OWNER, MANAGER) — the plans on sale. Moving between them is the platform's to do.
-- `GET /admin/tenant/plan/limits` (any staff role) — the allowances alone, no prices: what another service reads through `Entitlements` to enforce a limit it owns.
+- `GET /admin/tenant/plan/limits` (any staff role) — the allowances alone, no prices: what another service reads through `Entitlements` to enforce a limit it owns. Any staff role, because that is the identity a service-to-service read carries; the leaf is carved out of the management tier in `AdminAuthorizationFilter`, and without that line the read answers 403 and every limit outside tenant-svc silently enforces nothing (SJ-D65).
 - Limits are refused with `409 PLAN_LIMIT_REACHED`, naming the ceiling and the count: stores and staff by tenant-svc, products by product-svc. A limit fails **open** — a business on no plan, or one whose allowances cannot be read this moment, is unrestricted — because a blip should not stop a shop taking on staff; that is the opposite of spend authority (11.x), which fails closed because it guards money leaving.
 
 ### Tenant data export and leaving (21.14)
