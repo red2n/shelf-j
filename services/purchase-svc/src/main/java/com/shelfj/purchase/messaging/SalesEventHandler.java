@@ -140,4 +140,34 @@ public class SalesEventHandler {
       LOG.log(Level.WARNING, "dispute outcome not posted, malformed: " + e.getMessage());
     }
   }
+
+  /**
+   * {@code SettlementReconciled} (11.10): a payout agreed with what payment-svc holds. Card
+   * clearing empties into the bank, store by store, for what the acquirer paid.
+   */
+  public void settlementReconciled(String json) {
+    try {
+      JsonObject o = EventJson.parse(json);
+      if (!"SettlementReconciled".equals(o.getString("eventType", ""))) return;
+      List<SalesPosting.StoreSettlement> stores = new ArrayList<>();
+      for (JsonValue v : o.getJsonArray("stores")) {
+        JsonObject s = v.asJsonObject();
+        stores.add(
+            new SalesPosting.StoreSettlement(
+                EventJson.optUuid(s, "storeId"),
+                s.getJsonNumber("bank").bigDecimalValue(),
+                s.getJsonNumber("fees").bigDecimalValue(),
+                s.getJsonNumber("clearing").bigDecimalValue(),
+                s.getJsonNumber("unallocated").bigDecimalValue()));
+      }
+      postings.postCardSettlement(
+          UUID.fromString(o.getString("eventId")),
+          UUID.fromString(o.getString("tenantId")),
+          UUID.fromString(o.getString("batchId")),
+          o.getString("reference", "") + " paid " + o.getString("payoutDate", ""),
+          stores);
+    } catch (RuntimeException e) {
+      LOG.log(Level.WARNING, "settlement not posted, malformed: " + e.getMessage());
+    }
+  }
 }

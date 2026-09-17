@@ -131,7 +131,54 @@ final class Events {
     return new OutboxRow(type, topic, d.tenantId(), d.id(), json.toString());
   }
 
+  /**
+   * A payout has been reconciled against what this service holds (11.10): the ledger clears card
+   * clearing to the bank, store by store, books the acquirer's fees and puts what answered to
+   * nothing into unallocated receipts. Each store's four figures are signed so the usual case is
+   * positive and {@code bank = clearing + unallocated - fees}.
+   */
+  static OutboxRow settlementReconciled(
+      com.shelfj.payment.domain.Settlements.Batch b,
+      java.util.List<com.shelfj.payment.domain.Settlements.StoreTotals> stores) {
+    StringBuilder json = new StringBuilder(480);
+    json.append("{\"eventId\":\"").append(com.shelfj.ids.Ids.newId()).append('"');
+    json.append(",\"eventType\":\"SettlementReconciled\"");
+    json.append(",\"tenantId\":\"").append(b.tenantId()).append('"');
+    json.append(",\"batchId\":\"").append(b.id()).append('"');
+    json.append(",\"provider\":\"").append(clean(b.provider())).append('"');
+    json.append(",\"reference\":\"").append(clean(b.reference())).append('"');
+    json.append(",\"currency\":\"").append(clean(b.currency())).append('"');
+    json.append(",\"payoutDate\":\"").append(b.payoutDate()).append('"');
+    json.append(",\"netAmount\":").append(b.netAmount().toPlainString());
+    json.append(",\"stores\":[");
+    boolean first = true;
+    for (com.shelfj.payment.domain.Settlements.StoreTotals s : stores) {
+      if (!first) json.append(',');
+      first = false;
+      json.append('{');
+      if (s.storeId() != null) json.append("\"storeId\":\"").append(s.storeId()).append("\",");
+      json.append("\"bank\":").append(s.bank().toPlainString());
+      json.append(",\"fees\":").append(s.fees().toPlainString());
+      json.append(",\"clearing\":").append(s.clearing().toPlainString());
+      json.append(",\"unallocated\":").append(s.unallocated().toPlainString());
+      json.append('}');
+    }
+    json.append("],\"occurredAt\":\"").append(java.time.Instant.now()).append("\"}");
+    return new OutboxRow(
+        "SettlementReconciled",
+        "shelfj.payment.settlement-reconciled",
+        b.tenantId(),
+        b.id(),
+        json.toString());
+  }
+
+  /** What is left of a text once nothing in it can end a JSON string early or break one. */
   private static String clean(String s) {
-    return s.replace("\\", "").replace("\"", "");
+    StringBuilder out = new StringBuilder(s.length());
+    for (int i = 0; i < s.length(); i++) {
+      char ch = s.charAt(i);
+      if (ch != '\\' && ch != '"' && ch >= ' ') out.append(ch);
+    }
+    return out.toString();
   }
 }

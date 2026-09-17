@@ -221,6 +221,9 @@ export default function ({ gb, noaddr, cafe, nobody, slow, offline, inbox, inbox
   expect(deliver('peppol', keyed, ''), '[-] no document at all is refused', 400, 'PURCHASE_EINVOICE_EMPTY');
   expect(deliver('peppol', keyed, '{"invoice":1}', 'application/json'), '[-] JSON is not an e-invoice', 415);
   expect(deliver('peppol', keyed, '<Order/>'), '[-] XML that is not an invoice is refused', 400, 'PURCHASE_EINVOICE_NOT_AN_INVOICE');
+  // SJ-D64: a network's delivery takes a document's cap, not the 1 MB every other route has — a Factur-X PDF is
+  // megabytes. Two of them of nothing reach the service, which refuses them for what they are, not for their size.
+  expect(deliver('peppol', keyed, `<Order>${'x'.repeat(2 * 1024 * 1024)}</Order>`), '[+] a delivery of two megabytes is read, not turned away at the door for its size', 400, 'PURCHASE_EINVOICE_NOT_AN_INVOICE');
   const inboxBefore = inboxOf(inboxToken).length;
   const flood = http.batch(Array.from({ length: 10 }, () => ['POST', `${BASE}${P}/e-invoices/inbound/peppol`, issued.body.replace(home.fullNumber, `${home.fullNumber}-X`), { headers: { 'Content-Type': 'application/xml', ...keyed }, tags: { name: 'POST /e-invoices/inbound/{network}' } }]));
   const oneRow = inboxOf(inboxToken).filter((d) => d.invoiceNumber === `${home.fullNumber}-X`).length;

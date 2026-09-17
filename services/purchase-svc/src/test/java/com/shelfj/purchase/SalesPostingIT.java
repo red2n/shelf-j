@@ -5,6 +5,7 @@ import static com.shelfj.purchase.PurchaseFixtures.T;
 import static com.shelfj.purchase.PurchaseFixtures.T2;
 import static com.shelfj.purchase.PurchaseFixtures.USER;
 import static org.hamcrest.MatcherAssert.assertThat;
+import static org.hamcrest.Matchers.containsString;
 import static org.hamcrest.Matchers.is;
 
 import com.shelfj.ids.Ids;
@@ -237,6 +238,95 @@ class SalesPostingIT {
     assertThat(lines("SALE_TENDER").size(), is(2));
     assertThat(lines("SALE").size(), is(3));
     assertThat(trialBalance().getBoolean("balanced"), is(true));
+  }
+
+  // ── chargebacks (11.9) and settlement (11.10) ───────────────────────────────
+
+  private static String dispute(String type, String order, String extra) {
+    return "{\"eventId\":\""
+        + Ids.newId()
+        + "\",\"eventType\":\""
+        + type
+        + "\",\"tenantId\":\""
+        + T
+        + "\",\"disputeId\":\""
+        + Ids.newId()
+        + "\",\"orderId\":\""
+        + order
+        + "\",\"storeId\":\""
+        + STORE_A
+        + "\",\"amount\":40.00,\"feeAmount\":15.00,\"currency\":\"GBP\","
+        + "\"fundsWithdrawn\":true"
+        + extra
+        + "}";
+  }
+
+  private static String settled(String batch, String stores) {
+    return "{\"eventId\":\""
+        + Ids.newId()
+        + "\",\"eventType\":\"SettlementReconciled\",\"tenantId\":\""
+        + T
+        + "\",\"batchId\":\""
+        + batch
+        + "\",\"provider\":\"WORLDPAY\",\"reference\":\"WP-1\",\"currency\":\"GBP\","
+        + "\"payoutDate\":\"2026-09-15\",\"netAmount\":42.50,\"stores\":["
+        + stores
+        + "]}";
+  }
+
+  @Test
+  @DisplayName("A payout empties card clearing into the bank; a chargeback in it is booked once")
+  void aReconciledPayoutClearsCardClearing() {
+    String fine = Ids.newId().toString();
+    String disputed = Ids.newId().toString();
+    handler.paymentCaptured(captured(T, Ids.newId().toString(), fine, "60.00", "CARD"));
+    handler.paymentCaptured(captured(T, Ids.newId().toString(), disputed, "40.00", "CARD"));
+    // The bank takes the 40.00 back, with a fee of 15.00 (11.9) …
+    handler.disputeFundsTaken(dispute("PaymentDisputeOpened", disputed, ""));
+    same(row(trialBalance(), "1250"), "45.00");
+    same(row(trialBalance(), "1255"), "40.00");
+    same(row(trialBalance(), "6511"), "15.00");
+
+    // … and the payout that covers both sales: 100.00 less 1.50, less the 55.00 already taken, and
+    // a terminal rental of 1.00 that is no store's.
+    String batch = Ids.newId().toString();
+    String payout =
+        settled(
+            batch,
+            "{\"storeId\":\""
+                + STORE_A
+                + "\",\"bank\":43.5000,\"fees\":1.5000,\"clearing\":45.0000,"
+                + "\"unallocated\":0.0000},"
+                + "{\"bank\":-1.0000,\"fees\":1.0000,\"clearing\":0,\"unallocated\":0.0000}");
+    handler.settlementReconciled(payout);
+    handler.settlementReconciled(payout);
+
+    JsonObject tb = trialBalance();
+    assertThat(tb.getBoolean("balanced"), is(true));
+    same(row(tb, "1250"), "0");
+    same(row(tb, "1200"), "42.50");
+    same(row(tb, "6500"), "2.50");
+    same(row(tb, "6511"), "15.00");
+    JsonArray posted = lines("CARD_SETTLEMENT");
+    assertThat(
+        "two journals — three lines and two — once however often told", posted.size(), is(5));
+    assertThat(posted.getJsonObject(0).getString("sourceRef"), is(batch));
+    assertThat(posted.toString(), containsString("Card settlement WP-1 paid 2026-09-15"));
+
+    // Lost: the 40.00 still in dispute is written off, and card clearing is left alone.
+    handler.disputeClosed(dispute("PaymentDisputeClosed", disputed, ",\"outcome\":\"LOST\""));
+    same(row(trialBalance(), "1255"), "0");
+    same(row(trialBalance(), "6510"), "40.00");
+
+    // What does not balance, or is not a settlement, posts nothing.
+    handler.settlementReconciled(
+        settled(
+            Ids.newId().toString(),
+            "{\"bank\":100.0000,\"fees\":1.0000,\"clearing\":100.0000,\"unallocated\":0}"));
+    handler.settlementReconciled(settled(Ids.newId().toString(), "{\"bank\":1}"));
+    handler.settlementReconciled(payout.replace("SettlementReconciled", "SettlementImported"));
+    handler.settlementReconciled("{not json");
+    assertThat(lines("CARD_SETTLEMENT").size(), is(5));
   }
 
   @Test

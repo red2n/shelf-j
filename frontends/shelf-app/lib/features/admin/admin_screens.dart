@@ -14,6 +14,7 @@ export 'deposits_report_screen.dart';
 export 'disputes_screen.dart';
 export 'retention_screen.dart';
 export 'privacy_screen.dart';
+export 'settlements_screen.dart';
 export 'tenant_data_screen.dart';
 export 'security_notices_screen.dart';
 export 'audit_trail_screen.dart';

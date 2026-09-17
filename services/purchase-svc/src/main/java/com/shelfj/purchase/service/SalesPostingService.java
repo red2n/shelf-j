@@ -12,6 +12,7 @@ import jakarta.inject.Inject;
 import java.math.BigDecimal;
 import java.time.LocalDate;
 import java.time.ZoneOffset;
+import java.util.ArrayList;
 import java.util.List;
 import java.util.Optional;
 import java.util.UUID;
@@ -32,6 +33,7 @@ public class SalesPostingService {
   static final String TENDER_CONSUMER = "purchase-svc/tender-posting";
   static final String REFUND_CONSUMER = "purchase-svc/refund-posting";
   static final String CHARGEBACK_CONSUMER = "purchase-svc/chargeback-posting";
+  static final String SETTLEMENT_CONSUMER = "purchase-svc/card-settlement-posting";
 
   @Inject SalesPostingRepository repo;
 
@@ -116,6 +118,37 @@ public class SalesPostingService {
         SalesPosting.chargebackClosed(
             tenantId, orderId, storeId, amount, won, fundsWithdrawn, today()),
         "post chargeback outcome");
+  }
+
+  /**
+   * Posts a payout reconciled against the acquirer's file (11.10), once per event: a journal for
+   * each store the payout covers, all in one transaction. They are dated the day the payout was
+   * reconciled — a consumer cannot be refused by a closed period — and say which payout, paid when.
+   *
+   * @param stores what the payout moves in each store's books; a null store is the business's own
+   */
+  public boolean postCardSettlement(
+      UUID eventId,
+      UUID tenantId,
+      UUID batchId,
+      String payout,
+      List<SalesPosting.StoreSettlement> stores) {
+    List<com.shelfj.purchase.domain.Domain.NominalLedgerEntry> journals = new ArrayList<>();
+    for (SalesPosting.StoreSettlement s : stores) {
+      journals.addAll(
+          SalesPosting.cardSettlement(
+              tenantId,
+              batchId,
+              s.storeId(),
+              payout,
+              s.bank(),
+              s.fees(),
+              s.clearing(),
+              s.unallocated(),
+              today()));
+    }
+    if (journals.isEmpty()) return repo.markProcessedIfNew(eventId, SETTLEMENT_CONSUMER);
+    return repo.recordJournalOnce(eventId, SETTLEMENT_CONSUMER, journals, "post card settlement");
   }
 
   /**

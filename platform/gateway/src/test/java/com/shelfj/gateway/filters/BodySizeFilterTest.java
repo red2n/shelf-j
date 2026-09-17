@@ -134,6 +134,38 @@ class BodySizeFilterTest {
   }
 
   @Test
+  @DisplayName("The routes in force are the whole list: no packaged copy shadows it (SJ-D64)")
+  void theRoutesInForceAreTheWholeList() throws Exception {
+    String key = "shelfj.gateway.upload-routes";
+    java.util.Properties packaged = new java.util.Properties();
+    try (InputStream in =
+        GatewayConfig.class.getResourceAsStream("/META-INF/microprofile-config.properties")) {
+      packaged.load(in);
+    }
+    String declared =
+        GatewayConfig.class
+            .getDeclaredField("uploadRoutes")
+            .getAnnotation(org.eclipse.microprofile.config.inject.ConfigProperty.class)
+            .defaultValue();
+    // What the gateway runs with when no environment overrides it: the packaged file wins over the
+    // declared default, which is how a one-route copy there once held every network's delivery of
+    // a supplier's PDF to the 1 MB cap.
+    Map<String, Long> inForce = BodySizeFilter.parseRoutes(packaged.getProperty(key, declared));
+    assertEquals(
+        Map.of(
+            "/api/purchase-svc/e-invoices", 21_000_000L,
+            "/api/purchase-svc/e-invoices/inbound/peppol", 21_000_000L,
+            "/api/purchase-svc/e-invoices/inbound/fr_pdp", 21_000_000L,
+            "/api/purchase-svc/e-invoices/inbound/simulated", 21_000_000L,
+            "/api/payment-svc/admin/settlements", 6_000_000L),
+        inForce);
+    long server = Long.parseLong(packaged.getProperty("server.max-payload-size"));
+    assertTrue(
+        inForce.values().stream().allMatch(cap -> cap <= server),
+        "the server's own cap must admit the largest route's");
+  }
+
+  @Test
   @DisplayName("Route entries that do not parse are skipped rather than trusted")
   void routeListsAreParsedStrictly() {
     assertEquals(

@@ -7,6 +7,8 @@ import static org.hamcrest.Matchers.not;
 import static org.hamcrest.Matchers.nullValue;
 
 import com.shelfj.ids.Ids;
+import com.shelfj.payment.ItCalls.Answer;
+import com.shelfj.payment.ItCalls.Caller;
 import com.shelfj.payment.domain.Domain.PaymentIntent;
 import com.shelfj.payment.domain.Domain.PaymentTender;
 import com.shelfj.payment.provider.PaymentProvider.DisputeNotice;
@@ -16,15 +18,9 @@ import com.shelfj.service.OutboxRow;
 import com.shelfj.test.PostgresSupport;
 import io.helidon.microprofile.testing.junit5.HelidonTest;
 import jakarta.inject.Inject;
-import jakarta.json.Json;
 import jakarta.json.JsonArray;
 import jakarta.json.JsonObject;
-import jakarta.ws.rs.client.Entity;
-import jakarta.ws.rs.client.Invocation;
 import jakarta.ws.rs.client.WebTarget;
-import jakarta.ws.rs.core.MediaType;
-import jakarta.ws.rs.core.Response;
-import java.io.StringReader;
 import java.math.BigDecimal;
 import java.sql.DriverManager;
 import java.time.Instant;
@@ -56,55 +52,20 @@ class DisputeIT {
 
   // ── helpers ────────────────────────────────────────────────────────────────
 
-  private record Answer(int status, JsonObject body) {
-    JsonObject data() {
-      return body.getJsonObject("data");
-    }
-
-    String code() {
-      return body.containsKey("code") ? body.getString("code") : null;
-    }
-  }
-
-  private record Caller(UUID tenantId, UUID userId, String roles) {}
-
   private static Caller owner(UUID tenantId) {
-    return new Caller(tenantId, Ids.newId(), "OWNER");
+    return Caller.owner(tenantId);
   }
 
   private Answer call(String method, String path, Caller who, String json, String idempotencyKey) {
-    String[] parts = path.split("\\?", 2);
-    WebTarget t = target.path(parts[0]);
-    if (parts.length == 2) {
-      for (String pair : parts[1].split("&")) {
-        String[] kv = pair.split("=", 2);
-        t = t.queryParam(kv[0], kv[1]);
-      }
-    }
-    Invocation.Builder b =
-        t.request()
-            .header("X-Tenant-Id", who.tenantId())
-            .header("X-User-Id", who.userId())
-            .header("X-Roles", who.roles());
-    if (idempotencyKey != null) b = b.header("Idempotency-Key", idempotencyKey);
-    Response r =
-        "GET".equals(method)
-            ? b.get()
-            : b.post(Entity.entity(json == null ? "{}" : json, MediaType.APPLICATION_JSON));
-    String text = r.readEntity(String.class);
-    return new Answer(
-        r.getStatus(),
-        text == null || text.isBlank()
-            ? JsonObject.EMPTY_JSON_OBJECT
-            : Json.createReader(new StringReader(text)).readObject());
+    return ItCalls.call(target, method, path, who, json, idempotencyKey);
   }
 
   private Answer post(String path, Caller who, String json) {
-    return call("POST", path, who, json, null);
+    return ItCalls.post(target, path, who, json);
   }
 
   private Answer get(String path, Caller who) {
-    return call("GET", path, who, null, null);
+    return ItCalls.get(target, path, who);
   }
 
   private UUID tender(UUID tenantId, UUID orderId, UUID storeId, String method, String amount) {

@@ -49,6 +49,13 @@ class SalesEventConsumer extends BaseKafkaConsumer {
       defaultValue = "shelfj.payment.dispute-closed")
   String disputeClosed;
 
+  // A payout reconciled against the acquirer's settlement file (11.10).
+  @Inject
+  @ConfigProperty(
+      name = "shelfj.kafka.topics.settlement-reconciled",
+      defaultValue = "shelfj.payment.settlement-reconciled")
+  String settlementReconciled;
+
   @Override
   protected List<String> topics() {
     return List.of(
@@ -57,7 +64,8 @@ class SalesEventConsumer extends BaseKafkaConsumer {
         paymentRefunded,
         disputeOpened,
         disputeFundsWithdrawn,
-        disputeClosed);
+        disputeClosed,
+        settlementReconciled);
   }
 
   @Override
@@ -82,6 +90,8 @@ class SalesEventConsumer extends BaseKafkaConsumer {
       handler.disputeFundsTaken(value);
     } else if (topic.equals(disputeClosed)) {
       handler.disputeClosed(value);
+    } else if (topic.equals(settlementReconciled)) {
+      handler.settlementReconciled(value);
     }
   }
 }
