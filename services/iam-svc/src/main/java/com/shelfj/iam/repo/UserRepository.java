@@ -1,5 +1,6 @@
 package com.shelfj.iam.repo;
 
+import com.shelfj.iam.domain.TokenIdentity;
 import com.shelfj.iam.domain.User;
 import com.shelfj.ids.Ids;
 import com.shelfj.service.BaseOutboxRepository;
@@ -111,38 +112,78 @@ public class UserRepository extends BaseOutboxRepository {
     }
   }
 
+  private static final String SELECT_TOKEN_IDENTITY =
+      "SELECT u.tenant_id, u.type, u.email, r.name, ur.store_id, ur.permissions"
+          + " FROM users u LEFT JOIN user_roles ur ON ur.user_id = u.id"
+          + " LEFT JOIN roles r ON r.id = ur.role_id WHERE u.id = ?";
+
   /**
-   * Stores this user may operate in, for the JWT {@code storeIds} claim. A {@code NULL store_id}
-   * row (a tenant-wide role like OWNER/PLATFORM_ADMIN) grants unrestricted access — signalled by
-   * returning an <strong>empty set</strong> — because a tenant-wide grant must not be narrowed by
-   * also holding a store-scoped role elsewhere. Otherwise the result is the distinct {@code
-   * store_id} values the user is bound to, and callers must treat that as an allow-list.
+   * What a token says about a login — tenant, type, roles, store scope, permissions — read in
+   * <strong>one statement</strong>, so from one snapshot (SJ-D63). Sign-in reads the user's row,
+   * then spends a few hundred milliseconds checking the password; read piecemeal after that, a
+   * staff removal that committed in between put the new roles beside the old tenant in one token.
+   *
+   * <p>Store scope: only staff roles carry one. CUSTOMER is global and its row has no store — read
+   * as "a role with no store", it made every shopper-turned-cashier unrestricted across the tenant
+   * (SJ-D48) — and PLATFORM_ADMIN has no tenant, let alone a store; both are skipped. Among the
+   * staff roles that remain, a null store is a tenant-wide role (OWNER, MANAGER) and means
+   * unrestricted, signalled by an <strong>empty set</strong>, because a tenant-wide grant must not
+   * be narrowed by also holding a store-scoped role elsewhere.
+   *
+   * <p>Permissions: null unless one of the roles is a custom one; then the union of every
+   * assignment's set, a built-in role contributing its tier's defaults.
+   *
+   * @return empty when the user no longer exists
    */
-  public Set<UUID> storeScopeOf(UUID userId) {
-    // Only staff roles carry a store scope. CUSTOMER is global and its row has no store — and
-    // read as "a role with no store", it made every shopper-turned-cashier unrestricted across
-    // the tenant, because one null store meant "unrestricted" (SJ-D48). PLATFORM_ADMIN has no
-    // tenant, let alone a store. Both are skipped; among the staff roles that remain, a null
-    // store is a tenant-wide role (OWNER, MANAGER) and means unrestricted, as before.
-    String sql =
-        "SELECT ur.store_id FROM user_roles ur JOIN roles r ON r.id = ur.role_id"
-            + " WHERE ur.user_id = ? AND r.name NOT IN ('CUSTOMER', 'PLATFORM_ADMIN')";
-    Set<UUID> storeIds = new java.util.HashSet<>();
+  public Optional<TokenIdentity> tokenIdentity(UUID userId) {
     try (var c = dataSource.getConnection();
-        var ps = c.prepareStatement(sql)) {
+        var ps = c.prepareStatement(SELECT_TOKEN_IDENTITY)) {
       ps.setObject(1, userId);
       try (ResultSet rs = ps.executeQuery()) {
+        boolean found = false;
+        UUID tenantId = null;
+        String type = null;
+        String email = null;
+        Set<String> roles = new java.util.HashSet<>();
+        Set<UUID> storeIds = new java.util.HashSet<>();
+        boolean tenantWide = false;
+        Set<String> permissions = new java.util.LinkedHashSet<>();
+        boolean custom = false;
         while (rs.next()) {
-          UUID storeId = (UUID) rs.getObject(1);
-          if (storeId == null) {
-            return Set.of();
+          found = true;
+          tenantId = (UUID) rs.getObject(1);
+          type = rs.getString(2);
+          email = rs.getString(3);
+          String role = rs.getString(4);
+          if (role == null) continue; // a login that holds no role at all
+          roles.add(role);
+          if (!"CUSTOMER".equals(role) && !"PLATFORM_ADMIN".equals(role)) {
+            UUID storeId = (UUID) rs.getObject(5);
+            if (storeId == null) tenantWide = true;
+            else storeIds.add(storeId);
           }
-          storeIds.add(storeId);
+          String perms = rs.getString(6);
+          if (perms == null) {
+            permissions.addAll(com.shelfj.web.Permissions.defaultsFor(role));
+          } else {
+            custom = true;
+            for (String p : perms.split(",")) {
+              if (!p.isBlank()) permissions.add(p.trim());
+            }
+          }
         }
+        if (!found) return Optional.empty();
+        return Optional.of(
+            new TokenIdentity(
+                tenantId,
+                type,
+                email,
+                roles,
+                tenantWide ? Set.of() : storeIds,
+                custom ? permissions : null));
       }
-      return storeIds;
     } catch (SQLException e) {
-      throw dbError("load store scope", e);
+      throw dbError("load token identity", e);
     }
   }
 
@@ -197,14 +238,7 @@ public class UserRepository extends BaseOutboxRepository {
           if (!markProcessedIfNewTx(c, eventId, consumerName)) {
             return false;
           }
-          try (PreparedStatement ps =
-              c.prepareStatement(
-                  "UPDATE users SET tenant_id = ?, type = 'STAFF'"
-                      + " WHERE id = ? AND tenant_id IS NULL")) {
-            ps.setObject(1, tenantId);
-            ps.setObject(2, userId);
-            ps.executeUpdate();
-          }
+          stampTenant(c, userId, tenantId);
           UUID roleId = roleIdByName(c, ownerRole);
           try (PreparedStatement ps =
               c.prepareStatement(
@@ -267,14 +301,7 @@ public class UserRepository extends BaseOutboxRepository {
           if (!markProcessedIfNewTx(c, eventId, consumerName)) {
             return false;
           }
-          try (PreparedStatement ps =
-              c.prepareStatement(
-                  "UPDATE users SET tenant_id = ?, type = 'STAFF'"
-                      + " WHERE id = ? AND tenant_id IS NULL")) {
-            ps.setObject(1, tenantId);
-            ps.setObject(2, userId);
-            ps.executeUpdate();
-          }
+          stampTenant(c, userId, tenantId);
           UUID roleId = roleIdByName(c, roleName);
           String perms = permissions == null ? null : String.join(",", permissions);
           try (PreparedStatement ps =
@@ -305,6 +332,18 @@ public class UserRepository extends BaseOutboxRepository {
           return true;
         },
         "bind staff");
+  }
+
+  /** Makes a login this tenant's staff, unless it already belongs to a tenant. */
+  private static void stampTenant(java.sql.Connection c, UUID userId, UUID tenantId)
+      throws SQLException {
+    try (PreparedStatement ps =
+        c.prepareStatement(
+            "UPDATE users SET tenant_id = ?, type = 'STAFF' WHERE id = ? AND tenant_id IS NULL")) {
+      ps.setObject(1, tenantId);
+      ps.setObject(2, userId);
+      ps.executeUpdate();
+    }
   }
 
   /**
@@ -419,46 +458,6 @@ public class UserRepository extends BaseOutboxRepository {
           return true;
         },
         "apply role permissions");
-  }
-
-  /**
-   * The permissions a login carries (20.10), or empty when none of its roles is a custom one.
-   *
-   * <p>Empty means "no claim": the token carries no {@code perms} and every service judges the
-   * holder by their tiers' defaults, exactly as before custom roles existed. Present means the
-   * union, over every assignment, of the custom role's permissions where there is one and the
-   * tier's defaults where there is not — so a cashier who is also a narrowed shift lead keeps the
-   * cashier's drawer.
-   *
-   * @param userId the user logging in
-   * @return the claim to mint, or empty for none
-   */
-  public Optional<Set<String>> permissionsOf(UUID userId) {
-    String sql =
-        "SELECT r.name, ur.permissions FROM user_roles ur JOIN roles r ON r.id = ur.role_id"
-            + " WHERE ur.user_id = ?";
-    Set<String> out = new java.util.LinkedHashSet<>();
-    boolean custom = false;
-    try (var c = dataSource.getConnection();
-        var ps = c.prepareStatement(sql)) {
-      ps.setObject(1, userId);
-      try (ResultSet rs = ps.executeQuery()) {
-        while (rs.next()) {
-          String perms = rs.getString("permissions");
-          if (perms == null) {
-            out.addAll(com.shelfj.web.Permissions.defaultsFor(rs.getString("name")));
-          } else {
-            custom = true;
-            for (String p : perms.split(",")) {
-              if (!p.isBlank()) out.add(p.trim());
-            }
-          }
-        }
-      }
-      return custom ? Optional.of(Set.copyOf(out)) : Optional.empty();
-    } catch (SQLException e) {
-      throw dbError("load permissions", e);
-    }
   }
 
   // --- audit ---

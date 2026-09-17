@@ -73,10 +73,17 @@ export function claims(token) {
 }
 
 let counter = 0;
-/** Unique within a run and across runs: millis + VU-local counter + random suffix. */
+/**
+ * Unique within a run and across runs: millis + VU-local counter + random suffix, in base 36.
+ *
+ * <p>Base 36 on purpose. In decimal this was a run of fifteen to nineteen digits, and about one in
+ * ten of those holds a Luhn-valid card number somewhere inside it — which the gateway's card-data
+ * guard rightly refuses (400 CARD_DATA_NOT_ACCEPTED), failing whichever suite drew it. The millis
+ * in base 36 begin with a letter, so no run of thirteen digits can form.
+ */
 export function uniq() {
   counter += 1;
-  return `${Date.now()}${counter}${Math.floor(Math.random() * 1e4)}`;
+  return `${Date.now().toString(36)}${counter.toString(36)}${Math.floor(Math.random() * 46656).toString(36)}`;
 }
 
 export function newKey(prefix = 'k6') {
