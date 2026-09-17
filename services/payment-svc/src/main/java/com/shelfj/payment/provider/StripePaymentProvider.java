@@ -242,6 +242,9 @@ public class StripePaymentProvider implements PaymentProvider {
       JsonObject root = reader.readObject();
       String type = root.getString("type", "");
       JsonObject intent = root.getJsonObject("data").getJsonObject("object");
+      if (type.startsWith("charge.dispute.")) {
+        return disputeEvent(root.getString("id"), type, intent);
+      }
       String currency = intent.getString("currency", "gbp").toUpperCase(Locale.ROOT);
 
       BigDecimal captured = null;
@@ -268,6 +271,108 @@ public class StripePaymentProvider implements PaymentProvider {
     } catch (RuntimeException e) {
       throw new ProviderException("could not parse Stripe event", false, e);
     }
+  }
+
+  /**
+   * A {@code charge.dispute.*} event (11.9): the object is the dispute, which names the payment
+   * intent its charge belongs to. The fee is the sum of the fees on the dispute's balance
+   * transactions, as Stripe reports it once it has debited the account.
+   */
+  private static WebhookEvent disputeEvent(String eventId, String type, JsonObject dispute) {
+    String currency = dispute.getString("currency").toUpperCase(Locale.ROOT);
+    String status = dispute.getString("status", "");
+    String phase =
+        switch (type) {
+          case "charge.dispute.created" -> DisputeNotice.PHASE_OPENED;
+          case "charge.dispute.funds_withdrawn" -> DisputeNotice.PHASE_FUNDS_WITHDRAWN;
+          case "charge.dispute.funds_reinstated" -> DisputeNotice.PHASE_FUNDS_REINSTATED;
+          case "charge.dispute.closed" -> DisputeNotice.PHASE_CLOSED;
+          default -> DisputeNotice.PHASE_UPDATED;
+        };
+    String outcome = null;
+    if (DisputeNotice.PHASE_CLOSED.equals(phase)) {
+      // warning_closed is an inquiry that never became a chargeback: the money never left.
+      outcome = "lost".equals(status) ? "LOST" : "WON";
+    }
+    long feeMinor = 0;
+    if (dispute.containsKey("balance_transactions") && !dispute.isNull("balance_transactions")) {
+      for (JsonObject t :
+          dispute.getJsonArray("balance_transactions").getValuesAs(JsonObject.class)) {
+        if (t.containsKey("fee") && !t.isNull("fee"))
+          feeMinor += t.getJsonNumber("fee").longValue();
+      }
+    }
+    java.time.Instant dueBy = null;
+    if (dispute.containsKey("evidence_details") && !dispute.isNull("evidence_details")) {
+      JsonObject details = dispute.getJsonObject("evidence_details");
+      if (details.containsKey("due_by") && !details.isNull("due_by")) {
+        dueBy = java.time.Instant.ofEpochSecond(details.getJsonNumber("due_by").longValue());
+      }
+    }
+    String intentRef =
+        dispute.containsKey("payment_intent") && !dispute.isNull("payment_intent")
+            ? dispute.getString("payment_intent")
+            : null;
+    return new WebhookEvent(
+        eventId,
+        type,
+        intentRef,
+        null,
+        null,
+        null,
+        null,
+        new DisputeNotice(
+            dispute.getString("id"),
+            phase,
+            outcome,
+            majorUnits(dispute.getJsonNumber("amount").longValue(), currency),
+            majorUnits(feeMinor, currency),
+            currency,
+            disputeReason(dispute.getString("reason", "")),
+            dispute.getString("network_reason_code", null),
+            dueBy));
+  }
+
+  /** Stripe's dispute reasons, in the categories this service keeps. */
+  static String disputeReason(String stripeReason) {
+    return switch (stripeReason) {
+      case "fraudulent" -> "FRAUDULENT";
+      case "product_not_received" -> "PRODUCT_NOT_RECEIVED";
+      case "product_unacceptable" -> "PRODUCT_UNACCEPTABLE";
+      case "duplicate" -> "DUPLICATE";
+      case "credit_not_processed" -> "CREDIT_NOT_PROCESSED";
+      case "subscription_canceled" -> "SUBSCRIPTION_CANCELLED";
+      case "unrecognized" -> "UNRECOGNIZED";
+      default -> "GENERAL";
+    };
+  }
+
+  /**
+   * {@inheritDoc}
+   *
+   * <p>Stripe takes the text fields it has names for and one free-text field for the rest, and
+   * {@code submit=true} sends them to the bank: after that the evidence cannot be changed.
+   */
+  @Override
+  public void submitDisputeEvidence(String disputeRef, DisputeAnswer answer) {
+    Map<String, String> form = new java.util.LinkedHashMap<>();
+    put(form, "evidence[product_description]", answer.productDescription());
+    put(form, "evidence[customer_name]", answer.customerName());
+    put(form, "evidence[customer_email_address]", answer.customerEmail());
+    put(form, "evidence[refund_policy_disclosure]", answer.refundPolicy());
+    put(form, "evidence[uncategorized_text]", answer.uncategorized());
+    form.put("submit", "true");
+    post("/v1/disputes/" + disputeRef, form, "dispute-evidence-" + disputeRef);
+  }
+
+  /** {@inheritDoc} */
+  @Override
+  public void acceptDispute(String disputeRef) {
+    post("/v1/disputes/" + disputeRef + "/close", Map.of(), "dispute-accept-" + disputeRef);
+  }
+
+  private static void put(Map<String, String> form, String key, String value) {
+    if (value != null && !value.isBlank()) form.put(key, value);
   }
 
   /**

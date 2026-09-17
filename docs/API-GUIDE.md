@@ -492,6 +492,16 @@ Numbering restarts per `period` (fiscal year) and runs per `(store, series)`, so
 - `GET /payments/by-order/{orderId}` — list all tenders for an order.
 - `POST /payments/by-order/{orderId}/refunds`, `GET /payments/by-order/{orderId}/refunds` — record/list refunds against an order's captured tender.
 
+### Chargebacks (`/admin/disputes`, 11.9)
+OWNER or MANAGER throughout.
+- `GET /admin/disputes?status=&storeId=&after=&limit=` — the register, newest first. `status` is `NEEDS_RESPONSE`, `UNDER_REVIEW`, `WON`, `LOST` or `ACCEPTED` (`400 DISPUTE_STATUS_UNKNOWN`). Each row says `overdue` when an answer is still owed past its date.
+- `POST /admin/disputes` — record a chargeback the acquirer has told the business about, for a card taken on a terminal the platform does not talk to: `{paymentId, amount?, feeAmount?, currency?, reason, networkReasonCode?, caseReference, evidenceDueBy, fundsWithdrawn?}` with an `Idempotency-Key` (a retry is the same chargeback). `404 PAYMENT_NOT_FOUND`; `409 DISPUTE_NOT_DISPUTABLE` (only a captured card, UPI or wallet tender), `DISPUTE_ALREADY_OPEN` (one open dispute per payment); `400 DISPUTE_AMOUNT_EXCEEDS_PAYMENT`, `DISPUTE_DUE_DATE_PAST`, `DISPUTE_REASON_UNKNOWN`. A payment provider's own disputes arrive on `POST /payments/webhooks/{provider}` and are never recorded this way.
+- `GET /admin/disputes/{id}` — the dispute with its append-only history (`OPENED`, `FUNDS_WITHDRAWN`, `EVIDENCE_SUBMITTED`, `WON`/`LOST`/`ACCEPTED`, `FUNDS_REINSTATED`) and the answer given.
+- `POST /admin/disputes/{id}/evidence` — the business's answer: `{productDescription?, customerName?, customerEmail?, receiptReference?, fulfilmentProof?, customerCommunication?, refundPolicy?, notes?}`. Once, and not after its date: `409 DISPUTE_NOT_AWAITING_RESPONSE`, `DISPUTE_EVIDENCE_LATE`; `400 DISPUTE_EVIDENCE_EMPTY`. A provider's dispute is sent to the provider and submitted (`502 PAYMENT_PROVIDER_REFUSED` if it will not take it); the acquirer's is kept here and sent by the business.
+- `POST /admin/disputes/{id}/accept` — not contested: lost by the business's own decision. `409 DISPUTE_CLOSED`.
+- `POST /admin/disputes/{id}/resolve` `{outcome: WON|LOST, note?}` — how a dispute the acquirer told the business about ended. `409 DISPUTE_DECIDED_BY_PROVIDER` for a provider's dispute, `DISPUTE_CLOSED`; `400 DISPUTE_OUTCOME_UNKNOWN`.
+- `GET /admin/disputes/summary?from=&to=&storeId=` — opened, by standing, amounts disputed and lost, fees, the card payments of the period, `disputeRatio` and `aboveMonitoringThreshold` (0.9%, where the card schemes start monitoring a merchant).
+
 ### Cash & Till Management
 - `POST /admin/cash/till-sessions` — open a till session with an opening float.
 - `GET /admin/cash/till-sessions/{id}` — get session status/float.
@@ -744,7 +754,7 @@ Every route needs a management role **and** `finance.payments`; a storekeeper or
 - Invoices captured before the ledger was wired in have `postedAt` null and were not back-posted: a posting dated today for an invoice dated months ago would land in the wrong period, and inventing one is finance's decision, made with a journal.
 
 **Events**
-- Consumes: `OrderConfirmed`, `PaymentCaptured`, `PaymentRefunded` (17.7: posted to the nominal ledger as sales, tenders and refunds, deduped per event and per sale or tender).
+- Consumes: `OrderConfirmed`, `PaymentCaptured`, `PaymentRefunded` (17.7: posted to the nominal ledger as sales, tenders and refunds, deduped per event and per sale or tender). Also `PaymentDisputeOpened`, `PaymentDisputeFundsWithdrawn`, `PaymentDisputeClosed` (11.9): the disputed amount out of card clearing (1250) into card receipts in dispute (1255) with the acquirer's fee to 6511, back on a win, to chargeback losses (6510) otherwise; source type `CHARGEBACK`, once per event.
 - Publishes: `PurchaseOrderCreated`, `GoodsReceived`, `IntercompanyInvoiceRaised`, `SupplierInvoiceCaptured` (SJ-D39: invoice id as event id, net/VAT/gross, invoice date as tax point — pricing-svc projects it into the VAT return's boxes 4 and 7), `SupplierInvoiceRejected` (07.7: the same figures on the same topic, projected as their negative so the rejected invoice leaves boxes 4 and 7), `ReturnedToVendor` (07.8: return id as event id, the store and the lines going back — inventory-svc deducts them as `RTV` movements, once per line), `SupplierRemittanceIssued` (17.10: one per supplier a payment run pays, on `shelfj.purchase.supplier-remittance-issued` keyed by the run — the run reference, payment date, supplier, remittance email, currency, total and each document settled; notification-svc emails it as the remittance advice).
 
 ---

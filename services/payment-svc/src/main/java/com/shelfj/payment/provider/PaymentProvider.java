@@ -138,7 +138,89 @@ public interface PaymentProvider {
       String status,
       BigDecimal capturedAmount,
       String failureCode,
-      String failureMessage) {}
+      String failureMessage,
+      DisputeNotice dispute) {
+
+    /** An event about a payment intent, as every event was before disputes (11.9). */
+    public WebhookEvent(
+        String providerEventId,
+        String type,
+        String providerRef,
+        String status,
+        BigDecimal capturedAmount,
+        String failureCode,
+        String failureMessage) {
+      this(
+          providerEventId,
+          type,
+          providerRef,
+          status,
+          capturedAmount,
+          failureCode,
+          failureMessage,
+          null);
+    }
+  }
+
+  /**
+   * What a provider says about a dispute (11.9), in the provider-neutral shape. {@link
+   * WebhookEvent#providerRef()} names the payment intent the disputed charge belongs to.
+   *
+   * @param disputeRef the provider's id for the dispute
+   * @param phase OPENED, FUNDS_WITHDRAWN, FUNDS_REINSTATED, UPDATED or CLOSED
+   * @param outcome WON or LOST when {@code phase} is CLOSED, else null
+   * @param amount what is disputed, in major units
+   * @param fee what the provider charged for the dispute, in major units; zero when it did not say
+   * @param reason one of {@code Disputes.REASONS}
+   * @param networkReasonCode the card scheme's own code, when the provider passes it on
+   */
+  record DisputeNotice(
+      String disputeRef,
+      String phase,
+      String outcome,
+      BigDecimal amount,
+      BigDecimal fee,
+      String currency,
+      String reason,
+      String networkReasonCode,
+      java.time.Instant evidenceDueBy) {
+
+    public static final String PHASE_OPENED = "OPENED";
+    public static final String PHASE_FUNDS_WITHDRAWN = "FUNDS_WITHDRAWN";
+    public static final String PHASE_FUNDS_REINSTATED = "FUNDS_REINSTATED";
+    public static final String PHASE_UPDATED = "UPDATED";
+    public static final String PHASE_CLOSED = "CLOSED";
+  }
+
+  /**
+   * What the business answers a dispute with, as far as a provider takes text.
+   *
+   * @param uncategorized everything that has no field of its own: the receipt reference, the proof
+   *     of collection or delivery, what was said to the customer, the business's own notes
+   */
+  record DisputeAnswer(
+      String productDescription,
+      String customerName,
+      String customerEmail,
+      String refundPolicy,
+      String uncategorized) {}
+
+  /**
+   * Sends the business's evidence to the provider and submits it: a scheme takes evidence once. The
+   * default is for a provider that has no disputes of its own (MANUAL): nothing to send — the
+   * business answers its acquirer directly, and this service keeps what it said.
+   *
+   * @throws ProviderException if the provider could not be reached or refused it
+   */
+  default void submitDisputeEvidence(String disputeRef, DisputeAnswer answer) {}
+
+  /**
+   * Tells the provider the business will not contest a dispute. The default is for a provider that
+   * has no disputes of its own.
+   *
+   * @throws ProviderException if the provider could not be reached or refused it
+   */
+  default void acceptDispute(String disputeRef) {}
 
   /** A provider call failed. Mapped to 502/503 by the service, never to a 500. */
   class ProviderException extends RuntimeException {

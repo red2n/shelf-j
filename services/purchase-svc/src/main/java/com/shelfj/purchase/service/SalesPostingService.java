@@ -31,6 +31,7 @@ public class SalesPostingService {
   static final String SALE_CONSUMER = "purchase-svc/sale-posting";
   static final String TENDER_CONSUMER = "purchase-svc/tender-posting";
   static final String REFUND_CONSUMER = "purchase-svc/refund-posting";
+  static final String CHARGEBACK_CONSUMER = "purchase-svc/chargeback-posting";
 
   @Inject SalesPostingRepository repo;
 
@@ -85,6 +86,36 @@ public class SalesPostingService {
             sale.isPresent(),
             today());
     return repo.recordRefundOnce(eventId, REFUND_CONSUMER, posting);
+  }
+
+  /**
+   * Posts the acquirer taking a disputed card payment (11.9), once per event: when the dispute was
+   * opened with the money already gone, or later when the acquirer says it has taken it.
+   */
+  public boolean postChargebackWithdrawn(
+      UUID eventId, UUID tenantId, UUID orderId, UUID storeId, BigDecimal amount, BigDecimal fee) {
+    return repo.recordJournalOnce(
+        eventId,
+        CHARGEBACK_CONSUMER,
+        SalesPosting.chargebackWithdrawn(tenantId, orderId, storeId, amount, fee, today()),
+        "post chargeback");
+  }
+
+  /** Posts how a dispute ended, once per event. */
+  public boolean postChargebackClosed(
+      UUID eventId,
+      UUID tenantId,
+      UUID orderId,
+      UUID storeId,
+      BigDecimal amount,
+      boolean won,
+      boolean fundsWithdrawn) {
+    return repo.recordJournalOnce(
+        eventId,
+        CHARGEBACK_CONSUMER,
+        SalesPosting.chargebackClosed(
+            tenantId, orderId, storeId, amount, won, fundsWithdrawn, today()),
+        "post chargeback outcome");
   }
 
   /**

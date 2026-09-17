@@ -3,11 +3,11 @@ package com.shelfj.notification.messaging;
 import static org.junit.jupiter.api.Assertions.assertEquals;
 
 import com.shelfj.ids.Ids;
-import com.shelfj.notification.channel.NotificationChannel;
-import com.shelfj.notification.repo.NotificationRepository;
 import com.shelfj.notification.service.NotificationService;
 import com.shelfj.notification.service.Notifier;
 import com.shelfj.notification.service.NotifierTestSupport;
+import com.shelfj.notification.service.OnceRepo;
+import com.shelfj.notification.service.RecordingChannel;
 import jakarta.json.Json;
 import java.math.BigDecimal;
 import java.util.UUID;
@@ -44,55 +44,16 @@ class ShortageAlertHandlerTest {
     }
   }
 
-  private static final class FakeChannel implements NotificationChannel {
-    int sends;
-
-    @Override
-    public String name() {
-      return "FAKE";
-    }
-
-    @Override
-    public void send(UUID tenantId, String recipient, String subject, String body) {
-      sends++;
-    }
-  }
-
-  private static final class FakeRepo extends NotificationRepository {
-    boolean notified;
-    int records;
-
-    @Override
-    public boolean alreadyNotified(UUID eventId, String type) {
-      return notified;
-    }
-
-    @Override
-    public void recordNotification(
-        UUID tenantId,
-        UUID subjectId,
-        UUID eventId,
-        String type,
-        String channel,
-        String recipient,
-        String subject,
-        String body,
-        String status) {
-      records++;
-      notified = true;
-    }
-  }
-
   private FakeNotificationService service;
-  private FakeChannel channel;
-  private FakeRepo repo;
+  private RecordingChannel channel;
+  private OnceRepo repo;
   private ShortageAlertHandler handler;
 
   @BeforeEach
   void setUp() {
     service = new FakeNotificationService();
-    channel = new FakeChannel();
-    repo = new FakeRepo();
+    channel = new RecordingChannel();
+    repo = new OnceRepo();
     Notifier notifier = NotifierTestSupport.notifierOf(channel, repo);
 
     handler = new ShortageAlertHandler();
@@ -116,7 +77,7 @@ class ShortageAlertHandlerTest {
   void pushesToTheDeviceChannelOnFirstDelivery() {
     handler.handle(payload());
 
-    assertEquals(1, channel.sends);
+    assertEquals(1, channel.sends());
     assertEquals(1, repo.records);
   }
 
@@ -125,7 +86,7 @@ class ShortageAlertHandlerTest {
     handler.handle(payload());
     handler.handle(payload());
 
-    assertEquals(1, channel.sends, "second delivery of the same event must be a no-op push");
+    assertEquals(1, channel.sends(), "second delivery of the same event must be a no-op push");
   }
 
   @Test
@@ -137,7 +98,7 @@ class ShortageAlertHandlerTest {
 
     handler.handle(payload());
 
-    assertEquals(1, channel.sends, "push must be retried independently of the alert-row dedupe");
+    assertEquals(1, channel.sends(), "push must be retried independently of the alert-row dedupe");
     assertEquals(1, repo.records);
   }
 }

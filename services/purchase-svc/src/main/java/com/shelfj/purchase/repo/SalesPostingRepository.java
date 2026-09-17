@@ -78,13 +78,19 @@ public class SalesPostingRepository extends BaseJdbcRepository {
 
   /** Records a refund's journal, once per event. */
   public boolean recordRefundOnce(UUID eventId, String consumer, List<NominalLedgerEntry> posting) {
+    return recordJournalOnce(eventId, consumer, posting, "post refund");
+  }
+
+  /** Records a journal that needs no record of its own beside it, once per event. */
+  public boolean recordJournalOnce(
+      UUID eventId, String consumer, List<NominalLedgerEntry> posting, String what) {
     return inTx(
         c -> {
           if (!markProcessedIfNewTx(c, eventId, consumer)) return false;
           LedgerWriter.insert(c, posting);
           return true;
         },
-        "post refund");
+        what);
   }
 
   public Optional<SalesOrder> findSale(UUID tenantId, UUID orderId) {

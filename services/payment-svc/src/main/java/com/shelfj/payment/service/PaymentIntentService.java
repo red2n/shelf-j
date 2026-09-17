@@ -32,6 +32,7 @@ public class PaymentIntentService {
 
   @Inject PaymentIntentRepository repo;
   @Inject PaymentProviders providers;
+  @Inject DisputeService disputes;
   @Inject OrderPaymentGuard guard;
 
   // Optional, not defaultValue = "": MicroProfile Config treats an empty default as no default at
@@ -263,6 +264,20 @@ public class PaymentIntentService {
     // recording it below.
     if (repo.hasSeenWebhook(provider.name(), event.providerEventId())) {
       return; // Already applied. Redelivery is normal, not an error.
+    }
+
+    // A dispute (11.9) is about a payment that finished long ago, so it is judged before the
+    // "already finished" short-cut below. Applying it is idempotent — the provider's dispute
+    // reference is the key and every move is guarded on its state — and, as for every event, it is
+    // recorded as seen only after it has been applied.
+    if (event.dispute() != null) {
+      PaymentIntent disputed =
+          event.providerRef() == null
+              ? null
+              : repo.findByProviderRefAcrossTenants(provider.name(), event.providerRef());
+      disputes.fromProvider(provider.name(), disputed, event.dispute());
+      repo.markWebhookSeenIfNew(provider.name(), event.providerEventId(), event.type());
+      return;
     }
 
     PaymentIntent intent =

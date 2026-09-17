@@ -8,15 +8,13 @@ import com.shelfj.ids.Ids;
 import com.shelfj.notification.channel.Channels;
 import com.shelfj.notification.channel.NotificationChannel;
 import com.shelfj.notification.client.CustomerClient;
-import com.shelfj.notification.repo.NotificationRepository;
 import com.shelfj.notification.service.NotifierTestSupport;
+import com.shelfj.notification.service.OnceRepo;
+import com.shelfj.notification.service.RecordingChannel;
 import jakarta.json.Json;
 import jakarta.json.JsonObjectBuilder;
-import java.util.ArrayList;
-import java.util.HashSet;
 import java.util.List;
 import java.util.Optional;
-import java.util.Set;
 import java.util.UUID;
 import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.Test;
@@ -32,47 +30,6 @@ class RecallNoticeIssuedHandlerTest {
   private static final UUID CUSTOMER = Ids.newId();
   private static final UUID LOGIN = Ids.newId();
   private static final UUID ORDER = Ids.newId();
-
-  private static final class FakeChannel implements NotificationChannel {
-    final List<String> recipients = new ArrayList<>();
-    final List<String> subjects = new ArrayList<>();
-    final List<String> bodies = new ArrayList<>();
-
-    @Override
-    public String name() {
-      return "FAKE";
-    }
-
-    @Override
-    public void send(UUID tenantId, String recipient, String subject, String body) {
-      recipients.add(recipient);
-      subjects.add(subject);
-      bodies.add(body);
-    }
-  }
-
-  private static final class FakeRepo extends NotificationRepository {
-    final Set<String> notified = new HashSet<>();
-
-    @Override
-    public boolean alreadyNotified(UUID eventId, String type) {
-      return notified.contains(eventId + "/" + type);
-    }
-
-    @Override
-    public void recordNotification(
-        UUID tenantId,
-        UUID subjectId,
-        UUID eventId,
-        String type,
-        String channel,
-        String recipient,
-        String subject,
-        String body,
-        String status) {
-      notified.add(eventId + "/" + type);
-    }
-  }
 
   private static final class FakeCustomers extends CustomerClient {
     String email;
@@ -95,9 +52,9 @@ class RecallNoticeIssuedHandlerTest {
   }
 
   /** Email on the default channel; SMS and PUSH each on their own fake. */
-  private static final class FakeChannels extends Channels {
-    final FakeChannel sms = new FakeChannel();
-    final FakeChannel push = new FakeChannel();
+  private static final class RecordingChannels extends Channels {
+    final RecordingChannel sms = new RecordingChannel();
+    final RecordingChannel push = new RecordingChannel();
 
     @Override
     public NotificationChannel forName(String name) {
@@ -109,18 +66,18 @@ class RecallNoticeIssuedHandlerTest {
     }
   }
 
-  private FakeChannel channel;
-  private FakeChannels channels;
+  private RecordingChannel channel;
+  private RecordingChannels channels;
   private FakeCustomers customers;
   private RecallNoticeIssuedHandler handler;
 
   @BeforeEach
   void setUp() {
-    channel = new FakeChannel();
-    channels = new FakeChannels();
+    channel = new RecordingChannel();
+    channels = new RecordingChannels();
     customers = new FakeCustomers();
     handler = new RecallNoticeIssuedHandler();
-    handler.notifier = NotifierTestSupport.notifierOf(channel, new FakeRepo(), channels);
+    handler.notifier = NotifierTestSupport.notifierOf(channel, new OnceRepo(), channels);
     handler.customers = customers;
   }
 

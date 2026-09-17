@@ -87,6 +87,15 @@ const _navItems = [
   ),
   _AdminNavItem(
     destination: AdaptiveNavDestination(
+      label: 'Chargebacks',
+      icon: Icons.report_gmailerrorred_outlined,
+      selectedIcon: Icons.report_gmailerrorred,
+    ),
+    route: '/admin/disputes',
+    storekeeperVisible: false,
+  ),
+  _AdminNavItem(
+    destination: AdaptiveNavDestination(
       label: 'Container deposits',
       icon: Icons.recycling_outlined,
       selectedIcon: Icons.recycling,

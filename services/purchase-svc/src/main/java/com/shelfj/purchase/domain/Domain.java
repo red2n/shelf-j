@@ -55,6 +55,8 @@ public final class Domain {
   public static final String SOURCE_SALE = "SALE";
   public static final String SOURCE_SALE_TENDER = "SALE_TENDER";
   public static final String SOURCE_SALE_REFUND = "SALE_REFUND";
+  // Chargebacks (11.9): the acquirer taking a card payment back, and how the argument ended.
+  public static final String SOURCE_CHARGEBACK = "CHARGEBACK";
   // Deferred revenue for loyalty points and gift cards (17.11).
   public static final String SOURCE_LOYALTY_DEFERRAL = "LOYALTY_DEFERRAL";
   public static final String SOURCE_LOYALTY_RELEASE = "LOYALTY_RELEASE";
@@ -88,6 +90,14 @@ public final class Domain {
   public static final String NAME_LOYALTY_AWARDED = "Loyalty Points Awarded";
   public static final String CODE_GIFT_CARDS_GIVEN = "6420";
   public static final String NAME_GIFT_CARDS_GIVEN = "Gift Cards Given Away";
+
+  // ── Chargebacks (11.9) ────────────────────────────────────────────────────────
+  public static final String CODE_CARD_RECEIPTS_IN_DISPUTE = "1255";
+  public static final String NAME_CARD_RECEIPTS_IN_DISPUTE = "Card Receipts in Dispute";
+  public static final String CODE_CHARGEBACK_LOSSES = "6510";
+  public static final String NAME_CHARGEBACK_LOSSES = "Chargeback Losses";
+  public static final String CODE_CHARGEBACK_FEES = "6511";
+  public static final String NAME_CHARGEBACK_FEES = "Chargeback Fees";
 
   /** A confirmed sale as order-svc announced it. */
   public record SalesOrder(

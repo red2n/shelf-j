@@ -85,6 +85,52 @@ final class Events {
             Ids.newId(), tenantId, refundId, orderId, amount.toPlainString(), shares));
   }
 
+  /**
+   * A cardholder's bank has taken a card payment back, or says it will (11.9). The ledger moves the
+   * amount out of card clearing into disputed receipts when {@code fundsWithdrawn}, and books the
+   * acquirer's fee; notification-svc tells the business and says by when it must answer.
+   */
+  static OutboxRow disputeOpened(com.shelfj.payment.domain.Disputes.Dispute d) {
+    return disputeEvent("PaymentDisputeOpened", "shelfj.payment.dispute-opened", d, null);
+  }
+
+  /** The acquirer has debited a dispute opened without it: the same postings, later. */
+  static OutboxRow disputeFundsWithdrawn(com.shelfj.payment.domain.Disputes.Dispute d) {
+    return disputeEvent(
+        "PaymentDisputeFundsWithdrawn", "shelfj.payment.dispute-funds-withdrawn", d, null);
+  }
+
+  /**
+   * A dispute is over. {@code outcome} is WON (the money comes back), LOST or ACCEPTED (it does
+   * not).
+   */
+  static OutboxRow disputeClosed(com.shelfj.payment.domain.Disputes.Dispute d, String outcome) {
+    return disputeEvent("PaymentDisputeClosed", "shelfj.payment.dispute-closed", d, outcome);
+  }
+
+  private static OutboxRow disputeEvent(
+      String type, String topic, com.shelfj.payment.domain.Disputes.Dispute d, String outcome) {
+    StringBuilder json = new StringBuilder(320);
+    json.append("{\"eventId\":\"").append(com.shelfj.ids.Ids.newId()).append('"');
+    json.append(",\"eventType\":\"").append(type).append('"');
+    json.append(",\"tenantId\":\"").append(d.tenantId()).append('"');
+    json.append(",\"disputeId\":\"").append(d.id()).append('"');
+    json.append(",\"paymentId\":\"").append(d.paymentId()).append('"');
+    json.append(",\"orderId\":\"").append(d.orderId()).append('"');
+    if (d.storeId() != null) json.append(",\"storeId\":\"").append(d.storeId()).append('"');
+    json.append(",\"amount\":").append(d.amount().toPlainString());
+    json.append(",\"feeAmount\":").append(d.feeAmount().toPlainString());
+    json.append(",\"currency\":\"").append(clean(d.currency())).append('"');
+    json.append(",\"reason\":\"").append(clean(d.reason())).append('"');
+    json.append(",\"fundsWithdrawn\":").append(d.fundsWithdrawn());
+    if (d.evidenceDueBy() != null) {
+      json.append(",\"evidenceDueBy\":\"").append(d.evidenceDueBy()).append('"');
+    }
+    if (outcome != null) json.append(",\"outcome\":\"").append(clean(outcome)).append('"');
+    json.append(",\"occurredAt\":\"").append(java.time.Instant.now()).append("\"}");
+    return new OutboxRow(type, topic, d.tenantId(), d.id(), json.toString());
+  }
+
   private static String clean(String s) {
     return s.replace("\\", "").replace("\"", "");
   }

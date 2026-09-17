@@ -20,6 +20,12 @@ import java.util.UUID;
  * clearing to zero for its order; what does not is the reconciliation exception the clearing report
  * lists. A refund credits the control account each refunded tender came from and debits sales and
  * VAT in the sale's own VAT ratio — or clearing, when the ledger never saw the sale confirmed.
+ *
+ * <p>A chargeback (11.9) is the acquirer taking a card payment back while the argument about it
+ * runs. The amount leaves card clearing — the acquirer nets it off what it settles — for card
+ * receipts in dispute, where it waits; the acquirer's fee is an expense the day it is charged. A
+ * dispute won brings the amount back into clearing; one lost, or accepted, writes it off to
+ * chargeback losses. The sale itself stands: the goods left, and a bank's decision is not a refund.
  */
 public final class SalesPosting {
 
@@ -135,5 +141,72 @@ public final class SalesPosting {
     }
     byControl.forEach((control, amount) -> p.credit(control.code(), control.name(), amount));
     return p.build();
+  }
+
+  /**
+   * The acquirer has taken a disputed card payment, and charged for it: Dr card receipts in dispute
+   * with the amount, Dr chargeback fees with the fee, Cr card clearing with both.
+   */
+  public static List<NominalLedgerEntry> chargebackWithdrawn(
+      UUID tenantId,
+      UUID orderId,
+      UUID storeId,
+      BigDecimal amount,
+      BigDecimal fee,
+      LocalDate date) {
+    BigDecimal taken = amount == null ? BigDecimal.ZERO : amount.max(BigDecimal.ZERO);
+    BigDecimal charged = fee == null ? BigDecimal.ZERO : fee.max(BigDecimal.ZERO);
+    if (taken.signum() == 0 && charged.signum() == 0) return List.of();
+    LedgerPosting p =
+        LedgerPosting.of(
+            tenantId,
+            date,
+            "Chargeback on sale " + orderId,
+            Domain.SOURCE_CHARGEBACK,
+            orderId,
+            storeId);
+    if (taken.signum() > 0) {
+      p.debit(Domain.CODE_CARD_RECEIPTS_IN_DISPUTE, Domain.NAME_CARD_RECEIPTS_IN_DISPUTE, taken);
+    }
+    if (charged.signum() > 0) {
+      p.debit(Domain.CODE_CHARGEBACK_FEES, Domain.NAME_CHARGEBACK_FEES, charged);
+    }
+    return p.credit(Domain.CODE_CARD_CLEARING, Domain.NAME_CARD_CLEARING, taken.add(charged))
+        .build();
+  }
+
+  /**
+   * A dispute is over. Won: Dr card clearing, Cr card receipts in dispute — the money comes back.
+   * Lost or accepted: Dr chargeback losses, Cr card receipts in dispute. Nothing is posted for a
+   * dispute whose money the acquirer never took: there is nothing in dispute to move.
+   *
+   * @param won whether the business won
+   * @param fundsWithdrawn whether the acquirer had taken the amount
+   */
+  public static List<NominalLedgerEntry> chargebackClosed(
+      UUID tenantId,
+      UUID orderId,
+      UUID storeId,
+      BigDecimal amount,
+      boolean won,
+      boolean fundsWithdrawn,
+      LocalDate date) {
+    if (!fundsWithdrawn || amount == null || amount.signum() <= 0) return List.of();
+    LedgerPosting p =
+        LedgerPosting.of(
+            tenantId,
+            date,
+            "Chargeback " + (won ? "won" : "lost") + " on sale " + orderId,
+            Domain.SOURCE_CHARGEBACK,
+            orderId,
+            storeId);
+    if (won) {
+      p.debit(Domain.CODE_CARD_CLEARING, Domain.NAME_CARD_CLEARING, amount);
+    } else {
+      p.debit(Domain.CODE_CHARGEBACK_LOSSES, Domain.NAME_CHARGEBACK_LOSSES, amount);
+    }
+    return p.credit(
+            Domain.CODE_CARD_RECEIPTS_IN_DISPUTE, Domain.NAME_CARD_RECEIPTS_IN_DISPUTE, amount)
+        .build();
   }
 }
