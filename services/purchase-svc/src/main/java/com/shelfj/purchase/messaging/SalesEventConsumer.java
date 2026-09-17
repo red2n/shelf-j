@@ -30,9 +30,34 @@ class SalesEventConsumer extends BaseKafkaConsumer {
       defaultValue = "shelfj.payment.payment-refunded")
   String paymentRefunded;
 
+  // Chargebacks (11.9): the acquirer taking a card payment back, and how the dispute ended.
+  @Inject
+  @ConfigProperty(
+      name = "shelfj.kafka.topics.dispute-opened",
+      defaultValue = "shelfj.payment.dispute-opened")
+  String disputeOpened;
+
+  @Inject
+  @ConfigProperty(
+      name = "shelfj.kafka.topics.dispute-funds-withdrawn",
+      defaultValue = "shelfj.payment.dispute-funds-withdrawn")
+  String disputeFundsWithdrawn;
+
+  @Inject
+  @ConfigProperty(
+      name = "shelfj.kafka.topics.dispute-closed",
+      defaultValue = "shelfj.payment.dispute-closed")
+  String disputeClosed;
+
   @Override
   protected List<String> topics() {
-    return List.of(orderConfirmed, paymentCaptured, paymentRefunded);
+    return List.of(
+        orderConfirmed,
+        paymentCaptured,
+        paymentRefunded,
+        disputeOpened,
+        disputeFundsWithdrawn,
+        disputeClosed);
   }
 
   @Override
@@ -53,6 +78,10 @@ class SalesEventConsumer extends BaseKafkaConsumer {
       handler.paymentCaptured(value);
     } else if (topic.equals(paymentRefunded)) {
       handler.paymentRefunded(value);
+    } else if (topic.equals(disputeOpened) || topic.equals(disputeFundsWithdrawn)) {
+      handler.disputeFundsTaken(value);
+    } else if (topic.equals(disputeClosed)) {
+      handler.disputeClosed(value);
     }
   }
 }

@@ -334,8 +334,9 @@ The transaction/sales-journal service for **both** channels: online orders/retur
 ### payment-svc — Payments & Cash Management
 Payment capture/refund plus till sessions, cash drawer movements, and end-of-day reporting.
 - **API:** `/payments` capture, online, by-order, refunds; `/admin/cash/till-sessions` open/drops/x-report/close; `/admin/cash` movements (pay-in/pay-out), z-report.
-- **Tables:** `payment_tenders`, `refund_tenders`, `till_sessions`, `cash_drops`, `cash_movements`, `z_reports`.
-- **Events:** publishes `PaymentCaptured`, `PaymentFailed`, `PaymentRefunded`.
+- **Tables:** `payment_tenders`, `refund_tenders`, `payment_intents`, `till_sessions`, `cash_drops`, `cash_movements`, `z_reports`, `disputes`, `dispute_events`, `dispute_evidence`.
+- **Events:** publishes `PaymentCaptured`, `PaymentFailed`, `PaymentRefunded`, `PaymentDisputeOpened`, `PaymentDisputeFundsWithdrawn`, `PaymentDisputeClosed` (11.9).
+- **Chargebacks (11.9):** `disputes` (mutable: `NEEDS_RESPONSE` → `UNDER_REVIEW` → `WON` | `LOST` | `ACCEPTED`), `dispute_events` (append-only) and `dispute_evidence` (one answer per dispute). A dispute arrives by the provider's signed webhook (`charge.dispute.*`, judged before the "intent already finished" short-cut, idempotent on the provider's dispute reference) or is recorded by management from the acquirer's notice for a card taken on a terminal the platform does not talk to (`provider = MANUAL`). One dispute open per tender; evidence once and not after its date; a provider's dispute is decided by its webhook, never by hand. purchase-svc posts it: the amount out of card clearing (1250) into card receipts in dispute (1255) and the fee to chargeback fees (6511) when the acquirer takes the money; back into clearing on a win; to chargeback losses (6510) when lost or accepted — the sale itself stands. notification-svc tells the business at once and says by when it must answer. `GET /admin/disputes/summary` gives the dispute ratio the card schemes monitor (0.9%).
 - **Notable:** payment methods CASH/CARD/UPI/WALLET/GIFT_CARD/VOUCHER/STORE_CREDIT; X-report (mid-shift) vs Z-report (end-of-day close); idempotent cash-movement recording.
 
 ### purchase-svc — Procurement
@@ -396,6 +397,7 @@ tenant-svc   ──REST──►  iam-svc         (verify user on staff assignme
 | `OrderPlaced` / `OrderConfirmed` | order-svc | inventory-svc, customer-svc, cart-svc, reporting-svc, notification-svc |
 | `OrderCancelled` / `OrderReturned` | order-svc | inventory-svc, payment-svc, reporting-svc |
 | `PaymentCaptured` / `PaymentFailed` / `PaymentRefunded` | payment-svc | order-svc, reporting-svc (refunds net against sales) |
+| `PaymentDisputeOpened` / `PaymentDisputeFundsWithdrawn` / `PaymentDisputeClosed` | payment-svc | purchase-svc (the ledger: disputed receipts, fees, losses), notification-svc (opened: the alert with the date to answer by) |
 | `UserRegistered` | iam-svc | notification-svc (welcome notice) |
 | `RecallOpened` / `RecallSaleAffected` | inventory-svc | notification-svc (store alerts); order-svc (a notice per order the recall reached, 05.10) |
 | `RecallNoticeIssued` | order-svc | notification-svc (the written notice to the buyer: email, else text, and a push) |

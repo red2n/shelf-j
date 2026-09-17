@@ -159,4 +159,70 @@ class SalesPostingTest {
     same(balance(unseen, Domain.CODE_GIFT_CARD_LIABILITY), "-12.00");
     same(balance(unseen, Domain.CODE_SALES), "0");
   }
+
+  // ── chargebacks (11.9) ──────────────────────────────────────────────────────
+
+  @Test
+  void aChargebackMovesTheMoneyOutOfCardClearingAndBooksTheFee() {
+    var taken = SalesPosting.chargebackWithdrawn(TENANT, ORDER, STORE, d("45.99"), d("15.00"), DAY);
+    same(balance(taken, Domain.CODE_CARD_RECEIPTS_IN_DISPUTE), "45.99");
+    same(balance(taken, Domain.CODE_CHARGEBACK_FEES), "15.00");
+    same(balance(taken, Domain.CODE_CARD_CLEARING), "-60.99");
+    same(balance(taken, Domain.CODE_SALES), "0");
+    assertThat(
+        "the sale stands: a bank's decision is not a refund",
+        taken.stream().noneMatch(l -> Domain.CODE_VAT_OUTPUT.equals(l.nominalCode())),
+        is(true));
+  }
+
+  @Test
+  void aChargebackWonComesBackAndOneLostIsWrittenOff() {
+    var won = SalesPosting.chargebackClosed(TENANT, ORDER, STORE, d("45.99"), true, true, DAY);
+    same(balance(won, Domain.CODE_CARD_CLEARING), "45.99");
+    same(balance(won, Domain.CODE_CARD_RECEIPTS_IN_DISPUTE), "-45.99");
+
+    var lost = SalesPosting.chargebackClosed(TENANT, ORDER, STORE, d("45.99"), false, true, DAY);
+    same(balance(lost, Domain.CODE_CHARGEBACK_LOSSES), "45.99");
+    same(balance(lost, Domain.CODE_CARD_RECEIPTS_IN_DISPUTE), "-45.99");
+    same(balance(lost, Domain.CODE_CARD_CLEARING), "0");
+
+    // Taken then won nets disputed receipts to nothing and clearing back to where it was, less
+    // the fee, which nobody gives back.
+    var all = new java.util.ArrayList<NominalLedgerEntry>();
+    all.addAll(SalesPosting.chargebackWithdrawn(TENANT, ORDER, STORE, d("45.99"), d("15.00"), DAY));
+    all.addAll(won);
+    same(balance(all, Domain.CODE_CARD_RECEIPTS_IN_DISPUTE), "0");
+    same(balance(all, Domain.CODE_CARD_CLEARING), "-15.00");
+  }
+
+  @Test
+  void aDisputeWhoseMoneyNeverMovedPostsNothing() {
+    assertThat(
+        SalesPosting.chargebackClosed(TENANT, ORDER, STORE, d("45.99"), true, false, DAY).isEmpty(),
+        is(true));
+    assertThat(
+        SalesPosting.chargebackClosed(TENANT, ORDER, STORE, d("45.99"), false, false, DAY)
+            .isEmpty(),
+        is(true));
+    assertThat(
+        SalesPosting.chargebackClosed(TENANT, ORDER, STORE, d("0"), false, true, DAY).isEmpty(),
+        is(true));
+    assertThat(
+        SalesPosting.chargebackClosed(TENANT, ORDER, STORE, null, false, true, DAY).isEmpty(),
+        is(true));
+    assertThat(
+        SalesPosting.chargebackWithdrawn(TENANT, ORDER, STORE, d("0"), d("0"), DAY).isEmpty(),
+        is(true));
+    assertThat(
+        SalesPosting.chargebackWithdrawn(TENANT, ORDER, STORE, null, null, DAY).isEmpty(),
+        is(true));
+    // A fee with no amount — an inquiry the acquirer charged for — is still a fee.
+    var feeOnly = SalesPosting.chargebackWithdrawn(TENANT, ORDER, STORE, d("0"), d("15.00"), DAY);
+    same(balance(feeOnly, Domain.CODE_CHARGEBACK_FEES), "15.00");
+    same(balance(feeOnly, Domain.CODE_CARD_CLEARING), "-15.00");
+    // A negative amount from a confused sender moves nothing the wrong way.
+    assertThat(
+        SalesPosting.chargebackWithdrawn(TENANT, ORDER, STORE, d("-5"), d("-1"), DAY).isEmpty(),
+        is(true));
+  }
 }

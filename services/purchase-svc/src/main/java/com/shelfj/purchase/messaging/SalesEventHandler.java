@@ -97,4 +97,47 @@ public class SalesEventHandler {
       LOG.log(Level.WARNING, "PaymentRefunded not posted, malformed: " + e.getMessage());
     }
   }
+
+  /**
+   * {@code PaymentDisputeOpened} and {@code PaymentDisputeFundsWithdrawn} (11.9): the acquirer
+   * taking a disputed card payment. A dispute opened with the money still in hand posts nothing
+   * yet.
+   */
+  public void disputeFundsTaken(String json) {
+    try {
+      JsonObject o = EventJson.parse(json);
+      String type = o.getString("eventType", "");
+      if (!"PaymentDisputeOpened".equals(type) && !"PaymentDisputeFundsWithdrawn".equals(type)) {
+        return;
+      }
+      if (!o.getBoolean("fundsWithdrawn", false)) return;
+      postings.postChargebackWithdrawn(
+          UUID.fromString(o.getString("eventId")),
+          UUID.fromString(o.getString("tenantId")),
+          UUID.fromString(o.getString("orderId")),
+          EventJson.optUuid(o, "storeId"),
+          o.getJsonNumber("amount").bigDecimalValue(),
+          o.getJsonNumber("feeAmount").bigDecimalValue());
+    } catch (RuntimeException e) {
+      LOG.log(Level.WARNING, "dispute not posted, malformed: " + e.getMessage());
+    }
+  }
+
+  /** {@code PaymentDisputeClosed}: won brings the money back, lost or accepted writes it off. */
+  public void disputeClosed(String json) {
+    try {
+      JsonObject o = EventJson.parse(json);
+      if (!"PaymentDisputeClosed".equals(o.getString("eventType", ""))) return;
+      postings.postChargebackClosed(
+          UUID.fromString(o.getString("eventId")),
+          UUID.fromString(o.getString("tenantId")),
+          UUID.fromString(o.getString("orderId")),
+          EventJson.optUuid(o, "storeId"),
+          o.getJsonNumber("amount").bigDecimalValue(),
+          "WON".equals(o.getString("outcome", "")),
+          o.getBoolean("fundsWithdrawn", false));
+    } catch (RuntimeException e) {
+      LOG.log(Level.WARNING, "dispute outcome not posted, malformed: " + e.getMessage());
+    }
+  }
 }

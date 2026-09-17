@@ -5,6 +5,9 @@ import static org.hamcrest.Matchers.is;
 import static org.junit.jupiter.api.Assertions.assertThrows;
 import static org.mockito.ArgumentMatchers.any;
 import static org.mockito.ArgumentMatchers.anyString;
+import static org.mockito.ArgumentMatchers.eq;
+import static org.mockito.Mockito.doThrow;
+import static org.mockito.Mockito.inOrder;
 import static org.mockito.Mockito.never;
 import static org.mockito.Mockito.times;
 import static org.mockito.Mockito.verify;
@@ -13,6 +16,7 @@ import static org.mockito.Mockito.when;
 import com.shelfj.ids.Ids;
 import com.shelfj.payment.domain.Domain.PaymentIntent;
 import com.shelfj.payment.provider.PaymentProvider;
+import com.shelfj.payment.provider.PaymentProvider.DisputeNotice;
 import com.shelfj.payment.provider.PaymentProviders;
 import com.shelfj.payment.repo.PaymentIntentRepository;
 import java.math.BigDecimal;
@@ -22,6 +26,7 @@ import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.DisplayName;
 import org.junit.jupiter.api.Test;
 import org.junit.jupiter.api.extension.ExtendWith;
+import org.mockito.InOrder;
 import org.mockito.InjectMocks;
 import org.mockito.Mock;
 import org.mockito.junit.jupiter.MockitoExtension;
@@ -49,6 +54,7 @@ class WebhookDedupeOrderingTest {
   @Mock PaymentIntentRepository repo;
   @Mock PaymentProviders providers;
   @Mock PaymentProvider provider;
+  @Mock DisputeService disputes;
   @InjectMocks PaymentIntentService service;
 
   private final UnaryOperator<String> header = name -> "sig";
@@ -138,5 +144,87 @@ class WebhookDedupeOrderingTest {
 
     verify(repo, times(1)).markWebhookSeenIfNew(PROVIDER, EVENT_ID, "type");
     assertThat(true, is(true));
+  }
+
+  private PaymentIntent capturedIntent() {
+    PaymentIntent a = authorizedIntent();
+    return new PaymentIntent(
+        a.id(),
+        a.tenantId(),
+        a.orderId(),
+        a.storeId(),
+        PROVIDER,
+        PROVIDER_REF,
+        a.amount(),
+        a.amount(),
+        a.currency(),
+        PaymentIntent.STATUS_CAPTURED,
+        null,
+        null,
+        null,
+        Ids.newId(),
+        null,
+        a.createdAt(),
+        a.updatedAt());
+  }
+
+  private DisputeNotice deliverDispute() {
+    DisputeNotice notice =
+        new DisputeNotice(
+            "dp_test_1",
+            DisputeNotice.PHASE_OPENED,
+            null,
+            new BigDecimal("10.00"),
+            BigDecimal.ZERO,
+            "GBP",
+            "FRAUDULENT",
+            "10.4",
+            Instant.now().plusSeconds(864_000));
+    when(provider.verifyWebhook(any(), anyString()))
+        .thenReturn(
+            new PaymentProvider.WebhookEvent(
+                EVENT_ID, "charge.dispute.created", PROVIDER_REF, null, null, null, null, notice));
+    service.handleWebhook(PROVIDER, "{}".getBytes(), header);
+    return notice;
+  }
+
+  @Test
+  @DisplayName("A dispute is about a payment long finished: it is applied all the same, then seen")
+  void aDisputeReachesTheCaseFileThoughThePaymentIsFinished() {
+    PaymentIntent captured = capturedIntent();
+    when(repo.hasSeenWebhook(PROVIDER, EVENT_ID)).thenReturn(false);
+    when(repo.findByProviderRefAcrossTenants(PROVIDER, PROVIDER_REF)).thenReturn(captured);
+
+    DisputeNotice notice = deliverDispute();
+
+    // The "already finished" short-cut would have swallowed every chargeback there will ever be.
+    InOrder order = inOrder(disputes, repo);
+    order.verify(disputes).fromProvider(PROVIDER, captured, notice);
+    order.verify(repo).markWebhookSeenIfNew(PROVIDER, EVENT_ID, "charge.dispute.created");
+    verify(repo, never()).captureGuarded(any(), any(), any(), any());
+  }
+
+  @Test
+  @DisplayName("A dispute that could not be filed is NOT recorded as seen: the redelivery files it")
+  void aDisputeThatFailedIsDeliveredAgain() {
+    when(repo.hasSeenWebhook(PROVIDER, EVENT_ID)).thenReturn(false);
+    when(repo.findByProviderRefAcrossTenants(PROVIDER, PROVIDER_REF)).thenReturn(capturedIntent());
+    doThrow(new RuntimeException("database went away mid-dispute"))
+        .when(disputes)
+        .fromProvider(eq(PROVIDER), any(), any());
+
+    assertThrows(RuntimeException.class, this::deliverDispute);
+
+    verify(repo, never()).markWebhookSeenIfNew(anyString(), anyString(), anyString());
+  }
+
+  @Test
+  @DisplayName("A dispute already seen opens nothing twice")
+  void aDisputeAlreadySeenIsSkipped() {
+    when(repo.hasSeenWebhook(PROVIDER, EVENT_ID)).thenReturn(true);
+
+    deliverDispute();
+
+    verify(disputes, never()).fromProvider(anyString(), any(), any());
   }
 }
