@@ -96,6 +96,15 @@ const _navItems = [
   ),
   _AdminNavItem(
     destination: AdaptiveNavDestination(
+      label: 'Card settlements',
+      icon: Icons.account_balance_outlined,
+      selectedIcon: Icons.account_balance,
+    ),
+    route: '/admin/settlements',
+    storekeeperVisible: false,
+  ),
+  _AdminNavItem(
+    destination: AdaptiveNavDestination(
       label: 'Container deposits',
       icon: Icons.recycling_outlined,
       selectedIcon: Icons.recycling,

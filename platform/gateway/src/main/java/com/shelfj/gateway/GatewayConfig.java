@@ -70,7 +70,10 @@ public class GatewayConfig {
    * Routes that take a document rather than JSON, each with its own cap, as {@code path=bytes}
    * separated by commas: a supplier's e-invoice PDF may be 20 MB (07.13), uploaded by a person or
    * delivered by a network — each network's delivery route is its own entry, since the cap matches
-   * a path exactly. {@code server.max-payload-size} must be at least the largest.
+   * a path exactly. An acquirer's settlement file is a day of card payments as text (11.10). {@code
+   * server.max-payload-size} must be at least the largest. The list is kept here and nowhere else:
+   * a copy in the packaged properties once went stale and held every network's delivery to the
+   * small cap (SJ-D64).
    */
   @Inject
   @ConfigProperty(
@@ -79,7 +82,8 @@ public class GatewayConfig {
           "/api/purchase-svc/e-invoices=21000000,"
               + "/api/purchase-svc/e-invoices/inbound/peppol=21000000,"
               + "/api/purchase-svc/e-invoices/inbound/fr_pdp=21000000,"
-              + "/api/purchase-svc/e-invoices/inbound/simulated=21000000")
+              + "/api/purchase-svc/e-invoices/inbound/simulated=21000000,"
+              + "/api/payment-svc/admin/settlements=6000000")
   String uploadRoutes;
 
   @Inject

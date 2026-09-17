@@ -209,4 +209,75 @@ public final class SalesPosting {
             Domain.CODE_CARD_RECEIPTS_IN_DISPUTE, Domain.NAME_CARD_RECEIPTS_IN_DISPUTE, amount)
         .build();
   }
+
+  /**
+   * What a reconciled payout moves in one store's books, each signed so the usual case is positive.
+   *
+   * @param storeId null for what belongs to no store
+   */
+  public record StoreSettlement(
+      UUID storeId,
+      BigDecimal bank,
+      BigDecimal fees,
+      BigDecimal clearing,
+      BigDecimal unallocated) {}
+
+  /**
+   * A reconciled payout in one store's books (11.10): Dr bank for what the acquirer paid, Dr card
+   * processing fees for what it kept / Cr card clearing for the payments it covers, Cr unallocated
+   * receipts for money that answered to nothing here. Each figure is signed so that the usual case
+   * is positive, and a negative one changes sides — a payout of more refunds than sales takes money
+   * out of the bank. {@code bank = clearing + unallocated - fees}, or nothing is posted.
+   *
+   * @param batchId the settlement batch, the journal's source
+   */
+  public static List<NominalLedgerEntry> cardSettlement(
+      UUID tenantId,
+      UUID batchId,
+      UUID storeId,
+      String payout,
+      BigDecimal bank,
+      BigDecimal fees,
+      BigDecimal clearing,
+      BigDecimal unallocated,
+      LocalDate date) {
+    BigDecimal b = orZero(bank);
+    BigDecimal f = orZero(fees);
+    BigDecimal cl = orZero(clearing);
+    BigDecimal u = orZero(unallocated);
+    if (b.compareTo(cl.add(u).subtract(f)) != 0) {
+      throw new IllegalArgumentException("a settlement's figures do not balance");
+    }
+    if (b.signum() == 0 && f.signum() == 0 && cl.signum() == 0 && u.signum() == 0) {
+      return List.of();
+    }
+    LedgerPosting p =
+        LedgerPosting.of(
+            tenantId,
+            date,
+            "Card settlement " + payout,
+            Domain.SOURCE_CARD_SETTLEMENT,
+            batchId,
+            storeId);
+    side(p, Domain.CODE_BANK, Domain.NAME_BANK, b, true);
+    side(p, Domain.CODE_CARD_PROCESSING_FEES, Domain.NAME_CARD_PROCESSING_FEES, f, true);
+    side(p, Domain.CODE_CARD_CLEARING, Domain.NAME_CARD_CLEARING, cl, false);
+    side(p, Domain.CODE_UNALLOCATED_RECEIPTS, Domain.NAME_UNALLOCATED_RECEIPTS, u, false);
+    return p.build();
+  }
+
+  /** A signed figure on its usual side, or on the other when it is negative. */
+  private static void side(
+      LedgerPosting p, String code, String name, BigDecimal amount, boolean usuallyDebit) {
+    if (amount.signum() == 0) return;
+    if ((amount.signum() > 0) == usuallyDebit) {
+      p.debit(code, name, amount.abs());
+    } else {
+      p.credit(code, name, amount.abs());
+    }
+  }
+
+  private static BigDecimal orZero(BigDecimal amount) {
+    return amount == null ? BigDecimal.ZERO : amount;
+  }
 }

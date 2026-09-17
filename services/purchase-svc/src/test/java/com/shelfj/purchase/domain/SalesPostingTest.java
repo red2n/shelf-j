@@ -225,4 +225,69 @@ class SalesPostingTest {
         SalesPosting.chargebackWithdrawn(TENANT, ORDER, STORE, d("-5"), d("-1"), DAY).isEmpty(),
         is(true));
   }
+
+  // ── settlement against the acquirer's file (11.10) ──────────────────────────
+
+  @Test
+  void aSettledPayoutEmptiesCardClearingIntoTheBankLessTheAcquirersFees() {
+    // The day's card takings, 165.99, posted as they were captured …
+    var all = new java.util.ArrayList<NominalLedgerEntry>();
+    all.addAll(SalesPosting.tender(TENANT, ORDER, STORE, "CARD", d("165.99"), DAY));
+    // … and the payout that covers them: 163.50 in the bank, 2.49 kept.
+    var paid =
+        SalesPosting.cardSettlement(
+            TENANT,
+            ORDER,
+            STORE,
+            "WP-1 paid 2026-09-15",
+            d("163.50"),
+            d("2.49"),
+            d("165.99"),
+            d("0"),
+            DAY);
+    all.addAll(paid);
+
+    same(balance(paid, Domain.CODE_BANK), "163.50");
+    same(balance(paid, Domain.CODE_CARD_PROCESSING_FEES), "2.49");
+    same(balance(all, Domain.CODE_CARD_CLEARING), "0");
+    assertThat(paid.get(0).sourceType(), is(Domain.SOURCE_CARD_SETTLEMENT));
+    assertThat(paid.get(0).sourceRef(), is(ORDER));
+    assertThat(paid.get(0).description(), is("Card settlement WP-1 paid 2026-09-15"));
+    assertThat(paid.stream().allMatch(l -> STORE.equals(l.storeId())), is(true));
+  }
+
+  @Test
+  void moneyThatAnswersToNothingGoesToUnallocatedAndANegativeFigureChangesSides() {
+    var unknown =
+        SalesPosting.cardSettlement(
+            TENANT, ORDER, null, "WP-2", d("29.55"), d("0.45"), d("0"), d("30.00"), DAY);
+    same(balance(unknown, Domain.CODE_UNALLOCATED_RECEIPTS), "-30.00");
+    same(balance(unknown, Domain.CODE_BANK), "29.55");
+
+    // More refunds and chargebacks than sales: the acquirer takes money from the bank.
+    var owed =
+        SalesPosting.cardSettlement(
+            TENANT, ORDER, STORE, "WP-3", d("-35.90"), d("0.90"), d("-30.00"), d("-5.00"), DAY);
+    same(balance(owed, Domain.CODE_BANK), "-35.90");
+    same(balance(owed, Domain.CODE_CARD_CLEARING), "30.00");
+    same(balance(owed, Domain.CODE_UNALLOCATED_RECEIPTS), "5.00");
+    same(balance(owed, Domain.CODE_CARD_PROCESSING_FEES), "0.90");
+    assertThat(
+        "no line carries a negative amount",
+        owed.stream().allMatch(l -> l.debit().signum() >= 0 && l.credit().signum() >= 0),
+        is(true));
+  }
+
+  @Test
+  void figuresThatDoNotBalanceAreRefusedAndNothingIsNothing() {
+    org.junit.jupiter.api.Assertions.assertThrows(
+        IllegalArgumentException.class,
+        () ->
+            SalesPosting.cardSettlement(
+                TENANT, ORDER, STORE, "WP-4", d("100.00"), d("1.00"), d("100.00"), d("0"), DAY));
+    assertThat(
+        SalesPosting.cardSettlement(TENANT, ORDER, STORE, "WP-5", null, null, null, null, DAY)
+            .isEmpty(),
+        is(true));
+  }
 }

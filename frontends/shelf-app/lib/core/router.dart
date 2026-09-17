@@ -192,6 +192,13 @@ final routerProvider = Provider<GoRouter>((ref) {
             ),
           ),
           GoRoute(
+            path: '/admin/settlements',
+            builder: (_, _) => DeferredWidget(
+              libraryLoader: admin_lib.loadLibrary,
+              builder: (_) => admin_lib.SettlementsScreen(),
+            ),
+          ),
+          GoRoute(
             path: '/admin/deposits',
             builder: (_, _) => DeferredWidget(
               libraryLoader: admin_lib.loadLibrary,
