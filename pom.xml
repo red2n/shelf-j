@@ -53,6 +53,7 @@
         <fmt-plugin.version>2.29</fmt-plugin.version>
         <checkstyle-plugin.version>3.6.0</checkstyle-plugin.version>
         <checkstyle.version>14.1.0</checkstyle.version>
+        <cyclonedx-plugin.version>2.9.3</cyclonedx-plugin.version>
 
         <!-- Quality gate skip flags (override per-module or on CLI with -Dspotbugs.skip=true etc.) -->
         <spotbugs.skip>false</spotbugs.skip>
@@ -245,6 +246,35 @@
                     <groupId>org.graalvm.buildtools</groupId>
                     <artifactId>native-maven-plugin</artifactId>
                     <version>${graalvm.native.maven.plugin.version}</version>
+                </plugin>
+
+                <!-- ── SBOM (22.10) ──────────────────────────────────────────────────
+                     One CycloneDX bill of materials for the whole reactor: every module and every
+                     dependency that ships (compile + runtime; test and provided scopes are not in
+                     an image). Not bound to a phase — the release workflow and
+                     scripts/sbom.sh run `cyclonedx:makeAggregateBom`; the version and the shape
+                     are pinned here so both produce the same document.                  -->
+                <plugin>
+                    <groupId>org.cyclonedx</groupId>
+                    <artifactId>cyclonedx-maven-plugin</artifactId>
+                    <version>${cyclonedx-plugin.version}</version>
+                    <configuration>
+                        <projectType>application</projectType>
+                        <schemaVersion>1.6</schemaVersion>
+                        <outputFormat>all</outputFormat>
+                        <outputName>shelf-j-bom</outputName>
+                        <includeCompileScope>true</includeCompileScope>
+                        <includeRuntimeScope>true</includeRuntimeScope>
+                        <includeProvidedScope>false</includeProvidedScope>
+                        <includeSystemScope>false</includeSystemScope>
+                        <includeTestScope>false</includeTestScope>
+                        <includeLicenseText>false</includeLicenseText>
+                        <!-- common-test is the reactor's test-helper module (JUnit, Testcontainers,
+                             ArchUnit at compile scope, because helpers are its product). Services
+                             depend on it at test scope only and no image contains it, so it is
+                             not part of what ships. -->
+                        <excludeArtifactId>common-test</excludeArtifactId>
+                    </configuration>
                 </plugin>
 
                 <!-- ── PMD ───────────────────────────────────────────────────────────
