@@ -5,8 +5,9 @@
 # hardcoded/dev password in production).
 #
 # Run once per cluster, before applying anything else in k8s/. Safe to re-run:
-# any secret that ALREADY exists in the cluster is left untouched — rotating
-# shelfj-jwt invalidates every live session, and the per-service DB passwords
+# any secret that ALREADY exists in the cluster is left untouched — shelfj-jwt
+# seals iam-svc's token signing keys at rest (changing it strands them: iam-svc
+# refuses to start until they are re-sealed or cleared), and the per-service DB passwords
 # must stay in sync with what Postgres actually GRANTed at first boot.
 #
 # Usage: ./k8s/generate-secrets.sh
@@ -30,7 +31,7 @@ randsecret()    { openssl rand -base64 48; }
 
 # ── Core signing/auth secrets ─────────────────────────────────────────────────
 if secret_exists shelfj-jwt; then
-  echo "shelfj-jwt already exists — leaving it untouched (rotating invalidates all sessions)."
+  echo "shelfj-jwt already exists — leaving it untouched (it seals the token signing keys)."
 else
   kubectl -n "$NAMESPACE" create secret generic shelfj-jwt \
     --from-literal=shelfj.jwt.secret="$(randsecret)"

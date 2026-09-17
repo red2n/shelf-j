@@ -145,6 +145,9 @@ PECR reg.22/23 and UK GDPR art.7(1). `marketing_preferences` is what is true now
 - `POST /auth/platform-login` — platform-console login, kept deliberately separate so a `PLATFORM_ADMIN` credential never works on a store/POS login screen and vice versa.
 - `POST /auth/refresh` — exchange a refresh token for a new access token.
 - `POST /auth/logout` — revoke a refresh token.
+- `GET /auth/.well-known/jwks.json` — public: the token signing keys' public halves (RFC 7517), `Cache-Control: max-age=300`. Access tokens are RS256 and carry the `kid` of the key that signed them; the gateway and the MQTT broker verify against this set.
+- `GET /auth/admin/signing-keys` — PLATFORM_ADMIN: the signing key register (kid, status `ACTIVE`/`RETIRING`/`RETIRED`, dates) — never key material.
+- `POST /auth/admin/signing-keys/rotate` — PLATFORM_ADMIN: mint a new signing key now; the old one keeps verifying until the tokens it signed have expired.
 - `PUT /auth/change-password` — change the caller's own password.
 - `POST /auth/delete-account` — a customer deletes their own login (SJ-D43; requires the password again). Refused (403) for a staff account — that's removed by the business that employs its holder, not self-service.
 

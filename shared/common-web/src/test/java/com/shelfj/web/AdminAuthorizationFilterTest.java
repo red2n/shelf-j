@@ -438,6 +438,27 @@ class AdminAuthorizationFilterTest {
     assertNotAborted(invoke("POST", "/admin/cash/till-sessions"));
   }
 
+  // ── 20.15: the token signing keys' public halves ─────────────────────────────
+
+  @Test
+  void thePublishedKeySetIsReadByAnybody() throws Exception {
+    // The broker and the gateway read it with no identity at all.
+    assertNotAborted(invoke("GET", "/auth/.well-known/jwks.json"));
+  }
+
+  @Test
+  void thePublishedKeySetIsNeverWrittenByAnybodyWithoutAStaffRole() throws Exception {
+    assertAborted(invoke("POST", "/auth/.well-known/jwks.json"), 403);
+    assertAborted(invoke("DELETE", "/auth/.well-known/jwks.json"), 403);
+  }
+
+  @Test
+  void theSigningKeyRegisterIsNotOpenedByTheKeySet() throws Exception {
+    // The open read is the one exact path, not a prefix the admin routes could fall under.
+    assertAborted(invoke("GET", "/auth/admin/signing-keys"), 403);
+    assertAborted(invoke("POST", "/auth/admin/signing-keys/rotate"), 403);
+  }
+
   private Response.StatusType invoke(String method, String path) throws Exception {
     AbortCapture capture = new AbortCapture();
     var req = requestContext(method, path, capture);

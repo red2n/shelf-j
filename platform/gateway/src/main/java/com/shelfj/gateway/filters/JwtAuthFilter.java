@@ -7,7 +7,6 @@ import com.auth0.jwt.exceptions.JWTVerificationException;
 import com.auth0.jwt.interfaces.DecodedJWT;
 import com.shelfj.gateway.GatewayConfig;
 import com.shelfj.web.HttpHeaders;
-import jakarta.annotation.PostConstruct;
 import jakarta.annotation.Priority;
 import jakarta.enterprise.context.ApplicationScoped;
 import jakarta.inject.Inject;
@@ -41,6 +40,8 @@ public class JwtAuthFilter implements ContainerRequestFilter {
       Set.of(
           "api/iam-svc/auth/register",
           "api/iam-svc/auth/login",
+          // The token signing keys' public halves (20.15): public by nature.
+          "api/iam-svc/auth/.well-known/jwks.json",
           "api/iam-svc/auth/platform-login",
           "api/iam-svc/auth/refresh",
           "api/iam-svc/bootstrap/admin",
@@ -66,17 +67,30 @@ public class JwtAuthFilter implements ContainerRequestFilter {
   @Inject GatewayConfig config;
   @Inject TenantStatusGate tenantStatusGate;
 
-  private JWTVerifier verifier;
+  @Inject SigningKeySet signingKeys;
 
-  @PostConstruct
-  void init() {
-    String secret = config.jwtSecret();
-    if (secret == null || secret.trim().length() < 32) {
-      throw new IllegalStateException(
-          "shelfj.jwt.secret must be set and at least 32 characters; refusing to start with a"
-              + " weak or missing JWT secret");
+  /** A verifier per signing key, built once the key is known. */
+  private final java.util.Map<String, JWTVerifier> verifiers =
+      new java.util.concurrent.ConcurrentHashMap<>();
+
+  /**
+   * Verifies a token (20.15; RFC 8725): it must say RS256 — never {@code none}, never an HMAC a
+   * public key could be passed off as the secret of — and name a key iam-svc publishes; the
+   * signature, issuer and expiry are then checked against that key.
+   */
+  private DecodedJWT verify(String token) throws JWTVerificationException {
+    DecodedJWT decoded = JWT.decode(token);
+    if (!"RS256".equals(decoded.getAlgorithm())) {
+      throw new JWTVerificationException("not an RS256 token");
     }
-    verifier = JWT.require(Algorithm.HMAC256(secret)).withIssuer(config.jwtIssuer()).build();
+    String kid = decoded.getKeyId();
+    var key =
+        signingKeys.key(kid).orElseThrow(() -> new JWTVerificationException("unknown signing key"));
+    return verifiers
+        .computeIfAbsent(
+            kid + ":" + key.getModulus().hashCode(),
+            k -> JWT.require(Algorithm.RSA256(key, null)).withIssuer(config.jwtIssuer()).build())
+        .verify(token);
   }
 
   @Override
@@ -168,8 +182,14 @@ public class JwtAuthFilter implements ContainerRequestFilter {
     String token = authHeader.substring(7).trim();
     DecodedJWT jwt;
     try {
-      jwt = verifier.verify(token);
+      jwt = verify(token);
     } catch (JWTVerificationException e) {
+      if (!signingKeys.loaded()) {
+        // No key set has ever been read: iam-svc is not up yet. That is the platform's fault, not
+        // the caller's, and a 401 would sign a browser out for it.
+        ctx.abortWith(keysUnavailable());
+        return;
+      }
       ctx.abortWith(unauthorized("Invalid or expired token"));
       return;
     }
@@ -537,6 +557,18 @@ public class JwtAuthFilter implements ContainerRequestFilter {
             com.shelfj.web.ApiResponse.error(
                 com.shelfj.web.ErrorBody.of(
                     "TENANT_INACTIVE", "This store is currently unavailable.")))
+        .build();
+  }
+
+  private static Response keysUnavailable() {
+    return Response.status(Response.Status.SERVICE_UNAVAILABLE)
+        .header("Retry-After", "5")
+        .type(MediaType.APPLICATION_JSON)
+        .entity(
+            com.shelfj.web.ApiResponse.error(
+                com.shelfj.web.ErrorBody.of(
+                    "AUTH_KEYS_UNAVAILABLE",
+                    "tokens cannot be verified yet: the signing keys have not been read")))
         .build();
   }
 

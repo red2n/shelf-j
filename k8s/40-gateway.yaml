@@ -43,7 +43,8 @@ spec:
           ports: [{ containerPort: 8080 }]
           envFrom:
             - configMapRef: { name: shelfj-common-env }
-            - secretRef: { name: shelfj-jwt } # key "shelfj.jwt.secret" — verifies every request
+            # No token secret (20.15): the gateway verifies RS256 tokens against the public keys
+            # iam-svc publishes at /auth/.well-known/jwks.json and can mint nothing.
           env:
             - { name: JAVA_TOOL_OPTIONS, value: "-Xms128m -Xmx512m -XX:+UseG1GC" }
             # Production values (docker-compose.prod.yml overlay) — NOT the dev/k6 defaults

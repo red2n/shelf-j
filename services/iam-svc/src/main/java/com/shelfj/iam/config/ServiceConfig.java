@@ -24,7 +24,7 @@ public class ServiceConfig extends BaseServiceConfig {
   @ConfigProperty(name = "shelfj.db.schema", defaultValue = "iam")
   String dbSchema;
 
-  // --- JWT (HS256 dev secret; production uses RS256 keys from a secret store) ---
+  // --- JWT: RS256 (20.15). shelfj.jwt.secret seals the signing keys at rest; it mints nothing ---
   @Inject
   @ConfigProperty(name = "shelfj.jwt.issuer", defaultValue = "shelfj")
   String jwtIssuer;
@@ -36,6 +36,27 @@ public class ServiceConfig extends BaseServiceConfig {
   @Inject
   @ConfigProperty(name = "shelfj.jwt.secret")
   String jwtSecret;
+
+  /** How old the signing key may grow before it is rotated by itself (20.15). */
+  @Inject
+  @ConfigProperty(name = "shelfj.jwt.rotation-days", defaultValue = "90")
+  int jwtRotationDays;
+
+  /**
+   * How long a rotated key stays published: at least as long as a token it signed can live (20.15).
+   */
+  @Inject
+  @ConfigProperty(name = "shelfj.jwt.retire-after-seconds", defaultValue = "3600")
+  long jwtRetireAfterSeconds;
+
+  /**
+   * How long a rotated key is published before it signs anything (20.15): the time verifiers that
+   * re-read the key set on a schedule — the MQTT broker — need to have seen it. The previous key
+   * signs until then.
+   */
+  @Inject
+  @ConfigProperty(name = "shelfj.jwt.publish-lead-seconds", defaultValue = "60")
+  long jwtPublishLeadSeconds;
 
   @Inject
   @ConfigProperty(name = "shelfj.jwt.access-ttl-seconds", defaultValue = "900")
@@ -94,6 +115,18 @@ public class ServiceConfig extends BaseServiceConfig {
    *
    * @return the configured signing secret
    */
+  public int jwtRotationDays() {
+    return jwtRotationDays;
+  }
+
+  public long jwtRetireAfterSeconds() {
+    return jwtRetireAfterSeconds;
+  }
+
+  public long jwtPublishLeadSeconds() {
+    return jwtPublishLeadSeconds;
+  }
+
   public String jwtSecret() {
     return jwtSecret;
   }

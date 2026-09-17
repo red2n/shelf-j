@@ -69,22 +69,14 @@ public class NotificationChannelProducer {
   @ConfigProperty(name = "shelfj.notification.mqtt.tls", defaultValue = "false")
   boolean mqttTls;
 
-  @Inject
-  @ConfigProperty(
-      name = "shelfj.notification.mqtt.publisher-token-ttl-seconds",
-      defaultValue = "2592000") // 30 days
-  long mqttPublisherTokenTtlSeconds;
+  /** The username the broker's ACL lets publish to every business's topics. */
+  static final String MQTT_PUBLISHER = "__publisher__";
 
-  // The MQTT broker authenticates every client, including this service's own publisher
-  // connection, with a shelfj platform JWT (see infra/emqx.conf) — so notification-svc needs the
-  // same signing secret/issuer as iam-svc.
+  // The publisher's own password for the broker (20.15), from the secret store. It opens the broker
+  // and nothing else: this service holds no key that can sign a platform token.
   @Inject
-  @ConfigProperty(name = "shelfj.jwt.secret")
-  java.util.Optional<String> jwtSecret;
-
-  @Inject
-  @ConfigProperty(name = "shelfj.jwt.issuer", defaultValue = "shelfj")
-  String jwtIssuer;
+  @ConfigProperty(name = "shelfj.notification.mqtt.publisher-password")
+  java.util.Optional<String> mqttPublisherPassword;
 
   /**
    * Builds the single application-scoped channel the rest of the service injects.
@@ -113,16 +105,16 @@ public class NotificationChannelProducer {
       return new CompositeChannel(app, smtp);
     }
     if ("mqtt".equalsIgnoreCase(channelName)) {
-      String token =
-          MqttPublisherToken.mint(jwtSecret.orElse(null), jwtIssuer, mqttPublisherTokenTtlSeconds);
+      String password =
+          mqttPublisherPassword
+              .filter(p -> !p.isBlank())
+              .orElseThrow(
+                  () ->
+                      new IllegalStateException(
+                          "shelfj.notification.mqtt.publisher-password must be set to publish over"
+                              + " MQTT"));
       MqttChannel mqtt =
-          new MqttChannel(
-              mqttHost,
-              mqttPort,
-              mqttClientId,
-              MqttPublisherToken.PUBLISHER_IDENTITY,
-              token,
-              mqttTls);
+          new MqttChannel(mqttHost, mqttPort, mqttClientId, MQTT_PUBLISHER, password, mqttTls);
       return new CompositeChannel(app, mqtt);
     }
     return app;

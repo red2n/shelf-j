@@ -54,7 +54,9 @@ spec:
           envFrom:
             - configMapRef: { name: shelfj-common-env }
             - secretRef: { name: shelfj-config-token }
-            - secretRef: { name: shelfj-jwt } # key "shelfj.jwt.secret" — iam-svc issues/verifies tokens
+            # key "shelfj.jwt.secret" seals the token signing keys' private halves at rest (20.15);
+            # tokens themselves are RS256 under a rotating key. Only iam-svc is given it.
+            - secretRef: { name: shelfj-jwt }
           env:
             - { name: SHELFJ_DB_USER, value: "iam_svc" }
             - name: SHELFJ_DB_PASSWORD

@@ -35,11 +35,15 @@ class MqttSessionRevokerIT {
   private static final PostgresSupport PG;
   private static final EmqxSupport MQTT;
   private static final String JWT_SECRET = "integration-test-secret-of-at-least-32-chars";
+  private static final java.util.concurrent.atomic.AtomicReference<String> JWKS =
+      new java.util.concurrent.atomic.AtomicReference<>("{\"keys\":[]}");
 
   static {
     PG = PostgresSupport.start();
     PG.migrate("classpath:db/migration");
-    MQTT = EmqxSupport.start(JWT_SECRET);
+    // The broker verifies a device's token against iam-svc's published keys (20.15). The first key
+    // is made when the first token is issued, so the broker is handed the key set once it exists.
+    MQTT = EmqxSupport.start(JWKS::get, "it-publisher-password");
     System.setProperty("shelfj.db.url", PG.jdbcUrl());
     System.setProperty("shelfj.db.migration-url", PG.jdbcUrl());
     System.setProperty("shelfj.db.user", PG.username());
@@ -123,13 +127,24 @@ class MqttSessionRevokerIT {
             .serverHost(MQTT.host())
             .serverPort(MQTT.port())
             .buildBlocking();
-    device
-        .connectWith()
-        .simpleAuth()
-        .username(tenantId.toString())
-        .password(accessToken.getBytes(StandardCharsets.UTF_8))
-        .applySimpleAuth()
-        .send();
+    // Hand the broker iam-svc's key set, then connect once it has re-read it (every 5 s).
+    JWKS.set(target.path("/auth/.well-known/jwks.json").request().get(String.class));
+    boolean connected = false;
+    for (int attempt = 0; attempt < 20 && !connected; attempt++) {
+      try {
+        device
+            .connectWith()
+            .simpleAuth()
+            .username(tenantId.toString())
+            .password(accessToken.getBytes(StandardCharsets.UTF_8))
+            .applySimpleAuth()
+            .send();
+        connected = true;
+      } catch (com.hivemq.client.mqtt.mqtt5.exceptions.Mqtt5ConnAckException notYet) {
+        Thread.sleep(1000);
+      }
+    }
+    assertThat("the broker accepts a token signed by iam-svc's published key", connected, is(true));
     device
         .subscribeWith()
         .topicFilter("shelfj/notifications/" + tenantId + "/#")

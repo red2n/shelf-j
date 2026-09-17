@@ -122,14 +122,6 @@ public class GatewayConfig {
   @ConfigProperty(name = "shelfj.gateway.cors.allowed-origins")
   java.util.Optional<String> corsAllowedOrigins;
 
-  /**
-   * No default on purpose: a missing secret must fail deployment, never silently fall back to a
-   * publicly known value. Local dev supplies it via docker-compose / .env (golden rule #5).
-   */
-  @Inject
-  @ConfigProperty(name = "shelfj.jwt.secret")
-  String jwtSecret;
-
   @Inject
   @ConfigProperty(name = "shelfj.jwt.issuer", defaultValue = "shelfj")
   String jwtIssuer;
@@ -309,10 +301,6 @@ public class GatewayConfig {
 
   public String bruteForceLoginPath() {
     return bruteForceLoginPath;
-  }
-
-  public String jwtSecret() {
-    return jwtSecret;
   }
 
   public String jwtIssuer() {

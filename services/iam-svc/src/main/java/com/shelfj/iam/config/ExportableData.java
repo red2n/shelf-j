@@ -26,7 +26,9 @@ public class ExportableData extends TenantDataSpec {
         "refresh_tokens",
         "login session tokens: a credential",
         "roles",
-        "the platform's built-in roles, the same for every business; a business's own roles are in tenant-svc");
+        "the platform's built-in roles, the same for every business; a business's own roles are in tenant-svc",
+        "signing_keys",
+        "the platform's token signing keys: a credential of the deployment, not a business's data");
   }
 
   @Override

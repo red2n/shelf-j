@@ -59,7 +59,7 @@ lan_ip() { ip -4 route get 1.1.1.1 2>/dev/null | awk '/src/{for(i=1;i<=NF;i++) i
 # ── 0. Bootstrap .env + required secrets ─────────────────────────────────────
 # On a brand-new checkout (fresh VPS, CI runner, etc.) there is no .env at all, and
 # docker-compose.yml hard-refuses to start (`${VAR:?...}`) without SHELFJ_JWT_SECRET,
-# SHELFJ_CONFIG_TOKEN and PLATFORM_ADMIN_PASSWORD. Generate whichever of these are
+# SHELFJ_CONFIG_TOKEN, MQTT_PUBLISHER_PASSWORD and PLATFORM_ADMIN_PASSWORD. Generate whichever of these are
 # missing so `redeploy.sh` works standalone on a machine that has never seen this
 # repo before — no manual `cp .env.example .env` + editing required.
 ENV_FILE="$ROOT/.env"
@@ -76,10 +76,10 @@ env_set() {
   fi
 }
 
-# JWT signing secret + config-svc shared token: process-wide infra secrets, not tied
-# to any DB row, so generate once on first sight and never rotate automatically —
-# rotating SHELFJ_JWT_SECRET invalidates every live session, and SHELFJ_CONFIG_TOKEN
-# is what every service uses to authenticate to config-svc.
+# The seal on iam-svc's token signing keys + config-svc shared token: process-wide infra
+# secrets, not tied to any DB row, so generate once on first sight and never rotate
+# automatically — changing SHELFJ_JWT_SECRET strands the signing keys stored under it, and
+# SHELFJ_CONFIG_TOKEN is what every service uses to authenticate to config-svc.
 for secret in SHELFJ_JWT_SECRET SHELFJ_CONFIG_TOKEN; do
   val="$(env_get "$secret")"
   if [ -z "$val" ]; then
@@ -88,6 +88,13 @@ for secret in SHELFJ_JWT_SECRET SHELFJ_CONFIG_TOKEN; do
     cyan "Generated $secret (saved to .env)."
   fi
 done
+
+# The MQTT broker's publisher password (20.15): hex, because it is written into the CSV the
+# broker bootstraps its one password user from.
+if [ -z "$(env_get MQTT_PUBLISHER_PASSWORD)" ]; then
+  env_set MQTT_PUBLISHER_PASSWORD "$(openssl rand -hex 24)"
+  cyan "Generated MQTT_PUBLISHER_PASSWORD (saved to .env)."
+fi
 
 # Platform admin credential. Bootstrap only ever creates the admin once (the endpoint
 # 409s afterwards), so we must NOT rotate this on every redeploy — that would desync

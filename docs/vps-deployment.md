@@ -127,7 +127,8 @@ Now edit `.env` and fill in every required value. At minimum:
 
 ```bash
 # Secrets — generate these, never reuse dev defaults in production
-SHELFJ_JWT_SECRET=$(openssl rand -base64 48)          # >= 32 chars
+SHELFJ_JWT_SECRET=$(openssl rand -base64 48)          # >= 32 chars; seals iam-svc's token signing keys at rest
+MQTT_PUBLISHER_PASSWORD=$(openssl rand -hex 24)       # notification-svc's broker login (letters and digits only)
 SHELFJ_CONFIG_TOKEN=$(openssl rand -base64 48)        # >= 32 chars
 PLATFORM_ADMIN_PASSWORD=$(openssl rand -base64 24)    # save this — you'll need it to log in
 
