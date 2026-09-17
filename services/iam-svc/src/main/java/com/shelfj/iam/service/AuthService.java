@@ -5,6 +5,7 @@ import com.shelfj.iam.auth.Passwords;
 import com.shelfj.iam.auth.Tokens;
 import com.shelfj.iam.client.MqttSessionRevoker;
 import com.shelfj.iam.config.ServiceConfig;
+import com.shelfj.iam.domain.TokenIdentity;
 import com.shelfj.iam.domain.User;
 import com.shelfj.iam.dto.Dtos.ProvisionStaffResponse;
 import com.shelfj.iam.dto.Dtos.TokenResponse;
@@ -99,20 +100,9 @@ public class AuthService {
           java.util.List.of());
     }
 
-    policy.check(rawPassword, email);
-    UUID userId = Ids.newId();
-    Instant now = Instant.now();
-    var user =
-        new User(
-            userId,
-            null,
-            User.TYPE_STAFF,
-            email,
-            null,
-            passwords.hash(rawPassword),
-            User.STATUS_ACTIVE,
-            now,
-            now);
+    User user = newStaffLogin(email, rawPassword);
+    UUID userId = user.id();
+    Instant now = user.createdAt();
     String payload =
         Json.createObjectBuilder()
             .add("eventId", Ids.newId().toString())
@@ -287,20 +277,8 @@ public class AuthService {
           java.util.List.of(),
           null);
     }
-    policy.check(rawPassword, email);
-    UUID userId = Ids.newId();
-    Instant now = Instant.now();
-    var user =
-        new User(
-            userId,
-            null,
-            User.TYPE_STAFF,
-            email,
-            null,
-            passwords.hash(rawPassword),
-            User.STATUS_ACTIVE,
-            now,
-            now);
+    User user = newStaffLogin(email, rawPassword);
+    UUID userId = user.id();
     users.createPlatformAdmin(user);
     users.audit(null, userId, "PLATFORM_ADMIN_BOOTSTRAPPED", email);
     return userId;
@@ -369,18 +347,44 @@ public class AuthService {
 
   // --- helpers ---
 
+  /** A staff login that belongs to no tenant yet, its password checked against the policy. */
+  private User newStaffLogin(String email, String rawPassword) {
+    policy.check(rawPassword, email);
+    Instant now = Instant.now();
+    return new User(
+        Ids.newId(),
+        null,
+        User.TYPE_STAFF,
+        email,
+        null,
+        passwords.hash(rawPassword),
+        User.STATUS_ACTIVE,
+        now,
+        now);
+  }
+
   private TokenResponse issueTokens(User user) {
-    Set<String> roles = users.rolesOf(user.id());
-    Set<UUID> storeIds = users.storeScopeOf(user.id());
-    // An owner is never narrowed by a custom role, so the claim is omitted for one whatever the
-    // rows say; anyone else carries it as soon as one of their roles is a custom one.
+    // Read again, and all at once (SJ-D63). The row in hand was read before the password was
+    // checked, and that check takes long enough for a staff removal to commit meanwhile: the old
+    // row's tenant beside the new roles made a token naming a business the login had just left.
+    // An owner is never narrowed by a custom role, so the permission claim is omitted for one
+    // whatever the rows say; anyone else carries it as soon as one of their roles is a custom one.
+    TokenIdentity who =
+        users
+            .tokenIdentity(user.id())
+            .orElseThrow(
+                () -> ApiException.unauthorized("INVALID_CREDENTIALS", "User no longer exists"));
     Set<String> permissions =
-        com.shelfj.web.Permissions.unrestricted(roles)
-            ? null
-            : users.permissionsOf(user.id()).orElse(null);
+        com.shelfj.web.Permissions.unrestricted(who.roles()) ? null : who.permissions();
     String access =
         jwt.issueAccessToken(
-            user.id(), user.tenantId(), user.type(), user.email(), roles, storeIds, permissions);
+            user.id(),
+            who.tenantId(),
+            who.type(),
+            who.email(),
+            who.roles(),
+            who.storeIds(),
+            permissions);
 
     String refresh = Tokens.newOpaqueToken();
     refreshTokens.store(
