@@ -130,7 +130,23 @@ public final class ServiceReader {
       }
       try (HttpClientResponse res = request.request()) {
         last = new Reply(res.status().code(), res.as(String.class));
-        if (!last.unreachable()) return last;
+        if (!last.unreachable()) {
+          // A refusal is not a blip. Callers here treat an unreadable answer as "no opinion" and
+          // carry on — which is right for an outage and wrong for a 401/403, where the platform is
+          // misconfigured and will go on being misconfigured silently. SJ-D65 hid behind exactly
+          // that: an entitlement read answered 403 for a whole release and enforced nothing. A 404
+          // stays quiet; it is how these reads say "this business has none".
+          if (last.status() >= 400 && last.status() != 404) {
+            LOG.log(
+                Level.WARNING,
+                "{0}{1} for {2} was refused: HTTP {3} — this read is not doing its job",
+                service,
+                path,
+                tenantId,
+                last.status());
+          }
+          return last;
+        }
         LOG.log(Level.WARNING, "{0}{1} for {2}: HTTP {3}", service, path, tenantId, last.status());
       } catch (RuntimeException e) {
         LOG.log(
