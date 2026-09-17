@@ -57,17 +57,23 @@ spec:
             - { name: SHELFJ_GATEWAY_TRUST_FORWARDED_HEADERS, value: "true" }
             - name: SHELFJ_REDIS_PASSWORD
               valueFrom: { secretKeyRef: { name: shelfj-redis, key: REDIS_PASSWORD } }
+          # The 3-endpoint model, as the business services use it. /health is the aggregate of
+          # every check a service registers, so a liveness probe pointed at it makes any
+          # dependency a reason to kill the pod — a slow database becomes a restart storm.
+          # The gateway registers nothing but a process check today; the endpoint it is asked
+          # is what keeps that true when somebody adds one. See shared/common-service
+          # HealthChecks for the rule.
           startupProbe:
-            httpGet: { path: /health, port: 8080 }
+            httpGet: { path: /health/started, port: 8080 }
             periodSeconds: 5
             failureThreshold: 20
           readinessProbe:
-            httpGet: { path: /health, port: 8080 }
+            httpGet: { path: /health/ready, port: 8080 }
             periodSeconds: 10
             timeoutSeconds: 5
             failureThreshold: 6
           livenessProbe:
-            httpGet: { path: /health, port: 8080 }
+            httpGet: { path: /health/live, port: 8080 }
             periodSeconds: 15
             timeoutSeconds: 5
             failureThreshold: 6
