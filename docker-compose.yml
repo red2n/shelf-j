@@ -992,6 +992,7 @@ services:
     networks: [shelfj_network]
     depends_on:
       gateway: { condition: service_healthy }
+      iam-svc: { condition: service_healthy }
     environment:
       ADMIN_EMAIL: ${PLATFORM_ADMIN_EMAIL:-admin@shelf-j.dev}
       ADMIN_PASSWORD: ${PLATFORM_ADMIN_PASSWORD:?PLATFORM_ADMIN_PASSWORD must be set - see .env.example}
@@ -1003,10 +1004,19 @@ services:
       - sh
       - -c
       - |
-        STATUS=$$(curl -s -o /dev/null -w '%{http_code}' -X POST http://gateway:8080/api/iam-svc/bootstrap/admin -H 'Content-Type: application/json' -d "{\"email\":\"$$ADMIN_EMAIL\",\"password\":\"$$ADMIN_PASSWORD\",\"totpSecret\":\"$$ADMIN_TOTP_SECRET\"}");
-        if [ "$$STATUS" = "201" ]; then echo "[bootstrap] Platform admin created ($$ADMIN_EMAIL)";
-        elif [ "$$STATUS" = "409" ]; then echo "[bootstrap] Platform admin already exists — skipped";
-        else echo "[bootstrap] Unexpected status $$STATUS"; exit 1; fi
+        # The gateway being healthy does not mean iam-svc is routable through it yet: discovery
+        # lags the container's own health by a few seconds, and a 502/503/504 in that window used
+        # to end this one-shot job for good — leaving a stack with no platform administrator at
+        # all. Answers that mean "not yet" are retried; 201 and 409 are the only ways out.
+        for attempt in $$(seq 1 60); do
+          STATUS=$$(curl -s -o /dev/null -w '%{http_code}' -X POST http://gateway:8080/api/iam-svc/bootstrap/admin -H 'Content-Type: application/json' -d "{\"email\":\"$$ADMIN_EMAIL\",\"password\":\"$$ADMIN_PASSWORD\",\"totpSecret\":\"$$ADMIN_TOTP_SECRET\"}");
+          if [ "$$STATUS" = "201" ]; then echo "[bootstrap] Platform admin created ($$ADMIN_EMAIL)"; exit 0;
+          elif [ "$$STATUS" = "409" ]; then echo "[bootstrap] Platform admin already exists — skipped"; exit 0;
+          elif [ "$$STATUS" = "000" ] || [ "$$STATUS" = "502" ] || [ "$$STATUS" = "503" ] || [ "$$STATUS" = "504" ]; then
+            echo "[bootstrap] iam-svc not routable yet ($$STATUS), retrying ($$attempt/60)"; sleep 5;
+          else echo "[bootstrap] Unexpected status $$STATUS"; exit 1; fi
+        done
+        echo "[bootstrap] iam-svc never became routable"; exit 1
 
   # ---------------------------------------------------------------- web UI (Flutter)
 
