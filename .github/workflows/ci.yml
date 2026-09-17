@@ -97,3 +97,26 @@ jobs:
         run: |
           python3 -m pip install --quiet pyyaml
           scripts/k8s-check.sh
+
+  # The release path's supply-chain promises (22.10): every published image built with an SBOM and
+  # max-mode provenance, attested and signed by digest; the release carrying its SBOM, checksums
+  # and provenance. The check reads the workflows; its self-test breaks each promise in memory and
+  # fails unless the check notices. actionlint keeps the workflows themselves well-formed.
+  supply-chain:
+    name: Supply chain promises
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
+
+      - name: Check the workflows keep their promises
+        run: |
+          python3 -m pip install --quiet pyyaml
+          scripts/supply-chain-check.py
+          scripts/supply-chain-check.py --self-test
+
+      - name: Lint the workflows
+        run: |
+          curl -sSL https://github.com/rhysd/actionlint/releases/download/v1.7.12/actionlint_1.7.12_linux_amd64.tar.gz | tar -xz actionlint
+          ./actionlint .github/workflows/*.yml
+

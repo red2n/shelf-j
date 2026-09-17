@@ -44,3 +44,7 @@ tools/duplo
 # Local scratch / sample import data (not part of the app)
 /cat.csv
 tools/kubeconform
+tools/actionlint
+tools/cosign
+tools/syft
+tools/docker-buildx

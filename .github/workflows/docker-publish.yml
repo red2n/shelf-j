@@ -3,6 +3,13 @@ name: Build & Publish Docker Images
 # Triggers on every merge to main and on version tags.
 # CI (ci.yml) gates quality; this workflow only publishes — it skips tests.
 #
+# Supply chain (22.10): every image is pushed with BuildKit's SBOM and max-mode provenance
+# attestations, then gets three things bound to its digest — a CycloneDX SBOM attestation and a
+# SLSA build-provenance attestation (GitHub artifact attestations, pushed to the registry beside
+# the image), and a keyless Sigstore signature (cosign; the certificate names this workflow at this
+# ref, no key is kept anywhere). scripts/verify-release.sh checks all three; docs/RELEASE-PROCESS.md
+# says how. scripts/supply-chain-check.py fails CI if this file stops doing any of it.
+#
 # Build-once-per-service, no-artifact design: each service image used to be
 # built + pushed sequentially in ONE job off a single full-reactor `mvn install`.
 # That job kept accumulating Maven target/ output and Docker layers across all
@@ -47,6 +54,8 @@ jobs:
     permissions:
       contents: read
       packages: write
+      id-token: write # keyless signing and attestations: the job proves to Sigstore who it is
+      attestations: write # GitHub artifact attestations (SBOM, SLSA provenance)
     env:
       FORCE_JAVASCRIPT_ACTIONS_TO_NODE24: true
     strategy:
@@ -101,6 +110,7 @@ jobs:
           password: ${{ secrets.GITHUB_TOKEN }}
 
       - name: Build & push ${{ matrix.name }} image
+        id: build
         run: |
           set -euo pipefail
 
@@ -125,20 +135,64 @@ jobs:
             tag_args+=("-t" "${image}:${s}")
           done
 
-          # --provenance/--sbom=false: skip the attestation manifests buildx
-          # otherwise attaches on push — they show up as extra untagged GHCR
-          # versions and just add storage with no value for our single-arch JVM image.
+          # BuildKit attaches its own SBOM and max-mode provenance (the build's inputs, arguments
+          # and steps) to the image index. They show up as extra untagged GHCR versions; the
+          # cleanup job treats them as children of the image they belong to, not as leftovers.
           docker buildx build \
             --push \
-            --provenance=false \
-            --sbom=false \
+            --provenance=mode=max \
+            --sbom=true \
+            --metadata-file "${RUNNER_TEMP}/build-metadata.json" \
             --file Dockerfile.svc \
             --build-arg "SVC_PATH=${{ matrix.path }}" \
             --build-arg "SVC_JAR=${{ matrix.jar }}" \
             "${tag_args[@]}" \
             .
 
-          echo "Published \`${image}:latest\`" >> "$GITHUB_STEP_SUMMARY"
+          # What was pushed, by digest: a tag can be moved, a digest cannot, so everything below
+          # is bound to this and nothing to a tag.
+          digest="$(jq -r '."containerimage.digest"' "${RUNNER_TEMP}/build-metadata.json")"
+          [[ "${digest}" == sha256:* ]] || { echo "no digest for ${image}" >&2; exit 1; }
+          echo "image=${image}" >> "$GITHUB_OUTPUT"
+          echo "digest=${digest}" >> "$GITHUB_OUTPUT"
+
+          echo "Published \`${image}@${digest}\`" >> "$GITHUB_STEP_SUMMARY"
+
+      # What the image contains: every OS package and every jar in it, as CycloneDX.
+      - name: SBOM of the pushed image (CycloneDX)
+        uses: anchore/sbom-action@v0
+        with:
+          image: ${{ steps.build.outputs.image }}@${{ steps.build.outputs.digest }}
+          format: cyclonedx-json
+          output-file: ${{ runner.temp }}/sbom.cdx.json
+          upload-artifact: false
+          upload-release-assets: false
+
+      - name: Attest the SBOM to the image
+        uses: actions/attest-sbom@v4
+        with:
+          subject-name: ${{ steps.build.outputs.image }}
+          subject-digest: ${{ steps.build.outputs.digest }}
+          sbom-path: ${{ runner.temp }}/sbom.cdx.json
+          push-to-registry: true
+
+      # Where it was built: this repository, this workflow, this commit, this runner (SLSA).
+      - name: Attest build provenance to the image
+        uses: actions/attest-build-provenance@v4
+        with:
+          subject-name: ${{ steps.build.outputs.image }}
+          subject-digest: ${{ steps.build.outputs.digest }}
+          push-to-registry: true
+
+      - name: Install cosign
+        uses: sigstore/cosign-installer@v4.1.2
+
+      # Keyless: Sigstore issues a ten-minute certificate for this job's OIDC identity, the
+      # signature goes to the registry and the transparency log, and no private key outlives it.
+      - name: Sign the image
+        env:
+          IMAGE_REF: ${{ steps.build.outputs.image }}@${{ steps.build.outputs.digest }}
+        run: cosign sign --yes "${IMAGE_REF}"
 
   # ── Build the Flutter web bundle and push its image (no artifacts) ─────────
   # Set SHELFJ_API_BASE as a GitHub Actions repository variable (Settings →
@@ -151,6 +205,8 @@ jobs:
     permissions:
       contents: read
       packages: write
+      id-token: write # keyless signing and attestations
+      attestations: write
 
     steps:
       - name: Checkout
@@ -206,15 +262,68 @@ jobs:
             type=sha,format=short
 
       - name: Build and push
+        id: build
         uses: docker/build-push-action@v6
         with:
           context: .
           file: Dockerfile.web
           push: true
-          provenance: false
-          sbom: false
+          provenance: mode=max
+          sbom: true
           tags: ${{ steps.meta.outputs.tags }}
           labels: ${{ steps.meta.outputs.labels }}
+
+      # The image holds nginx and a compiled bundle: the image SBOM lists the OS packages, and the
+      # bundle's own ingredients are the Dart packages pubspec.lock pinned — a second SBOM, from
+      # the source tree the bundle was compiled from.
+      - name: SBOM of the pushed image (CycloneDX)
+        uses: anchore/sbom-action@v0
+        with:
+          image: ${{ env.IMAGE_PREFIX }}-web@${{ steps.build.outputs.digest }}
+          format: cyclonedx-json
+          output-file: ${{ runner.temp }}/sbom.cdx.json
+          upload-artifact: false
+          upload-release-assets: false
+
+      - name: SBOM of the app's Dart packages (CycloneDX)
+        uses: anchore/sbom-action@v0
+        with:
+          path: frontends/shelf-app
+          format: cyclonedx-json
+          output-file: ${{ runner.temp }}/sbom-app.cdx.json
+          upload-artifact: false
+          upload-release-assets: false
+
+      - name: Attest the image SBOM
+        uses: actions/attest-sbom@v4
+        with:
+          subject-name: ${{ env.IMAGE_PREFIX }}-web
+          subject-digest: ${{ steps.build.outputs.digest }}
+          sbom-path: ${{ runner.temp }}/sbom.cdx.json
+          push-to-registry: true
+
+      - name: Attest the app SBOM
+        uses: actions/attest-sbom@v4
+        with:
+          subject-name: ${{ env.IMAGE_PREFIX }}-web
+          subject-digest: ${{ steps.build.outputs.digest }}
+          sbom-path: ${{ runner.temp }}/sbom-app.cdx.json
+          push-to-registry: true
+
+      - name: Attest build provenance to the image
+        uses: actions/attest-build-provenance@v4
+        with:
+          subject-name: ${{ env.IMAGE_PREFIX }}-web
+          subject-digest: ${{ steps.build.outputs.digest }}
+          push-to-registry: true
+
+      - name: Install cosign
+        uses: sigstore/cosign-installer@v4.1.2
+
+      - name: Sign the image
+        env:
+          IMAGE_REF: ${{ env.IMAGE_PREFIX }}-web@${{ steps.build.outputs.digest }}
+        run: cosign sign --yes "${IMAGE_REF}"
 
   # ── Prune old GHCR versions: keep current + previous build per package ──────
   # A push never deletes the old image — it only moves the latest/main tags, so
@@ -266,7 +375,11 @@ jobs:
           package: ${{ matrix.package }}
           # Keep the 2 most recent tagged versions (current + previous build).
           keep-n-tagged: 2
-          # Remove dangling/untagged manifests left behind by older pushes.
+          # Remove dangling/untagged manifests left behind by older pushes. The action counts an
+          # image's platform layers, attestations and cosign signatures as its children: they go
+          # when it goes and stay while it stays, and are never pruned as "untagged" by themselves.
           delete-untagged: true
+          # A signature or attestation (tagged sha256-<digest>...) whose image is already gone.
+          delete-orphaned-images: true
           # Don't fail the run if a package doesn't exist yet (first publish).
           validate: true

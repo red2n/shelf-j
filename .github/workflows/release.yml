@@ -8,9 +8,15 @@ on:
     tags:
       - 'v*.*.*'
 
+# Supply chain (22.10): the release carries a CycloneDX SBOM of the whole reactor and a checksum
+# list, and every jar gets a SLSA build-provenance attestation — `gh attestation verify <jar>
+# --repo <this repo>` says which workflow, at which commit, built it. The images' own SBOMs,
+# provenance and signatures are made in docker-publish.yml, off the same tag.
 permissions:
-  contents: read
+  contents: write # the release and its assets
   packages: write
+  id-token: write # attestations: the job proves to Sigstore who it is
+  attestations: write
 
 jobs:
   build-and-publish:
@@ -59,13 +65,40 @@ jobs:
           find . -path '*/target/*.jar' -type f -not -path '*/target/dependency/*' -exec cp {} release-artifacts/ \;
           ls -1 release-artifacts
 
+      # What the release is made of: every module and every dependency that ships, once, for the
+      # whole reactor (pom.xml pins the plugin and the shape; the script refuses a document that is
+      # unusable or lists test libraries). JSON and XML, CycloneDX 1.6.
+      - name: SBOM of the reactor (CycloneDX)
+        run: |
+          scripts/sbom.sh
+          cp target/shelf-j-bom.json release-artifacts/shelf-j-${{ github.ref_name }}.cdx.json
+          cp target/shelf-j-bom.xml release-artifacts/shelf-j-${{ github.ref_name }}.cdx.xml
+
+      - name: Checksums
+        working-directory: release-artifacts
+        run: sha256sum -- * > SHA256SUMS
+
+      # Where each jar was built: this repository, this workflow, this commit (SLSA provenance).
+      - name: Attest build provenance of the jars
+        uses: actions/attest-build-provenance@v4
+        with:
+          subject-path: release-artifacts/*.jar
+
+      - name: Attest the SBOM to the jars
+        uses: actions/attest-sbom@v4
+        with:
+          subject-path: release-artifacts/*.jar
+          sbom-path: release-artifacts/shelf-j-${{ github.ref_name }}.cdx.json
+
       - name: Publish GitHub release assets
-        uses: softprops/action-gh-release@v1
+        uses: softprops/action-gh-release@v3
         with:
           tag_name: ${{ github.ref_name }}
           name: Shelf-J Release ${{ github.ref_name }}
           body: |
             Shelf-J release built from commit ${{ github.sha }}.
+
+            **What it is made of, and where it was built.** `shelf-j-${{ github.ref_name }}.cdx.json` is the CycloneDX SBOM of every module and shipped dependency; `SHA256SUMS` lists every asset. Each jar carries a SLSA build-provenance attestation: `gh attestation verify <jar> --repo ${{ github.repository }}`. Each image of this version is signed and carries its own SBOM and provenance: `scripts/verify-release.sh ${{ github.ref_name }}` (see docs/RELEASE-PROCESS.md).
           files: release-artifacts/*
         env:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
