@@ -19,7 +19,7 @@ export PLATFORM_ADMIN_TOTP_SECRET="${PLATFORM_ADMIN_TOTP_SECRET:-$(env_value PLA
 FUNCTIONAL=(
   flow-guard-comprehensive flow-guard-runtime
   iam-crud tenant-crud product-crud inventory-crud pricing-crud order-crud notification-crud reporting-crud
-  privacy-flow compliance-flow purchase-crud vat-return-flow markdown-flow audit-trail storefront-account notification-channels ledger-flow role-model promotion-scoping payment-run-flow tenant-defaults sales-posting security-incidents recall-buyers retention-flow web-shell deferred-revenue bank-files tenant-export einvoice-inbound einvoice-outbound einvoice-transport dpdp-flow cash-limit-flow deposit-return-flow item-lifecycle-flow script-integrity-flow password-policy-flow problem-details-flow token-signing-flow
+  privacy-flow compliance-flow purchase-crud vat-return-flow markdown-flow audit-trail storefront-account notification-channels ledger-flow role-model promotion-scoping payment-run-flow tenant-defaults sales-posting security-incidents recall-buyers retention-flow web-shell deferred-revenue bank-files tenant-export einvoice-inbound einvoice-outbound einvoice-transport dpdp-flow cash-limit-flow deposit-return-flow item-lifecycle-flow script-integrity-flow password-policy-flow problem-details-flow token-signing-flow mfa-flow
   gateway-smoke-it gateway-login-protection gateway-unsubscribe-protection gateway-card-data-guard
 )
 LOAD=(multi-tenant-retail full-stack-simulation gateway-rate-limit-stress)
@@ -81,7 +81,8 @@ for suite in "${suites[@]}"; do
   log="$logs/$suite.log"
   k6 run --quiet "k6/$suite.js" >"$log" 2>&1
   code=$?
-  [[ "$suite" == gateway-* ]] && clear_gateway_counters
+  # mfa-flow answers second factors wrongly on purpose, and those count as failed sign-ins too.
+  [[ "$suite" == gateway-* || "$suite" == mfa-flow ]] && clear_gateway_counters
   checks=$(grep -E '^\s*checks_succeeded' "$log" | tr -s ' ' | cut -d' ' -f3-)
   if [[ $code -eq 0 ]]; then result=pass; else result=FAIL; failed=1; fi
   printf '%-28s %-6s %s\n' "$suite" "$result" "${checks:-see log}"

@@ -91,14 +91,24 @@ export default function () {
   const parts = inventory.status === 200 ? (inventory.json().scripts || []).map((x) => x.path).filter((p) => /^main\.dart\.js/.test(p)) : [];
   let displayRoute = false;
   let displayWords = false;
+  // The second step of signing in (20.12) ships the same way: the step itself, the set-up a login
+  // may be made to do, and the screen where a login manages its own factors.
+  const secondStep = { step: false, setUp: false, security: false, passkey: false };
   for (const p of parts) {
     const body = String(http.get(`${WEB}/${p}`).body || '');
     displayRoute = displayRoute || body.includes('/pos/display');
     displayWords = displayWords || body.includes('Container deposit (refundable)');
-    if (displayRoute && displayWords) break;
+    secondStep.step = secondStep.step || (body.includes('/auth/mfa/login') && body.includes('One more step'));
+    secondStep.setUp = secondStep.setUp || (body.includes('/mfa/setup') && body.includes('Set up a second step'));
+    secondStep.security = secondStep.security || (body.includes('/account/security') && body.includes('Keep these recovery codes'));
+    secondStep.passkey = secondStep.passkey || body.includes('PublicKeyCredential');
   }
   truthy('[+] the customer display ships in the bundle: its route', displayRoute, parts.length);
   truthy('[+] ...and the rows it shows the customer', displayWords, parts.length);
+  truthy('[+] the second step of signing in ships in the bundle', secondStep.step, secondStep);
+  truthy('[+] ...with the set-up a login may be made to do', secondStep.setUp, secondStep);
+  truthy('[+] ...the screen where a login manages its own factors, recovery codes and all', secondStep.security, secondStep);
+  truthy('[+] ...and the browser half of passkeys, which only the web build compiles', secondStep.passkey, secondStep);
   const manifest = headersOn('the manifest', http.get(`${WEB}/manifest.json`));
   let icons = [];
   try {

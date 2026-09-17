@@ -48,6 +48,9 @@ dependencies:
   # (MqttBrowserClient); native mobile/desktop would need MqttServerClient behind a conditional
   # import, not added yet.
   mqtt_client: ^10.0.0
+  # The QR code an authenticator app scans when a second factor is set up (20.12):
+  # the encoder only — the app paints the modules itself.
+  qr: ^4.0.0
 
 dev_dependencies:
   flutter_test:

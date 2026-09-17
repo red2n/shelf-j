@@ -188,6 +188,12 @@ class _PosShellState extends ConsumerState<PosShell> {
                 context: context, builder: (_) => const PrinterSettingsDialog()),
           ),
           IconButton(
+            key: const Key('pos-security'),
+            icon: const Icon(Icons.verified_user_outlined),
+            tooltip: 'Sign-in security',
+            onPressed: () => context.push('/account/security'),
+          ),
+          IconButton(
             icon: const Icon(Icons.exit_to_app),
             tooltip: 'Sign out',
             onPressed: () => ref.read(authNotifierProvider.notifier).logout(),

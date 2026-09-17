@@ -145,6 +145,15 @@ PECR reg.22/23 and UK GDPR art.7(1). `marketing_preferences` is what is true now
 - `POST /auth/platform-login` — platform-console login, kept deliberately separate so a `PLATFORM_ADMIN` credential never works on a store/POS login screen and vice versa.
 - `POST /auth/refresh` — exchange a refresh token for a new access token.
 - `POST /auth/logout` — revoke a refresh token.
+- `POST /auth/login`, `POST /auth/platform-login` — when the login holds a second factor (20.12) the answer is `200 { mfaRequired: true, mfaToken, mfaMethods }` and **no tokens**; when it must have one and has none, `{ mfaEnrolmentRequired: true, accessToken }` where the token (scope `mfa-enrol`, ten minutes, no role or tenant) reaches only `/auth/mfa/**`.
+- `POST /auth/mfa/login` — public: answer a waiting sign-in — `{ mfaToken, method: TOTP | RECOVERY_CODE | PASSKEY, code | assertion }` → the token pair (`amr`: `pwd` + `otp` or `hwk`). Five wrong answers end the wait (`401 MFA_CHALLENGE_EXPIRED`); twenty in fifteen minutes over all of a login's sign-ins lock its second factor (`429 MFA_LOCKED`).
+- `POST /auth/mfa/login/passkey-options` — public: the WebAuthn challenge for a waiting sign-in.
+- `GET /auth/mfa` — the caller's own factors: `totp`, `passkeys[]`, `recoveryCodesLeft`, `required`.
+- `POST /auth/mfa/totp` → `{ secret, otpauthUri }` (pending) · `POST /auth/mfa/totp/confirm { code }` → `{ recoveryCodes?, tokens? }` (recovery codes with the first factor; the real session when called with an enrolment token) · `POST /auth/mfa/totp/remove { password }`.
+- `POST /auth/mfa/passkeys/options` → creation options + `registrationToken` · `POST /auth/mfa/passkeys { registrationToken, name, clientDataJson, attestationObject }` · `POST /auth/mfa/passkeys/{id}/remove { password }`.
+- `POST /auth/mfa/recovery-codes { password }` — ten new codes; the old ones stop working.
+- `GET /auth/admin/mfa-policy` (OWNER, MANAGER) · `PUT /auth/admin/mfa-policy { requiredTiers: [OWNER|MANAGER|STOREKEEPER|CASHIER] }` (OWNER) — who must have a second factor. Removing the last factor is then `409 MFA_REQUIRED_BY_POLICY`, and a password-only session is not renewed (`401 MFA_REQUIRED`).
+- `DELETE /auth/admin/staff-users/{userId}/mfa` — the lost phone: OWNER for their own staff, PLATFORM_ADMIN for anybody, never oneself (`400 MFA_RESET_SELF`); ends the person's sessions.
 - `GET /auth/.well-known/jwks.json` — public: the token signing keys' public halves (RFC 7517), `Cache-Control: max-age=300`. Access tokens are RS256 and carry the `kid` of the key that signed them; the gateway and the MQTT broker verify against this set.
 - `GET /auth/admin/signing-keys` — PLATFORM_ADMIN: the signing key register (kid, status `ACTIVE`/`RETIRING`/`RETIRED`, dates) — never key material.
 - `POST /auth/admin/signing-keys/rotate` — PLATFORM_ADMIN: mint a new signing key now; the old one keeps verifying until the tokens it signed have expired.
