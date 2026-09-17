@@ -1,0 +1,733 @@
+import 'package:dio/dio.dart';
+import 'package:flutter/material.dart';
+import 'package:flutter_riverpod/flutter_riverpod.dart';
+
+import '../../core/constants.dart';
+import '../../core/network/api_client.dart';
+import '../../core/network/api_error.dart';
+import '../../shared/widgets/error_view.dart';
+import '../../shared/widgets/loading_view.dart';
+
+// ---------------------------------------------------------------------------
+// Plans and packaging (21.8) — the platform's own price list.
+//
+// What a business can be sold: a plan, its price in each currency it is sold
+// in, and what it includes. A plan is written as a draft, priced, given its
+// allowances, and only then put on sale; one of the plans on sale is the one a
+// business signing up starts on. A plan is never deleted — retiring it takes it
+// off sale and leaves the businesses that bought it exactly where they are.
+//
+// The allowance keys are not typed here: they come from the platform, because a
+// key nothing enforces would be a promise nobody keeps.
+// ---------------------------------------------------------------------------
+
+class PlanPrice {
+  final String currency;
+  final num amount;
+  final String effectiveFrom;
+  const PlanPrice({required this.currency, required this.amount, required this.effectiveFrom});
+
+  factory PlanPrice.fromJson(Map<String, dynamic> j) => PlanPrice(
+        currency: j['currency'] as String? ?? '',
+        amount: j['amount'] as num? ?? 0,
+        effectiveFrom: j['effectiveFrom'] as String? ?? '',
+      );
+}
+
+class PlanGrant {
+  final String key;
+  final String label;
+  final int? limitValue;
+  final bool? enabled;
+  const PlanGrant({required this.key, required this.label, required this.limitValue, required this.enabled});
+
+  factory PlanGrant.fromJson(Map<String, dynamic> j) => PlanGrant(
+        key: j['key'] as String? ?? '',
+        label: j['label'] as String? ?? (j['key'] as String? ?? ''),
+        limitValue: (j['limitValue'] as num?)?.toInt(),
+        enabled: j['enabled'] as bool?,
+      );
+
+  /// A limit with no number is unlimited; a feature is included or it is not.
+  String get says {
+    if (enabled != null) return enabled! ? 'included' : 'not included';
+    return limitValue == null ? 'unlimited' : '$limitValue';
+  }
+}
+
+class Plan {
+  final String id;
+  final String code;
+  final String name;
+  final String? description;
+  final String status;
+  final String billingInterval;
+  final int trialDays;
+  final bool isDefault;
+  final bool isPublic;
+  final List<PlanPrice> prices;
+  final List<PlanGrant> includes;
+
+  const Plan({
+    required this.id,
+    required this.code,
+    required this.name,
+    required this.description,
+    required this.status,
+    required this.billingInterval,
+    required this.trialDays,
+    required this.isDefault,
+    required this.isPublic,
+    required this.prices,
+    required this.includes,
+  });
+
+  factory Plan.fromJson(Map<String, dynamic> j) => Plan(
+        id: j['id'] as String,
+        code: j['code'] as String? ?? '',
+        name: j['name'] as String? ?? '',
+        description: j['description'] as String?,
+        status: j['status'] as String? ?? '',
+        billingInterval: j['billingInterval'] as String? ?? 'MONTH',
+        trialDays: j['trialDays'] as int? ?? 0,
+        isDefault: j['isDefault'] == true,
+        isPublic: j['isPublic'] == true,
+        prices: [
+          for (final p in j['prices'] as List<dynamic>? ?? const [])
+            PlanPrice.fromJson(Map<String, dynamic>.from(p as Map)),
+        ],
+        includes: [
+          for (final g in j['includes'] as List<dynamic>? ?? const [])
+            PlanGrant.fromJson(Map<String, dynamic>.from(g as Map)),
+        ],
+      );
+
+  bool get sold => status == 'ACTIVE';
+  bool get draft => status == 'DRAFT';
+}
+
+class EntitlementKey {
+  final String key;
+  final String label;
+  final bool limit;
+  final String enforcedBy;
+  const EntitlementKey({required this.key, required this.label, required this.limit, required this.enforcedBy});
+
+  factory EntitlementKey.fromJson(Map<String, dynamic> j) => EntitlementKey(
+        key: j['key'] as String? ?? '',
+        label: j['label'] as String? ?? '',
+        limit: j['limit'] == true,
+        enforcedBy: j['enforcedBy'] as String? ?? '',
+      );
+}
+
+const _base = '/${ApiConstants.tenant}/platform/plans';
+
+String planStatusLabel(String status) => switch (status) {
+      'DRAFT' => 'Draft',
+      'ACTIVE' => 'On sale',
+      'RETIRED' => 'Retired',
+      _ => status,
+    };
+
+String planIntervalLabel(String interval) => interval == 'YEAR' ? 'a year' : 'a month';
+
+final plansProvider = FutureProvider.autoDispose<List<Plan>>((ref) async {
+  final resp = await ref.watch(apiClientProvider).dio.get(_base);
+  return [
+    for (final p in resp.data['data'] as List<dynamic>) Plan.fromJson(Map<String, dynamic>.from(p as Map)),
+  ];
+});
+
+final entitlementKeysProvider = FutureProvider.autoDispose<List<EntitlementKey>>((ref) async {
+  final resp = await ref.watch(apiClientProvider).dio.get('$_base/entitlement-keys');
+  return [
+    for (final e in (resp.data['data'] as Map)['entitlements'] as List<dynamic>)
+      EntitlementKey.fromJson(Map<String, dynamic>.from(e as Map)),
+  ];
+});
+
+class PlansScreen extends ConsumerWidget {
+  const PlansScreen({super.key});
+
+  @override
+  Widget build(BuildContext context, WidgetRef ref) {
+    final plans = ref.watch(plansProvider);
+    final text = Theme.of(context).textTheme;
+    void refresh() => ref.invalidate(plansProvider);
+
+    return Padding(
+      padding: const EdgeInsets.all(24),
+      child: Column(
+        crossAxisAlignment: CrossAxisAlignment.start,
+        children: [
+          Row(
+            children: [
+              Expanded(child: Text('Plans', style: text.headlineSmall)),
+              OutlinedButton.icon(
+                key: const Key('plan-write'),
+                icon: const Icon(Icons.add),
+                label: const Text('Write a plan'),
+                onPressed: () async {
+                  final written = await showDialog<bool>(context: context, builder: (_) => const WritePlanDialog());
+                  if (written == true) refresh();
+                },
+              ),
+              const SizedBox(width: 8),
+              IconButton(icon: const Icon(Icons.refresh), tooltip: 'Refresh', onPressed: refresh),
+            ],
+          ),
+          const SizedBox(height: 4),
+          Text(
+            'What a business can be sold. A plan is written, priced and given its allowances before '
+            'it goes on sale; one plan on sale is the one a business signing up starts on.',
+            style: text.bodyMedium?.copyWith(color: Theme.of(context).colorScheme.outline),
+          ),
+          const SizedBox(height: 16),
+          Expanded(
+            child: plans.when(
+              loading: () => const LoadingView(label: 'Loading plans…'),
+              error: (e, _) => ErrorView(message: friendlyError(e, fallback: 'Could not load plans.'), onRetry: refresh),
+              data: (list) => list.isEmpty
+                  ? const Center(child: Text('No plans yet. Write one, price it, then put it on sale.'))
+                  : ListView.separated(
+                      itemCount: list.length,
+                      separatorBuilder: (_, _) => const SizedBox(height: 10),
+                      itemBuilder: (context, i) => _PlanCard(plan: list[i], onChanged: refresh),
+                    ),
+            ),
+          ),
+        ],
+      ),
+    );
+  }
+}
+
+class _PlanCard extends ConsumerStatefulWidget {
+  final Plan plan;
+  final VoidCallback onChanged;
+  const _PlanCard({required this.plan, required this.onChanged});
+
+  @override
+  ConsumerState<_PlanCard> createState() => _PlanCardState();
+}
+
+class _PlanCardState extends ConsumerState<_PlanCard> {
+  String? _error;
+  bool _busy = false;
+
+  Dio get _dio => ref.read(apiClientProvider).dio;
+
+  Future<void> _act(String path) async {
+    setState(() {
+      _busy = true;
+      _error = null;
+    });
+    try {
+      await _dio.post('$_base/${widget.plan.id}/$path', data: const <String, dynamic>{});
+      widget.onChanged();
+    } catch (e) {
+      if (!mounted) return;
+      setState(() {
+        _busy = false;
+        _error = switch (apiErrorCode(e)) {
+          'PLAN_HAS_NO_PRICE' => 'Give it a price before selling it.',
+          'PLAN_ALREADY_SOLD' => 'It is already on sale.',
+          'PLAN_NOT_SOLD' => 'Only a plan on sale can be taken off sale, or be the one new businesses start on.',
+          _ => friendlyError(e),
+        };
+      });
+    }
+  }
+
+  @override
+  Widget build(BuildContext context) {
+    final p = widget.plan;
+    final cs = Theme.of(context).colorScheme;
+    final text = Theme.of(context).textTheme;
+    return Card(
+      key: Key('plan-${p.code}'),
+      child: Padding(
+        padding: const EdgeInsets.all(16),
+        child: Column(
+          crossAxisAlignment: CrossAxisAlignment.start,
+          children: [
+            Row(
+              crossAxisAlignment: CrossAxisAlignment.start,
+              children: [
+                Expanded(
+                  child: Column(
+                    crossAxisAlignment: CrossAxisAlignment.start,
+                    children: [
+                      Text('${p.name} · ${p.code}', style: text.titleMedium),
+                      const SizedBox(height: 2),
+                      Text(
+                        [
+                          'billed ${planIntervalLabel(p.billingInterval)}',
+                          if (p.trialDays > 0) '${p.trialDays} days free',
+                          if (!p.isPublic) 'not on the public list',
+                        ].join(' · '),
+                        style: text.bodySmall?.copyWith(color: cs.outline),
+                      ),
+                    ],
+                  ),
+                ),
+                if (p.isDefault)
+                  Padding(
+                    padding: const EdgeInsets.only(right: 8),
+                    child: Chip(
+                      key: Key('plan-default-${p.code}'),
+                      label: const Text('New businesses start here'),
+                    ),
+                  ),
+                Chip(label: Text(planStatusLabel(p.status))),
+              ],
+            ),
+            if (p.description != null) ...[
+              const SizedBox(height: 8),
+              Text(p.description!, style: text.bodyMedium),
+            ],
+            const Divider(height: 24),
+            Text('Price', style: text.titleSmall),
+            const SizedBox(height: 4),
+            if (p.prices.isEmpty)
+              Text('No price yet — it cannot go on sale without one.', style: TextStyle(color: cs.error))
+            else
+              Text(
+                p.prices.map((x) => '${x.amount} ${x.currency} from ${x.effectiveFrom}').join('  ·  '),
+                style: text.bodyMedium,
+              ),
+            const SizedBox(height: 12),
+            Text('What it includes', style: text.titleSmall),
+            const SizedBox(height: 4),
+            if (p.includes.isEmpty)
+              Text('Nothing named — a business on it is unrestricted.', style: text.bodyMedium)
+            else
+              Wrap(
+                spacing: 8,
+                runSpacing: 6,
+                children: [
+                  for (final g in p.includes)
+                    Chip(key: Key('plan-grant-${p.code}-${g.key}'), label: Text('${g.label}: ${g.says}')),
+                ],
+              ),
+            if (_error != null) ...[
+              const SizedBox(height: 10),
+              Text(_error!, key: Key('plan-error-${p.code}'), style: TextStyle(color: cs.error)),
+            ],
+            const SizedBox(height: 8),
+            Wrap(
+              spacing: 8,
+              children: [
+                TextButton(
+                  key: Key('plan-price-${p.code}'),
+                  onPressed: _busy
+                      ? null
+                      : () async {
+                          final set = await showDialog<bool>(context: context, builder: (_) => SetPriceDialog(planId: p.id));
+                          if (set == true) widget.onChanged();
+                        },
+                  child: const Text('Set a price'),
+                ),
+                TextButton(
+                  key: Key('plan-includes-${p.code}'),
+                  onPressed: _busy
+                      ? null
+                      : () async {
+                          final set = await showDialog<bool>(context: context, builder: (_) => SetIncludesDialog(plan: p));
+                          if (set == true) widget.onChanged();
+                        },
+                  child: const Text('What it includes'),
+                ),
+                if (!p.sold)
+                  FilledButton(
+                    key: Key('plan-sell-${p.code}'),
+                    onPressed: _busy ? null : () => _act('activate'),
+                    child: const Text('Put on sale'),
+                  ),
+                if (p.sold && !p.isDefault)
+                  TextButton(
+                    key: Key('plan-make-default-${p.code}'),
+                    onPressed: _busy ? null : () => _act('default'),
+                    child: const Text('New businesses start here'),
+                  ),
+                if (p.sold)
+                  TextButton(
+                    key: Key('plan-retire-${p.code}'),
+                    onPressed: _busy ? null : () => _act('retire'),
+                    child: const Text('Take off sale'),
+                  ),
+              ],
+            ),
+          ],
+        ),
+      ),
+    );
+  }
+}
+
+/// Writing a plan. It is a draft until somebody puts it on sale.
+class WritePlanDialog extends ConsumerStatefulWidget {
+  const WritePlanDialog({super.key});
+
+  @override
+  ConsumerState<WritePlanDialog> createState() => _WritePlanDialogState();
+}
+
+class _WritePlanDialogState extends ConsumerState<WritePlanDialog> {
+  final _code = TextEditingController();
+  final _name = TextEditingController();
+  final _description = TextEditingController();
+  final _trial = TextEditingController(text: '0');
+  String _interval = 'MONTH';
+  bool _public = true;
+  String? _error;
+  bool _busy = false;
+
+  @override
+  void dispose() {
+    _code.dispose();
+    _name.dispose();
+    _description.dispose();
+    _trial.dispose();
+    super.dispose();
+  }
+
+  Future<void> _save() async {
+    if (_code.text.trim().isEmpty || _name.text.trim().isEmpty) {
+      setState(() => _error = 'A plan needs a code and a name.');
+      return;
+    }
+    setState(() {
+      _busy = true;
+      _error = null;
+    });
+    try {
+      await ref.read(apiClientProvider).dio.post(_base, data: {
+        'code': _code.text.trim(),
+        'name': _name.text.trim(),
+        'description': ?(_description.text.trim().isEmpty ? null : _description.text.trim()),
+        'billingInterval': _interval,
+        'trialDays': int.tryParse(_trial.text.trim()) ?? 0,
+        'isPublic': _public,
+      });
+      if (mounted) Navigator.of(context).pop(true);
+    } catch (e) {
+      if (!mounted) return;
+      setState(() {
+        _busy = false;
+        _error = switch (apiErrorCode(e)) {
+          'PLAN_CODE_TAKEN' => 'A plan already goes by that code.',
+          'PLAN_CODE_INVALID' => 'A code is 2 to 40 of A–Z, 0–9, dash and underscore.',
+          'PLAN_INTERVAL_UNKNOWN' => 'A plan is billed by the month or by the year.',
+          _ => friendlyError(e),
+        };
+      });
+    }
+  }
+
+  @override
+  Widget build(BuildContext context) {
+    final cs = Theme.of(context).colorScheme;
+    return AlertDialog(
+      title: const Text('Write a plan'),
+      content: SizedBox(
+        width: 460,
+        child: SingleChildScrollView(
+          child: Column(
+            mainAxisSize: MainAxisSize.min,
+            crossAxisAlignment: CrossAxisAlignment.start,
+            children: [
+              const Text('It is a draft until you put it on sale, so nothing here is offered to anybody yet.'),
+              const SizedBox(height: 12),
+              TextField(key: const Key('plan-code'), controller: _code, decoration: const InputDecoration(labelText: 'Code *', hintText: 'STARTER')),
+              const SizedBox(height: 8),
+              TextField(key: const Key('plan-name'), controller: _name, decoration: const InputDecoration(labelText: 'Name *')),
+              const SizedBox(height: 8),
+              TextField(controller: _description, maxLines: 2, decoration: const InputDecoration(labelText: 'What it is for')),
+              const SizedBox(height: 8),
+              DropdownButtonFormField<String>(
+                key: const Key('plan-interval'),
+                isExpanded: true,
+                initialValue: _interval,
+                decoration: const InputDecoration(labelText: 'Billed'),
+                items: const [
+                  DropdownMenuItem(value: 'MONTH', child: Text('Every month')),
+                  DropdownMenuItem(value: 'YEAR', child: Text('Every year')),
+                ],
+                onChanged: (v) => setState(() => _interval = v ?? 'MONTH'),
+              ),
+              const SizedBox(height: 8),
+              TextField(
+                key: const Key('plan-trial'),
+                controller: _trial,
+                keyboardType: TextInputType.number,
+                decoration: const InputDecoration(labelText: 'Days free before the first bill'),
+              ),
+              SwitchListTile(
+                key: const Key('plan-public'),
+                contentPadding: EdgeInsets.zero,
+                title: const Text('Show it on the price list'),
+                value: _public,
+                onChanged: (v) => setState(() => _public = v),
+              ),
+              if (_error != null) Text(_error!, key: const Key('plan-write-error'), style: TextStyle(color: cs.error)),
+            ],
+          ),
+        ),
+      ),
+      actions: [
+        TextButton(onPressed: _busy ? null : () => Navigator.of(context).pop(false), child: const Text('Cancel')),
+        FilledButton(key: const Key('plan-write-save'), onPressed: _busy ? null : _save, child: Text(_busy ? 'Writing…' : 'Write')),
+      ],
+    );
+  }
+}
+
+/// A plan's price in one currency, from a date. An earlier price is never edited.
+class SetPriceDialog extends ConsumerStatefulWidget {
+  final String planId;
+  const SetPriceDialog({super.key, required this.planId});
+
+  @override
+  ConsumerState<SetPriceDialog> createState() => _SetPriceDialogState();
+}
+
+class _SetPriceDialogState extends ConsumerState<SetPriceDialog> {
+  final _currency = TextEditingController(text: 'GBP');
+  final _amount = TextEditingController();
+  DateTime? _from;
+  String? _error;
+  bool _busy = false;
+
+  @override
+  void dispose() {
+    _currency.dispose();
+    _amount.dispose();
+    super.dispose();
+  }
+
+  Future<void> _save() async {
+    final amount = num.tryParse(_amount.text.trim());
+    if (amount == null || amount < 0) {
+      setState(() => _error = 'A price is a number, like 49.00.');
+      return;
+    }
+    setState(() {
+      _busy = true;
+      _error = null;
+    });
+    try {
+      await ref.read(apiClientProvider).dio.post('$_base/${widget.planId}/prices', data: {
+        'currency': _currency.text.trim().toUpperCase(),
+        'amount': amount,
+        'effectiveFrom': ?_from?.toIso8601String().substring(0, 10),
+      });
+      if (mounted) Navigator.of(context).pop(true);
+    } catch (e) {
+      if (!mounted) return;
+      setState(() {
+        _busy = false;
+        _error = apiErrorCode(e) == 'CURRENCY_INVALID' ? 'A currency is a three-letter code, like GBP.' : friendlyError(e);
+      });
+    }
+  }
+
+  @override
+  Widget build(BuildContext context) {
+    final cs = Theme.of(context).colorScheme;
+    return AlertDialog(
+      title: const Text('Set a price'),
+      content: SizedBox(
+        width: 400,
+        child: Column(
+          mainAxisSize: MainAxisSize.min,
+          crossAxisAlignment: CrossAxisAlignment.start,
+          children: [
+            const Text('From a date. An earlier price is kept, so an invoice raised under it stays explicable.'),
+            const SizedBox(height: 12),
+            Row(
+              children: [
+                SizedBox(
+                  width: 110,
+                  child: TextField(key: const Key('price-currency'), controller: _currency, decoration: const InputDecoration(labelText: 'Currency')),
+                ),
+                const SizedBox(width: 12),
+                Expanded(
+                  child: TextField(
+                    key: const Key('price-amount'),
+                    controller: _amount,
+                    keyboardType: const TextInputType.numberWithOptions(decimal: true),
+                    decoration: const InputDecoration(labelText: 'Per billing period, before tax'),
+                  ),
+                ),
+              ],
+            ),
+            ListTile(
+              key: const Key('price-from'),
+              contentPadding: EdgeInsets.zero,
+              leading: const Icon(Icons.event_outlined),
+              title: Text(_from == null ? 'From today' : 'From ${_from!.toIso8601String().substring(0, 10)}'),
+              onTap: () async {
+                final now = DateTime.now();
+                final picked = await showDatePicker(context: context, firstDate: now.subtract(const Duration(days: 365)), lastDate: now.add(const Duration(days: 730)), initialDate: now);
+                if (picked != null) setState(() => _from = picked);
+              },
+            ),
+            if (_error != null) Text(_error!, key: const Key('price-error'), style: TextStyle(color: cs.error)),
+          ],
+        ),
+      ),
+      actions: [
+        TextButton(onPressed: _busy ? null : () => Navigator.of(context).pop(false), child: const Text('Cancel')),
+        FilledButton(key: const Key('price-save'), onPressed: _busy ? null : _save, child: Text(_busy ? 'Saving…' : 'Set')),
+      ],
+    );
+  }
+}
+
+/// What a plan includes. The keys come from the platform: only what something enforces is offered.
+class SetIncludesDialog extends ConsumerStatefulWidget {
+  final Plan plan;
+  const SetIncludesDialog({super.key, required this.plan});
+
+  @override
+  ConsumerState<SetIncludesDialog> createState() => _SetIncludesDialogState();
+}
+
+class _SetIncludesDialogState extends ConsumerState<SetIncludesDialog> {
+  final Map<String, TextEditingController> _limits = {};
+  final Map<String, bool> _features = {};
+  String? _error;
+  bool _busy = false;
+
+  @override
+  void dispose() {
+    for (final c in _limits.values) {
+      c.dispose();
+    }
+    super.dispose();
+  }
+
+  /// What the plan already says about a key, or nothing.
+  PlanGrant? _granted(String key) {
+    for (final g in widget.plan.includes) {
+      if (g.key == key) return g;
+    }
+    return null;
+  }
+
+  void _seed(List<EntitlementKey> keys) {
+    for (final k in keys) {
+      if (k.limit) {
+        _limits.putIfAbsent(k.key, () {
+          final has = _granted(k.key);
+          return TextEditingController(text: has?.limitValue?.toString() ?? '');
+        });
+      } else {
+        _features.putIfAbsent(
+          k.key,
+          () => _granted(k.key)?.enabled ?? false,
+        );
+      }
+    }
+  }
+
+  Future<void> _save(List<EntitlementKey> keys) async {
+    setState(() {
+      _busy = true;
+      _error = null;
+    });
+    final grants = <Map<String, dynamic>>[];
+    for (final k in keys) {
+      if (k.limit) {
+        final raw = _limits[k.key]?.text.trim() ?? '';
+        if (raw == '-') {
+          grants.add({'key': k.key}); // named, with no number: unlimited
+        } else if (raw.isNotEmpty) {
+          final n = int.tryParse(raw);
+          if (n == null || n < 0) {
+            setState(() {
+              _busy = false;
+              _error = '${k.label} is a whole number, or “-” for unlimited.';
+            });
+            return;
+          }
+          grants.add({'key': k.key, 'limitValue': n});
+        }
+      } else if (_features[k.key] == true) {
+        grants.add({'key': k.key, 'enabled': true});
+      }
+    }
+    try {
+      await ref.read(apiClientProvider).dio.put('$_base/${widget.plan.id}/includes', data: {'grants': grants});
+      if (mounted) Navigator.of(context).pop(true);
+    } catch (e) {
+      if (!mounted) return;
+      setState(() {
+        _busy = false;
+        _error = friendlyError(e);
+      });
+    }
+  }
+
+  @override
+  Widget build(BuildContext context) {
+    final cs = Theme.of(context).colorScheme;
+    final keys = ref.watch(entitlementKeysProvider);
+    return AlertDialog(
+      title: Text('What ${widget.plan.code} includes'),
+      content: SizedBox(
+        width: 480,
+        child: keys.when(
+          loading: () => const SizedBox(height: 120, child: Center(child: CircularProgressIndicator())),
+          error: (e, _) => Text(friendlyError(e, fallback: 'Could not load what can be included.')),
+          data: (list) {
+            _seed(list);
+            return SingleChildScrollView(
+              child: Column(
+                mainAxisSize: MainAxisSize.min,
+                crossAxisAlignment: CrossAxisAlignment.start,
+                children: [
+                  const Text(
+                    'Only what the platform actually enforces can be promised here. Leave a limit '
+                    'empty to say nothing about it; type “-” for unlimited.',
+                  ),
+                  const SizedBox(height: 12),
+                  for (final k in list)
+                    if (k.limit)
+                      Padding(
+                        padding: const EdgeInsets.only(bottom: 8),
+                        child: TextField(
+                          key: Key('include-${k.key}'),
+                          controller: _limits[k.key],
+                          decoration: InputDecoration(labelText: k.label, helperText: 'enforced by ${k.enforcedBy}'),
+                        ),
+                      )
+                    else
+                      SwitchListTile(
+                        key: Key('include-${k.key}'),
+                        contentPadding: EdgeInsets.zero,
+                        title: Text(k.label),
+                        subtitle: Text('enforced by ${k.enforcedBy}'),
+                        value: _features[k.key] ?? false,
+                        onChanged: (v) => setState(() => _features[k.key] = v),
+                      ),
+                  if (_error != null) Text(_error!, key: const Key('includes-error'), style: TextStyle(color: cs.error)),
+                ],
+              ),
+            );
+          },
+        ),
+      ),
+      actions: [
+        TextButton(onPressed: _busy ? null : () => Navigator.of(context).pop(false), child: const Text('Cancel')),
+        FilledButton(
+          key: const Key('includes-save'),
+          onPressed: _busy || !keys.hasValue ? null : () => _save(keys.value!),
+          child: Text(_busy ? 'Saving…' : 'Set'),
+        ),
+      ],
+    );
+  }
+}

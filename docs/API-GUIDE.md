@@ -830,6 +830,25 @@ Every route needs a management role **and** `finance.payments`; a storekeeper or
 - `PATCH /platform/tenants/{tenantId}/status` — activate/suspend a tenant platform-wide.
 - `GET /platform/tenants/by-einvoice-address?scheme=&id=` or `?vatNumber=` (`PLATFORM_ADMIN`) — **which business a network's delivery lands with (07.13, the transport seam).** By electronic address when one is named (both halves: `400 TENANT_EINVOICE_ADDRESS_INVALID`), else by VAT identifier (neither: `400 TENANT_RECEIVER_UNNAMED`), case and spaces aside. The one `ACTIVE` business holding it, as `GET /platform/tenants` lists it; `404 TENANT_NOT_FOUND` when none does, a suspended business included; `409 TENANT_EINVOICE_ADDRESS_SHARED` when more than one does — the platform cannot tell which the document is for, so purchase-svc places it nowhere. Asked by purchase-svc as the platform itself before a delivered e-invoice is read into anyone's inbox.
 
+### Plans and packaging (`/platform/plans`, `PLATFORM_ADMIN` only; 21.8)
+The platform's price list. A plan is written as a draft, priced, given its allowances, and only then sold; one plan on sale is the one a business signing up starts on. A plan is never deleted — retiring it takes it off sale and leaves its subscribers where they are.
+- `GET /platform/plans` — every plan, drafts and retired ones included, with its prices and what it includes.
+- `POST /platform/plans` `{code, name, description?, billingInterval, trialDays?, isPublic?, sortOrder?}` → `201`, always `DRAFT`. `400 PLAN_CODE_INVALID` (2–40 of A–Z, 0–9, `-`, `_`), `PLAN_INTERVAL_UNKNOWN` (`MONTH` or `YEAR`); `409 PLAN_CODE_TAKEN` (case-insensitive).
+- `GET /platform/plans/{id}`, `PUT /platform/plans/{id}` — read and change name, description, interval, trial, visibility and order. `409 PLAN_INTERVAL_IN_USE`: how often a plan bills cannot change while businesses are on it.
+- `POST /platform/plans/{id}/prices` `{currency, amount, effectiveFrom?}` — the price in one currency from a date (today when absent). An earlier price is kept, never edited. `400 CURRENCY_INVALID`, `PLAN_PRICE_DATE_INVALID`.
+- `PUT /platform/plans/{id}/includes` `{grants:[{key, limitValue?, enabled?}]}` — replaced whole: a key left out is one the plan no longer names. A limit carries `limitValue` (absent means unlimited), a feature carries `enabled`. `400 PLAN_ENTITLEMENT_UNKNOWN` for a key the platform does not enforce, `PLAN_ENTITLEMENT_SHAPE` for a limit written as a yes or no, or the reverse.
+- `POST /platform/plans/{id}/activate` — put it on sale. `409 PLAN_HAS_NO_PRICE`, `PLAN_ALREADY_SOLD`.
+- `POST /platform/plans/{id}/retire` — take it off sale; its subscribers keep it. `409 PLAN_NOT_SOLD`.
+- `POST /platform/plans/{id}/default` — the plan a business signing up starts on, at most one. `409 PLAN_NOT_SOLD`.
+- `GET /platform/plans/entitlement-keys` — the keys a plan may carry, each with who enforces it. A console offers these rather than inventing one.
+- `PUT /platform/tenants/{tenantId}/plan` `{planId, reason?}` — put a business on a plan. `409 PLAN_LIMIT_EXCEEDED_NOW`, naming each limit it is already over, because moving somebody onto a plan they do not fit would either take their stores away or leave them quietly past a limit they are now told they have.
+
+### What a business is allowed (`/admin/tenant/plan`; 21.8)
+- `GET /admin/tenant/plan` (OWNER, MANAGER) — the plan it is on, with each limit against what it is using. `used` is absent where the owning service holds the count, and is shown as unknown rather than guessed at. A business on no plan carries no `plan` and a `note` saying so; it is unrestricted.
+- `GET /admin/tenant/plan/available` (OWNER, MANAGER) — the plans on sale. Moving between them is the platform's to do.
+- `GET /admin/tenant/plan/limits` (any staff role) — the allowances alone, no prices: what another service reads through `Entitlements` to enforce a limit it owns.
+- Limits are refused with `409 PLAN_LIMIT_REACHED`, naming the ceiling and the count: stores and staff by tenant-svc, products by product-svc. A limit fails **open** — a business on no plan, or one whose allowances cannot be read this moment, is unrestricted — because a blip should not stop a shop taking on staff; that is the opposite of spend authority (11.x), which fails closed because it guards money leaving.
+
 ### Tenant data export and leaving (21.14)
 
 A business may leave on notice and take its data with it, or have it erased (EU Data Act (EU) 2023/2854 art.25). Its data is exported through every service's `/admin/tenant-data` (see *Platform-wide conventions*); tenant-svc keeps the notice, starts the erasure and records what each service erased. The owner alone acts (anyone else `403`).

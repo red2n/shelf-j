@@ -33,6 +33,14 @@ public class ExportableData extends TenantDataSpec {
             "deposit_schemes",
             "the platform's reference data: the law as recorded for every business"),
         Map.entry(
+            "plans", "the platform's price list: the same for every business, and not theirs"),
+        Map.entry(
+            "plan_prices",
+            "the platform's price list: the same for every business, and not theirs"),
+        Map.entry(
+            "plan_entitlements",
+            "the platform's price list: the same for every business, and not theirs"),
+        Map.entry(
             "jurisdiction_members",
             "the platform's reference data: the law as recorded for every business"),
         Map.entry(

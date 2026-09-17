@@ -105,6 +105,15 @@ const _navItems = [
   ),
   _AdminNavItem(
     destination: AdaptiveNavDestination(
+      label: 'Plan',
+      icon: Icons.sell_outlined,
+      selectedIcon: Icons.sell,
+    ),
+    route: '/admin/plan',
+    storekeeperVisible: false,
+  ),
+  _AdminNavItem(
+    destination: AdaptiveNavDestination(
       label: 'Container deposits',
       icon: Icons.recycling_outlined,
       selectedIcon: Icons.recycling,

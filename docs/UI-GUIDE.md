@@ -79,11 +79,13 @@ A two-step wizard, shown full-screen right after registration, with a visible st
 |---|---|
 | **Platform Overview** | See above. |
 | **Tenants** | A table (wide) / card list (narrow) of every business on the platform: name, legal name, country, currency, status, created date. A per-tenant menu to **activate/deactivate** (with a confirmation explaining that a deactivated tenant and all its users immediately lose access — this is what triggers the storefront's "currently unavailable" notice). An **"Onboard New Tenant"** button opens a 2-step dialog: create the owner's login, then the business + first store in one form; success shows a "tenant is live" confirmation with the owner's email to hand off. |
+| **Plans** (21.8) | The price list, and the only place it is written. Each plan is a card: its name and code, how often it is billed, days free, whether it is on the public list, and a chip saying **Draft**, **On sale** or **Retired**; the one new businesses start on is marked. Below it, **Price** — each currency with the date it took effect, or a warning in red that without one it cannot go on sale — and **What it includes** as chips. The actions follow what the plan can do: *Set a price*, *What it includes*, then *Put on sale* for a draft, and for one on sale *New businesses start here* and *Take off sale*. **Write a plan** asks for the code, name, what it is for, how often it bills, days free and whether to list it; it is a draft until somebody sells it. *What it includes* offers only the keys the platform enforces, each labelled with the service that refuses when it is exceeded — a limit takes a number, or a dash for unlimited; a feature is a switch. Refusals are in words: *Give it a price before selling it*, *A plan already goes by that code*. |
 | **Security incidents** | The register the Cyber Resilience Act and GDPR art.33(2) ask the platform to keep. Filter open / closed / all; each incident shows its kind, when the platform became aware, and its next deadline, marked *Overdue* in the error colour when a stage is past due. **Open incident** takes the kind (actively exploited vulnerability, severe incident, personal data breach), a title, what happened, when the platform became aware (UTC), and the businesses affected — none chosen means every business, and the dialog will not submit while the business list cannot be loaded, so a failed read never widens an incident to everyone. An incident opens to its stages, each with what the law asks, its citation and *Due*, *Overdue since*, *Done*, *Waiting* or *No fixed time*; its timeline with each report's reference; and how many notices were issued and acknowledged. **Record** offers only the events that incident can still have; **Tell businesses** sends the notice once per business. Refusals (too early for the final report, a stage already recorded, closing with stages outstanding) are shown in the dialog as the server words them. Nothing is edited or deleted. |
 
 **Flows:**
 - *Monitor tenants:* Tenants list → inspect status → activate or deactivate.
 - *Assisted onboarding:* Tenants screen → "Onboard New Tenant" → owner credentials → business + first store → hand off.
+- *Put a plan on sale:* Plans → Write a plan → Set a price → What it includes → Put on sale → (optionally) New businesses start here.
 - *Report an incident:* Security incidents → Open incident → record the early warning and the notification with the authority's references as they are made → the measure and the final report → Tell businesses → Close.
 
 **Signing in with a second step (20.12), every shell:** after a right password, a login that holds a second factor lands on **One more step** — the six-digit code from its authenticator app, *Use a passkey* where the browser can (the web app; elsewhere the button is not shown), or *Lost your phone? Use a recovery code*. A wrong answer says so and keeps the step open; when the wait has ended it is the password again. A login that must have a second step and has none lands on **Set up a second step**: a QR code and the key to type by hand, the code that confirms it, then the ten recovery codes — and *Finish signing in* stays disabled until *I have kept these somewhere safe* is ticked. **Sign-in security** (Account menu in Admin, the shield icon in POS and the platform console) is where a login sets up or removes its authenticator app, adds and removes passkeys by name, and makes new recovery codes; removal asks for the password, and is refused with an explanation when the business requires a second step and it is the last.
@@ -164,6 +166,10 @@ A product's state in words on the products table — **New line**, **On sale**, 
 ### 4.2g Chargebacks (11.9, management)
 
 The register of card payments a customer's bank has taken back. Each row: the amount, what the cardholder says ("Says they never got it"), and — for one that **Needs an answer** — the date it must be answered by, in red once that date has passed. Filter chips by standing (*Needs an answer*, *With the bank*, *Won*, *Lost*, *Accepted*). Opening one shows its history (opened, the bank took the money, answered, won or lost, the money came back), the answer that was given, and what can still be done: **Answer it** (what was sold, the customer, the receipt number, how it was handed over, what was said, the refund policy, anything else — sent once), **Accept it** (not worth contesting), and, for a chargeback the acquirer wrote to the business about, **It was won** / **It was lost**. **Record a chargeback** is for a card taken on the business's own terminal: the payment, the acquirer's case number, the amount and fee, what the cardholder says, the scheme's reason code and the date to answer by. A payment provider's own disputes appear by themselves.
+
+### 4.2i Plan (21.8, management)
+
+What this business is on and how much of it is in use. One card names the plan and how often it is billed, with a chip for each thing it includes — *Stores and warehouses: 2*, *The online shop: included*. Below it, **What it allows**: a row per limit with a bar, reading **2 of 2** as the allowance fills and turning red when it is full, so an owner sees a limit coming rather than meeting it as a refusal mid-shift. A count another service holds reads **up to 500** with *counted by the service that holds them* beneath it — unknown rather than guessed at. A business on no plan says **No plan** and that nothing is limited. Moving between plans is the platform's to do, not the business's.
 
 ### 4.2h Card settlements (11.10, management)
 
@@ -403,12 +409,14 @@ Navigation: **Shop · Cart** (with a live item-count badge). A sticky cart bar (
 | `/onboarding` | Business setup wizard (2 steps) |
 | `/platform/overview` | Platform Overview (dashboard) |
 | `/platform/tenants` | Tenants list + onboarding dialog |
+| `/platform/plans` | Plans: the price list — write, price, what it includes, sell, retire, default |
 | `/platform/security` | Security incidents register |
 | `/admin/dashboard` | Dashboard |
 | `/admin/catalog` | Catalog (Products / Categories / Import tabs) |
 | `/admin/inventory` | Inventory (Levels / Batches tabs) + Receive Stock |
 | `/admin/food-safety` | Food safety: Today / Diary, plus Setup / Reviews for managers |
 | `/admin/recalls` | Recalls: list, detail with store actions; open / close / cancel for managers |
+| `/admin/plan` | Plan: what this business is on and how much of each allowance is in use |
 | `/admin/retention` | Data retention: the schedule with the law's floors, holds, run-now and the register of purges |
 | `/admin/age-checks` | Age checks register (management) |
 | `/admin/obligations` | Legal obligations |

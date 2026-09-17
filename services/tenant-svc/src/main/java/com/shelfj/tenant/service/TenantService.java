@@ -54,6 +54,7 @@ import java.util.UUID;
 public class TenantService {
 
   @Inject TenantRepository repo;
+  @Inject PlanService plans;
 
   // --- onboarding ---
 
@@ -90,6 +91,10 @@ public class TenantService {
             Events.tenantCreated(
                 tenantId, ownerUserId, req.businessName(), tenant.country(), tenant.currency()));
     var createdTenant = repo.createTenantWithOutbox(tenant, event);
+
+    // A business signs up on whatever the platform sells by default (21.8). Best effort: one on no
+    // plan is unrestricted, so failing to place it is safe where failing to create it is not.
+    plans.putOnDefaultPlan(tenantId);
 
     // Flow guard: grant OWNER role to tenant creator so they can access admin endpoints
     // before their JWT is refreshed with the new tenant claim
@@ -196,6 +201,8 @@ public class TenantService {
 
   private StoreWithZone createStoreInternal(
       UUID tenantId, CreateStoreRequest req, boolean isDefault) {
+    // What the business is sold decides how many stores it may open (21.8).
+    plans.requireRoomForAnotherStore(tenantId);
     UUID storeId = Ids.newId();
     String type = req.type() == null || req.type().isBlank() ? Store.TYPE_STORE : req.type();
     Instant nowStore = Instant.now();
@@ -304,6 +311,8 @@ public class TenantService {
     UUID tenantId = ctx.requireTenantId();
     UUID userId = parseUuid(req.userId(), "userId");
     UUID storeId = parseUuid(req.storeId(), "storeId");
+    // What the business is sold decides how many people may work for it (21.8).
+    plans.requireRoomForAnotherStaffMember(tenantId, userId);
     repo.findStore(tenantId, storeId)
         .orElseThrow(
             () -> ApiException.notFound("STORE_NOT_FOUND", "No such store in this tenant"));
