@@ -16,13 +16,23 @@ const _destinations = [
     selectedIcon: Icons.business,
   ),
   AdaptiveNavDestination(
+    label: 'Plans',
+    icon: Icons.sell_outlined,
+    selectedIcon: Icons.sell,
+  ),
+  AdaptiveNavDestination(
     label: 'Security incidents',
     icon: Icons.shield_outlined,
     selectedIcon: Icons.shield,
   ),
 ];
 
-const _routes = ['/platform/overview', '/platform/tenants', '/platform/security'];
+const _routes = [
+  '/platform/overview',
+  '/platform/tenants',
+  '/platform/plans',
+  '/platform/security',
+];
 
 class PlatformShell extends ConsumerWidget {
   final String currentLocation;

@@ -3,7 +3,10 @@ package com.shelfj.tenant.api;
 import com.shelfj.tenant.dto.Dtos.CurrencyRepublishResponse;
 import com.shelfj.tenant.dto.Dtos.PatchStatusRequest;
 import com.shelfj.tenant.dto.Dtos.TenantResponse;
+import com.shelfj.tenant.dto.PlanDtos;
 import com.shelfj.tenant.mapper.Mappers;
+import com.shelfj.tenant.mapper.PlanMappers;
+import com.shelfj.tenant.service.PlanService;
 import com.shelfj.tenant.service.TenantService;
 import com.shelfj.web.ApiResponse;
 import com.shelfj.web.Cursor;
@@ -16,6 +19,7 @@ import jakarta.ws.rs.Consumes;
 import jakarta.ws.rs.GET;
 import jakarta.ws.rs.PATCH;
 import jakarta.ws.rs.POST;
+import jakarta.ws.rs.PUT;
 import jakarta.ws.rs.Path;
 import jakarta.ws.rs.PathParam;
 import jakarta.ws.rs.Produces;
@@ -34,6 +38,8 @@ import org.eclipse.microprofile.openapi.annotations.tags.Tag;
 @Consumes(MediaType.APPLICATION_JSON)
 @Tag(name = "Platform")
 public class PlatformResource {
+
+  @Inject PlanService plans;
 
   @Inject TenantService service;
   @Inject TenantContext ctx;
@@ -129,6 +135,36 @@ public class PlatformResource {
     ctx.requireAnyRole("PLATFORM_ADMIN");
     Validations.validate(req);
     return ApiResponse.ok(Mappers.toTenant(service.patchTenantStatus(tenantId, req)));
+  }
+
+  /**
+   * Puts a business on a plan (21.8).
+   *
+   * <p>Refused when the business already uses more than the plan allows, and the refusal names what
+   * is over: moving somebody onto a plan they do not fit would either have to take their stores
+   * away or leave them quietly past a limit they are now told they have.
+   *
+   * @param tenantId the business to move
+   * @param req the plan, and why
+   * @return the plan it is now on, with each limit against what it is using
+   * @throws com.shelfj.web.ApiException 404 when there is no such business or plan; 409 {@code
+   *     PLAN_NOT_SOLD}, {@code PLAN_LIMIT_EXCEEDED_NOW}
+   */
+  @Operation(
+      summary = "Put a business on a plan",
+      description =
+          "PLATFORM_ADMIN. Refused when the business already exceeds what the plan allows"
+              + " (PLAN_LIMIT_EXCEEDED_NOW), naming each limit it is over.")
+  @APIResponse(responseCode = "409", description = "The plan is not on sale, or does not fit")
+  @PUT
+  @jakarta.ws.rs.Path("/tenants/{tenantId}/plan")
+  public ApiResponse<PlanDtos.TenantPlanResponse> putOnPlan(
+      @PathParam("tenantId") UUID tenantId, PlanDtos.TenantPlanRequest req) {
+    ctx.requireAnyRole("PLATFORM_ADMIN");
+    Validations.validate(req);
+    return ApiResponse.ok(
+        PlanMappers.toDto(
+            plans.putOnPlan(tenantId, ctx.requireUserId(), req.planId(), req.reason())));
   }
 
   /**

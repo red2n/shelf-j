@@ -98,6 +98,17 @@ public class ProductRepository extends BaseOutboxRepository {
    * @param event the outbox row to commit alongside the write
    * @return the product as stored
    */
+  /** How many products a business has, for the limit its plan sets (21.8). */
+  public long countProducts(UUID tenantId) {
+    List<Long> rows =
+        query(
+            "SELECT count(*) FROM products WHERE tenant_id = ?",
+            ps -> ps.setObject(1, tenantId),
+            rs -> rs.getLong(1),
+            "count a business's products");
+    return rows.isEmpty() ? 0 : rows.get(0);
+  }
+
   public Product createProductWithOutbox(Product p, OutboxRow event) {
     return createProductWithOutbox(p, List.of(event));
   }

@@ -80,6 +80,7 @@ import java.util.UUID;
 public class ProductService {
 
   @Inject ProductRepository repo;
+  @Inject com.shelfj.service.Entitlements entitlements;
   @Inject BrandRepository brandRepo;
   @Inject CategoryRepository categoryRepo;
   @Inject UomRepository uomRepo;
@@ -245,6 +246,13 @@ public class ProductService {
    * @return the created product
    */
   public Product createProduct(UUID tenantId, CreateProductRequest req) {
+    // What the business is sold decides how many products it may list (21.8). The count is asked
+    // for only when its plan sets a ceiling.
+    entitlements.requireRoom(
+        tenantId,
+        com.shelfj.service.Entitlements.PRODUCTS_MAX,
+        "products",
+        () -> repo.countProducts(tenantId));
     UUID id = Ids.newId();
     Instant now = Instant.now();
     var safety =

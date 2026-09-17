@@ -7,6 +7,7 @@ export 'dashboard_screen.dart';
 export 'catalog_screen.dart';
 export 'inventory_screen.dart';
 export 'food_safety_screen.dart';
+export 'plan_screen.dart';
 export 'recalls_screen.dart';
 export 'age_checks_screen.dart';
 export 'obligations_screen.dart';
