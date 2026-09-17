@@ -7,3 +7,4 @@ export 'cart_screen.dart';
 export 'tender_screen.dart';
 export 'cash_screen.dart';
 export 'offline_queue_screen.dart';
+export 'customer_display.dart';
