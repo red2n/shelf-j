@@ -4,7 +4,8 @@
 // Every call goes through the gateway with a real JWT. The gateway strips client-supplied
 // X-Tenant-Id / X-User-Id / X-Roles, so a script that sends those instead of a token is testing
 // nothing.
-import crypto from 'k6/crypto';
+// Under its own name: the global `crypto` is WebCrypto, which newId() and the software passkey use.
+import k6crypto from 'k6/crypto';
 import http from 'k6/http';
 import { check, sleep } from 'k6';
 import encoding from 'k6/encoding';
@@ -211,7 +212,7 @@ export function totp(secretBase32, stepsFromNow = 0) {
     counter[i] = n & 0xff;
     n = Math.floor(n / 256);
   }
-  const hex = crypto.hmac('sha1', fromBase32(secretBase32), counter.buffer, 'hex');
+  const hex = k6crypto.hmac('sha1', fromBase32(secretBase32), counter.buffer, 'hex');
   const offset = parseInt(hex.slice(-1), 16);
   const binary = parseInt(hex.substr(offset * 2, 8), 16) & 0x7fffffff;
   return String(binary % 1000000).padStart(6, '0');
