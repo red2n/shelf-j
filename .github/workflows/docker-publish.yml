@@ -236,7 +236,7 @@ jobs:
           SHELFJ_API_BASE: ${{ vars.SHELFJ_API_BASE || '/api' }}
         run: |
           flutter build web --release \
-            --dart-define=SHELFJ_API_BASE=$SHELFJ_API_BASE
+            --dart-define="SHELFJ_API_BASE=${SHELFJ_API_BASE}"
 
       - name: Set up Docker Buildx
         uses: docker/setup-buildx-action@v3

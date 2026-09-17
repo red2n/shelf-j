@@ -45,6 +45,7 @@ tools/duplo
 /cat.csv
 tools/kubeconform
 tools/actionlint
+tools/shellcheck
 tools/cosign
 tools/syft
 tools/docker-buildx
