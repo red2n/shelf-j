@@ -66,6 +66,91 @@ public class ServiceConfig extends BaseServiceConfig {
   @ConfigProperty(name = "shelfj.jwt.refresh-ttl-seconds", defaultValue = "1209600")
   long refreshTtlSeconds;
 
+  // --- Second factors (20.12) ---
+
+  /** The name an authenticator app shows beside the code. */
+  @Inject
+  @ConfigProperty(name = "shelfj.mfa.issuer", defaultValue = "Shelf-J")
+  String mfaIssuer;
+
+  /**
+   * The WebAuthn relying party id: the domain the app is served from, without scheme or port. A
+   * passkey made for one id is no use under another, which is what makes it phishing-resistant.
+   */
+  @Inject
+  @ConfigProperty(name = "shelfj.mfa.rp-id", defaultValue = "localhost")
+  String mfaRpId;
+
+  /** The origins the app is served from, exactly as a browser reports them, comma-separated. */
+  @Inject
+  @ConfigProperty(
+      name = "shelfj.mfa.origins",
+      defaultValue = "http://localhost:8088,http://localhost:40015")
+  String mfaOrigins;
+
+  /** Whether a platform administrator must have a second factor: on unless a deployment says no. */
+  @Inject
+  @ConfigProperty(name = "shelfj.mfa.platform-admin-required", defaultValue = "true")
+  boolean mfaPlatformAdminRequired;
+
+  /** How long a sign-in may wait for its second factor. */
+  @Inject
+  @ConfigProperty(name = "shelfj.mfa.challenge-ttl-seconds", defaultValue = "300")
+  long mfaChallengeTtlSeconds;
+
+  /** Wrong answers a waiting sign-in survives before the password has to be given again. */
+  @Inject
+  @ConfigProperty(name = "shelfj.mfa.max-attempts", defaultValue = "5")
+  int mfaMaxAttempts;
+
+  /**
+   * Wrong answers, over every sign-in of one login, that lock its second factor for the window
+   * below: the password buys five guesses at a time, and this is what stops it being bought for
+   * ever (NIST SP 800-63B-4 asks for no more than a hundred consecutive failures).
+   */
+  @Inject
+  @ConfigProperty(name = "shelfj.mfa.lockout-failures", defaultValue = "20")
+  int mfaLockoutFailures;
+
+  @Inject
+  @ConfigProperty(name = "shelfj.mfa.lockout-window-seconds", defaultValue = "900")
+  long mfaLockoutWindowSeconds;
+
+  public int mfaLockoutFailures() {
+    return mfaLockoutFailures;
+  }
+
+  public long mfaLockoutWindowSeconds() {
+    return mfaLockoutWindowSeconds;
+  }
+
+  public String mfaIssuer() {
+    return mfaIssuer;
+  }
+
+  public String mfaRpId() {
+    return mfaRpId;
+  }
+
+  public java.util.Set<String> mfaOrigins() {
+    return java.util.Arrays.stream(mfaOrigins.split(","))
+        .map(String::trim)
+        .filter(o -> !o.isEmpty())
+        .collect(java.util.stream.Collectors.toUnmodifiableSet());
+  }
+
+  public boolean mfaPlatformAdminRequired() {
+    return mfaPlatformAdminRequired;
+  }
+
+  public long mfaChallengeTtlSeconds() {
+    return mfaChallengeTtlSeconds;
+  }
+
+  public int mfaMaxAttempts() {
+    return mfaMaxAttempts;
+  }
+
   /**
    * {@inheritDoc}
    *

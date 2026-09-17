@@ -38,6 +38,10 @@ spec:
               valueFrom: { secretKeyRef: { name: shelfj-platform-admin, key: PLATFORM_ADMIN_EMAIL } }
             - name: ADMIN_PASSWORD
               valueFrom: { secretKeyRef: { name: shelfj-platform-admin, key: PLATFORM_ADMIN_PASSWORD } }
+            # The administrator's authenticator secret (20.12): the account is born with its second
+            # factor. generate-secrets.sh makes it and says how to read it back for the app.
+            - name: ADMIN_TOTP_SECRET
+              valueFrom: { secretKeyRef: { name: shelfj-platform-admin, key: PLATFORM_ADMIN_TOTP_SECRET } }
           command:
             - sh
             - -c
@@ -49,7 +53,7 @@ spec:
               done
               STATUS=$(curl -s -o /dev/null -w '%{http_code}' -X POST http://gateway:8080/api/iam-svc/bootstrap/admin \
                 -H 'Content-Type: application/json' \
-                -d "{\"email\":\"$ADMIN_EMAIL\",\"password\":\"$ADMIN_PASSWORD\"}")
+                -d "{\"email\":\"$ADMIN_EMAIL\",\"password\":\"$ADMIN_PASSWORD\",\"totpSecret\":\"$ADMIN_TOTP_SECRET\"}")
               if [ "$STATUS" = "201" ]; then echo "[bootstrap] Platform admin created ($ADMIN_EMAIL)";
               elif [ "$STATUS" = "409" ]; then echo "[bootstrap] Platform admin already exists — skipped";
               else echo "[bootstrap] Unexpected status $STATUS"; exit 1; fi

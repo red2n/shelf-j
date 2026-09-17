@@ -642,6 +642,92 @@ class JwtAuthFilterTest {
     org.junit.jupiter.api.Assertions.assertFalse(headers.containsKey("X-Permissions"));
   }
 
+  // ── Second factors (20.12) ─────────────────────────────────────────────────
+
+  private static String enrolmentToken(String scope) {
+    return com.auth0
+        .jwt
+        .JWT
+        .create()
+        .withKeyId(KID)
+        .withIssuer("shelfj")
+        .withSubject("01a090ae-611e-700f-b645-a14095230b77")
+        .withClaim("type", "STAFF")
+        .withArrayClaim("roles", new String[] {})
+        .withClaim("scope", scope)
+        .sign(SIGNER);
+  }
+
+  @Test
+  void anEnrolmentTokenReachesTheSecondFactorRoutesAndSaysWhatItIs() throws IOException {
+    when(uriInfo.getPath()).thenReturn("api/iam-svc/auth/mfa/totp/confirm");
+    when(requestContext.getMethod()).thenReturn("POST");
+    when(requestContext.getHeaderString("Authorization"))
+        .thenReturn("Bearer " + enrolmentToken("mfa-enrol"));
+
+    filter.filter(requestContext);
+
+    verify(requestContext, never()).abortWith(any());
+    org.junit.jupiter.api.Assertions.assertEquals("mfa-enrol", headers.getFirst("X-Auth-Scope"));
+  }
+
+  @Test
+  void anEnrolmentTokenReachesNothingElse() throws IOException {
+    for (String path :
+        new String[] {
+          "api/order-svc/orders",
+          "api/iam-svc/auth/me",
+          "api/iam-svc/auth/mfa-policy",
+          "api/iam-svc/auth/admin/mfa-policy",
+          "api/customer-svc/customers/me"
+        }) {
+      org.mockito.Mockito.reset(requestContext);
+      lenient().when(requestContext.getUriInfo()).thenReturn(uriInfo);
+      lenient().when(requestContext.getHeaders()).thenReturn(headers);
+      when(uriInfo.getPath()).thenReturn(path);
+      lenient().when(requestContext.getMethod()).thenReturn("GET");
+      when(requestContext.getHeaderString("Authorization"))
+          .thenReturn("Bearer " + enrolmentToken("mfa-enrol"));
+
+      filter.filter(requestContext);
+
+      org.junit.jupiter.api.Assertions.assertEquals(403, abortedStatus(), path);
+    }
+  }
+
+  @Test
+  void aScopeTheGatewayDoesNotKnowReachesNothingNotEvenTheSecondFactorRoutes() throws IOException {
+    when(uriInfo.getPath()).thenReturn("api/iam-svc/auth/mfa/totp");
+    lenient().when(requestContext.getMethod()).thenReturn("POST");
+    when(requestContext.getHeaderString("Authorization"))
+        .thenReturn("Bearer " + enrolmentToken("everything"));
+
+    filter.filter(requestContext);
+
+    org.junit.jupiter.api.Assertions.assertEquals(403, abortedStatus());
+  }
+
+  @Test
+  void aClientCannotClaimAScopeForItself() throws IOException {
+    headers.putSingle("X-Auth-Scope", "mfa-enrol");
+    protectedRead(staffToken(new String[] {"OWNER"}, null));
+
+    filter.filter(requestContext);
+
+    verify(requestContext, never()).abortWith(any());
+    org.junit.jupiter.api.Assertions.assertFalse(headers.containsKey("X-Auth-Scope"));
+  }
+
+  @Test
+  void aSignInAnswersItsSecondFactorWithoutAToken() throws IOException {
+    when(uriInfo.getPath()).thenReturn("api/iam-svc/auth/mfa/login");
+    lenient().when(requestContext.getMethod()).thenReturn("POST");
+
+    filter.filter(requestContext);
+
+    verify(requestContext, never()).abortWith(any());
+  }
+
   // ── Token signing (20.15; RFC 8725) ────────────────────────────────────────
 
   /** An owner's token for tenant-xyz under this key id (null for none), signed by this signer. */

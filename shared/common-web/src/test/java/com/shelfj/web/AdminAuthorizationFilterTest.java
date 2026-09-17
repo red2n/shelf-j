@@ -438,6 +438,43 @@ class AdminAuthorizationFilterTest {
     assertNotAborted(invoke("POST", "/admin/cash/till-sessions"));
   }
 
+  // ── 20.12: second factors ─────────────────────────────────────────────────────
+
+  @Test
+  void aSignInAnswersItsSecondFactorWithNoRoleAtAll() throws Exception {
+    assertNotAborted(invoke("POST", "/auth/mfa/login"));
+    assertNotAborted(invoke("POST", "/auth/mfa/login/passkey-options"));
+  }
+
+  @Test
+  void anyLoginSetsUpAndRemovesItsOwnFactors() throws Exception {
+    ctx.set(null, null, Set.of("CUSTOMER"), null, null);
+    assertNotAborted(invoke("GET", "/auth/mfa"));
+    assertNotAborted(invoke("POST", "/auth/mfa/totp"));
+    assertNotAborted(invoke("POST", "/auth/mfa/totp/confirm"));
+    assertNotAborted(invoke("POST", "/auth/mfa/totp/remove"));
+    assertNotAborted(invoke("POST", "/auth/mfa/recovery-codes"));
+    assertNotAborted(invoke("POST", "/auth/mfa/passkeys/options"));
+    assertNotAborted(invoke("POST", "/auth/mfa/passkeys"));
+  }
+
+  @Test
+  void theBusinesssRuleAndTheLostPhoneResetStayWithManagement() throws Exception {
+    ctx.set(null, null, Set.of("CUSTOMER"), null, null);
+    assertAborted(invoke("GET", "/auth/admin/mfa-policy"), 403);
+    assertAborted(invoke("PUT", "/auth/admin/mfa-policy"), 403);
+    assertAborted(
+        invoke("DELETE", "/auth/admin/staff-users/01a090ae-611e-7011-ae7d-1bd68c966ff6/mfa"), 403);
+    ctx.set(null, null, Set.of("CASHIER"), null, null);
+    assertAborted(invoke("PUT", "/auth/admin/mfa-policy"), 403);
+  }
+
+  @Test
+  void aLookalikeOfTheSecondFactorPathsIsNotOpened() throws Exception {
+    assertAborted(invoke("POST", "/auth/mfa-something"), 403);
+    assertAborted(invoke("POST", "/auth/mfax/login"), 403);
+  }
+
   // ── 20.15: the token signing keys' public halves ─────────────────────────────
 
   @Test

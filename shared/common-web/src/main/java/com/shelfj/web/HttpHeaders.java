@@ -47,6 +47,16 @@ public final class HttpHeaders {
    */
   public static final String PERMISSIONS = "X-Permissions";
 
+  /**
+   * What a token is good for when it is not good for everything (20.12): {@code mfa-enrol} marks a
+   * sign-in that owes a second factor it has yet to set up. The gateway stamps it from the token's
+   * {@code scope} claim and lets such a token reach the second-factor routes and nothing else.
+   */
+  public static final String AUTH_SCOPE = "X-Auth-Scope";
+
+  /** The scope of a token that may only set up a second factor. */
+  public static final String SCOPE_MFA_ENROL = "mfa-enrol";
+
   /** Idempotency key for retryable writes (checkout, payment capture, stock receipt). */
   public static final String IDEMPOTENCY_KEY = "Idempotency-Key";
 

@@ -20,7 +20,17 @@ public class ExportableData extends TenantDataSpec {
 
   @Override
   public Map<String, String> excludedTables() {
+    String secondFactor =
+        "a login's second factor: a credential; it is set up again at the destination";
     return Map.of(
+        "mfa_totp",
+        secondFactor,
+        "mfa_recovery_codes",
+        secondFactor,
+        "mfa_passkeys",
+        secondFactor,
+        "mfa_challenges",
+        "sign-ins waiting on a second factor, minutes old: not data",
         "otp_codes",
         "one-time sign-in codes sent to a phone or email address and valid for minutes: not data, and not tied to a business",
         "refresh_tokens",
@@ -45,7 +55,13 @@ public class ExportableData extends TenantDataSpec {
 
   @Override
   public Map<String, String> erasurePredicates() {
-    return Map.of("refresh_tokens", "user_id IN (SELECT u.id FROM users u WHERE u.tenant_id = ?)");
+    String staffOfTheBusiness = "user_id IN (SELECT u.id FROM users u WHERE u.tenant_id = ?)";
+    return Map.of(
+        "refresh_tokens", staffOfTheBusiness,
+        "mfa_totp", staffOfTheBusiness,
+        "mfa_recovery_codes", staffOfTheBusiness,
+        "mfa_passkeys", staffOfTheBusiness,
+        "mfa_challenges", staffOfTheBusiness);
   }
 
   @Override

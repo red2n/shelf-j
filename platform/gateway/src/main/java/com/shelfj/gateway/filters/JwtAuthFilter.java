@@ -43,6 +43,10 @@ public class JwtAuthFilter implements ContainerRequestFilter {
           // The token signing keys' public halves (20.15): public by nature.
           "api/iam-svc/auth/.well-known/jwks.json",
           "api/iam-svc/auth/platform-login",
+          // A sign-in answering its second factor (20.12): the password was right, no token exists
+          // yet, and the mfaToken in the body names the waiting sign-in.
+          "api/iam-svc/auth/mfa/login",
+          "api/iam-svc/auth/mfa/login/passkey-options",
           "api/iam-svc/auth/refresh",
           "api/iam-svc/bootstrap/admin",
           // The opt-out link in a marketing message (PECR reg.23). Necessarily public: the person
@@ -115,6 +119,7 @@ public class JwtAuthFilter implements ContainerRequestFilter {
     ctx.getHeaders().remove(HttpHeaders.ROLES);
     ctx.getHeaders().remove(HttpHeaders.STORE_IDS);
     ctx.getHeaders().remove(HttpHeaders.PERMISSIONS);
+    ctx.getHeaders().remove(HttpHeaders.AUTH_SCOPE);
 
     // Allow public auth paths without a token.
     if (isPublic(path)) {
@@ -192,6 +197,20 @@ public class JwtAuthFilter implements ContainerRequestFilter {
       }
       ctx.abortWith(unauthorized("Invalid or expired token"));
       return;
+    }
+
+    // A token that may only set a second factor up (20.12) reaches those routes and nothing else;
+    // a scope this gateway does not know reaches nothing at all.
+    String scope = jwt.getClaim("scope").asString();
+    if (scope != null) {
+      String target = normalize(path);
+      boolean secondFactorRoute =
+          "api/iam-svc/auth/mfa".equals(target) || target.startsWith("api/iam-svc/auth/mfa/");
+      if (!HttpHeaders.SCOPE_MFA_ENROL.equals(scope) || !secondFactorRoute) {
+        ctx.abortWith(enrolmentOwed());
+        return;
+      }
+      ctx.getHeaders().putSingle(HttpHeaders.AUTH_SCOPE, scope);
     }
 
     // Stamp verified claims as trusted headers for downstream services.
@@ -569,6 +588,17 @@ public class JwtAuthFilter implements ContainerRequestFilter {
                 com.shelfj.web.ErrorBody.of(
                     "AUTH_KEYS_UNAVAILABLE",
                     "tokens cannot be verified yet: the signing keys have not been read")))
+        .build();
+  }
+
+  private static Response enrolmentOwed() {
+    return Response.status(Response.Status.FORBIDDEN)
+        .type(MediaType.APPLICATION_JSON)
+        .entity(
+            com.shelfj.web.ApiResponse.error(
+                com.shelfj.web.ErrorBody.of(
+                    "MFA_ENROLMENT_REQUIRED",
+                    "This sign-in must set up a second factor before it can do anything else")))
         .build();
   }
 

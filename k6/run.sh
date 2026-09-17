@@ -14,6 +14,7 @@ env_value() { grep -m1 "^$1=" .env 2>/dev/null | cut -d= -f2-; }
 export BASE_URL="${BASE_URL:-http://localhost:8090}"
 export PLATFORM_ADMIN_EMAIL="${PLATFORM_ADMIN_EMAIL:-$(env_value PLATFORM_ADMIN_EMAIL)}"
 export PLATFORM_ADMIN_PASSWORD="${PLATFORM_ADMIN_PASSWORD:-$(env_value PLATFORM_ADMIN_PASSWORD)}"
+export PLATFORM_ADMIN_TOTP_SECRET="${PLATFORM_ADMIN_TOTP_SECRET:-$(env_value PLATFORM_ADMIN_TOTP_SECRET)}"
 
 FUNCTIONAL=(
   flow-guard-comprehensive flow-guard-runtime

@@ -4,6 +4,7 @@
 // Every call goes through the gateway with a real JWT. The gateway strips client-supplied
 // X-Tenant-Id / X-User-Id / X-Roles, so a script that sends those instead of a token is testing
 // nothing.
+import crypto from 'k6/crypto';
 import http from 'k6/http';
 import { check, sleep } from 'k6';
 import encoding from 'k6/encoding';
@@ -176,14 +177,78 @@ export function signInUntil(user, wanted, seconds = 90) {
   return claims(user.token);
 }
 
+const BASE32 = 'ABCDEFGHIJKLMNOPQRSTUVWXYZ234567';
+
+/** Base 32 (RFC 4648, padding and spaces forgiven) to bytes. */
+function fromBase32(text) {
+  const clean = String(text).replace(/[\s=-]/g, '').toUpperCase();
+  const out = [];
+  let buffer = 0;
+  let bits = 0;
+  for (const ch of clean) {
+    const value = BASE32.indexOf(ch);
+    if (value < 0) throw new Error('not base 32');
+    buffer = (buffer << 5) | value;
+    bits += 5;
+    if (bits >= 8) {
+      out.push((buffer >> (bits - 8)) & 0xff);
+      bits -= 8;
+    }
+  }
+  return new Uint8Array(out).buffer;
+}
+
+/**
+ * The code an authenticator app shows for a base-32 secret (RFC 6238: HMAC-SHA-1, six digits,
+ * thirty seconds), `stepsFromNow` time steps away — the server accepts one either side of now, and
+ * no code twice, so a flow that signs in more than once asks for the next step's code.
+ */
+export function totp(secretBase32, stepsFromNow = 0) {
+  const step = Math.floor(Date.now() / 30000) + stepsFromNow;
+  const counter = new Uint8Array(8);
+  let n = step;
+  for (let i = 7; i >= 0; i--) {
+    counter[i] = n & 0xff;
+    n = Math.floor(n / 256);
+  }
+  const hex = crypto.hmac('sha1', fromBase32(secretBase32), counter.buffer, 'hex');
+  const offset = parseInt(hex.slice(-1), 16);
+  const binary = parseInt(hex.substr(offset * 2, 8), 16) & 0x7fffffff;
+  return String(binary % 1000000).padStart(6, '0');
+}
+
+/** Answer a sign-in's second factor (20.12). */
+export function answerSecondFactor(mfaToken, method, code) {
+  return call('POST', '/api/iam-svc/auth/mfa/login', { body: { mfaToken, method, code } });
+}
+
+/**
+ * Sign in as the platform administrator, who is born with an authenticator (20.12): the password,
+ * then a code. Suites run one after another against the same account and no code works twice, so
+ * a code the server has already seen is answered with the next step's, and failing that the wait
+ * is for the step to turn.
+ */
 export function platformAdmin() {
   const email = __ENV.PLATFORM_ADMIN_EMAIL;
   const password = __ENV.PLATFORM_ADMIN_PASSWORD;
+  const secret = __ENV.PLATFORM_ADMIN_TOTP_SECRET;
   if (!email || !password) {
     throw new Error('set PLATFORM_ADMIN_EMAIL and PLATFORM_ADMIN_PASSWORD (k6/run.sh reads them from .env)');
   }
-  const res = call('POST', '/api/iam-svc/auth/platform-login', { body: { email, password } });
-  return { email, password, token: must(res, 200, 'platform-login').accessToken };
+  let last = null;
+  for (let attempt = 0; attempt < 8; attempt++) {
+    const first = must(call('POST', '/api/iam-svc/auth/platform-login', { body: { email, password } }), 200, 'platform-login');
+    if (first.accessToken && !first.mfaEnrolmentRequired) return { email, password, token: first.accessToken };
+    if (!first.mfaRequired) throw new Error(`platform-login: the administrator has no second factor and must set one up: ${JSON.stringify(first).slice(0, 200)}`);
+    if (!secret) throw new Error('set PLATFORM_ADMIN_TOTP_SECRET (k6/run.sh reads it from .env): the platform administrator signs in with a code');
+    for (const stepsFromNow of [0, 1]) {
+      last = answerSecondFactor(first.mfaToken, 'TOTP', totp(secret, stepsFromNow));
+      if (last.status === 200) return { email, password, token: data(last).accessToken };
+    }
+    // Both of this moment's codes were used by a sign-in just before: wait for the step to turn.
+    sleep(10);
+  }
+  throw new Error(`platform-login: the second factor was never accepted: ${last && last.status} ${last && last.body}`);
 }
 
 // ── tenants ───────────────────────────────────────────────────────────────────

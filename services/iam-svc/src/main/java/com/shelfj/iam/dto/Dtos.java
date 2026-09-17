@@ -72,8 +72,17 @@ public final class Dtos {
   public record LogoutRequest(
       @Schema(description = "The refresh token to revoke.") @NotBlank String refreshToken) {}
 
-  /** Token pair returned on register/login/refresh. */
-  @Schema(name = "TokenResponse", description = "Access/refresh token pair.")
+  /**
+   * What a sign-in answers: a token pair — or, when the password was right and a second factor is
+   * owed (20.12), what to do next instead of one.
+   */
+  @Schema(
+      name = "TokenResponse",
+      description =
+          "Access/refresh token pair. When mfaRequired is true there are no tokens yet: answer the"
+              + " second factor at POST /auth/mfa/login with mfaToken. When mfaEnrolmentRequired is"
+              + " true the access token is good only for setting a second factor up"
+              + " (/auth/mfa/**), which then answers with the real pair.")
   public record TokenResponse(
       @Schema(description = "Short-lived JWT used as the Authorization: Bearer credential.")
           String accessToken,
@@ -81,7 +90,23 @@ public final class Dtos {
           String refreshToken,
       @Schema(description = "Always \"Bearer\".") String tokenType,
       @Schema(description = "Access token lifetime in seconds from issuance.")
-          long expiresInSeconds) {
+          Long expiresInSeconds,
+      @Schema(description = "True when the password was right and a second factor is owed.")
+          Boolean mfaRequired,
+      @Schema(description = "Names the waiting sign-in at POST /auth/mfa/login. Minutes, not days.")
+          String mfaToken,
+      @Schema(description = "The second factors this login can answer with.")
+          java.util.List<String> mfaMethods,
+      @Schema(
+              description =
+                  "True when this login must have a second factor and has none: the access token"
+                      + " only reaches /auth/mfa/**.")
+          Boolean mfaEnrolmentRequired) {
+
+    public TokenResponse {
+      mfaMethods = mfaMethods == null ? null : java.util.List.copyOf(mfaMethods);
+    }
+
     /**
      * Builds a {@code Bearer} token pair.
      *
@@ -91,7 +116,17 @@ public final class Dtos {
      * @return the response with {@code tokenType} fixed to {@code Bearer}
      */
     public static TokenResponse bearer(String access, String refresh, long ttl) {
-      return new TokenResponse(access, refresh, "Bearer", ttl);
+      return new TokenResponse(access, refresh, "Bearer", ttl, null, null, null, null);
+    }
+
+    /** The password was right; a second factor is owed before any token exists. */
+    public static TokenResponse secondFactorOwed(String mfaToken, java.util.List<String> methods) {
+      return new TokenResponse(null, null, null, null, true, mfaToken, methods, null);
+    }
+
+    /** A token that can only set a second factor up, for a login that must have one. */
+    public static TokenResponse enrolmentOwed(String access, long ttl) {
+      return new TokenResponse(access, null, "Bearer", ttl, null, null, null, true);
     }
   }
 

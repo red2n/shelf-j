@@ -18,32 +18,42 @@ public class RefreshTokenRepository extends BaseJdbcRepository {
    * @param userId the user the token authenticates
    * @param tokenHash the hash of the token; the raw value is never persisted
    * @param expiresAt when the token stops being redeemable, UTC
+   * @param amr how the session was authenticated, carried to the tokens it is renewed into
    */
-  public void store(UUID userId, String tokenHash, Instant expiresAt) {
+  public void store(UUID userId, String tokenHash, Instant expiresAt, String amr) {
     exec(
-        "INSERT INTO refresh_tokens (id, user_id, token_hash, expires_at, revoked)"
-            + " VALUES (?,?,?,?,false)",
+        "INSERT INTO refresh_tokens (id, user_id, token_hash, expires_at, revoked, amr)"
+            + " VALUES (?,?,?,?,false,?)",
         ps -> {
           ps.setObject(1, Ids.newId());
           ps.setObject(2, userId);
           ps.setString(3, tokenHash);
           ps.setTimestamp(4, Timestamp.from(expiresAt));
+          ps.setString(5, amr);
         },
         "store refresh token");
   }
+
+  /**
+   * A session a refresh token stood for.
+   *
+   * @param amr how it was authenticated (20.12): {@code pwd}, {@code pwd,otp}, {@code pwd,hwk}…;
+   *     null for a session older than second factors, which was a password's
+   */
+  public record Session(UUID userId, String amr) {}
 
   /**
    * Atomically consume (revoke) a valid token and return its owner. Validate-then-revoke as two
    * statements would let two concurrent requests both pass validation and each mint a fresh token
    * pair from the same (supposedly single-use) refresh token.
    */
-  public Optional<UUID> consume(String tokenHash) {
+  public Optional<Session> consume(String tokenHash) {
     return query(
             "UPDATE refresh_tokens SET revoked = true"
                 + " WHERE token_hash = ? AND revoked = false AND expires_at > now()"
-                + " RETURNING user_id",
+                + " RETURNING user_id, amr",
             ps -> ps.setString(1, tokenHash),
-            rs -> rs.getObject("user_id", UUID.class),
+            rs -> new Session(rs.getObject("user_id", UUID.class), rs.getString("amr")),
             "consume refresh token")
         .stream()
         .findFirst();

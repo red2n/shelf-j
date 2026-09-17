@@ -45,6 +45,31 @@ public class JwtService {
   }
 
   /**
+   * A token for a login that must have a second factor and has none (20.12): it says who, and
+   * nothing else — no role, no tenant — and its {@code scope} lets the gateway pass it to the
+   * second-factor routes alone. Ten minutes: long enough to scan a QR code.
+   */
+  public String issueEnrolmentToken(UUID userId, String userType, String email) {
+    SigningKeys.Signer signer = keys.signer();
+    Instant now = Instant.now();
+    return JWT.create()
+        .withKeyId(signer.kid())
+        .withIssuer(config.jwtIssuer())
+        .withSubject(userId.toString())
+        .withClaim("type", userType)
+        .withClaim("roles", List.of())
+        .withClaim("email", email)
+        .withClaim("scope", com.shelfj.web.HttpHeaders.SCOPE_MFA_ENROL)
+        .withClaim("amr", List.of("pwd"))
+        .withIssuedAt(now)
+        .withExpiresAt(now.plusSeconds(ENROLMENT_TTL_SECONDS))
+        .sign(Algorithm.RSA256(null, signer.privateKey()));
+  }
+
+  /** How long an enrolment token lasts. */
+  public static final long ENROLMENT_TTL_SECONDS = 600;
+
+  /**
    * Issue a signed access token carrying a permission claim (20.10).
    *
    * @param permissions the {@code perms} claim, or {@code null} to omit it — a login with no custom
@@ -58,6 +83,25 @@ public class JwtService {
       Set<String> roles,
       Set<UUID> storeIds,
       Set<String> permissions) {
+    return issueAccessToken(
+        userId, tenantId, userType, email, roles, storeIds, permissions, List.of("pwd"));
+  }
+
+  /**
+   * Issue a signed access token that says how its holder was authenticated (20.12).
+   *
+   * @param amr the authentication methods, as RFC 8176 names them: {@code pwd} for the password,
+   *     then {@code otp} (an authenticator app or a recovery code) or {@code hwk} (a passkey)
+   */
+  public String issueAccessToken(
+      UUID userId,
+      UUID tenantId,
+      String userType,
+      String email,
+      Set<String> roles,
+      Set<UUID> storeIds,
+      Set<String> permissions,
+      List<String> amr) {
     Instant now = Instant.now();
     var builder =
         JWT.create()
@@ -89,6 +133,7 @@ public class JwtService {
     if (permissions != null) {
       builder.withClaim("perms", List.copyOf(new java.util.TreeSet<>(permissions)));
     }
+    builder.withClaim("amr", List.copyOf(amr));
     SigningKeys.Signer signer = keys.signer();
     return builder.withKeyId(signer.kid()).sign(Algorithm.RSA256(null, signer.privateKey()));
   }
