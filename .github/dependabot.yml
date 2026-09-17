@@ -1,0 +1,34 @@
+# Proposes updates so that a fix is a pull request away (22.11). Security updates come as soon as
+# an advisory names a version we use (enable "Dependabot security updates" in the repository's
+# settings — a file cannot switch that on); version updates come weekly, grouped so that a week's
+# patch and minor bumps are one pull request per ecosystem rather than thirty. CI — the build, the
+# Flutter job, the manifests, the supply chain check and the vulnerability scan — judges each one.
+version: 2
+updates:
+  - package-ecosystem: maven
+    directory: /
+    schedule: { interval: weekly, day: monday }
+    open-pull-requests-limit: 5
+    groups:
+      maven-minor-and-patch:
+        update-types: [minor, patch]
+
+  - package-ecosystem: pub
+    directory: /frontends/shelf-app
+    schedule: { interval: weekly, day: monday }
+    open-pull-requests-limit: 5
+    groups:
+      pub-minor-and-patch:
+        update-types: [minor, patch]
+
+  # The base images of Dockerfile.svc and Dockerfile.web: most of an image's findings live there.
+  - package-ecosystem: docker
+    directory: /
+    schedule: { interval: weekly, day: monday }
+
+  - package-ecosystem: github-actions
+    directory: /
+    schedule: { interval: weekly, day: monday }
+    groups:
+      actions:
+        patterns: ['*']

@@ -66,6 +66,20 @@ The script resolves each tag to a digest once, then requires the signature to co
 
 `scripts/supply-chain-check.py` runs in CI and fails the build if either workflow stops doing any of this — an SBOM switched off, a tag signed instead of a digest, a stored key instead of keyless, an image the verifier does not know; `--self-test` breaks each promise in memory and fails unless the check notices. `scripts/supply-chain-selftest.sh` drives the mechanism end to end against a local registry (build with attestations, sign, attest, verify; then a wrong key, an unsigned image and a moved tag, each refused).
 
+## Known vulnerabilities: scanned before signing, and every night after
+
+`scripts/vuln-scan.sh` (grype) is one script with three callers:
+
+| Where | What it scans | When |
+|---|---|---|
+| `docker-publish.yml` | each pushed image by digest — OS packages and everything in it | after the push, **before** the SBOM is attested and the image signed: an image with a High or Critical finding is never signed, so `verify-release.sh` and an admission policy refuse it |
+| `vulnerability-scan.yml` | the reactor's SBOM (every shipped jar) and the app's Dart packages; on main and nightly also all fifteen published images | pull requests, pushes to main, and 03:17 UTC every night — advisories arrive after the build, so what shipped clean does not stay clean |
+| a desk | `scripts/vuln-scan.sh deps`, `… image <ref>`, `… sbom <file>` | before pushing |
+
+The scan fails at **High**. The only way past a finding is an entry in [`security/vulnerability-exceptions.yaml`](../security/vulnerability-exceptions.yaml): the advisory, the package, a reason that is a sentence, who decided, and an expiry at most ninety days out — the day after, the scan fails again and the decision is made afresh. An entry with no advisory, no reason, no name or a lapsed date stops CI (`scripts/vuln-scan.sh exceptions`). `scripts/vuln-scan-selftest.sh` shows the gate refusing Log4Shell by name and the exceptions file refusing what is not a decision. Findings also go to the repository's code scanning.
+
+Fixes arrive as pull requests: `.github/dependabot.yml` watches Maven, the app's pub packages, the Dockerfiles' base images and the workflows' actions, weekly and grouped; security updates come as soon as an advisory names a version in use (switch on *Dependabot security updates* in the repository settings). Where Helidon's parent manages a vulnerable version, the parent pom raises Helidon's own version property and names the advisory beside it, so the line can go when Helidon catches up.
+
 ## Registry retention (why GHCR doesn't fill up)
 
 `docker-publish.yml`'s `cleanup` job runs after every publish and keeps only the **2 most recent tagged versions** per package (`keep-n-tagged: 2`), deleting older versions and any untagged/dangling manifests. That means:

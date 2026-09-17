@@ -8,7 +8,9 @@ name: Build & Publish Docker Images
 # SLSA build-provenance attestation (GitHub artifact attestations, pushed to the registry beside
 # the image), and a keyless Sigstore signature (cosign; the certificate names this workflow at this
 # ref, no key is kept anywhere). scripts/verify-release.sh checks all three; docs/RELEASE-PROCESS.md
-# says how. scripts/supply-chain-check.py fails CI if this file stops doing any of it.
+# says how. Before any of that, the pushed image is scanned for known vulnerabilities (22.11): one
+# that fails is never signed. scripts/supply-chain-check.py fails CI if this file stops doing any
+# of it.
 #
 # Build-once-per-service, no-artifact design: each service image used to be
 # built + pushed sequentially in ONE job off a single full-reactor `mvn install`.
@@ -158,6 +160,21 @@ jobs:
 
           echo "Published \`${image}@${digest}\`" >> "$GITHUB_STEP_SUMMARY"
 
+      # Known vulnerabilities (22.11), before anything vouches for the image: a High or Critical
+      # finding without a current decision in security/vulnerability-exceptions.yaml stops the job
+      # here, so the image is never signed or attested — and what is not signed does not verify.
+      - name: Install grype
+        id: grype
+        uses: anchore/scan-action/download-grype@v7
+
+      - name: Scan the pushed image
+        env:
+          GRYPE: ${{ steps.grype.outputs.cmd }}
+          IMAGE_REF: ${{ steps.build.outputs.image }}@${{ steps.build.outputs.digest }}
+        run: |
+          python3 -m pip install --quiet pyyaml
+          scripts/vuln-scan.sh image "registry:${IMAGE_REF}"
+
       # What the image contains: every OS package and every jar in it, as CycloneDX.
       - name: SBOM of the pushed image (CycloneDX)
         uses: anchore/sbom-action@v0
@@ -272,6 +289,19 @@ jobs:
           sbom: true
           tags: ${{ steps.meta.outputs.tags }}
           labels: ${{ steps.meta.outputs.labels }}
+
+      # Known vulnerabilities (22.11), before anything vouches for the image — as for the services.
+      - name: Install grype
+        id: grype
+        uses: anchore/scan-action/download-grype@v7
+
+      - name: Scan the pushed image
+        env:
+          GRYPE: ${{ steps.grype.outputs.cmd }}
+          IMAGE_REF: ${{ env.IMAGE_PREFIX }}-web@${{ steps.build.outputs.digest }}
+        run: |
+          python3 -m pip install --quiet pyyaml
+          scripts/vuln-scan.sh image "registry:${IMAGE_REF}"
 
       # The image holds nginx and a compiled bundle: the image SBOM lists the OS packages, and the
       # bundle's own ingredients are the Dart packages pubspec.lock pinned — a second SBOM, from
