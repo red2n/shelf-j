@@ -261,6 +261,9 @@ public class AdminAuthorizationFilter implements ContainerRequestFilter {
     // The shopper-facing catalogue: categories, product search, one product, its variants and
     // its image. Public by definition — this is the shop window.
     pathEqualsOrUnder(path, "/catalog")
+        // The public halves of the token signing keys (20.15): every verifier reads them, and a
+        // key set that needed a token to read could never verify the first one.
+        || "/auth/.well-known/jwks.json".equals(path)
         // Per-store storefront configuration and the list of stores a shopper may buy from,
         // plus the transact-or-not flow guard. Also read service-to-service by payment-svc.
         || pathEqualsOrUnder(path, "/storefront")

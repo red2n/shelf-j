@@ -26,18 +26,37 @@ class JwtAuthFilterTest {
   @Mock UriInfo uriInfo;
   @Mock TenantStatusGate tenantStatusGate;
 
+  private static final String KID = "unit-test-key";
+  private static final java.security.KeyPair KEYS = rsaKeys();
+  private static final com.auth0.jwt.algorithms.Algorithm SIGNER =
+      com.auth0.jwt.algorithms.Algorithm.RSA256(
+          null, (java.security.interfaces.RSAPrivateKey) KEYS.getPrivate());
+
   private JwtAuthFilter filter;
   private final MultivaluedMap<String, String> headers = new MultivaluedHashMap<>();
 
+  private static java.security.KeyPair rsaKeys() {
+    try {
+      var gen = java.security.KeyPairGenerator.getInstance("RSA");
+      gen.initialize(2048);
+      return gen.generateKeyPair();
+    } catch (java.security.NoSuchAlgorithmException e) {
+      throw new IllegalStateException(e);
+    }
+  }
+
+  private static java.security.interfaces.RSAPublicKey publicKey() {
+    return (java.security.interfaces.RSAPublicKey) KEYS.getPublic();
+  }
+
   @BeforeEach
   void setUp() {
-    lenient().when(config.jwtSecret()).thenReturn("unit-test-secret-of-at-least-32-chars!!");
     lenient().when(config.jwtIssuer()).thenReturn("shelfj");
     lenient().when(tenantStatusGate.isActive(any())).thenReturn(true);
     filter = new JwtAuthFilter();
     filter.config = config;
     filter.tenantStatusGate = tenantStatusGate;
-    filter.init();
+    filter.signingKeys = SigningKeySet.of(java.util.Map.of(KID, publicKey()));
     lenient().when(requestContext.getUriInfo()).thenReturn(uriInfo);
     lenient().when(requestContext.getHeaders()).thenReturn(headers);
   }
@@ -263,18 +282,7 @@ class JwtAuthFilterTest {
   @Test
   void signedInCustomerGetsTenantFromStorefrontHeaderOnMyOrders() throws IOException {
     // A customer token carries identity but no tenant claim.
-    String token =
-        com.auth0
-            .jwt
-            .JWT
-            .create()
-            .withIssuer("shelfj")
-            .withSubject("01a090ae-611e-700b-bde4-50df0324c37c")
-            .withClaim("type", "CUSTOMER")
-            .withArrayClaim("roles", new String[] {"CUSTOMER"})
-            .sign(
-                com.auth0.jwt.algorithms.Algorithm.HMAC256(
-                    "unit-test-secret-of-at-least-32-chars!!"));
+    String token = customerToken();
     when(uriInfo.getPath()).thenReturn("api/order-svc/orders/mine");
     when(requestContext.getMethod()).thenReturn("GET");
     when(requestContext.getHeaderString("Authorization")).thenReturn("Bearer " + token);
@@ -293,12 +301,12 @@ class JwtAuthFilterTest {
         .jwt
         .JWT
         .create()
+        .withKeyId(KID)
         .withIssuer("shelfj")
         .withSubject("01a090ae-611e-700b-bde4-50df0324c37c")
         .withClaim("type", "CUSTOMER")
         .withArrayClaim("roles", new String[] {"CUSTOMER"})
-        .sign(
-            com.auth0.jwt.algorithms.Algorithm.HMAC256("unit-test-secret-of-at-least-32-chars!!"));
+        .sign(SIGNER);
   }
 
   /**
@@ -479,12 +487,11 @@ class JwtAuthFilterTest {
             .jwt
             .JWT
             .create()
+            .withKeyId(KID)
             .withIssuer("shelfj")
             .withSubject("01a090ae-611e-700b-bde4-50df0324c37c")
             .withArrayClaim("roles", new String[] {"CUSTOMER"})
-            .sign(
-                com.auth0.jwt.algorithms.Algorithm.HMAC256(
-                    "unit-test-secret-of-at-least-32-chars!!"));
+            .sign(SIGNER);
     when(uriInfo.getPath()).thenReturn("api/order-svc/orders");
     when(requestContext.getMethod()).thenReturn("GET");
     when(requestContext.getHeaderString("Authorization")).thenReturn("Bearer " + token);
@@ -512,18 +519,7 @@ class JwtAuthFilterTest {
     // Regression: a signed-in customer's Dio client attaches its Bearer token to every request,
     // including plain catalog browsing. That irrelevant token must not force JWT verification and
     // reject the request for lacking a tenant claim — these paths stay public regardless of caller.
-    String token =
-        com.auth0
-            .jwt
-            .JWT
-            .create()
-            .withIssuer("shelfj")
-            .withSubject("01a090ae-611e-700b-bde4-50df0324c37c")
-            .withClaim("type", "CUSTOMER")
-            .withArrayClaim("roles", new String[] {"CUSTOMER"})
-            .sign(
-                com.auth0.jwt.algorithms.Algorithm.HMAC256(
-                    "unit-test-secret-of-at-least-32-chars!!"));
+    String token = customerToken();
     when(uriInfo.getPath()).thenReturn("api/product-svc/catalog/products");
     when(requestContext.getMethod()).thenReturn("GET");
     // Present but must never be consulted: this path stays public regardless of caller identity.
@@ -592,14 +588,14 @@ class JwtAuthFilterTest {
             .jwt
             .JWT
             .create()
+            .withKeyId(KID)
             .withIssuer("shelfj")
             .withSubject("01a090ae-611e-700f-b645-a14095230b77")
             .withClaim("type", "STAFF")
             .withClaim("tenant", "tenant-xyz")
             .withArrayClaim("roles", roles);
     if (perms != null) b = b.withArrayClaim("perms", perms);
-    return b.sign(
-        com.auth0.jwt.algorithms.Algorithm.HMAC256("unit-test-secret-of-at-least-32-chars!!"));
+    return b.sign(SIGNER);
   }
 
   @Test
@@ -644,5 +640,154 @@ class JwtAuthFilterTest {
     filter.filter(requestContext);
 
     org.junit.jupiter.api.Assertions.assertFalse(headers.containsKey("X-Permissions"));
+  }
+
+  // ── Token signing (20.15; RFC 8725) ────────────────────────────────────────
+
+  /** An owner's token for tenant-xyz under this key id (null for none), signed by this signer. */
+  private static String ownerToken(String kid, com.auth0.jwt.algorithms.Algorithm signer) {
+    var b =
+        com.auth0
+            .jwt
+            .JWT
+            .create()
+            .withIssuer("shelfj")
+            .withSubject("01a090ae-611e-700f-b645-a14095230b77")
+            .withClaim("tenant", "tenant-xyz")
+            .withArrayClaim("roles", new String[] {"OWNER"});
+    return (kid == null ? b : b.withKeyId(kid)).sign(signer);
+  }
+
+  private static com.auth0.jwt.algorithms.Algorithm strangersKey() {
+    return com.auth0.jwt.algorithms.Algorithm.RSA256(
+        null, (java.security.interfaces.RSAPrivateKey) rsaKeys().getPrivate());
+  }
+
+  private void protectedRead(String token) {
+    when(uriInfo.getPath()).thenReturn("api/order-svc/orders");
+    when(requestContext.getMethod()).thenReturn("GET");
+    when(requestContext.getHeaderString("Authorization")).thenReturn("Bearer " + token);
+  }
+
+  private int abortedStatus() {
+    var response = org.mockito.ArgumentCaptor.forClass(jakarta.ws.rs.core.Response.class);
+    verify(requestContext).abortWith(response.capture());
+    return response.getValue().getStatus();
+  }
+
+  @Test
+  void aTokenSignedByAPublishedKeyPasses() throws IOException {
+    protectedRead(staffToken(new String[] {"OWNER"}, null));
+
+    filter.filter(requestContext);
+
+    verify(requestContext, never()).abortWith(any());
+    org.junit.jupiter.api.Assertions.assertEquals("tenant-xyz", headers.getFirst("X-Tenant-Id"));
+  }
+
+  @Test
+  void anHmacTokenKeyedWithThePublicKeyIsRefused() throws IOException {
+    // The algorithm-confusion attack: the public key is public, so anyone can HMAC with it. A
+    // verifier that let the token choose its algorithm would accept this.
+    String forged =
+        ownerToken(KID, com.auth0.jwt.algorithms.Algorithm.HMAC256(publicKey().getEncoded()));
+    protectedRead(forged);
+
+    filter.filter(requestContext);
+
+    org.junit.jupiter.api.Assertions.assertEquals(401, abortedStatus());
+    org.junit.jupiter.api.Assertions.assertFalse(headers.containsKey("X-Roles"));
+  }
+
+  @Test
+  void anUnsignedTokenIsRefused() throws IOException {
+    var url = java.util.Base64.getUrlEncoder().withoutPadding();
+    String header =
+        url.encodeToString(
+            "{\"alg\":\"none\",\"typ\":\"JWT\",\"kid\":\"unit-test-key\"}"
+                .getBytes(java.nio.charset.StandardCharsets.UTF_8));
+    String body =
+        url.encodeToString(
+            "{\"iss\":\"shelfj\",\"sub\":\"x\",\"tenant\":\"tenant-xyz\",\"roles\":[\"OWNER\"]}"
+                .getBytes(java.nio.charset.StandardCharsets.UTF_8));
+    protectedRead(header + "." + body + ".");
+
+    filter.filter(requestContext);
+
+    org.junit.jupiter.api.Assertions.assertEquals(401, abortedStatus());
+  }
+
+  @Test
+  void aTokenNamingAKeyNobodyPublishedIsRefused() throws IOException {
+    String token = ownerToken("a-key-of-my-own", strangersKey());
+    protectedRead(token);
+
+    filter.filter(requestContext);
+
+    org.junit.jupiter.api.Assertions.assertEquals(401, abortedStatus());
+  }
+
+  @Test
+  void aStrangersKeyUnderAPublishedKeyIdIsRefused() throws IOException {
+    String token = ownerToken(KID, strangersKey());
+    protectedRead(token);
+
+    filter.filter(requestContext);
+
+    org.junit.jupiter.api.Assertions.assertEquals(401, abortedStatus());
+  }
+
+  @Test
+  void aTokenWithoutAKeyIdIsRefused() throws IOException {
+    String token = ownerToken(null, SIGNER);
+    protectedRead(token);
+
+    filter.filter(requestContext);
+
+    org.junit.jupiter.api.Assertions.assertEquals(401, abortedStatus());
+  }
+
+  @Test
+  void aTamperedPayloadIsRefused() throws IOException {
+    String[] parts = staffToken(new String[] {"CASHIER"}, null).split("\\.");
+    var url = java.util.Base64.getUrlEncoder().withoutPadding();
+    String raised =
+        new String(
+                java.util.Base64.getUrlDecoder().decode(parts[1]),
+                java.nio.charset.StandardCharsets.UTF_8)
+            .replace("CASHIER", "OWNER");
+    protectedRead(
+        parts[0]
+            + "."
+            + url.encodeToString(raised.getBytes(java.nio.charset.StandardCharsets.UTF_8))
+            + "."
+            + parts[2]);
+
+    filter.filter(requestContext);
+
+    org.junit.jupiter.api.Assertions.assertEquals(401, abortedStatus());
+  }
+
+  @Test
+  void beforeAnyKeySetIsReadTheAnswerIsUnavailableNotUnauthorised() throws IOException {
+    // iam-svc is not up yet: a 401 would sign every browser out for the platform's own start-up.
+    filter.signingKeys = new SigningKeySet();
+    filter.signingKeys.iamUrl = java.util.Optional.of("http://localhost:1");
+    filter.signingKeys.webClient = io.helidon.webclient.api.WebClient.builder().build();
+    protectedRead(staffToken(new String[] {"OWNER"}, null));
+
+    filter.filter(requestContext);
+
+    org.junit.jupiter.api.Assertions.assertEquals(503, abortedStatus());
+  }
+
+  @Test
+  void theKeySetItselfIsReadWithoutAToken() throws IOException {
+    when(uriInfo.getPath()).thenReturn("api/iam-svc/auth/.well-known/jwks.json");
+    lenient().when(requestContext.getMethod()).thenReturn("GET");
+
+    filter.filter(requestContext);
+
+    verify(requestContext, never()).abortWith(any());
   }
 }

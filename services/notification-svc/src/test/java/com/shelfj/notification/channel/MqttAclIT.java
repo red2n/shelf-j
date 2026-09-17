@@ -5,19 +5,19 @@ import static org.hamcrest.Matchers.startsWith;
 import static org.junit.jupiter.api.Assertions.assertThrows;
 import static org.junit.jupiter.api.Assertions.assertTrue;
 
-import com.auth0.jwt.JWT;
-import com.auth0.jwt.algorithms.Algorithm;
 import com.hivemq.client.mqtt.MqttGlobalPublishFilter;
 import com.hivemq.client.mqtt.datatypes.MqttQos;
 import com.hivemq.client.mqtt.mqtt5.Mqtt5BlockingClient;
 import com.hivemq.client.mqtt.mqtt5.Mqtt5Client;
+import com.hivemq.client.mqtt.mqtt5.exceptions.Mqtt5ConnAckException;
 import com.hivemq.client.mqtt.mqtt5.exceptions.Mqtt5SubAckException;
 import com.hivemq.client.mqtt.mqtt5.message.publish.Mqtt5Publish;
 import com.hivemq.client.mqtt.mqtt5.message.subscribe.suback.Mqtt5SubAck;
 import com.shelfj.ids.Ids;
 import com.shelfj.test.EmqxSupport;
+import com.shelfj.test.SigningKeysFixture;
 import java.nio.charset.StandardCharsets;
-import java.time.Instant;
+import java.util.Map;
 import java.util.Optional;
 import java.util.UUID;
 import java.util.concurrent.TimeUnit;
@@ -38,14 +38,20 @@ import org.junit.jupiter.api.Test;
  */
 class MqttAclIT {
 
-  private static final String JWT_SECRET = "test-secret-at-least-32-characters-long!";
   private static final String JWT_ISSUER = "shelfj";
+  private static final String PUBLISHER_PASSWORD = "it-publisher-password-not-a-token";
+
+  /** What iam-svc is to the stack: the key the platform's tokens are signed with (20.15). */
+  private static final SigningKeysFixture KEYS = SigningKeysFixture.generate("it-key-1");
+
+  /** A key the broker has never been told about: whatever it signs must be refused. */
+  private static final SigningKeysFixture STRANGER = SigningKeysFixture.generate("it-key-1");
 
   private static EmqxSupport broker;
 
   @BeforeAll
   static void startBroker() {
-    broker = EmqxSupport.start(JWT_SECRET);
+    broker = EmqxSupport.start(KEYS.jwksJson(), PUBLISHER_PASSWORD);
   }
 
   @AfterAll
@@ -54,14 +60,7 @@ class MqttAclIT {
   }
 
   private static String signToken(String tenantClaim) {
-    Instant now = Instant.now();
-    return JWT.create()
-        .withIssuer(JWT_ISSUER)
-        .withSubject(tenantClaim)
-        .withClaim("tenant", tenantClaim)
-        .withIssuedAt(now)
-        .withExpiresAt(now.plusSeconds(300))
-        .sign(Algorithm.HMAC256(JWT_SECRET));
+    return KEYS.sign(JWT_ISSUER, tenantClaim, Map.of("tenant", tenantClaim), 300);
   }
 
   private static Mqtt5BlockingClient newClient() {
@@ -89,8 +88,8 @@ class MqttAclIT {
             broker.host(),
             broker.port(),
             "it-publisher",
-            MqttPublisherToken.PUBLISHER_IDENTITY,
-            MqttPublisherToken.mint(JWT_SECRET, JWT_ISSUER, 300),
+            EmqxSupport.PUBLISHER,
+            PUBLISHER_PASSWORD,
             false);
 
     Mqtt5BlockingClient subscriber = newClient();
@@ -157,5 +156,28 @@ class MqttAclIT {
     assertThrows(
         RuntimeException.class,
         () -> connect(spoofer, tenantB.toString(), signToken(tenantA.toString())));
+  }
+
+  @Test
+  void aTokenSignedWithAKeyTheBrokerDoesNotKnowIsRefused() {
+    UUID tenant = Ids.newId();
+    Mqtt5BlockingClient forger = newClient();
+    String forged =
+        STRANGER.sign(JWT_ISSUER, tenant.toString(), Map.of("tenant", tenant.toString()), 300);
+    assertThrows(Mqtt5ConnAckException.class, () -> connect(forger, tenant.toString(), forged));
+  }
+
+  @Test
+  void thePublishersNameWithoutItsPasswordIsRefusedEvenWithAValidToken() {
+    // The publisher is a row in the broker's own database: a wrong password stops there, and a
+    // platform token naming "__publisher__" as its tenant does not get a second chance.
+    Mqtt5BlockingClient impostor = newClient();
+    assertThrows(
+        Mqtt5ConnAckException.class,
+        () -> connect(impostor, EmqxSupport.PUBLISHER, signToken(EmqxSupport.PUBLISHER)));
+    Mqtt5BlockingClient guesser = newClient();
+    assertThrows(
+        Mqtt5ConnAckException.class,
+        () -> connect(guesser, EmqxSupport.PUBLISHER, "not-the-password"));
   }
 }
