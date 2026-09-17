@@ -84,6 +84,12 @@ for suite in "${suites[@]}"; do
   # mfa-flow answers second factors wrongly on purpose, and those count as failed sign-ins too.
   [[ "$suite" == gateway-* || "$suite" == mfa-flow ]] && clear_gateway_counters
   checks=$(grep -E '^\s*checks_succeeded' "$log" | tr -s ' ' | cut -d' ' -f3-)
+  # A suite that throws part-way runs fewer checks, all of them green, and k6 exits 0: an uncaught
+  # exception (k6 logs it with the executor's name) is a failure whatever the thresholds say.
+  if [[ $code -eq 0 ]] && grep -qE 'level=error .*executor=' "$log"; then
+    code=1
+    checks="threw: $(grep -m1 -oE 'msg="[^\\"]{1,80}' "$log" | cut -c6-)"
+  fi
   if [[ $code -eq 0 ]]; then result=pass; else result=FAIL; failed=1; fi
   printf '%-28s %-6s %s\n' "$suite" "$result" "${checks:-see log}"
 done
