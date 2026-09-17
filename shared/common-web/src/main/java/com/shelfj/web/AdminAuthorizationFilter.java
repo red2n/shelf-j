@@ -33,6 +33,9 @@ import java.util.Set;
  *             enforces finer rules, e.g. Z-report stays MANAGER+)
  *         <li>Read support for those UIs: {@code GET /admin/tenant}, {@code GET /admin/stores…},
  *             {@code GET /admin/products/variants/resolve}
+ *         <li>Reads one service makes of another under a staff identity: {@code GET
+ *             /admin/tenant/obligations}, {@code GET /admin/tenant/retention}, {@code GET
+ *             /admin/tenant/plan/limits} — each the leaf only, never the subtree it sits in
  *       </ul>
  *       Without this tier, STOREKEEPER could not receive stock and CASHIER could not open a till,
  *       even though the resource classes intentionally allow those roles.
@@ -526,6 +529,16 @@ public class AdminAuthorizationFilter implements ContainerRequestFilter {
       // The retention schedule (21.16): the services that purge read it under a staff identity.
       // Only the sheet; its holds and register, and every write, stay management work.
       if ("/admin/tenant/retention".equals(path)) return true;
+      // What the business's plan allows (21.8): the service that owns the thing being counted
+      // reads it under a staff identity to enforce its own limit — product-svc for products.
+      // Only the allowances; the plan itself, its prices and every write stay management work.
+      //
+      // Found by driving the running stack (SJ-D65): the resource named STOREKEEPER among the
+      // roles it admits, which reads as though it opened the route, and this filter refused the
+      // call before the resource ever ran. Entitlements fails open by design, so every limit
+      // enforced outside tenant-svc silently enforced nothing — the SJ-D10 shape again, an
+      // authorisation claim that reads as correct and is never executed.
+      if ("/admin/tenant/plan/limits".equals(path)) return true;
       if (pathEqualsOrUnder(path, "/admin/stores")) return true;
       if ("/admin/products/variants/resolve".equals(path)) return true;
     }

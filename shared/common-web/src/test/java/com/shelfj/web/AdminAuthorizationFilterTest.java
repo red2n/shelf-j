@@ -591,6 +591,39 @@ class AdminAuthorizationFilterTest {
     assertNotAborted(invoke("GET", "/admin/tenant/retention/runs"));
   }
 
+  // ── 21.8: what the plan allows, read service-to-service ──────────────────────
+
+  @Test
+  void planAllowancesAreStaffReadableAndTheRestOfThePlanIsManagement() throws Exception {
+    // STOREKEEPER is the identity ServiceReader stamps on a service-to-service read, and this is
+    // the route product-svc enforces its product ceiling from. It was refused here before SJ-D65,
+    // so the ceiling was never enforced at all.
+    ctx.set(null, null, Set.of("STOREKEEPER"), null, null);
+    assertNotAborted(invoke("GET", "/admin/tenant/plan/limits"));
+    // The leaf only. The plan itself carries what the business is charged, which is management's.
+    assertAborted(invoke("GET", "/admin/tenant/plan"), 403);
+    assertAborted(invoke("GET", "/admin/tenant/plan/available"), 403);
+    // Nothing under the leaf, and nothing that merely begins with its name.
+    assertAborted(invoke("GET", "/admin/tenant/plan/limits/stores.max"), 403);
+    assertAborted(invoke("GET", "/admin/tenant/plan/limitsx"), 403);
+    assertAborted(invoke("GET", "/admin/tenant/plans/limits"), 403);
+    // A read, never a write: an allowance is the platform's to set.
+    assertAborted(invoke("PUT", "/admin/tenant/plan/limits"), 403);
+    assertAborted(invoke("POST", "/admin/tenant/plan/limits"), 403);
+    assertAborted(invoke("DELETE", "/admin/tenant/plan/limits"), 403);
+
+    // A shopper is not staff, whatever the route.
+    ctx.set(null, null, Set.of("CUSTOMER"), null, null);
+    assertAborted(invoke("GET", "/admin/tenant/plan/limits"), 403);
+    // Nor is a caller carrying no role at all.
+    ctx.set(null, null, Set.of(), null, null);
+    assertAborted(invoke("GET", "/admin/tenant/plan/limits"), 403);
+
+    ctx.set(null, null, Set.of("MANAGER"), null, null);
+    assertNotAborted(invoke("GET", "/admin/tenant/plan"));
+    assertNotAborted(invoke("GET", "/admin/tenant/plan/limits"));
+  }
+
   // ── 05.10: a recall's notices to buyers ──────────────────────────────────────
 
   @Test
