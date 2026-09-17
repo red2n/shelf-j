@@ -218,15 +218,17 @@ export default function ({ gb, rival, store, variantId, cashier, storekeeper, sh
   group('7. the register', () => {
     let runs = [];
     const services = () => new Set(runs.map((r) => r.service));
+    const orderRuns = () => runs.filter((r) => r.service === 'order-svc');
     truthy(
       '[+] every purge is on the register, from all three services',
       poll(90, () => {
         runs = data(call('GET', `${SHEET}/runs?limit=100`, { token: owner })) || [];
-        return services().has('order-svc') && services().has('notification-svc') && services().has('customer-svc');
+        // The register is fed by events, one per run: wait for the last of order-svc's twenty, not the first.
+        return orderRuns().length >= 20 && services().has('notification-svc') && services().has('customer-svc');
       }) >= 0,
       runs.map((r) => `${r.service}:${r.rowsAffected}`)
     );
-    truthy('[+] ...each order-svc sweep once, one of them the redaction', runs.filter((r) => r.service === 'order-svc').length === 20 && runs.some((r) => r.service === 'order-svc' && r.rowsAffected === 1), runs.filter((r) => r.service === 'order-svc').length);
+    truthy('[+] ...each order-svc sweep once, one of them the redaction', orderRuns().length === 20 && orderRuns().some((r) => r.rowsAffected === 1), orderRuns().length);
     truthy('[-] a rival\'s register is empty', (data(call('GET', `${SHEET}/runs`, { token: rival.owner.token })) || []).length === 0);
     expect(call('GET', `${SHEET}/runs`, { token: storekeeper.token }), '[-] a storekeeper does not read the register', 403);
     truthy('[+] the transactions themselves are never purged', Number(orderOf(saleGone.id).total) > 0 && orderOf(saleGone.id).items.length === 1, orderOf(saleGone.id));
