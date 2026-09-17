@@ -93,7 +93,6 @@
         <dependency>
             <groupId>org.apache.kafka</groupId>
             <artifactId>kafka-clients</artifactId>
-            <version>3.7.1</version>
             <scope>provided</scope>
         </dependency>
         <!-- JSON-P — provided by the Helidon MP runtime; declared here so the shared

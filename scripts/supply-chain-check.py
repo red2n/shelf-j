@@ -1,11 +1,14 @@
 #!/usr/bin/env python3
-"""Keeps the release path's supply-chain promises (22.10), so a workflow edit cannot quietly drop one.
+"""Keeps the release path's supply-chain promises (22.10, 22.11), so a workflow edit cannot quietly drop one.
 
 Every image Shelf-J publishes must be pushed with BuildKit's SBOM and max-mode provenance, and then
 get — bound to its digest, never to a tag — a CycloneDX SBOM attestation, a SLSA build-provenance
 attestation and a keyless Sigstore signature. The release must carry the reactor's SBOM, a checksum
 list and provenance for its jars. scripts/verify-release.sh must know every image the workflow
-publishes. This script reads the workflows and says which of those no longer holds.
+publishes. And known vulnerabilities (22.11): every image is scanned before anything vouches for it,
+the shipped dependencies and the published images are scanned on pull requests, on main and every
+night, and an update bot watches all four ecosystems. This script reads the workflows and says
+which of those no longer holds.
 
 Usage: scripts/supply-chain-check.py              check the repository; exit 1 on any problem
        scripts/supply-chain-check.py --self-test  break the workflows in memory, one promise at a
@@ -23,6 +26,8 @@ RELEASE = ROOT / ".github/workflows/release.yml"
 VERIFY = ROOT / "scripts/verify-release.sh"
 POM = ROOT / "pom.xml"
 SBOM = ROOT / "scripts/sbom.sh"
+SCAN = ROOT / ".github/workflows/vulnerability-scan.yml"
+DEPENDABOT = ROOT / ".github/dependabot.yml"
 
 IMAGE_JOBS = ("services", "web")
 DIGEST = "steps.build.outputs.digest"
@@ -75,6 +80,17 @@ def image_job_problems(name, job):
             if with_.get("push-to-registry") is not True:
                 out.append(f"{name}: the {what} attestation is not pushed to the registry")
 
+    steps = job.get("steps", [])
+    scans = [i for i, s in enumerate(steps) if "scripts/vuln-scan.sh image" in str(s.get("run", ""))]
+    vouches = [i for i, s in enumerate(steps)
+               if "cosign sign" in str(s.get("run", "")) or str(s.get("uses", "")).startswith("actions/attest-")]
+    if not scans:
+        out.append(f"{name}: the pushed image is not scanned for known vulnerabilities")
+    elif vouches and min(vouches) < min(scans):
+        out.append(f"{name}: the image is signed or attested before it is scanned")
+    if scans and DIGEST not in str(steps[scans[0]].get("env", {})):
+        out.append(f"{name}: the scan is not of the pushed digest")
+
     if not steps_using(job, "sigstore/cosign-installer"):
         out.append(f"{name}: cosign is not installed")
     signs = [s for s in job.get("steps", []) if "cosign sign" in str(s.get("run", ""))]
@@ -89,7 +105,43 @@ def image_job_problems(name, job):
     return out
 
 
-def problems(publish_text, release_text, verify_text, pom_text, sbom_text):
+def scanning_problems(texts, published):
+    """22.11: the scan workflow's triggers and coverage, and the update bot's ecosystems."""
+    out = []
+    scan = yaml.safe_load(texts["scan"])
+    triggers = scan.get("on") or scan.get(True) or {}  # YAML reads a bare `on` as a boolean
+    for trigger in ("pull_request", "push", "schedule"):
+        if trigger not in triggers:
+            out.append(f"vulnerability-scan.yml: does not run on {trigger}")
+    jobs = scan.get("jobs", {})
+    deps = yaml.safe_dump(jobs.get("dependencies", {}))
+    if "scripts/vuln-scan.sh deps" not in deps:
+        out.append("vulnerability-scan.yml: the shipped dependencies are not scanned")
+    if "scripts/vuln-scan-selftest.sh" not in deps:
+        out.append("vulnerability-scan.yml: the gate is not shown to refuse a known-bad bill of materials")
+    images = jobs.get("images", {})
+    scanned = images.get("strategy", {}).get("matrix", {}).get("image", [])
+    for image in published:
+        if image not in scanned:
+            out.append(f"vulnerability-scan.yml: the published image {image} is never rescanned")
+    if "scripts/vuln-scan.sh image" not in yaml.safe_dump(images):
+        out.append("vulnerability-scan.yml: the published images are not scanned")
+    if "upload-sarif" not in texts["scan"]:
+        out.append("vulnerability-scan.yml: findings do not reach code scanning")
+    if "FAIL_ON" in texts["scan"] or "FAIL_ON" in texts["publish"]:
+        out.append("a workflow overrides the severity that fails the scan")
+
+    bot = yaml.safe_load(texts["dependabot"]) or {}
+    watched = {u.get("package-ecosystem") for u in bot.get("updates", [])}
+    for ecosystem in ("maven", "pub", "docker", "github-actions"):
+        if ecosystem not in watched:
+            out.append(f"dependabot.yml: nothing proposes updates for {ecosystem}")
+    return out
+
+
+def problems(texts):
+    publish_text, release_text, verify_text = texts["publish"], texts["release"], texts["verify"]
+    pom_text, sbom_text = texts["pom"], texts["sbom"]
     out = []
     publish = yaml.safe_load(publish_text)
     jobs = publish.get("jobs", {})
@@ -129,6 +181,7 @@ def problems(publish_text, release_text, verify_text, pom_text, sbom_text):
         out.append("scripts/sbom.sh no longer makes the aggregate CycloneDX SBOM")
     if "<excludeArtifactId>common-test</excludeArtifactId>" not in pom_text:
         out.append("pom.xml: the test-helper module is counted among what ships")
+    out += scanning_problems(texts, published)
     pinned = re.search(r"<cyclonedx-plugin\.version>([^<]+)</cyclonedx-plugin\.version>", pom_text)
     if not pinned or not re.fullmatch(r"\d+(\.\d+)+", pinned.group(1)):
         out.append("pom.xml: the CycloneDX plugin's version is not pinned")
@@ -156,12 +209,21 @@ BREAKS = [
     ("the release without checksums", "sha256sum -- * > SHA256SUMS", "true", "release"),
     ("the jars without provenance", "subject-path: release-artifacts/*.jar", "subject-path: release-artifacts/*.txt", "release"),
     ("the release job unable to attest", "  attestations: write\n", "", "release"),
+    ("an image signed before it is scanned", "      - name: Install grype\n        id: grype\n        uses: anchore/scan-action/download-grype@v7\n\n      - name: Scan the pushed image\n        env:\n          GRYPE: ${{ steps.grype.outputs.cmd }}\n          IMAGE_REF: ${{ steps.build.outputs.image }}@${{ steps.build.outputs.digest }}\n        run: |\n          python3 -m pip install --quiet pyyaml\n          scripts/vuln-scan.sh image \"registry:${IMAGE_REF}\"\n\n", "", "publish"),
+    ("the image scan pointed at a tag", "IMAGE_REF: ${{ env.IMAGE_PREFIX }}-web@${{ steps.build.outputs.digest }}\n        run: |\n          python3 -m pip install --quiet pyyaml", "IMAGE_REF: ${{ env.IMAGE_PREFIX }}-web:latest\n        run: |\n          python3 -m pip install --quiet pyyaml", "publish"),
+    ("the nightly scan switched off", "  schedule:\n    - cron: '17 3 * * *' # nightly, 03:17 UTC\n", "", "scan"),
+    ("pull requests no longer scanned", "  pull_request:\n    branches: [main, master]\n", "", "scan"),
+    ("the dependency scan removed", "run: scripts/vuln-scan.sh deps", "run: true", "scan"),
+    ("a published image left out of the nightly scan", "customer-svc, notification-svc, reporting-svc, web]", "customer-svc, notification-svc, web]", "scan"),
+    ("the failing severity loosened in a workflow", "          SARIF_DIR: ${{ runner.temp }}/sarif\n        run: scripts/vuln-scan.sh deps", "          SARIF_DIR: ${{ runner.temp }}/sarif\n          FAIL_ON: critical\n        run: scripts/vuln-scan.sh deps", "scan"),
+    ("the update bot blind to the base images", "  - package-ecosystem: docker\n", "  - package-ecosystem: gomod\n", "dependabot"),
+    ("the update bot blind to the workflows' actions", "  - package-ecosystem: github-actions\n", "  - package-ecosystem: gomod\n", "dependabot"),
     ("the SBOM plugin floating to LATEST", "<cyclonedx-plugin.version>2.9.3</cyclonedx-plugin.version>", "<cyclonedx-plugin.version>LATEST</cyclonedx-plugin.version>", "pom"),
 ]
 
 
 def self_test(texts):
-    base = problems(texts["publish"], texts["release"], texts["verify"], texts["pom"], texts["sbom"])
+    base = problems(texts)
     if base:
         print("self-test needs a clean repository first:", *base, sep="\n  ", file=sys.stderr)
         return 1
@@ -173,7 +235,7 @@ def self_test(texts):
             continue
         broken = dict(texts)
         broken[which] = texts[which].replace(find, put)
-        found = problems(broken["publish"], broken["release"], broken["verify"], broken["pom"], broken["sbom"])
+        found = problems(broken)
         if found:
             print(f"  caught {what}: {found[0]}")
         else:
@@ -184,16 +246,16 @@ def self_test(texts):
 
 
 def main():
-    texts = {"publish": PUBLISH.read_text(), "release": RELEASE.read_text(), "verify": VERIFY.read_text(), "pom": POM.read_text(), "sbom": SBOM.read_text()}
+    texts = {"publish": PUBLISH.read_text(), "release": RELEASE.read_text(), "verify": VERIFY.read_text(), "pom": POM.read_text(), "sbom": SBOM.read_text(), "scan": SCAN.read_text(), "dependabot": DEPENDABOT.read_text()}
     if "--self-test" in sys.argv[1:]:
         return self_test(texts)
-    found = problems(texts["publish"], texts["release"], texts["verify"], texts["pom"], texts["sbom"])
+    found = problems(texts)
     for p in found:
         print(f"  {p}", file=sys.stderr)
     if found:
         print(f"supply chain: {len(found)} promise(s) broken", file=sys.stderr)
         return 1
-    print("supply chain: 15 images built with SBOM and max provenance, attested and signed by digest; the release carries its SBOM, checksums and provenance — all checks pass")
+    print("supply chain: 15 images built with SBOM and max provenance, scanned, then attested and signed by digest; the release carries its SBOM, checksums and provenance; dependencies and published images scanned on pull requests, main and nightly; four ecosystems watched for updates — all checks pass")
     return 0
 
 

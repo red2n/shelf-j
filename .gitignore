@@ -46,6 +46,7 @@ tools/duplo
 tools/kubeconform
 tools/actionlint
 tools/shellcheck
+tools/grype
 tools/cosign
 tools/syft
 tools/docker-buildx

@@ -98,9 +98,10 @@ jobs:
           python3 -m pip install --quiet pyyaml
           scripts/k8s-check.sh
 
-  # The release path's supply-chain promises (22.10): every published image built with an SBOM and
-  # max-mode provenance, attested and signed by digest; the release carrying its SBOM, checksums
-  # and provenance. The check reads the workflows; its self-test breaks each promise in memory and
+  # The release path's supply-chain promises (22.10, 22.11): every published image built with an
+  # SBOM and max-mode provenance, scanned for known vulnerabilities, then attested and signed by
+  # digest; the release carrying its SBOM, checksums and provenance; the scan running on pull
+  # requests, main and nightly; an update bot on all four ecosystems. The check reads the workflows; its self-test breaks each promise in memory and
   # fails unless the check notices. actionlint keeps the workflows themselves well-formed.
   supply-chain:
     name: Supply chain promises
@@ -114,6 +115,8 @@ jobs:
           python3 -m pip install --quiet pyyaml
           scripts/supply-chain-check.py
           scripts/supply-chain-check.py --self-test
+          # Every vulnerability exception is a dated, reasoned decision (22.11) — or the build stops.
+          scripts/vuln-scan.sh exceptions
 
       - name: Lint the workflows
         run: |
