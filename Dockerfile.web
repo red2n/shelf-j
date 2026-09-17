@@ -10,7 +10,13 @@
 # --no-web-resources-cdn serves CanvasKit from this image rather than www.gstatic.com, which the
 # Content-Security-Policy in infra/nginx-spa.conf.template does not allow.
 #   docker build -f Dockerfile.web -t shelfj/web .
-FROM nginxinc/nginx-unprivileged:1.27-alpine
+#
+# The base (22.11): nginx's stable line on the slim Alpine variant. 1.27 was a retired mainline on
+# an Alpine nobody patched any more — the first image scan found 15 critical and 68 high findings
+# in it, in curl, OpenSSL and libxml2 — and the full variant carries image and XSLT libraries a
+# static file server never loads. Slim still has what this image uses: the entrypoint that renders
+# the template with envsubst, and busybox's wget for the health check. Dependabot watches the tag.
+FROM nginxinc/nginx-unprivileged:1.30-alpine-slim
 
 LABEL org.opencontainers.image.title="shelf-j-web" \
       org.opencontainers.image.description="Shelf-J Flutter web app (admin/storefront/POS)" \
