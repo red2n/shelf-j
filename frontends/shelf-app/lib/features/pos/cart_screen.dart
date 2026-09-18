@@ -235,9 +235,14 @@ class _PosCartScreenState extends ConsumerState<PosCartScreen> {
   /// The recall check, against the list the till keeps: blocked outright when
   /// every pack is recalled, a pack check when only some lots or dates are.
   Future<bool> _passesRecallCheck(PosLine line) async {
+    // The pack's own lot and expiry, when a 2D code carried them (07.15): with
+    // them the till stops the recalled lot and sells every other one, instead of
+    // asking the cashier to read the jar for every pack of a recalled line.
     final result = checkRecall(
       line.variantId,
       ref.read(activeRecallsProvider).items,
+      batchNo: line.batchNo,
+      expiry: line.expiry,
     );
     if (result is RecallClear) return true;
     if (!mounted) return false;

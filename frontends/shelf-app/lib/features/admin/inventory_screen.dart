@@ -670,6 +670,10 @@ class _ReceiveStockDialogState extends ConsumerState<_ReceiveStockDialog> {
   final _costCtrl = TextEditingController();
   final _batchCtrl = TextEditingController();
   final _expiryCtrl = TextEditingController();
+
+  /// What the last scanned label filled in, so the operator can see that the lot
+  /// and expiry came off the case rather than from their own typing.
+  List<String> _fromLabel = const [];
   String? _storeId;
   String? _zoneId;
   bool _loading = false;
@@ -693,20 +697,44 @@ class _ReceiveStockDialogState extends ConsumerState<_ReceiveStockDialog> {
     setState(() {
       _resolving = true;
       _resolvedLabel = null;
+      _fromLabel = const [];
       _error = null;
     });
     try {
+      // /catalog/scan reads whatever the case carried (07.15): a linear barcode,
+      // a GS1 DataMatrix element string or a Digital Link QR. A case label is
+      // where a 2D code earns its keep — it names the lot and the expiry as well
+      // as the item, which are exactly the two fields this form asks for next,
+      // and typing them off a printed label is where they get mistyped.
       final resp = await ref
           .read(apiClientProvider)
           .dio
-          .get('/${ApiConstants.product}/catalog/variants/by-barcode/$code');
-      final v = resp.data['data'] as Map<String, dynamic>;
+          .get('/${ApiConstants.product}/catalog/scan',
+              queryParameters: {'code': code});
+      final d = resp.data['data'] as Map<String, dynamic>;
+      final v = d['item'] as Map<String, dynamic>? ?? const {};
+      final scanned = d['code'] as Map<String, dynamic>?;
       final variantId = v['variantId'] as String? ?? '';
       if (variantId.isEmpty) throw Exception('No product found for "$code"');
+      final batch = scanned?['batch'] as String?;
+      final expiry = scanned?['expiry'] as String?;
       setState(() {
         _variantCtrl.text = variantId;
         _resolvedLabel =
             '${v['productName'] ?? v['sku'] ?? variantId} (${v['sku'] ?? code})';
+        // Filled from the label, never overwritten: what somebody typed is their
+        // decision, and a scan silently replacing it would be the worse of the
+        // two errors. An empty field is filled; a filled one is left alone.
+        if (batch != null && _batchCtrl.text.trim().isEmpty) {
+          _batchCtrl.text = batch;
+        }
+        if (expiry != null && _expiryCtrl.text.trim().isEmpty) {
+          _expiryCtrl.text = expiry;
+        }
+        _fromLabel = [
+          if (batch != null) 'lot $batch',
+          if (expiry != null) 'expiry $expiry',
+        ];
       });
     } catch (e) {
       setState(() => _error = 'No product found for barcode "$code".');
@@ -933,6 +961,23 @@ class _ReceiveStockDialogState extends ConsumerState<_ReceiveStockDialog> {
                   ],
                 ),
                 const SizedBox(height: 12),
+                if (_fromLabel.isNotEmpty)
+                  Padding(
+                    key: const Key('receive-from-label'),
+                    padding: const EdgeInsets.only(bottom: 8),
+                    child: Row(
+                      children: [
+                        const Icon(Icons.qr_code_2, size: 16),
+                        const SizedBox(width: 6),
+                        Expanded(
+                          child: Text(
+                            'Read off the label: ${_fromLabel.join(' · ')}',
+                            style: Theme.of(context).textTheme.bodySmall,
+                          ),
+                        ),
+                      ],
+                    ),
+                  ),
                 Row(
                   children: [
                     Expanded(

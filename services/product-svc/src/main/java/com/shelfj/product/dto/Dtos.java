@@ -327,6 +327,44 @@ public final class Dtos {
       @Schema(description = "The container's volume in millilitres (09.16).")
           Integer depositVolumeMl) {}
 
+  /**
+   * What a 2D code carried besides the item (07.15).
+   *
+   * <p>Every field is what the code said, not what the platform concluded. The batch is not yet
+   * known to be a batch this shop received; the expiry is not yet a reason to refuse the sale.
+   * Those are inventory-svc's and the till's decisions, and each has a different answer.
+   *
+   * @param format PLAIN_GTIN, ELEMENT_STRING or DIGITAL_LINK
+   * @param netWeightKg the weight the code declared, already scaled by the AI's decimal places.
+   *     Pounds stay in netWeightLb: a conversion is a decision about which unit the shop sells in,
+   *     and doing it here would bury a rounding nobody chose inside a price.
+   */
+  @Schema(name = "ScannedCode")
+  public record ScannedCodeResponse(
+      String format,
+      String gtin,
+      @Schema(description = "AI 10 — the batch or lot a recall is issued against.") String batch,
+      @Schema(description = "AI 21 — the serial number.") String serial,
+      @Schema(description = "AI 00 — a logistic unit's SSCC, on a pallet label.") String sscc,
+      @Schema(description = "AI 17 — the date after which it must not be sold.") String expiry,
+      @Schema(description = "AI 15 — best before, which is quality and not legality.")
+          String bestBefore,
+      @Schema(description = "AI 11 — when it was made.") String productionDate,
+      @Schema(description = "AI 310n, in kilograms, scaled.") String netWeightKg,
+      @Schema(description = "AI 320n, in pounds, scaled. Not converted.") String netWeightLb,
+      @Schema(description = "AI 392n or 393n, scaled.") String amountPayable,
+      @Schema(description = "The ISO 4217 numeric currency AI 393n named, when it did.")
+          String currencyNumeric) {}
+
+  /**
+   * A scan: the item it found, and what the code carried (07.15).
+   *
+   * @param code null when the scan was not a GS1 code at all — an internal code, a PLU or a shelf
+   *     label, matched exactly and carrying nothing besides itself
+   */
+  @Schema(name = "ScanResponse")
+  public record ScanResponse(VariantScanResponse item, ScannedCodeResponse code) {}
+
   // ── UOM ──────────────────────────────────────────────────────────────────
 
   @Schema(name = "UomClassResponse")
