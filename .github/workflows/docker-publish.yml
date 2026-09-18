@@ -251,8 +251,14 @@ jobs:
         working-directory: frontends/shelf-app
         env:
           SHELFJ_API_BASE: ${{ vars.SHELFJ_API_BASE || '/api' }}
+        # --no-web-resources-cdn serves CanvasKit from this image rather than www.gstatic.com, which
+        # the Content-Security-Policy in infra/nginx-spa.conf.template does not allow. Without it the
+        # bundle builds, ships, and then fails to load its renderer in the browser — and no test here
+        # catches it, because k6's web-shell exercises the locally built image. Keep in lockstep with
+        # Dockerfile.web's documented command and scripts/redeploy.sh.
         run: |
           flutter build web --release \
+            --no-web-resources-cdn \
             --dart-define="SHELFJ_API_BASE=${SHELFJ_API_BASE}"
 
       - name: Set up Docker Buildx
