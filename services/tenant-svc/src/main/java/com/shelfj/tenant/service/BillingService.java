@@ -212,6 +212,61 @@ public class BillingService {
   }
 
   /**
+   * Pays an invoice in full, for the pay link a dunning notice carries (21.12).
+   *
+   * <p>The same path as {@link #recordPayment}, reached without a DTO because the caller is a link
+   * and not a form. It reuses {@code repo.pay} and {@code settleUp} rather than repeating them: two
+   * ways to apply money to an invoice is one edit away from only one of them settling it.
+   *
+   * @throws ApiException 409 {@code INVOICE_NOT_OPEN}
+   */
+  public Invoice payInFull(UUID invoiceId, BigDecimal amount, UUID recordedBy) {
+    Invoice invoice =
+        repo.invoice(invoiceId)
+            .orElseThrow(() -> ApiException.notFound("INVOICE_NOT_FOUND", "No such invoice"));
+    Subscriptions.Payment payment =
+        new Subscriptions.Payment(
+            Ids.newId(),
+            invoiceId,
+            money(amount),
+            invoice.currency(),
+            Subscriptions.CARD,
+            "pay-link",
+            null,
+            LocalDate.now(),
+            recordedBy,
+            Instant.now());
+    if (!repo.pay(payment, invoice.tenantId(), null)) {
+      throw ApiException.conflict(
+          "INVOICE_NOT_OPEN",
+          "This invoice is " + invoice.status() + ", so no payment can be applied to it");
+    }
+    settleUp(invoice.tenantId());
+    return repo.invoice(invoiceId).orElseThrow();
+  }
+
+  /**
+   * Moves a due date out — a promise to pay (21.12).
+   *
+   * @throws ApiException 400 {@code DUE_DATE_NOT_LATER} when nothing moved, which is a date that is
+   *     not later or an invoice that is no longer open; the same answer either way, because both
+   *     mean "this is not a date this invoice can be given"
+   */
+  public Invoice extendDueDate(UUID invoiceId, LocalDate to) {
+    if (!repo.extendDueDate(invoiceId, to)) {
+      throw ApiException.badRequest(
+          "DUE_DATE_NOT_LATER",
+          "A due date only ever moves outwards, and only on an invoice that is still owed");
+    }
+    return repo.invoice(invoiceId).orElseThrow();
+  }
+
+  /** Gives up on a debt (21.12). */
+  public boolean writeOff(UUID invoiceId) {
+    return repo.writeOff(invoiceId);
+  }
+
+  /**
    * Withdraws an unpaid invoice, keeping its number.
    *
    * @throws ApiException 409 {@code INVOICE_NOT_VOIDABLE}
@@ -241,7 +296,8 @@ public class BillingService {
         s.periodStart(),
         s.periodEnd(),
         on,
-        List.of(planLine(s, s.periodStart(), s.periodEnd())));
+        List.of(planLine(s, s.periodStart(), s.periodEnd())),
+        Subscriptions.PERIOD);
   }
 
   /**
@@ -365,7 +421,15 @@ public class BillingService {
     Subscription moved = applyPending(s);
     LocalDate start = moved.periodEnd();
     LocalDate end = advance(start, moved.billingInterval());
-    Invoice invoice = issue(moved, seller, start, end, asOf, List.of(planLine(moved, start, end)));
+    Invoice invoice =
+        issue(
+            moved,
+            seller,
+            start,
+            end,
+            asOf,
+            List.of(planLine(moved, start, end)),
+            Subscriptions.PERIOD);
     repo.save(
         new Builder(moved).status(Subscriptions.ACTIVE).period(start, end).trialEnd(null).build());
     repo.record(
@@ -390,7 +454,8 @@ public class BillingService {
       LocalDate periodStart,
       LocalDate periodEnd,
       LocalDate issued,
-      List<InvoiceLine> lines) {
+      List<InvoiceLine> lines,
+      String kind) {
     Buyer buyer = s.buyer();
     String buyerCountry = buyer.country();
     Treatment treatment =
@@ -414,6 +479,7 @@ public class BillingService {
             s.tenantId(),
             s.id(),
             "",
+            kind,
             Subscriptions.OPEN,
             issued,
             issued.plusDays(seller.paymentTermsDays()),
@@ -512,7 +578,10 @@ public class BillingService {
                 + s.periodEnd(),
             p.debit()));
 
-    Invoice invoice = issue(s, seller, on, s.periodEnd(), on, lines);
+    // An adjustment, not a period: a proration can happen more than once inside one period, and
+    // uq_invoices_period constrains periods alone. Raising this as a PERIOD collided with the
+    // period's own invoice on the day a business signed up, which its first live run found.
+    Invoice invoice = issue(s, seller, on, s.periodEnd(), on, lines, Subscriptions.ADJUSTMENT);
     repo.save(new Builder(s).planId(planId).price(newPrice).pendingPlanId(null).build());
     repo.record(
         Ids.newId(),

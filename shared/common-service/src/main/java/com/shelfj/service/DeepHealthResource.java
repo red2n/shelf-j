@@ -2,8 +2,6 @@ package com.shelfj.service;
 
 import com.shelfj.web.ApiResponse;
 import com.shelfj.web.TenantContext;
-import com.zaxxer.hikari.HikariDataSource;
-import com.zaxxer.hikari.HikariPoolMXBean;
 import jakarta.enterprise.context.ApplicationScoped;
 import jakarta.inject.Inject;
 import jakarta.ws.rs.GET;
@@ -13,7 +11,6 @@ import jakarta.ws.rs.core.MediaType;
 import java.sql.Connection;
 import java.sql.PreparedStatement;
 import java.sql.ResultSet;
-import java.sql.SQLException;
 import java.util.ArrayList;
 import java.util.List;
 import java.util.Set;
@@ -76,6 +73,7 @@ public class DeepHealthResource {
   }
 
   @Inject DataSource dataSource;
+  @Inject DataSourceProducer dataSources;
   @Inject DatabaseProbe probe;
   @Inject ServiceSettings settings;
   @Inject TenantContext ctx;
@@ -128,33 +126,22 @@ public class DeepHealthResource {
   }
 
   /**
-   * The pool's figures, or null where the data source is not one this can read.
+   * The pool's figures, read from the one place that has the concrete pool.
    *
-   * <p><b>Unwrapped, not cast.</b> What CDI injects for an {@code @ApplicationScoped} producer of
-   * {@code DataSource} is a client proxy implementing that interface, so {@code instanceof
-   * HikariDataSource} is always false and a cast would silently report no pool at all — which is
-   * what the first live run of {@code k6/health-probes} found. {@link
-   * java.sql.Wrapper#unwrap(Class)} is the JDBC-standard way through, and the proxy forwards it.
+   * <p>Not from the injected {@code DataSource}: what CDI hands out is a client proxy, which is
+   * neither an instance of {@code HikariDataSource} nor willing to return the real one through
+   * JDBC's {@code unwrap} — the cast throws and the unwrap hands the proxy back. Both were tried
+   * against the running stack and both failed, the second with a 500 that the live flow caught.
+   * {@link DataSourceProducer} builds the pool, so it keeps the reference and answers for it.
+   *
+   * @return null before the pool exists or after it is closed, which the page shows as no pool
+   *     rather than as a failure
    */
-  @SuppressWarnings(
-      "PMD.CloseResource") // this is the application's pool — reading it, never owning it
   private Pool pool() {
-    HikariDataSource hikari;
-    try {
-      if (!dataSource.isWrapperFor(HikariDataSource.class)) return null;
-      hikari = dataSource.unwrap(HikariDataSource.class);
-    } catch (SQLException e) {
-      return null;
-    }
-    HikariPoolMXBean bean = hikari.getHikariPoolMXBean();
-    if (bean == null) return null;
-    return new Pool(
-        hikari.getPoolName(),
-        bean.getActiveConnections(),
-        bean.getIdleConnections(),
-        bean.getTotalConnections(),
-        hikari.getMaximumPoolSize(),
-        bean.getThreadsAwaitingConnection());
+    return dataSources
+        .poolStats()
+        .map(p -> new Pool(p.name(), p.active(), p.idle(), p.total(), p.max(), p.waiting()))
+        .orElse(null);
   }
 
   private static long millisSince(long startedNanos) {

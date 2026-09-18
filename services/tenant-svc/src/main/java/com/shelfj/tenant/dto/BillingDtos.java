@@ -215,6 +215,10 @@ public final class BillingDtos {
   public record InvoiceResponse(
       String id,
       @Schema(description = "Gapless within its year.") String number,
+      @Schema(
+              description =
+                  "PERIOD (one per period) or ADJUSTMENT (a proration, any number per period).")
+          String kind,
       @Schema(description = "OPEN, PAID, VOID or UNCOLLECTIBLE.") String status,
       String issueDate,
       String dueDate,

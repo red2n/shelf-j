@@ -76,6 +76,18 @@ public final class Subscriptions {
   /** Given up on: owed, and not expected (21.12). */
   public static final String UNCOLLECTIBLE = "UNCOLLECTIBLE";
 
+  /**
+   * An invoice for a period, one per period per subscription — the run raises these.
+   *
+   * <p>Separate from an adjustment because {@code uq_invoices_period} constrains periods alone: a
+   * proration can happen more than once in a period and must not compete with the period's own
+   * invoice for its slot. The live flow found that the hard way.
+   */
+  public static final String PERIOD = "PERIOD";
+
+  /** An adjustment to a period: a proration, any number of them. */
+  public static final String ADJUSTMENT = "ADJUSTMENT";
+
   public static final String LINE_PLAN = "PLAN";
   public static final String LINE_PRORATION = "PRORATION";
   public static final String LINE_CREDIT = "CREDIT";
@@ -237,6 +249,7 @@ public final class Subscriptions {
    * stays in the sequence either way.
    *
    * @param number gapless within its year
+   * @param kind {@link #PERIOD} or {@link #ADJUSTMENT}
    * @param taxTreatment {@link BillingTax}
    * @param sellerSnapshot both sides as they stood the day it was issued, so it still explains
    *     itself when the business has moved and the platform has been renamed
@@ -246,6 +259,7 @@ public final class Subscriptions {
       UUID tenantId,
       UUID subscriptionId,
       String number,
+      String kind,
       String status,
       LocalDate issueDate,
       LocalDate dueDate,
