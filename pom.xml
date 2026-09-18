@@ -31,7 +31,7 @@
         <graalvm.native.maven.plugin.version>0.9.24</graalvm.native.maven.plugin.version>
 
         <!-- Versions for libraries NOT managed by the Helidon BOM -->
-        <flyway.version>10.20.1</flyway.version>
+        <flyway.version>13.7.0</flyway.version>
         <postgresql.version>42.7.12</postgresql.version>
         <hikaricp.version>6.2.1</hikaricp.version>
         <!-- Must match the version Helidon's own BOM pins org.testcontainers:testcontainers/jdbc
