@@ -174,7 +174,12 @@ public final class Dtos {
       String updatedAt,
       @Schema(description = "VAT identifier with its country prefix, or null.") String vatNumber,
       @Schema(description = "E-invoicing address scheme (EAS), or null.") String einvoiceScheme,
-      @Schema(description = "Identifier within that scheme, or null.") String einvoiceId) {}
+      @Schema(description = "Identifier within that scheme, or null.") String einvoiceId,
+      @Schema(
+              description =
+                  "Why it is switched off: NON_PAYMENT (dunning, and lifted by paying up) or"
+                      + " ADMINISTRATOR (never lifted by a payment). Null when it is trading.")
+          String deactivatedReason) {}
 
   @Schema(name = "StoreResponse")
   public record StoreResponse(

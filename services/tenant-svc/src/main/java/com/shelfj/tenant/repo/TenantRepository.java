@@ -35,7 +35,7 @@ public class TenantRepository extends BaseOutboxRepository {
 
   private static final String TENANT_SELECT =
       "SELECT id, name, legal_name, status, plan_id, owner_user_id, country, currency,"
-          + " created_at, updated_at, vat_number, einvoice_scheme, einvoice_id FROM tenants";
+          + " created_at, updated_at, vat_number, einvoice_scheme, einvoice_id, deactivated_reason FROM tenants";
 
   // ─────────────────────────────────────────────── create (atomic with outbox)
 
@@ -137,7 +137,7 @@ public class TenantRepository extends BaseOutboxRepository {
   public Optional<Tenant> findTenant(UUID tenantId) {
     return one(
         "SELECT id, name, legal_name, status, plan_id, owner_user_id, country, currency,"
-            + " created_at, updated_at, vat_number, einvoice_scheme, einvoice_id FROM tenants WHERE id = ?",
+            + " created_at, updated_at, vat_number, einvoice_scheme, einvoice_id, deactivated_reason FROM tenants WHERE id = ?",
         tenantId,
         TenantRepository::mapTenant);
   }
@@ -203,15 +203,34 @@ public class TenantRepository extends BaseOutboxRepository {
    * Flip the tenant status AND publish the change event in one transaction (golden rule #6), so a
    * suspension can never be applied locally without other services (iam-svc) hearing about it.
    */
-  public Tenant updateTenantStatusWithOutbox(UUID tenantId, String status, OutboxRow event) {
+  /**
+   * Moves a business's status, recording <em>why</em> when it is switched off (21.12).
+   *
+   * <p>The reason is not decoration. Only a business suspended for {@code NON_PAYMENT} comes back
+   * when it pays; one an {@code ADMINISTRATOR} switched off never does. Recording it in the same
+   * statement as the status means the pair cannot come apart — and switching a business back on
+   * clears it, so a stale reason cannot make a later payment lift a suspension nobody asked it to.
+   *
+   * @param reason {@code ADMINISTRATOR} or {@code NON_PAYMENT} when switching off, ignored when
+   *     switching on
+   * @param actorId who did it, or null when the dunning run did
+   */
+  public Tenant updateTenantStatusWithOutbox(
+      UUID tenantId, String status, String reason, UUID actorId, OutboxRow event) {
     Instant now = Instant.now();
+    boolean off = !"ACTIVE".equals(status);
     inTx(
         c -> {
           try (PreparedStatement ps =
-              c.prepareStatement("UPDATE tenants SET status = ?, updated_at = ? WHERE id = ?")) {
+              c.prepareStatement(
+                  "UPDATE tenants SET status = ?, updated_at = ?, deactivated_reason = ?,"
+                      + " deactivated_by = ?, deactivated_at = ? WHERE id = ?")) {
             ps.setString(1, status);
             ps.setObject(2, now.atOffset(ZoneOffset.UTC));
-            ps.setObject(3, tenantId);
+            ps.setString(3, off ? reason : null);
+            ps.setObject(4, off ? actorId : null);
+            ps.setObject(5, off ? now.atOffset(ZoneOffset.UTC) : null);
+            ps.setObject(6, tenantId);
             if (ps.executeUpdate() == 0) {
               throw ApiException.notFound("TENANT_NOT_FOUND", "Tenant not found");
             }
@@ -1013,7 +1032,8 @@ public class TenantRepository extends BaseOutboxRepository {
         rs.getObject("updated_at", OffsetDateTime.class).toInstant(),
         rs.getString("vat_number"),
         rs.getString("einvoice_scheme"),
-        rs.getString("einvoice_id"));
+        rs.getString("einvoice_id"),
+        rs.getString("deactivated_reason"));
   }
 
   private static Store mapStore(ResultSet rs) throws SQLException {
@@ -1169,7 +1189,7 @@ public class TenantRepository extends BaseOutboxRepository {
     StringBuilder sql =
         new StringBuilder(
             "SELECT id, name, legal_name, status, plan_id, owner_user_id, country, currency,"
-                + " created_at, updated_at, vat_number, einvoice_scheme, einvoice_id FROM tenants");
+                + " created_at, updated_at, vat_number, einvoice_scheme, einvoice_id, deactivated_reason FROM tenants");
     if (afterCreatedAt != null && afterId != null) sql.append(" WHERE (created_at, id) > (?, ?)");
     sql.append(" ORDER BY created_at, id LIMIT ?");
     return query(
