@@ -37,6 +37,13 @@ public class JwtAuthFilter implements ContainerRequestFilter {
 
   private static final System.Logger LOG = System.getLogger(JwtAuthFilter.class.getName());
 
+  /**
+   * How far apart two pods' clocks may be before this gateway stops believing a token iam has just
+   * minted. Well inside the "few minutes" RFC 7519 allows, and a small fraction of an access
+   * token's fifteen minutes.
+   */
+  private static final long CLOCK_SKEW_SECONDS = 60;
+
   /** Exact request paths (normalized, no leading/trailing slash) that do NOT require a token. */
   private static final Set<String> PUBLIC_PATHS =
       Set.of(
@@ -110,7 +117,27 @@ public class JwtAuthFilter implements ContainerRequestFilter {
     return verifiers
         .computeIfAbsent(
             kid + ":" + key.getModulus().hashCode(),
-            k -> JWT.require(Algorithm.RSA256(key, null)).withIssuer(config.jwtIssuer()).build())
+            k ->
+                JWT.require(Algorithm.RSA256(key, null))
+                    .withIssuer(config.jwtIssuer())
+                    // Clock skew, on the two claims where tolerating it only ever helps a
+                    // legitimate caller. RFC 7519 §4.1.5 anticipates exactly this and allows "a
+                    // small leeway, usually no more than a few minutes".
+                    //
+                    // SJ-D66, and it cost a whole k6 run in 401s that looked random: the gateway
+                    // judged a token at 02:51:42.978Z whose `iat` was 02:51:43Z, so it refused a
+                    // token iam had minted for that very request. `iat` is whole seconds and
+                    // java-jwt floors it (checked), so the extra second is not rounding — it is
+                    // iam's clock reading a few milliseconds ahead of this one. Two processes do
+                    // not share a clock to the millisecond, and with zero leeway every such
+                    // millisecond is a 401 nobody can reproduce.
+                    //
+                    // `exp` is deliberately left strict: leeway there would extend a token's life
+                    // past the moment it was meant to die, which is the one direction skew must
+                    // never be allowed to help.
+                    .acceptIssuedAt(CLOCK_SKEW_SECONDS)
+                    .acceptNotBefore(CLOCK_SKEW_SECONDS)
+                    .build())
         .verify(token);
   }
 
