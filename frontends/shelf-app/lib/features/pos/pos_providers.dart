@@ -452,13 +452,37 @@ class PosTender {
   final String? giftCardCode; // for GIFT_CARD
   final String? customerId; // for STORE_CREDIT
 
+  /// For CARD: the EMV terminal this tender must be approved on (07.16). When
+  /// set, nothing is recorded until the terminal approves the card. Null means
+  /// the shop has no pinpad and the tender is recorded as it always was.
+  final String? terminalId;
+
+  /// What the terminal said, once it has said it: the receipt line the card
+  /// needs, kept so a reprint shows the same card and entry mode.
+  final String? terminalReceiptLine;
+
   const PosTender({
     required this.method,
     required this.amount,
     this.cashGiven = 0,
     this.giftCardCode,
     this.customerId,
+    this.terminalId,
+    this.terminalReceiptLine,
   });
+
+  /// Whether this tender has to be approved by a terminal before it is recorded.
+  bool get needsTerminal => terminalId != null;
+
+  PosTender withTerminalOutcome(String receiptLine) => PosTender(
+        method: method,
+        amount: amount,
+        cashGiven: cashGiven,
+        giftCardCode: giftCardCode,
+        customerId: customerId,
+        terminalId: terminalId,
+        terminalReceiptLine: receiptLine,
+      );
 
   /// Payment-svc method code (store credit is recorded as a VOUCHER tender).
   String get paymentMethod => method == 'STORE_CREDIT' ? 'VOUCHER' : method;

@@ -123,6 +123,18 @@ class PosReceiptData {
           <td class="item-total">${_esc(_fmt(t.amount))}</td>
         </tr>
       ''');
+      // A card taken on an EMV terminal prints what the terminal said (07.16):
+      // the application label, the four digits a receipt may print, how the card
+      // was read and how the cardholder was verified. A card receipt without
+      // these is not a valid card receipt in any market this platform trades in.
+      final card = t.terminalReceiptLine;
+      if (card != null && card.isNotEmpty) {
+        tenderRows.write('''
+        <tr>
+          <td class="muted" colspan="3">${_esc(card)}</td>
+        </tr>
+      ''');
+      }
     }
 
     final depositRow = deposit > 0
