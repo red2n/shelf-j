@@ -22,7 +22,15 @@ public final class Domain {
       Instant updatedAt,
       String vatNumber,
       String einvoiceScheme,
-      String einvoiceId) {
+      String einvoiceId,
+      /**
+       * Why it is switched off: NON_PAYMENT or ADMINISTRATOR, and null when it is on (21.12).
+       *
+       * <p>The distinction paying up rests on. Only NON_PAYMENT is ever lifted by money — an
+       * administrator's decision is not an argument a payment can win — so without this the two
+       * suspensions are indistinguishable and a payment would overrule one of them silently.
+       */
+      String deactivatedReason) {
     public static final String STATUS_PENDING = "PENDING";
     public static final String STATUS_ACTIVE = "ACTIVE";
     public static final String STATUS_INACTIVE = "INACTIVE";

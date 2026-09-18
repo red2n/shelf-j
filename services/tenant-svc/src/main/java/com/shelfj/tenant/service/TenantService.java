@@ -89,6 +89,7 @@ public class TenantService {
             nowTenant,
             null,
             null,
+            null,
             null);
     var event =
         new OutboxRow(
@@ -695,13 +696,20 @@ public class TenantService {
    * @throws ApiException {@code TENANT_NOT_FOUND} (404) when no such tenant exists; {@code
    *     INVALID_STATUS} (400) when the status is neither ACTIVE nor INACTIVE
    */
-  public Tenant patchTenantStatus(UUID tenantId, PatchStatusRequest req) {
+  public Tenant patchTenantStatus(UUID tenantId, PatchStatusRequest req, UUID actorId) {
     getTenant(tenantId);
     String status = req.status().toUpperCase(Locale.ROOT);
     if (!Tenant.STATUS_ACTIVE.equals(status) && !Tenant.STATUS_INACTIVE.equals(status)) {
       throw ApiException.badRequest("INVALID_STATUS", "status must be ACTIVE or INACTIVE");
     }
-    return repo.updateTenantStatusWithOutbox(tenantId, status, tenantStatusEvent(tenantId, status));
+    // Switched off by a person, so it is recorded as such — and a payment will not lift it. Dunning
+    // writes NON_PAYMENT for its own suspensions, which is the only reason money ever undoes.
+    return repo.updateTenantStatusWithOutbox(
+        tenantId,
+        status,
+        com.shelfj.tenant.domain.Dunning.ADMINISTRATOR,
+        actorId,
+        tenantStatusEvent(tenantId, status));
   }
 
   /**

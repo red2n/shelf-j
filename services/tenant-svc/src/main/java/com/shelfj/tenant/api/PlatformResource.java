@@ -71,6 +71,22 @@ public class PlatformResource {
     return ApiResponse.ok(tenants, new ApiResponse.Meta(ctx.requestId(), page.nextCursor()));
   }
 
+  @Operation(
+      summary = "One business, as the platform sees it",
+      description =
+          "Including **why** it is switched off, which is the question the console has to be able to"
+              + " answer: only a business suspended for NON_PAYMENT comes back when it pays, and one"
+              + " an ADMINISTRATOR switched off never does. Without this route the reason is recorded"
+              + " and unreadable.")
+  @APIResponse(responseCode = "403", description = "Caller is not a PLATFORM_ADMIN")
+  @APIResponse(responseCode = "404", description = "No such business")
+  @GET
+  @Path("/tenants/{tenantId}")
+  public ApiResponse<TenantResponse> oneTenant(@PathParam("tenantId") UUID tenantId) {
+    ctx.requireAnyRole("PLATFORM_ADMIN");
+    return ApiResponse.ok(Mappers.toTenant(service.getTenant(tenantId)));
+  }
+
   /**
    * The business a network's delivery lands with (07.13, the transport seam).
    *
@@ -134,7 +150,7 @@ public class PlatformResource {
       @PathParam("tenantId") UUID tenantId, PatchStatusRequest req) {
     ctx.requireAnyRole("PLATFORM_ADMIN");
     Validations.validate(req);
-    return ApiResponse.ok(Mappers.toTenant(service.patchTenantStatus(tenantId, req)));
+    return ApiResponse.ok(Mappers.toTenant(service.patchTenantStatus(tenantId, req, ctx.userId())));
   }
 
   /**

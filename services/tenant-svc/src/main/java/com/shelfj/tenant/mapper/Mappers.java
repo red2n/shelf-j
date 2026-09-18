@@ -55,7 +55,8 @@ public final class Mappers {
         ts(t.updatedAt()),
         t.vatNumber(),
         t.einvoiceScheme(),
-        t.einvoiceId());
+        t.einvoiceId(),
+        t.deactivatedReason());
   }
 
   /**
