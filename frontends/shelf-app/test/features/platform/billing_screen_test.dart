@@ -51,14 +51,18 @@ List<Map<String, dynamic>> _owed() => [
 class _Server implements HttpClientAdapter {
   final Map<String, dynamic>? profile;
   final List<Map<String, dynamic>> owed;
+  final List<Map<String, dynamic>> stages;
 
-  _Server({required this.profile, required this.owed});
+  _Server({required this.profile, required this.owed, this.stages = const []});
 
   @override
   void close({bool force = false}) {}
 
   @override
   Future<ResponseBody> fetch(RequestOptions o, Stream<List<int>>? s, Future<void>? c) async {
+    if (o.path.contains('/dunning/overdue')) {
+      return jsonResponse(jsonEncode({'data': stages}));
+    }
     if (o.path.contains('/receivables')) {
       return jsonResponse(jsonEncode({'data': owed}));
     }
@@ -79,12 +83,14 @@ Future<void> _pump(
   WidgetTester tester, {
   Map<String, dynamic>? profile,
   List<Map<String, dynamic>>? owed,
+  List<Map<String, dynamic>>? stages,
 }) async {
   tester.view.physicalSize = const Size(1200, 2000);
   tester.view.devicePixelRatio = 1;
   addTearDown(tester.view.reset);
   final dio = Dio(BaseOptions(baseUrl: 'http://test'))
-    ..httpClientAdapter = _Server(profile: profile, owed: owed ?? const []);
+    ..httpClientAdapter =
+        _Server(profile: profile, owed: owed ?? const [], stages: stages ?? const []);
   await tester.pumpWidget(
     ProviderScope(
       overrides: [apiClientProvider.overrideWithValue(FakeApiClient(dio))],
@@ -132,5 +138,59 @@ void main() {
     expect(find.byKey(const Key('owed-none')), findsOneWidget);
     expect(find.text('Every invoice is settled.'), findsOneWidget);
     expect(find.text('nothing'), findsOneWidget);
+  });
+
+  testWidgets('a chased invoice says what has been done and what is coming', (tester) async {
+    // The point of the column: an operator who can see "suspended next" acts before a customer
+    // telephones to say the till has stopped working.
+    await _pump(
+      tester,
+      profile: _profile(),
+      owed: _owed(),
+      stages: [
+        {
+          'invoiceId': 'i1',
+          'number': 'INV-2026-000041',
+          'daysOverdue': 5,
+          'stage': 'REMINDER_5',
+          'nextStep': 'SUSPENDED',
+        },
+      ],
+    );
+
+    expect(find.textContaining('reminder 5'), findsOneWidget);
+    expect(find.textContaining('suspended next'), findsOneWidget);
+    expect(find.byKey(const Key('suspended-count')), findsNothing);
+  });
+
+  testWidgets('a suspended business is unmistakable and counted', (tester) async {
+    await _pump(
+      tester,
+      profile: _profile(),
+      owed: _owed(),
+      stages: [
+        {
+          'invoiceId': 'i1',
+          'number': 'INV-2026-000041',
+          'daysOverdue': 20,
+          'stage': 'SUSPENDED',
+          'nextStep': 'UNCOLLECTIBLE',
+        },
+      ],
+    );
+
+    expect(find.byKey(const Key('suspended-count')), findsOneWidget);
+    expect(find.text('1 suspended'), findsOneWidget);
+    expect(find.byIcon(Icons.block), findsOneWidget);
+    expect(find.textContaining('written off next'), findsOneWidget);
+  });
+
+  testWidgets('arrears still show when dunning says nothing about them', (tester) async {
+    // Dunning is the platform's own and may be switched off. What is owed is a different question.
+    await _pump(tester, profile: _profile(), owed: _owed(), stages: const []);
+
+    expect(find.byKey(const Key('owed-INV-2026-000041')), findsOneWidget);
+    expect(find.byKey(const Key('suspended-count')), findsNothing);
+    expect(find.textContaining('reminder'), findsNothing);
   });
 }

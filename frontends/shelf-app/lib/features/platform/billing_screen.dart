@@ -47,6 +47,41 @@ class PlatformProfile {
       '${(taxRate * 100).toStringAsFixed(2)}%';
 }
 
+/// What the platform has done about one overdue invoice, and what it will do next (21.12).
+class DunningStage {
+  final String? stage;
+  final String? nextStep;
+  final int daysOverdue;
+
+  const DunningStage({required this.stage, required this.nextStep, required this.daysOverdue});
+
+  factory DunningStage.fromJson(Map<String, dynamic> j) => DunningStage(
+        stage: j['stage'] as String?,
+        nextStep: j['nextStep'] as String?,
+        daysOverdue: (j['daysOverdue'] as num?)?.toInt() ?? 0,
+      );
+
+  /// A reminder reads as one; the two that matter read as themselves.
+  static String? _words(String? step) {
+    if (step == null) return null;
+    if (step.startsWith('REMINDER_')) return 'reminder ${step.substring(9)}';
+    return switch (step) {
+      'SUSPENDED' => 'suspended',
+      'UNCOLLECTIBLE' => 'written off',
+      'DUE_DATE_EXTENDED' => 'date extended',
+      'RESOLVED' => 'paid',
+      _ => step.toLowerCase(),
+    };
+  }
+
+  String? get stageSays => _words(stage);
+
+  /// Said plainly, because an operator seeing "suspended next" can act before a customer calls.
+  String? get nextSays => _words(nextStep) == null ? null : '${_words(nextStep)} next';
+
+  bool get suspended => stage == 'SUSPENDED';
+}
+
 class Receivable {
   final String id;
   final String number;
@@ -92,9 +127,14 @@ class PlatformBilling {
   final PlatformProfile? profile;
   final List<Receivable> owed;
 
-  const PlatformBilling({required this.profile, required this.owed});
+  /// The dunning stage per invoice id. Absent for an invoice nothing has been done about yet.
+  final Map<String, DunningStage> stages;
+
+  const PlatformBilling({required this.profile, required this.owed, required this.stages});
 
   num get totalOwed => owed.fold<num>(0, (sum, r) => sum + (r.outstanding ?? 0));
+
+  int get suspendedCount => stages.values.where((s) => s.suspended).length;
 }
 
 final platformBillingProvider = FutureProvider.autoDispose<PlatformBilling>((ref) async {
@@ -108,12 +148,27 @@ final platformBillingProvider = FutureProvider.autoDispose<PlatformBilling>((ref
     profile = null;
   }
   final owed = await dio.get('/${ApiConstants.tenant}/platform/billing/receivables?limit=100');
+  // The stages come from the dunning side, keyed on the invoice. Read separately and joined here
+  // rather than folded into the receivables response: what is owed and what has been done about it
+  // are two questions, and an operator may want the first even when dunning is switched off.
+  final stages = <String, DunningStage>{};
+  try {
+    final chased =
+        await dio.get('/${ApiConstants.tenant}/platform/billing/dunning/overdue?limit=100');
+    for (final o in chased.data['data'] as List<dynamic>? ?? const []) {
+      final row = Map<String, dynamic>.from(o as Map);
+      stages[row['invoiceId'] as String] = DunningStage.fromJson(row);
+    }
+  } on Object {
+    // Dunning is the platform's own and may legitimately be off; the arrears still show.
+  }
   return PlatformBilling(
     profile: profile,
     owed: [
       for (final r in owed.data['data'] as List<dynamic>? ?? const [])
         Receivable.fromJson(Map<String, dynamic>.from(r as Map)),
     ],
+    stages: stages,
   );
 });
 
@@ -181,6 +236,15 @@ class PlatformBillingScreen extends ConsumerWidget {
                   Row(
                     children: [
                       Expanded(child: Text('Owed', style: text.titleMedium)),
+                      if (b.suspendedCount > 0)
+                        Padding(
+                          padding: const EdgeInsets.only(right: 12),
+                          child: Text(
+                            key: const Key('suspended-count'),
+                            '${b.suspendedCount} suspended',
+                            style: text.bodyMedium?.copyWith(color: cs.error),
+                          ),
+                        ),
                       Text(
                         key: const Key('total-owed'),
                         b.owed.isEmpty ? 'nothing' : b.totalOwed.toStringAsFixed(2),
@@ -196,7 +260,8 @@ class PlatformBillingScreen extends ConsumerWidget {
                       style: text.bodyMedium?.copyWith(color: cs.outline),
                     )
                   else
-                    for (final r in b.owed) _ReceivableRow(receivable: r),
+                    for (final r in b.owed)
+                      _ReceivableRow(receivable: r, stage: b.stages[r.id]),
                 ],
               ),
             ),
@@ -209,8 +274,9 @@ class PlatformBillingScreen extends ConsumerWidget {
 
 class _ReceivableRow extends StatelessWidget {
   final Receivable receivable;
+  final DunningStage? stage;
 
-  const _ReceivableRow({required this.receivable});
+  const _ReceivableRow({required this.receivable, this.stage});
 
   @override
   Widget build(BuildContext context) {
@@ -218,18 +284,29 @@ class _ReceivableRow extends StatelessWidget {
     final cs = Theme.of(context).colorScheme;
     final r = receivable;
     final overdue = r.overdueOn(DateTime.now());
+    final suspended = stage?.suspended == true;
     return ListTile(
       key: Key('owed-${r.number}'),
       dense: true,
       leading: Icon(
-        overdue ? Icons.warning_amber : Icons.schedule,
-        color: overdue ? cs.error : cs.outline,
+        suspended
+            ? Icons.block
+            : overdue
+                ? Icons.warning_amber
+                : Icons.schedule,
+        color: suspended || overdue ? cs.error : cs.outline,
         size: 20,
       ),
       title: Text(r.number, style: text.bodyLarge),
       subtitle: Text(
-        overdue ? 'Overdue since ${r.dueDate}' : 'Due ${r.dueDate ?? '—'}',
-        style: text.bodySmall?.copyWith(color: overdue ? cs.error : cs.outline),
+        [
+          if (overdue) 'Overdue since ${r.dueDate}' else 'Due ${r.dueDate ?? '—'}',
+          // What has been done, and what is coming. An operator who can see "suspended next" can act
+          // before a customer telephones to say the till has stopped working.
+          ?stage?.stageSays,
+          ?stage?.nextSays,
+        ].join(' · '),
+        style: text.bodySmall?.copyWith(color: suspended || overdue ? cs.error : cs.outline),
       ),
       trailing: Text('${r.currency ?? ''} ${r.outstanding ?? 0}', style: text.bodyLarge),
     );
