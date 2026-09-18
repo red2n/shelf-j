@@ -16,7 +16,7 @@
 # in it, in curl, OpenSSL and libxml2 — and the full variant carries image and XSLT libraries a
 # static file server never loads. Slim still has what this image uses: the entrypoint that renders
 # the template with envsubst, and busybox's wget for the health check. Dependabot watches the tag.
-FROM nginxinc/nginx-unprivileged:1.30-alpine-slim
+FROM nginxinc/nginx-unprivileged:1.31-alpine-slim
 
 LABEL org.opencontainers.image.title="shelf-j-web" \
       org.opencontainers.image.description="Shelf-J Flutter web app (admin/storefront/POS)" \
