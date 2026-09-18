@@ -771,6 +771,63 @@ class JwtAuthFilterTest {
     org.junit.jupiter.api.Assertions.assertEquals("tenant-xyz", headers.getFirst("X-Tenant-Id"));
   }
 
+  // ── SJ-D66: two clocks, and which way leeway may bend ──────────────────────
+  // iam mints a token and the gateway judges it milliseconds later, on a different pod's clock.
+  // With no leeway a token whose iat rounds to the next second is "from the future" and refused
+  // until the second turns over — which cost a whole k6 run in 401s that looked random. Leeway is
+  // allowed where it only ever helps a legitimate caller, and refused where it would extend
+  // access past the moment it was meant to end.
+
+  /** A token whose issued-at and expiry are placed relative to now, in seconds. */
+  private static String timedToken(long iatOffsetSeconds, long expOffsetSeconds) {
+    java.time.Instant now = java.time.Instant.now();
+    return com.auth0
+        .jwt
+        .JWT
+        .create()
+        .withKeyId(KID)
+        .withIssuer("shelfj")
+        .withSubject("01a090ae-611e-700f-b645-a14095230b77")
+        .withClaim("tenant", "tenant-xyz")
+        .withArrayClaim("roles", new String[] {"OWNER"})
+        .withIssuedAt(now.plusSeconds(iatOffsetSeconds))
+        .withExpiresAt(now.plusSeconds(expOffsetSeconds))
+        .sign(SIGNER);
+  }
+
+  @Test
+  void aTokenMintedAMomentAheadOfThisClockIsAccepted() throws IOException {
+    protectedRead(timedToken(2, 900));
+
+    filter.filter(requestContext);
+
+    verify(requestContext, never()).abortWith(any());
+    org.junit.jupiter.api.Assertions.assertEquals("tenant-xyz", headers.getFirst("X-Tenant-Id"));
+  }
+
+  @Test
+  void aTokenFromFarEnoughAheadIsStillRefused() throws IOException {
+    // Leeway is for skew, not for a token minted by something whose clock is simply wrong.
+    protectedRead(timedToken(3600, 7200));
+
+    filter.filter(requestContext);
+
+    org.junit.jupiter.api.Assertions.assertEquals(401, abortedStatus());
+    org.junit.jupiter.api.Assertions.assertFalse(headers.containsKey("X-Roles"));
+  }
+
+  @Test
+  void anExpiredTokenIsRefusedNoMatterWhatTheClocksSay() throws IOException {
+    // The direction leeway must never bend. A token whose life is over is over; tolerating skew on
+    // the expiry would hand every token an extra minute of access it was not granted.
+    protectedRead(timedToken(-900, -5));
+
+    filter.filter(requestContext);
+
+    org.junit.jupiter.api.Assertions.assertEquals(401, abortedStatus());
+    org.junit.jupiter.api.Assertions.assertFalse(headers.containsKey("X-Roles"));
+  }
+
   @Test
   void anHmacTokenKeyedWithThePublicKeyIsRefused() throws IOException {
     // The algorithm-confusion attack: the public key is public, so anyone can HMAC with it. A
