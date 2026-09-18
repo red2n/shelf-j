@@ -14,6 +14,7 @@ import '../admin/customer_providers.dart';
 import '../admin/providers/admin_providers.dart';
 import 'pos_fiscal_receipt.dart';
 import 'pos_providers.dart';
+import 'pos_terminal.dart';
 import 'pos_receipt.dart';
 import 'pos_receipt_printer.dart';
 import 'pos_session_providers.dart';
@@ -90,15 +91,65 @@ class _TenderScreenState extends ConsumerState<TenderScreen> {
         ? result.amount.clamp(0, _remaining).toDouble()
         : result.amount;
     if (applied <= 0) return;
+    // A card goes to a terminal when the store has one (07.16). The card is not
+    // charged here — the amount is sent at settle, once the order exists, so a
+    // decline leaves an order awaiting payment rather than money taken for
+    // nothing. A store with no pinpad records the tender as it always did.
+    final terminalId = method == 'CARD' ? await _chooseTerminal() : null;
+    if (method == 'CARD' && terminalId == _noTerminalChosen) return;
+    if (!mounted) return;
     setState(
       () => _tenders.add(
         PosTender(
           method: method,
           amount: applied,
           cashGiven: method == 'CASH' ? result.given : 0,
+          terminalId: terminalId,
         ),
       ),
     );
+  }
+
+  /// Sentinel for "the cashier backed out of choosing a terminal", which is not
+  /// the same as "this store has no terminal" — one adds no tender, the other
+  /// adds a self-attested one.
+  static const _noTerminalChosen = '';
+
+  /// Which terminal to send the amount to, or null when the store has none.
+  ///
+  /// One terminal is chosen without asking: a cashier at a single till should not
+  /// answer a question with one answer. Several are offered, because a shop with
+  /// two counters can have the wrong pinpad light up otherwise.
+  Future<String?> _chooseTerminal() async {
+    final storeId = ref.read(posStoreProvider);
+    if (storeId == null) return null;
+    List<CardTerminalDevice> devices;
+    try {
+      devices = await ref.read(posTerminalsProvider(storeId).future);
+    } catch (_) {
+      // A terminal list that cannot be read must not stop a sale: the tender is
+      // recorded the way it was before this row existed.
+      return null;
+    }
+    if (devices.isEmpty) return null;
+    if (devices.length == 1) return devices.first.id;
+    if (!mounted) return _noTerminalChosen;
+    final chosen = await showDialog<String>(
+      context: context,
+      builder: (_) => SimpleDialog(
+        key: const Key('tender-choose-terminal'),
+        title: const Text('Which card machine?'),
+        children: [
+          for (final d in devices)
+            SimpleDialogOption(
+              key: Key('tender-terminal-${d.id}'),
+              onPressed: () => Navigator.of(context).pop(d.id),
+              child: Text(d.simulated ? '${d.label} (simulated)' : d.label),
+            ),
+        ],
+      ),
+    );
+    return chosen ?? _noTerminalChosen;
   }
 
   Future<void> _addGiftCard() async {
@@ -235,6 +286,35 @@ class _TenderScreenState extends ConsumerState<TenderScreen> {
       // here only the steps that have not landed are queued.
       for (var i = 0; i < sale.tenders.length; i++) {
         final t = sale.tenders[i];
+        // A card on a terminal is approved BEFORE it is recorded (07.16). The
+        // key is derived from the sale and the tender's position, never freshly
+        // generated: a second press with the same key finds the first attempt
+        // instead of starting a second EMV transaction on a real card.
+        // The terminal is read from the till's own tender, not from the queued
+        // one. Deliberate: an OfflineTender is persisted and replayed, and a
+        // card must never be sent to a terminal minutes or hours after the
+        // customer has left. So a queued sale replays as a plain CARD tender —
+        // which is what actually happened, because with no network the cashier
+        // took the card on the terminal standalone, exactly as before this row.
+        final terminalId = i < _tenders.length ? _tenders[i].terminalId : null;
+        if (terminalId != null) {
+          final outcome = await takeCardOnTerminal(
+            dio,
+            terminalId: terminalId,
+            orderId: orderId,
+            amount: t.amount,
+            currency: currency,
+            idempotencyKey: '$idemBase-term$i',
+          );
+          if (!outcome.approved) throw TerminalNotApproved(outcome);
+          // Back onto the till's own tender, because that is what the receipt is
+          // built from. Kept in a side map it would print nothing, which is how a
+          // card receipt ends up without the line the scheme rules require.
+          final line = outcome.receiptLine;
+          if (line != null && line.isNotEmpty) {
+            _tenders[i] = _tenders[i].withTerminalOutcome(line);
+          }
+        }
         await dio.post(
           '/${ApiConstants.payment}/payments',
           data: {...t.body, 'orderId': orderId},
@@ -325,6 +405,39 @@ class _TenderScreenState extends ConsumerState<TenderScreen> {
         receiptData: receiptData,
       );
     } catch (e) {
+      // A card the terminal did not approve (07.16). A definite answer, so the
+      // sale is never queued for replay — but the order IS placed and awaiting
+      // payment, so the cashier can take another tender rather than start again.
+      if (e is TerminalNotApproved) {
+        if (!mounted) return;
+        setState(() => _processing = false);
+        if (e.outcome.uncertain) {
+          // A timeout may have charged the card. A snackbar can be missed and
+          // this one must not be, so it blocks until somebody acknowledges it.
+          await showDialog<void>(
+            context: context,
+            barrierDismissible: false,
+            builder: (_) => AlertDialog(
+              key: const Key('tender-terminal-uncertain'),
+              title: const Text('Check the card machine'),
+              content: Text(
+                '${e.outcome.message}\n\nThe sale is saved and still awaiting '
+                'payment. Do not take the card again until you know whether it '
+                'went through.',
+              ),
+              actions: [
+                TextButton(
+                  onPressed: () => Navigator.of(context).pop(),
+                  child: const Text('I have checked'),
+                ),
+              ],
+            ),
+          );
+        } else {
+          _snack('${e.outcome.message} — try another tender.', error: true);
+        }
+        return;
+      }
       if (!isOfflineError(e)) {
         // The server answered and said no. Replaying would get the same answer,
         // so the sale must not be queued — the cashier has to deal with it now.
