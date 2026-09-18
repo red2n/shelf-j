@@ -46,9 +46,17 @@ export default function ({ admin }) {
   }), 200, 'the platform bills as somebody');
 
   // ── the policy, and what it will not accept ─────────────────────────────────────────────────────
+  // The policy is a platform singleton, so this pair reads differently on a fresh stack and on one
+  // that has already run this suite. Both readings are asserted rather than only the first, because a
+  // check that can pass once per stack teaches the next person to ignore a red suite.
   const policy = data(dun('GET', '/policy'));
-  truthy('[+] a platform that has set no policy still chases, on the published defaults', policy.reminderDays.join(',') === '1,3,5,7' && policy.suspendAfterDays === 14 && policy.uncollectibleAfterDays === 30, policy);
-  truthy('[+] and says nobody set it, rather than inventing somebody who did', policy.set === false, policy);
+  if (policy.set === false) {
+    truthy('[+] a platform that has set no policy still chases, on the published defaults', policy.reminderDays.join(',') === '1,3,5,7' && policy.suspendAfterDays === 14 && policy.uncollectibleAfterDays === 30, policy);
+    truthy('[+] and says nobody set it, rather than inventing somebody who did', policy.set === false, policy);
+  } else {
+    truthy('[+] a policy somebody set says so, and says when', policy.set === true && !!policy.updatedAt, policy);
+    truthy('[+] and still carries a full set of stages to chase on', policy.reminderDays.length > 0 && policy.suspendAfterDays > 0 && policy.uncollectibleAfterDays >= policy.suspendAfterDays, policy);
+  }
   expect(dun('PUT', '/policy', { enabled: true, reminderDays: [1, 3, 20], suspendAfterDays: 14, uncollectibleAfterDays: 30 }), '[-] the service cannot be interrupted before the last reminder has gone', 400, 'DUNNING_POLICY_INVALID');
   expect(dun('PUT', '/policy', { enabled: true, reminderDays: [1], suspendAfterDays: 20, uncollectibleAfterDays: 10 }), '[-] nor the debt given up on before the service was interrupted', 400, 'DUNNING_POLICY_INVALID');
   // No code asserted here on purpose: "at least one reminder" is a shape rule and the DTO catches it
@@ -130,8 +138,11 @@ export default function ({ admin }) {
   // ── extending a due date pauses the chase without forgiving the debt ────────────────────────────
   const later = must(asRoot('POST', '/run?asOf=' + day(70)), 200, 'a third period');
   const promised = invoices().find((i) => i.status === 'OPEN');
-  expect(dun('PUT', `/invoices/${promised.id}/due-date`, { dueDate: day(120), reason: 'they promised to pay' }), '[+] a promise to pay moves the date out', 200);
-  expect(dun('PUT', `/invoices/${promised.id}/due-date`, { dueDate: day(80), reason: 'back again' }), '[-] and a date only ever moves out, never in', 400, 'DUE_DATE_NOT_LATER');
+  // An action ON AN INVOICE, so it sits with `payments` and `write-off` under /billing/invoices/…,
+  // not with the dunning reads under /billing/dunning/…. Calling it through dun() got a 404 and four
+  // failed checks in a row, all of them this one line.
+  expect(asRoot('PUT', `/invoices/${promised.id}/due-date`, { dueDate: day(120), reason: 'they promised to pay' }), '[+] a promise to pay moves the date out', 200);
+  expect(asRoot('PUT', `/invoices/${promised.id}/due-date`, { dueDate: day(80), reason: 'back again' }), '[-] and a date only ever moves out, never in', 400, 'DUE_DATE_NOT_LATER');
   truthy('[+] the extension is on the file rather than a date that quietly moved', stages(promised.id).includes('DUE_DATE_EXTENDED'), stages(promised.id));
   expect(dun('POST', '/run?asOf=' + day(100)), '[+] and the chase is paused while the promise stands', 200);
   truthy('[+] nothing chased in the meantime', stages(promised.id).filter((x) => x.startsWith('REMINDER')).length === 0, stages(promised.id));
