@@ -205,4 +205,102 @@ public class PlatformBillingResource {
           400, "BILLING_DATE_INVALID", "asOf is a date, as 2026-09-18", List.of(), e);
     }
   }
+
+  @Inject com.shelfj.tenant.service.DunningService dunning;
+
+  @Operation(
+      summary = "How hard the platform chases what it is owed",
+      description =
+          "A platform that has set no policy still chases, on the published defaults: reminders on"
+              + " days 1, 3, 5 and 7 after the due date, the service interrupted at 14, the debt"
+              + " given up on at 30. It says so rather than inventing somebody who set them.")
+  @GET
+  @Path("/dunning/policy")
+  public ApiResponse<BillingDtos.DunningPolicyResponse> dunningPolicy() {
+    ctx.requireAnyRole("PLATFORM_ADMIN");
+    return ApiResponse.ok(BillingMappers.toDto(dunning.policy()));
+  }
+
+  @Operation(
+      summary = "Sets how hard the platform chases",
+      description =
+          "The order of the stages is part of the policy and is refused if it is wrong: the service"
+              + " cannot be interrupted before the last reminder has gone, and a debt cannot be given"
+              + " up on before the service was interrupted.")
+  @PUT
+  @Path("/dunning/policy")
+  public ApiResponse<BillingDtos.DunningPolicyResponse> setDunningPolicy(
+      @Valid BillingDtos.DunningPolicyRequest req) {
+    ctx.requireAnyRole("PLATFORM_ADMIN");
+    return ApiResponse.ok(
+        BillingMappers.toDto(dunning.setPolicy(BillingMappers.policy(req), ctx.requireUserId())));
+  }
+
+  @Operation(
+      summary = "Chases everything that is overdue",
+      description =
+          "Every notice a business missed is sent, once — a run that has not run for a week owes the"
+              + " business each reminder it did not get, because suspending a business the platform"
+              + " never finished telling was late is the opposite of what dunning is for. Safe to run"
+              + " twice: a step happens once by a unique index. A business it cannot act on is named"
+              + " in `skipped` rather than stopping the rest.")
+  @POST
+  @Path("/dunning/run")
+  public ApiResponse<BillingDtos.DunningRunResponse> runDunning(@QueryParam("asOf") String asOf) {
+    ctx.requireAnyRole("PLATFORM_ADMIN");
+    LocalDate on = day(asOf);
+    return ApiResponse.ok(BillingMappers.dunningRun(on, dunning.run(on)));
+  }
+
+  @Operation(
+      summary = "What is overdue, most overdue first",
+      description = "With the stage each invoice has reached and what it earns next.")
+  @GET
+  @Path("/dunning/overdue")
+  public ApiResponse<List<BillingDtos.OverdueResponse>> overdue(
+      @QueryParam("asOf") String asOf, @QueryParam("limit") Integer limit) {
+    ctx.requireAnyRole("PLATFORM_ADMIN");
+    return ApiResponse.ok(
+        BillingMappers.overdue(dunning.overdue(day(asOf), limit == null ? 50 : limit)));
+  }
+
+  @Operation(summary = "What has been done about one overdue invoice, oldest first")
+  @GET
+  @Path("/dunning/invoices/{invoiceId}/events")
+  public ApiResponse<List<BillingDtos.DunningEventResponse>> dunningEvents(
+      @PathParam("invoiceId") UUID invoiceId) {
+    ctx.requireAnyRole("PLATFORM_ADMIN");
+    return ApiResponse.ok(BillingMappers.dunningEvents(dunning.eventsOf(invoiceId)));
+  }
+
+  @Operation(
+      summary = "The link that pays one invoice without a sign-in",
+      description =
+          "What a notice carries. A suspended business cannot sign in, so telling it to pay while"
+              + " denying it the means would be a dead end. A fresh token each time this is asked,"
+              + " and only its hash is kept.")
+  @GET
+  @Path("/dunning/invoices/{invoiceId}/pay-link")
+  public ApiResponse<BillingDtos.PayLinkResponse> payLink(@PathParam("invoiceId") UUID invoiceId) {
+    ctx.requireAnyRole("PLATFORM_ADMIN");
+    return ApiResponse.ok(new BillingDtos.PayLinkResponse(dunning.issuePayToken(invoiceId)));
+  }
+
+  @Operation(
+      summary = "Moves an invoice's due date out",
+      description =
+          "A promise to pay, which pauses the chase without forgiving the debt. Outwards only, and"
+              + " only on an invoice still owed: a date that could move inwards would shorten the"
+              + " time a business has to pay after the fact. Recorded, so an extension is on the file"
+              + " rather than a due date that quietly moved.")
+  @PUT
+  @Path("/invoices/{invoiceId}/due-date")
+  public ApiResponse<BillingDtos.InvoiceResponse> extendDueDate(
+      @PathParam("invoiceId") UUID invoiceId, @Valid BillingDtos.ExtendDueDateRequest req) {
+    ctx.requireAnyRole("PLATFORM_ADMIN");
+    return ApiResponse.ok(
+        BillingMappers.toDto(
+            dunning.extendDueDate(
+                invoiceId, day(req.dueDate()), req.reason(), ctx.requireUserId())));
+  }
 }

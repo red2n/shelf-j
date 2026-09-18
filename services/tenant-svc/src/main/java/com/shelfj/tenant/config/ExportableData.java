@@ -50,6 +50,9 @@ public class ExportableData extends TenantDataSpec {
             "billing_invoice_numbers",
             "the platform's invoice counter: a sequence, and nobody's data"),
         Map.entry(
+            "dunning_policy",
+            "the platform's own tolerance for late payment: the same for every business"),
+        Map.entry(
             "jurisdiction_members",
             "the platform's reference data: the law as recorded for every business"),
         Map.entry(

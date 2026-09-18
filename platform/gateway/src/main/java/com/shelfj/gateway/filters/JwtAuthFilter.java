@@ -68,6 +68,20 @@ public class JwtAuthFilter implements ContainerRequestFilter {
           ".well-known/security.txt");
 
   /**
+   * The pay link in a dunning notice (21.12): {@code POST /api/tenant-svc/billing/pay/{token}}.
+   *
+   * <p>Not in {@link #PUBLIC_PATHS} because that set is matched exactly and this path ends in a
+   * token. Same reasoning as the unsubscribe link one entry above: by the time the later notices go
+   * the business has been suspended, so it cannot sign in, and a pay link that demands a session is
+   * a dead end. The token is the whole capability — 256 bits, stored only as a hash, naming one
+   * invoice — and it can do exactly one thing to it.
+   *
+   * <p>tenant-svc's {@code AdminAuthorizationFilter} carries the matching carve-out. Both are
+   * needed: with either missing, a suspended business is told to pay and cannot.
+   */
+  private static final String PAY_LINK_PREFIX = "api/tenant-svc/billing/pay/";
+
+  /**
    * Public storefront access (guest shopping). These tenant-scoped paths expose only public data
    * (active, sellable-online products and their prices) plus guest checkout, so they may be reached
    * without a token. The tenant is taken from {@code X-Storefront-Tenant}, which in production the
@@ -600,7 +614,20 @@ public class JwtAuthFilter implements ContainerRequestFilter {
   private static boolean isPublic(String path) {
     // Exact match only — a substring match would let any URL that merely embeds a public
     // suffix (e.g. /api/x-svc/foo/iam-svc/auth/login) skip token validation.
-    return PUBLIC_PATHS.contains(normalize(path));
+    String normalized = normalize(path);
+    return PUBLIC_PATHS.contains(normalized) || isPayLink(normalized);
+  }
+
+  /**
+   * The pay link, matched by shape: the prefix plus exactly one more segment.
+   *
+   * @param normalized the normalized path, no leading or trailing slash
+   * @return {@code true} for exactly {@code api/tenant-svc/billing/pay/{token}}
+   */
+  private static boolean isPayLink(String normalized) {
+    if (!normalized.startsWith(PAY_LINK_PREFIX)) return false;
+    String token = normalized.substring(PAY_LINK_PREFIX.length());
+    return !token.isEmpty() && token.indexOf('/') < 0;
   }
 
   /**

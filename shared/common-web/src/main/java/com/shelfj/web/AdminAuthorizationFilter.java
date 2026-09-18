@@ -362,6 +362,22 @@ public class AdminAuthorizationFilter implements ContainerRequestFilter {
    *     without any staff role (bootstrap/identity/guest-checkout flows — see the exhaustive
    *     rationale on each branch below)
    */
+  /**
+   * The pay link in a dunning notice: {@code /billing/pay/{token}} and nothing else (21.12).
+   *
+   * <p>Matched by shape rather than by prefix, like every other unauthenticated route here. A
+   * prefix would admit anything that appears under {@code /billing/pay/} later, and this is the one
+   * path in the service that carries no identity at all.
+   *
+   * @param path the service-local request path
+   * @return {@code true} for exactly one segment under the pay path
+   */
+  private static boolean isPayLink(String path) {
+    if (!path.startsWith("/billing/pay/")) return false;
+    String token = path.substring("/billing/pay/".length());
+    return !token.isEmpty() && token.indexOf('/') < 0;
+  }
+
   private static boolean isOpenMutation(String path) {
     return IDENTITY_PATHS.contains(path)
         // Second factors (20.12): answering one at sign-in (no token yet — the mfaToken in the
@@ -409,6 +425,15 @@ public class AdminAuthorizationFilter implements ContainerRequestFilter {
         // forwarded email, on a device that was never signed in, for a customer who has no
         // password at all. It can only ever withdraw permission, never grant it.
         || "/marketing/unsubscribe".equals(path)
+        // The pay link in a dunning notice (21.12). The same reasoning one row over: by the time
+        // the
+        // later notices go the business has been *suspended*, so it cannot sign in — telling it to
+        // pay
+        // while denying it the means is a dead end, not a dunning process. Matched by shape, so the
+        // token is one segment and nothing else under /billing/pay is admitted; the token names one
+        // invoice and the only thing it can do is pay it. The gateway's PUBLIC_PATHS carries the
+        // matching entry, and both are needed.
+        || isPayLink(path)
         // Guest storefront checkout: an online shopper places an order with no staff role.
         // Reachable only via the gateway's storefront whitelist (tenant from X-Storefront-Tenant)
         // or by an authenticated customer. POS channel orders require a staff role — enforced

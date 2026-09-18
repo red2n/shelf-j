@@ -231,4 +231,72 @@ public final class BillingMappers {
   private static String text(UUID id) {
     return id == null ? null : id.toString();
   }
+
+  public static BillingDtos.DunningPolicyResponse toDto(com.shelfj.tenant.domain.Dunning.Policy p) {
+    return new BillingDtos.DunningPolicyResponse(
+        p.enabled(),
+        p.reminderDays(),
+        p.suspendAfterDays(),
+        p.uncollectibleAfterDays(),
+        p.set(),
+        text(p.updatedAt()));
+  }
+
+  /** A policy as a request asks for it; the days are sorted and de-duplicated by the record. */
+  public static com.shelfj.tenant.domain.Dunning.Policy policy(
+      BillingDtos.DunningPolicyRequest req) {
+    return new com.shelfj.tenant.domain.Dunning.Policy(
+        Boolean.TRUE.equals(req.enabled()),
+        req.reminderDays().stream().distinct().sorted().toList(),
+        req.suspendAfterDays(),
+        req.uncollectibleAfterDays(),
+        null,
+        null);
+  }
+
+  public static List<BillingDtos.DunningEventResponse> dunningEvents(
+      List<com.shelfj.tenant.domain.Dunning.Event> events) {
+    return events.stream()
+        .map(
+            e ->
+                new BillingDtos.DunningEventResponse(
+                    e.id().toString(), e.step(), e.detail(), text(e.createdAt())))
+        .toList();
+  }
+
+  public static List<BillingDtos.OverdueResponse> overdue(
+      List<com.shelfj.tenant.domain.Dunning.Overdue> overdue) {
+    return overdue.stream()
+        .map(
+            o ->
+                new BillingDtos.OverdueResponse(
+                    o.invoiceId().toString(),
+                    o.tenantId().toString(),
+                    o.number(),
+                    text(o.dueDate()),
+                    o.daysOverdue(),
+                    o.stage(),
+                    o.nextStep()))
+        .toList();
+  }
+
+  /** What a dunning run did, as the platform console shows it. */
+  public static BillingDtos.DunningRunResponse dunningRun(
+      java.time.LocalDate asOf, com.shelfj.tenant.service.DunningService.Run result) {
+    return new BillingDtos.DunningRunResponse(
+        asOf.toString(),
+        result.taken().size(),
+        result.taken().stream()
+            .map(
+                t ->
+                    new BillingDtos.DunningStepResponse(
+                        t.tenantId().toString(), t.invoiceNumber(), t.step()))
+            .toList(),
+        result.skipped().stream()
+            .map(
+                k ->
+                    new BillingDtos.SkippedResponse(
+                        k.tenantId().toString(), "DUNNING_SKIPPED", k.reason()))
+            .toList());
+  }
 }
