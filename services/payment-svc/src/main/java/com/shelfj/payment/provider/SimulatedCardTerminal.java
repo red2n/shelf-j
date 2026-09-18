@@ -91,17 +91,7 @@ public class SimulatedCardTerminal implements CardTerminal {
 
   @Override
   public Terminals.Outcome cancel(String providerRef) {
-    return new Terminals.Outcome(
-        Terminals.CANCELLED,
-        null,
-        null,
-        null,
-        null,
-        null,
-        null,
-        null,
-        providerRef,
-        "Cancelled at the till");
+    return Terminals.refused(Terminals.CANCELLED, providerRef, "Cancelled at the till");
   }
 
   private Terminals.Outcome approved(Request request, String entryMode, String verification) {
@@ -119,8 +109,7 @@ public class SimulatedCardTerminal implements CardTerminal {
   }
 
   private Terminals.Outcome refused(String state, String detail, Request request) {
-    return new Terminals.Outcome(
-        state, null, null, null, null, null, null, null, reference(request), detail);
+    return Terminals.refused(state, reference(request), detail);
   }
 
   /**
