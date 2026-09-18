@@ -127,6 +127,13 @@ final routerProvider = Provider<GoRouter>((ref) {
             ),
           ),
           GoRoute(
+            path: '/platform/billing',
+            builder: (_, _) => DeferredWidget(
+              libraryLoader: platform_lib.loadLibrary,
+              builder: (_) => platform_lib.PlatformBillingScreen(),
+            ),
+          ),
+          GoRoute(
             path: '/platform/security',
             builder: (_, _) => DeferredWidget(
               libraryLoader: platform_lib.loadLibrary,
@@ -203,6 +210,13 @@ final routerProvider = Provider<GoRouter>((ref) {
             builder: (_, _) => DeferredWidget(
               libraryLoader: admin_lib.loadLibrary,
               builder: (_) => admin_lib.PlanScreen(),
+            ),
+          ),
+          GoRoute(
+            path: '/admin/billing',
+            builder: (_, _) => DeferredWidget(
+              libraryLoader: admin_lib.loadLibrary,
+              builder: (_) => admin_lib.BillingScreen(),
             ),
           ),
           GoRoute(

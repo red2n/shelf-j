@@ -54,7 +54,15 @@ import java.util.UUID;
 public class TenantService {
 
   @Inject TenantRepository repo;
+  private static final System.Logger LOG = System.getLogger(TenantService.class.getName());
+
   @Inject PlanService plans;
+
+  /**
+   * What a business owes for the plan it lands on (21.9). Starting it is best effort at sign-up —
+   * see {@code createTenant}.
+   */
+  @Inject SubscriptionService subscriptions;
 
   // --- onboarding ---
 
@@ -95,6 +103,20 @@ public class TenantService {
     // A business signs up on whatever the platform sells by default (21.8). Best effort: one on no
     // plan is unrestricted, so failing to place it is safe where failing to create it is not.
     plans.putOnDefaultPlan(tenantId);
+
+    // And signing up is subscribing (21.9): the plan it landed on decides what it owes and when.
+    // Best effort for the same reason, and with one more: a business that exists and is not billed
+    // is a commercial problem somebody can fix afterwards, where a sign-up that fails because the
+    // platform has not filled in its own VAT details is a customer lost at the door.
+    try {
+      subscriptions.start(tenantId, java.time.LocalDate.now(), ownerUserId);
+    } catch (RuntimeException e) {
+      LOG.log(
+          System.Logger.Level.WARNING,
+          "{0} was created but not subscribed: {1}",
+          tenantId,
+          e.getMessage());
+    }
 
     // Flow guard: grant OWNER role to tenant creator so they can access admin endpoints
     // before their JWT is refreshed with the new tenant claim

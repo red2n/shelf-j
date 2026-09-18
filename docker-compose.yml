@@ -673,6 +673,11 @@ services:
       shelfj.db.password: ${TENANT_DB_PASSWORD:-tenant_dev_change_me}
       JAVA_TOOL_OPTIONS: "${TENANT_JAVA_OPTS:--Xms128m -Xmx512m -XX:+UseG1GC}"
       SHELFJ_ADVERTISE_HOST: tenant-svc
+      # The billing run may be asked for a day other than today (21.9). On here so a live flow can
+      # drive a year of periods in seconds — Stripe ships a test clock for the same reason — and off
+      # in k8s, where a platform administrator being able to bill next March is not a feature but a
+      # way to issue an invoice nobody owes yet.
+      shelfj.billing.test-clock.enabled: "true"
     mem_limit: ${TENANT_MEM_LIMIT:-700m}
     networks: [shelfj_network]
     depends_on: *svc-depends
