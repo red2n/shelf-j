@@ -347,6 +347,27 @@ class AppliedPriceIT {
         is(false));
   }
 
+  /**
+   * The one recorded application beginning at an instant.
+   *
+   * @throws AssertionError when there is none, naming what was there instead — a positional index
+   *     would have failed with a price and no hint of which row it came from
+   */
+  private static JsonObject at(List<JsonObject> rows, Instant from) {
+    return rows.stream()
+        .filter(r -> Instant.parse(r.getString("appliedFrom")).equals(from))
+        .findFirst()
+        .orElseThrow(
+            () ->
+                new AssertionError(
+                    "no price recorded from "
+                        + from
+                        + "; the history holds "
+                        + rows.stream()
+                            .map(r -> r.getString("appliedFrom") + "=" + money(r, "price"))
+                            .toList()));
+  }
+
   @Test
   @DisplayName(
       "A promotion scheduled to start and end is recorded at its moments, not when the worker ran")
@@ -365,15 +386,24 @@ class AppliedPriceIT {
             + ends
             + "\"}");
     drain();
-    Thread.sleep(Duration.between(Instant.now(), ends).toMillis() + 500);
+    // A second and a half past the end, not half a second: the boundaries are recorded by a worker,
+    // and inside a reactor build a whole second can disappear between the sleep ending and the pass
+    // running. A margin thinner than the machine's own noise measures the machine.
+    Thread.sleep(Duration.between(Instant.now(), ends).toMillis() + 1500);
     drain();
     List<JsonObject> online = rows(history(de, v), "ONLINE");
     assertThat(online.size(), greaterThanOrEqualTo(3));
-    JsonObject reduced = online.get(1);
-    assertThat(money(reduced, "price"), is("6.00"));
-    assertThat(Instant.parse(reduced.getString("appliedFrom")), is(starts));
-    assertThat(money(online.get(0), "price"), is("12.00"));
-    assertThat(Instant.parse(online.get(0).getString("appliedFrom")), is(ends));
+
+    // Found by what they are, not by where they sit. The worker decides how many rows it writes, so
+    // an index into its output asserts the worker's shape rather than the rule under test: that the
+    // reduction is recorded from the moment the promotion *starts*, and the regular price from the
+    // moment it *ends*, whenever the worker happened to run.
+    JsonObject reduced = at(online, starts);
+    assertThat(
+        "a reduction recorded from the moment it starts", money(reduced, "price"), is("6.00"));
+    JsonObject restored = at(online, ends);
+    assertThat(
+        "and the regular price from the moment it ends", money(restored, "price"), is("12.00"));
   }
 
   @Test
