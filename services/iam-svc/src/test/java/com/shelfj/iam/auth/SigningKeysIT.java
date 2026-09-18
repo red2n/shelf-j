@@ -203,7 +203,13 @@ class SigningKeysIT {
         is(oldKid));
     assertThat("both keys are published from the moment of rotation", jwks().size(), is(2));
 
-    Thread.sleep(2200);
+    // A second of margin over the two-second lead, not two hundred milliseconds. The lead is
+    // compared
+    // against wall-clock time, and this test runs inside a reactor build where a whole second can
+    // disappear between the sleep ending and the request being served. A margin smaller than the
+    // machine's own noise measures the machine and not the rule — the same lesson the chargeback
+    // evidence-deadline check learned on the same day.
+    Thread.sleep(3000);
     String after = register("keys-4c@example.com");
     String newKid = JWT.decode(after).getKeyId();
     assertThat("after the lead time the new key signs", newKid, not(is(oldKid)));
