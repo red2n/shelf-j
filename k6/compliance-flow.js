@@ -380,11 +380,22 @@ export default function ({ tenant, rival, storeA, storeB, variantId, cigs, cashi
       return p.id;
     };
     // The worker records a change within seconds; until it has, a reduction is PENDING.
-    const recorded = (opts, id) => {
+    //
+    // A poll must wait for what the caller is about to assert, not for something weaker. Waiting
+    // only for "not PENDING" let NO_HISTORY through — the reading taken before the price-set row
+    // had landed — and the German check then asserted SHORT_HISTORY against it. Exactly the shape
+    // of the retention-flow poll that returned on the first of twenty purge runs (73253f94), so
+    // the caller says what it is waiting for and the wait and the assertion cannot drift apart.
+    const recorded = (opts, id, settled) => {
       let last = null;
       poll(45, () => {
         last = data(resolveAs(opts, id));
-        return !!(last && last.priorPriceStatus && last.priorPriceStatus !== 'PENDING');
+        return !!(
+          last &&
+          last.priorPriceStatus &&
+          last.priorPriceStatus !== 'PENDING' &&
+          settled(last)
+        );
       });
       return last;
     };
@@ -395,7 +406,7 @@ export default function ({ tenant, rival, storeA, storeB, variantId, cigs, cashi
     const before = data(resolveAs({ storefront: de.tenantId }, riesling));
     truthy('a German price carries the prior-price rule, unreduced', before && before.priorPriceRequired === true && before.reductionAnnounceable === false, before);
     promote(deOwner, riesling, 'Prior Price Too Soon', 20);
-    const fresh = recorded({ storefront: de.tenantId }, riesling);
+    const fresh = recorded({ storefront: de.tenantId }, riesling, (r) => r.priorPriceStatus === 'SHORT_HISTORY');
     truthy('reduced the day it was priced: SHORT_HISTORY, not announceable', fresh && fresh.priorPriceStatus === 'SHORT_HISTORY' && fresh.reductionAnnounceable === false, fresh);
     truthy('...its prior price still reported, the price before the promotion', fresh && near(fresh.priorPrice, before.totalWithVat) && fresh.totalWithVat < before.totalWithVat, { fresh, before });
 
@@ -438,7 +449,7 @@ export default function ({ tenant, rival, storeA, storeB, variantId, cigs, cashi
     const cheddar = sellableVariant(tenant, 'Prior Price Cheddar').variantId;
     priceVariants(tenant, [cheddar], '12.00');
     promote(owner, cheddar, 'Prior Price British', 10);
-    const british = recorded({ storefront: tenant.tenantId }, cheddar);
+    const british = recorded({ storefront: tenant.tenantId }, cheddar, (r) => r.reductionAnnounceable === true);
     truthy('a British reduction may be announced against the regular price', british && british.priorPriceRequired === false && british.reductionAnnounceable === true, british);
     const gbBanner = (data(call('GET', `${PR}/promotions`, { storefront: tenant.tenantId })) || []).find((p) => p.name === 'Prior Price British');
     truthy('...and its banner may advertise it', gbBanner && gbBanner.reductionAnnounceable === true, gbBanner);
