@@ -35,6 +35,8 @@ import java.util.Set;
 @Priority(Priorities.AUTHENTICATION - 1)
 public class JwtAuthFilter implements ContainerRequestFilter {
 
+  private static final System.Logger LOG = System.getLogger(JwtAuthFilter.class.getName());
+
   /** Exact request paths (normalized, no leading/trailing slash) that do NOT require a token. */
   private static final Set<String> PUBLIC_PATHS =
       Set.of(
@@ -76,6 +78,21 @@ public class JwtAuthFilter implements ContainerRequestFilter {
   /** A verifier per signing key, built once the key is known. */
   private final java.util.Map<String, JWTVerifier> verifiers =
       new java.util.concurrent.ConcurrentHashMap<>();
+
+  /**
+   * The key id a token names, for the log alone.
+   *
+   * @return the {@code kid}, or {@code "unreadable"} when the token will not even decode — which is
+   *     itself the answer, and distinguishes a malformed header from a real token refused
+   */
+  private static String keyIdOf(String token) {
+    try {
+      String kid = JWT.decode(token).getKeyId();
+      return kid == null || kid.isBlank() ? "none" : kid;
+    } catch (JWTVerificationException e) {
+      return "unreadable";
+    }
+  }
 
   /**
    * Verifies a token (20.15; RFC 8725): it must say RS256 — never {@code none}, never an HMAC a
@@ -195,6 +212,18 @@ public class JwtAuthFilter implements ContainerRequestFilter {
         ctx.abortWith(keysUnavailable());
         return;
       }
+      // The caller is told "invalid or expired" and nothing more — which of the four reasons it
+      // was is an oracle, and none of them is the caller's to act on differently. But it is the
+      // platform's to act on, and one message for four causes hides the difference where it
+      // matters: an unknown key id is a key-set problem, a bad signature is a forgery or a
+      // rotation gone wrong, a stale expiry is a clock. Recorded here with the key id and never
+      // the token, because a 401 nobody can explain is a 401 that will happen again.
+      LOG.log(
+          System.Logger.Level.WARNING,
+          "token refused on {0}: {1} (kid {2})",
+          normalize(path),
+          e.getMessage(),
+          keyIdOf(token));
       ctx.abortWith(unauthorized("Invalid or expired token"));
       return;
     }
