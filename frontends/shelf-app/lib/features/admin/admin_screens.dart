@@ -13,6 +13,7 @@ export 'recalls_screen.dart';
 export 'age_checks_screen.dart';
 export 'obligations_screen.dart';
 export 'statutory_returns_screen.dart';
+export 'terminals_screen.dart';
 export 'deposits_report_screen.dart';
 export 'disputes_screen.dart';
 export 'retention_screen.dart';

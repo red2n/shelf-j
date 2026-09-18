@@ -104,6 +104,15 @@ const _navItems = [
   ),
   _AdminNavItem(
     destination: AdaptiveNavDestination(
+      label: 'Card machines',
+      icon: Icons.point_of_sale_outlined,
+      selectedIcon: Icons.point_of_sale,
+    ),
+    route: '/admin/terminals',
+    storekeeperVisible: false,
+  ),
+  _AdminNavItem(
+    destination: AdaptiveNavDestination(
       label: 'Card settlements',
       icon: Icons.account_balance_outlined,
       selectedIcon: Icons.account_balance,
