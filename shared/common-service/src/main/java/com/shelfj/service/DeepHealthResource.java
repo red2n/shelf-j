@@ -13,6 +13,7 @@ import jakarta.ws.rs.core.MediaType;
 import java.sql.Connection;
 import java.sql.PreparedStatement;
 import java.sql.ResultSet;
+import java.sql.SQLException;
 import java.util.ArrayList;
 import java.util.List;
 import java.util.Set;
@@ -126,11 +127,25 @@ public class DeepHealthResource {
         null);
   }
 
-  /** The pool's figures, or null where the data source is not one this can read. */
+  /**
+   * The pool's figures, or null where the data source is not one this can read.
+   *
+   * <p><b>Unwrapped, not cast.</b> What CDI injects for an {@code @ApplicationScoped} producer of
+   * {@code DataSource} is a client proxy implementing that interface, so {@code instanceof
+   * HikariDataSource} is always false and a cast would silently report no pool at all — which is
+   * what the first live run of {@code k6/health-probes} found. {@link
+   * java.sql.Wrapper#unwrap(Class)} is the JDBC-standard way through, and the proxy forwards it.
+   */
   @SuppressWarnings(
       "PMD.CloseResource") // this is the application's pool — reading it, never owning it
   private Pool pool() {
-    if (!(dataSource instanceof HikariDataSource hikari)) return null;
+    HikariDataSource hikari;
+    try {
+      if (!dataSource.isWrapperFor(HikariDataSource.class)) return null;
+      hikari = dataSource.unwrap(HikariDataSource.class);
+    } catch (SQLException e) {
+      return null;
+    }
     HikariPoolMXBean bean = hikari.getHikariPoolMXBean();
     if (bean == null) return null;
     return new Pool(

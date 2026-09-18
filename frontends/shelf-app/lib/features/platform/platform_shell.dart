@@ -21,16 +21,23 @@ const _destinations = [
     selectedIcon: Icons.sell,
   ),
   AdaptiveNavDestination(
+    label: 'Billing',
+    icon: Icons.receipt_long_outlined,
+    selectedIcon: Icons.receipt_long,
+  ),
+  AdaptiveNavDestination(
     label: 'Security incidents',
     icon: Icons.shield_outlined,
     selectedIcon: Icons.shield,
   ),
 ];
 
+// The order here must match _destinations above, or the wrong tab is highlighted.
 const _routes = [
   '/platform/overview',
   '/platform/tenants',
   '/platform/plans',
+  '/platform/billing',
   '/platform/security',
 ];
 

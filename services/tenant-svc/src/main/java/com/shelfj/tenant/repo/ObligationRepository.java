@@ -115,4 +115,34 @@ public class ObligationRepository extends BaseJdbcRepository {
                 rs.getString("summary")),
         "legal obligations for a country");
   }
+
+  /**
+   * Whether a country belonged to a regime on a date (21.9).
+   *
+   * <p>The same question the three statements above ask as a join, asked directly, because the
+   * platform's own invoice needs it as a yes or no: whether the business it is billing was in the
+   * EU decides the VAT treatment, and membership has dates. The United Kingdom was a member until
+   * 31 January 2020, so an invoice dated before that and one dated after it are taxed differently
+   * for the same business — which is why this takes a day and not just a country.
+   *
+   * @param regime the regime code, e.g. {@code "EU"}
+   * @param country ISO 3166-1 alpha-2; a null or blank country belongs to nothing
+   * @param day the date the question is asked of
+   * @return true when a membership window covers that day
+   */
+  public boolean memberOn(String regime, String country, LocalDate day) {
+    if (country == null || country.isBlank()) return false;
+    return !query(
+            "SELECT 1 FROM jurisdiction_members WHERE regime_code = ? AND country = upper(?)"
+                + " AND member_from <= ? AND (member_to IS NULL OR member_to >= ?) LIMIT 1",
+            ps -> {
+              ps.setString(1, regime);
+              ps.setString(2, country.strip());
+              ps.setObject(3, day);
+              ps.setObject(4, day);
+            },
+            rs -> Boolean.TRUE,
+            "regime membership on a day")
+        .isEmpty();
+  }
 }

@@ -41,6 +41,15 @@ public class ExportableData extends TenantDataSpec {
             "plan_entitlements",
             "the platform's price list: the same for every business, and not theirs"),
         Map.entry(
+            "platform_billing_profile",
+            "the platform's own identity as a seller: its record, not the business's"),
+        Map.entry(
+            "platform_vat_rates",
+            "the platform's reference data: the rates it charges, the same for every business"),
+        Map.entry(
+            "billing_invoice_numbers",
+            "the platform's invoice counter: a sequence, and nobody's data"),
+        Map.entry(
             "jurisdiction_members",
             "the platform's reference data: the law as recorded for every business"),
         Map.entry(
