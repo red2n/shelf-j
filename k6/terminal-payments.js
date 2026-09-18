@@ -51,9 +51,13 @@ export default function () {
     '[-] two active machines cannot share a label in one store', 409, 'TERMINAL_ALREADY_REGISTERED');
   expect(call('POST', ADMIN, { token: owner, body: { storeId: store, label: `Other ${tag}`, vendor: 'MY_OWN_PINPAD' } }),
     '[-] nor a make the platform cannot talk to', 400, 'TERMINAL_VENDOR_UNKNOWN');
-  // Belt to the gateway's braces: nothing card-shaped may arrive by any route, including a label.
+  // Two layers refuse a card number, and through the gateway the OUTER one answers first: the code
+  // is the gateway's CARD_DATA_NOT_ACCEPTED, not the service's TERMINAL_CARD_DATA_NOT_ACCEPTED,
+  // because the request never reaches payment-svc. The service's own guard is proven by
+  // TerminalPaymentIT, which calls it with no gateway in front. Asserting the inner code here read
+  // as "the belt is missing" when in fact the braces had caught it.
   expect(call('POST', ADMIN, { token: owner, body: { storeId: store, label: '4242 4242 4242 4242', vendor: 'SIMULATED' } }),
-    '[abuse] and a card number is not accepted as a machine’s name', 400, 'TERMINAL_CARD_DATA_NOT_ACCEPTED');
+    '[abuse] and a card number is refused before it reaches the service at all', 400, 'CARD_DATA_NOT_ACCEPTED');
 
   // ── taking a card ───────────────────────────────────────────────────────────────────────────────
   // Each attempt is against its own order, so one outcome cannot be mistaken for another's. The id is
