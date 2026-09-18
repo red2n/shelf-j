@@ -771,6 +771,43 @@ class JwtAuthFilterTest {
     org.junit.jupiter.api.Assertions.assertEquals("tenant-xyz", headers.getFirst("X-Tenant-Id"));
   }
 
+  // ── 21.12: the pay link, public because a suspended business cannot sign in ──
+
+  @Test
+  void thePayLinkNeedsNoTokenAndNothingElseUnderItIsPublic() throws IOException {
+    when(requestContext.getMethod()).thenReturn("POST");
+    when(uriInfo.getPath()).thenReturn("api/tenant-svc/billing/pay/AbC123-token_value");
+
+    filter.filter(requestContext);
+
+    verify(requestContext, never()).abortWith(any());
+  }
+
+  @Test
+  void anythingElseUnderThePayPathStillNeedsAToken() throws IOException {
+    // Matched by shape: the prefix plus exactly one segment. A prefix match would make everything
+    // that appears under /billing/pay/ later public by accident, and this is the one path the
+    // gateway lets through with no identity.
+    for (String path :
+        new String[] {
+          "api/tenant-svc/billing/pay",
+          "api/tenant-svc/billing/pay/",
+          "api/tenant-svc/billing/pay/tok/extra",
+          "api/tenant-svc/billing/payx/tok",
+          "api/tenant-svc/billing/invoices/tok/payments"
+        }) {
+      org.mockito.Mockito.reset(requestContext);
+      when(requestContext.getHeaders()).thenReturn(new MultivaluedHashMap<>());
+      when(requestContext.getUriInfo()).thenReturn(uriInfo);
+      when(requestContext.getMethod()).thenReturn("POST");
+      when(uriInfo.getPath()).thenReturn(path);
+
+      filter.filter(requestContext);
+
+      verify(requestContext, org.mockito.Mockito.atLeastOnce()).abortWith(any());
+    }
+  }
+
   // ── SJ-D66: two clocks, and which way leeway may bend ──────────────────────
   // iam mints a token and the gateway judges it milliseconds later, on a different pod's clock.
   // With no leeway a token whose iat rounds to the next second is "from the future" and refused

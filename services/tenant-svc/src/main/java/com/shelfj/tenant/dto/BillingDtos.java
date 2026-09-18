@@ -3,6 +3,7 @@ package com.shelfj.tenant.dto;
 import jakarta.validation.constraints.DecimalMin;
 import jakarta.validation.constraints.Digits;
 import jakarta.validation.constraints.Email;
+import jakarta.validation.constraints.Max;
 import jakarta.validation.constraints.Min;
 import jakarta.validation.constraints.NotBlank;
 import jakarta.validation.constraints.NotNull;
@@ -290,4 +291,91 @@ public final class BillingDtos {
       skipped = skipped == null ? List.of() : List.copyOf(skipped);
     }
   }
+
+  /**
+   * How hard the platform chases what it is owed.
+   *
+   * <p>The order of the stages is the policy, and it is refused if it is wrong: the service cannot
+   * be interrupted before the last reminder has gone, and a debt cannot be given up on before the
+   * service was interrupted.
+   */
+  @Schema(name = "DunningPolicyRequest")
+  public record DunningPolicyRequest(
+      @NotNull Boolean enabled,
+      @Schema(description = "Days after the due date, e.g. [1, 3, 5, 7].")
+          @NotNull
+          @Size(min = 1, max = 12)
+          List<@Min(1) @Max(365) Integer> reminderDays,
+      @NotNull @Min(1) @Max(365) Integer suspendAfterDays,
+      @NotNull @Min(2) @Max(730) Integer uncollectibleAfterDays) {}
+
+  /**
+   * @param set false when nobody has set a policy and these are the published defaults — said
+   *     rather than implied, because "who decided this?" has no answer until somebody does
+   */
+  @Schema(name = "DunningPolicy")
+  public record DunningPolicyResponse(
+      boolean enabled,
+      List<Integer> reminderDays,
+      int suspendAfterDays,
+      int uncollectibleAfterDays,
+      boolean set,
+      String updatedAt) {
+    public DunningPolicyResponse {
+      reminderDays = reminderDays == null ? List.of() : List.copyOf(reminderDays);
+    }
+  }
+
+  /** One thing done about one overdue invoice. Append-only. */
+  @Schema(name = "DunningEvent")
+  public record DunningEventResponse(
+      String id,
+      @Schema(description = "REMINDER_n, SUSPENDED, UNCOLLECTIBLE, DUE_DATE_EXTENDED or RESOLVED.")
+          String step,
+      String detail,
+      String createdAt) {}
+
+  /**
+   * An overdue invoice on the receivables screen.
+   *
+   * @param stage the last step taken, or null when it has not been chased yet
+   * @param nextStep what it earns next, so an operator can see what is about to happen rather than
+   *     find out from a suspended customer
+   */
+  @Schema(name = "OverdueInvoice")
+  public record OverdueResponse(
+      String invoiceId,
+      String tenantId,
+      String number,
+      String dueDate,
+      int daysOverdue,
+      String stage,
+      String nextStep) {}
+
+  /** What one dunning run did, and what it could not do. */
+  @Schema(name = "DunningRunResponse")
+  public record DunningRunResponse(
+      String asOf, int stepsTaken, List<DunningStepResponse> taken, List<SkippedResponse> skipped) {
+    public DunningRunResponse {
+      taken = taken == null ? List.of() : List.copyOf(taken);
+      skipped = skipped == null ? List.of() : List.copyOf(skipped);
+    }
+  }
+
+  @Schema(name = "DunningStep")
+  public record DunningStepResponse(String tenantId, String invoiceNumber, String step) {}
+
+  /**
+   * The link a notice carries.
+   *
+   * <p>Returned once, here, because only its hash is kept — asking again mints a new one and the
+   * old link stops working. A link is a capability, and the newest notice is the one to act on.
+   */
+  @Schema(name = "PayLink")
+  public record PayLinkResponse(String token) {}
+
+  /** A promise to pay: the date moves out, the debt does not move at all. */
+  @Schema(name = "ExtendDueDateRequest")
+  public record ExtendDueDateRequest(
+      @NotBlank @Size(max = 10) String dueDate, @Size(max = 500) String reason) {}
 }

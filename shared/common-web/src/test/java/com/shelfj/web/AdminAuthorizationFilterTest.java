@@ -591,6 +591,33 @@ class AdminAuthorizationFilterTest {
     assertNotAborted(invoke("GET", "/admin/tenant/retention/runs"));
   }
 
+  // ── 21.12: the pay link in a dunning notice ──────────────────────────────────
+
+  @Test
+  void thePayLinkIsReachableWithNoIdentityAtAll() throws Exception {
+    // The one route in the service with no identity. By the time the later dunning notices go out
+    // the
+    // business has been suspended, so it cannot sign in; a pay link that demands a session is a
+    // dead
+    // end. The token is the whole capability and it names one invoice.
+    ctx.set(null, null, Set.of(), null, null);
+    assertNotAborted(invoke("POST", "/billing/pay/AbC123-token_value"));
+
+    // Matched by shape, so nothing else under the prefix is admitted.
+    assertAborted(invoke("POST", "/billing/pay"), 403);
+    assertAborted(invoke("POST", "/billing/pay/"), 403);
+    assertAborted(invoke("POST", "/billing/pay/tok/extra"), 403);
+    assertAborted(invoke("POST", "/billing/payx/tok"), 403);
+    // And the token opens nothing else: it is a payment, not a door into billing.
+    assertAborted(invoke("POST", "/billing/invoices/tok/void"), 403);
+    assertAborted(invoke("GET", "/billing/pay/tok"), 403);
+
+    // A cashier gains nothing from it either — there is no role that makes it more than one
+    // payment.
+    ctx.set(null, null, Set.of("CASHIER"), null, null);
+    assertNotAborted(invoke("POST", "/billing/pay/AbC123-token_value"));
+  }
+
   // ── 21.8: what the plan allows, read service-to-service ──────────────────────
 
   @Test
