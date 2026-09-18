@@ -202,6 +202,7 @@ class BillingIT {
     JsonObject invoice = invoices.get(0);
     assertThat(invoice.getString("status"), is("OPEN"));
     assertThat(invoice.getString("taxTreatment"), is("DOMESTIC"));
+    assertThat("the run raises periods", invoice.getString("kind"), is("PERIOD"));
     assertThat(invoice.getString("number"), containsString("INV-"));
     // The platform's own rate, because the business is in the platform's own country.
     assertThat(new BigDecimal(invoice.get("taxRate").toString()), is(new BigDecimal("0.2300")));
@@ -209,6 +210,36 @@ class BillingIT {
     BigDecimal tax = new BigDecimal(invoice.get("taxAmount").toString());
     BigDecimal total = new BigDecimal(invoice.get("totalAmount").toString());
     assertThat("an invoice adds up", net.add(tax).compareTo(total), is(0));
+  }
+
+  @Test
+  @DisplayName("An upgrade the same day raises an adjustment beside the period, not instead of it")
+  void aProrationIsNotAPeriod() {
+    // The defect the first live run of k6 billing-flow found. Both invoices have the same
+    // period_start — the day the business signed up — and uq_invoices_period was written over
+    // (subscription, period_start) with nothing to say which invoices are periods, so it refused
+    // the
+    // proration and the upgrade answered 500. A proration is an adjustment: it can happen more than
+    // once inside a period and must not compete for the period's slot.
+    sellerIs("IE", "0.2300");
+    String tag = Ids.newId().toString().substring(0, 8);
+    String small = sellablePlan("IT-ADJ-S-" + tag, "10.00");
+    String big = sellablePlan("IT-ADJ-B-" + tag, "20.00");
+    assertThat(platform("POST", PLANS + "/" + small + "/default", null).status(), is(200));
+    String shop = onboard("Upgrades at once");
+
+    Answer up =
+        owner("POST", MINE + "/plan", "{\"planId\":\"" + big + "\",\"when\":\"NOW\"}", shop);
+    assertThat(up.text(), up.status(), is(200));
+
+    List<JsonObject> raised = invoicesOf(shop);
+    assertThat("the period and the adjustment both exist", raised.size(), is(2));
+    Set<String> kinds = raised.stream().map(i -> i.getString("kind")).collect(Collectors.toSet());
+    assertThat(kinds, is(Set.of("PERIOD", "ADJUSTMENT")));
+    assertThat(
+        "and they are for the same period",
+        raised.stream().map(i -> i.getString("periodStart")).distinct().count(),
+        is(1L));
   }
 
   @Test

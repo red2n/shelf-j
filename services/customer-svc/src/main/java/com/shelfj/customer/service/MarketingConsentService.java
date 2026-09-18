@@ -8,16 +8,12 @@ import com.shelfj.customer.dto.Dtos.MarketingChannelChoice;
 import com.shelfj.customer.dto.Dtos.SetMarketingPreferencesRequest;
 import com.shelfj.customer.repo.CustomerRepository;
 import com.shelfj.ids.Ids;
+import com.shelfj.service.CapabilityTokens;
 import com.shelfj.web.ApiException;
 import jakarta.enterprise.context.ApplicationScoped;
 import jakarta.inject.Inject;
-import java.nio.charset.StandardCharsets;
-import java.security.MessageDigest;
-import java.security.NoSuchAlgorithmException;
-import java.security.SecureRandom;
 import java.time.Instant;
 import java.util.ArrayList;
-import java.util.Base64;
 import java.util.List;
 import java.util.Locale;
 import java.util.Set;
@@ -46,8 +42,6 @@ public class MarketingConsentService {
           MarketingPreference.CHANNEL_SMS,
           MarketingPreference.CHANNEL_PHONE,
           MarketingPreference.CHANNEL_POST);
-
-  private static final SecureRandom RANDOM = new SecureRandom();
 
   @Inject CustomerRepository repo;
 
@@ -235,23 +229,16 @@ public class MarketingConsentService {
     return stopped;
   }
 
+  /**
+   * Shared with the pay link a dunning notice carries (21.12): both are a token that <em>is</em>
+   * the permission, reaching somebody who cannot be asked to sign in. See {@link CapabilityTokens}
+   * for why SHA-256 and not a password hash.
+   */
   private static String mintToken() {
-    byte[] bytes = new byte[32];
-    RANDOM.nextBytes(bytes);
-    return Base64.getUrlEncoder().withoutPadding().encodeToString(bytes);
+    return CapabilityTokens.mint();
   }
 
-  /**
-   * SHA-256, not a password hash: the token is 256 bits of randomness rather than something a
-   * person chose, so there is nothing to brute-force and no reason to make verification slow.
-   */
   private static String hash(String token) {
-    try {
-      MessageDigest digest = MessageDigest.getInstance("SHA-256");
-      return Base64.getEncoder()
-          .encodeToString(digest.digest(token.getBytes(StandardCharsets.UTF_8)));
-    } catch (NoSuchAlgorithmException e) {
-      throw new IllegalStateException("SHA-256 is required by the platform", e);
-    }
+    return CapabilityTokens.hash(token);
   }
 }

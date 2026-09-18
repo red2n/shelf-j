@@ -197,7 +197,14 @@ public class PaymentRunRepository extends BaseOutboxRepository {
             + RUN_COLUMNS
             + " FROM payment_runs WHERE tenant_id = ?"
             + (status == null ? "" : " AND status = ?")
-            + " ORDER BY created_at DESC, id DESC LIMIT ?",
+            // Newest first by id, not by created_at. The id is UUIDv7, minted once when the run is
+            // created and never rewritten, so it cannot wind backwards; created_at is filled by a
+            // column DEFAULT of now(), which is Postgres's *transaction start* time, so two
+            // concurrent transactions can stamp rows in an order that does not match the order they
+            // were created in. A live run turned up a row whose cancelled_at preceded its own
+            // created_at by two seconds and sorted above a newer run because of it. Ordering by the
+            // id uses the very property UUIDv7 was chosen for.
+            + " ORDER BY id DESC LIMIT ?",
         ps -> {
           int i = 1;
           ps.setObject(i++, tenantId);

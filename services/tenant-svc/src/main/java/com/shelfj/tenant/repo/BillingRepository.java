@@ -322,18 +322,19 @@ public class BillingRepository extends BaseJdbcRepository {
       "UPDATE billing_invoice_numbers SET next_number = next_number + 1 WHERE year = ?";
 
   private static final String INSERT_INVOICE =
-      "INSERT INTO billing_invoices (id, tenant_id, subscription_id, number, status, issue_date,"
-          + " due_date, period_start, period_end, currency, net_amount, tax_treatment, tax_rate,"
-          + " tax_amount, total_amount, amount_paid, seller_snapshot, buyer_snapshot,"
+      "INSERT INTO billing_invoices (id, tenant_id, subscription_id, number, kind, status,"
+          + " issue_date, due_date, period_start, period_end, currency, net_amount, tax_treatment,"
+          + " tax_rate, tax_amount, total_amount, amount_paid, seller_snapshot, buyer_snapshot,"
           + " buyer_vat_number, pay_token_hash, voided_reason, created_at, updated_at)"
-          + " VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)";
+          + " VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)";
 
   private static final String INSERT_LINE =
       "INSERT INTO billing_invoice_lines (id, tenant_id, invoice_id, line_no, kind, description,"
           + " quantity, unit_amount, amount) VALUES (?,?,?,?,?,?,?,?,?)";
 
   private static final String INVOICE_COLUMNS =
-      "SELECT id, tenant_id, subscription_id, number, status, issue_date, due_date, period_start,"
+      "SELECT id, tenant_id, subscription_id, number, kind, status, issue_date, due_date,"
+          + " period_start,"
           + " period_end, currency, net_amount, tax_treatment, tax_rate, tax_amount, total_amount,"
           + " amount_paid, seller_snapshot, buyer_snapshot, buyer_vat_number, voided_reason,"
           + " created_at, updated_at FROM billing_invoices";
@@ -554,6 +555,57 @@ public class BillingRepository extends BaseJdbcRepository {
         .findFirst();
   }
 
+  /**
+   * Gives up on a debt (21.12): the invoice is owed and not expected.
+   *
+   * <p>Not the same as withdrawing it. A void says the invoice should never have been raised; this
+   * says it was right and will not be paid, which is what a write-off is and what the ledger needs
+   * to hear.
+   *
+   * @return false when it was not open, so a run that runs twice gives up once
+   */
+  private static final String WRITE_OFF =
+      "UPDATE billing_invoices SET status = 'UNCOLLECTIBLE', updated_at = ?"
+          + " WHERE id = ? AND status = 'OPEN'";
+
+  /**
+   * Moves a due date <em>out</em> (21.12): a promise to pay pauses the chase without forgiving the
+   * debt.
+   *
+   * <p>The predicate does the refusing. Only an open invoice, and only to a later date — a due date
+   * that could move inwards would let somebody shorten the time a business has to pay after the
+   * fact, and one that could move on a settled invoice would be editing history.
+   */
+  private static final String EXTEND_DUE_DATE =
+      "UPDATE billing_invoices SET due_date = ?, updated_at = ?"
+          + " WHERE id = ? AND status = 'OPEN' AND due_date < ?";
+
+  public boolean writeOff(UUID invoiceId) {
+    return inTx(
+        c -> {
+          try (PreparedStatement ps = c.prepareStatement(WRITE_OFF)) {
+            ps.setObject(1, Instant.now().atOffset(ZoneOffset.UTC));
+            ps.setObject(2, invoiceId);
+            return ps.executeUpdate() == 1;
+          }
+        },
+        "write off invoice");
+  }
+
+  public boolean extendDueDate(UUID invoiceId, LocalDate to) {
+    return inTx(
+        c -> {
+          try (PreparedStatement ps = c.prepareStatement(EXTEND_DUE_DATE)) {
+            ps.setObject(1, to);
+            ps.setObject(2, Instant.now().atOffset(ZoneOffset.UTC));
+            ps.setObject(3, invoiceId);
+            ps.setObject(4, to);
+            return ps.executeUpdate() == 1;
+          }
+        },
+        "extend due date");
+  }
+
   /** Withdraws an unpaid invoice. One that has taken money is settled or credited, never voided. */
   public boolean voidInvoice(UUID id, String reason) {
     return inTx(
@@ -608,6 +660,7 @@ public class BillingRepository extends BaseJdbcRepository {
         rs.getObject("tenant_id", UUID.class),
         rs.getObject("subscription_id", UUID.class),
         rs.getString("number"),
+        rs.getString("kind"),
         rs.getString("status"),
         rs.getObject("issue_date", LocalDate.class),
         rs.getObject("due_date", LocalDate.class),
@@ -712,25 +765,26 @@ public class BillingRepository extends BaseJdbcRepository {
     ps.setObject(2, i.tenantId());
     ps.setObject(3, i.subscriptionId());
     ps.setString(4, i.number());
-    ps.setString(5, i.status());
-    ps.setObject(6, i.issueDate());
-    ps.setObject(7, i.dueDate());
-    ps.setObject(8, i.periodStart());
-    ps.setObject(9, i.periodEnd());
-    ps.setString(10, i.currency());
-    ps.setBigDecimal(11, i.netAmount());
-    ps.setString(12, i.taxTreatment());
-    ps.setBigDecimal(13, i.taxRate());
-    ps.setBigDecimal(14, i.taxAmount());
-    ps.setBigDecimal(15, i.totalAmount());
-    ps.setBigDecimal(16, i.amountPaid());
-    ps.setString(17, i.sellerSnapshot());
-    ps.setString(18, i.buyerSnapshot());
-    ps.setString(19, i.buyerVatNumber());
-    ps.setString(20, null);
-    ps.setString(21, i.voidedReason());
-    ps.setObject(22, offset(i.createdAt()));
-    ps.setObject(23, offset(i.updatedAt()));
+    ps.setString(5, i.kind());
+    ps.setString(6, i.status());
+    ps.setObject(7, i.issueDate());
+    ps.setObject(8, i.dueDate());
+    ps.setObject(9, i.periodStart());
+    ps.setObject(10, i.periodEnd());
+    ps.setString(11, i.currency());
+    ps.setBigDecimal(12, i.netAmount());
+    ps.setString(13, i.taxTreatment());
+    ps.setBigDecimal(14, i.taxRate());
+    ps.setBigDecimal(15, i.taxAmount());
+    ps.setBigDecimal(16, i.totalAmount());
+    ps.setBigDecimal(17, i.amountPaid());
+    ps.setString(18, i.sellerSnapshot());
+    ps.setString(19, i.buyerSnapshot());
+    ps.setString(20, i.buyerVatNumber());
+    ps.setString(21, null);
+    ps.setString(22, i.voidedReason());
+    ps.setObject(23, offset(i.createdAt()));
+    ps.setObject(24, offset(i.updatedAt()));
   }
 
   private static Invoice withNumber(Invoice i, String number) {
@@ -739,6 +793,7 @@ public class BillingRepository extends BaseJdbcRepository {
         i.tenantId(),
         i.subscriptionId(),
         number,
+        i.kind(),
         i.status(),
         i.issueDate(),
         i.dueDate(),

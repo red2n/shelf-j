@@ -118,6 +118,7 @@ public final class BillingMappers {
     return new BillingDtos.InvoiceResponse(
         i.id().toString(),
         i.number(),
+        i.kind(),
         i.status(),
         text(i.issueDate()),
         text(i.dueDate()),

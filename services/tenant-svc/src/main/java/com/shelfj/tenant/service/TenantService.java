@@ -701,16 +701,37 @@ public class TenantService {
     if (!Tenant.STATUS_ACTIVE.equals(status) && !Tenant.STATUS_INACTIVE.equals(status)) {
       throw ApiException.badRequest("INVALID_STATUS", "status must be ACTIVE or INACTIVE");
     }
-    // Publish the change so iam-svc (and anyone else) can react — deactivating a tenant must lock
-    // its staff out, not just flip a row no other service can see.
-    var event =
-        new OutboxRow(
-            "TenantStatusChanged",
-            "shelfj.tenant.tenant-status-changed",
-            tenantId,
-            tenantId,
-            Events.tenantStatusChanged(tenantId, status));
-    return repo.updateTenantStatusWithOutbox(tenantId, status, event);
+    return repo.updateTenantStatusWithOutbox(tenantId, status, tenantStatusEvent(tenantId, status));
+  }
+
+  /**
+   * The event a status change publishes, built in one place.
+   *
+   * <p>Deactivating a business must lock its staff out and close its storefront, not just flip a
+   * row no other service can see — that is what this event is for. It is built here rather than at
+   * each call site because dunning (21.12) writes the status itself and then announces it, and two
+   * copies of the announcement would drift on what it says.
+   */
+  private static OutboxRow tenantStatusEvent(UUID tenantId, String status) {
+    return new OutboxRow(
+        "TenantStatusChanged",
+        "shelfj.tenant.tenant-status-changed",
+        tenantId,
+        tenantId,
+        Events.tenantStatusChanged(tenantId, status));
+  }
+
+  /**
+   * Announces a status the dunning side has already written (21.12).
+   *
+   * <p>Dunning writes {@code tenants.status} itself, because it also writes <em>why</em> — the
+   * reason is what lets a payment lift a suspension the platform imposed and not one an
+   * administrator imposed. So it needs the announcement without the write, and this is that half.
+   *
+   * @param status the status already on the row
+   */
+  public void announceStatus(UUID tenantId, String status) {
+    repo.publishEvent(tenantStatusEvent(tenantId, status));
   }
 
   /**
