@@ -33,7 +33,7 @@
         <!-- Versions for libraries NOT managed by the Helidon BOM -->
         <flyway.version>13.7.0</flyway.version>
         <postgresql.version>42.7.12</postgresql.version>
-        <hikaricp.version>6.2.1</hikaricp.version>
+        <hikaricp.version>7.1.0</hikaricp.version>
         <!-- Must match the version Helidon's own BOM pins org.testcontainers:testcontainers/jdbc
              to (checked via `mvn help:effective-pom`) — otherwise postgresql/kafka/database-commons
              resolve to this property's value while testcontainers-core/jdbc resolve to Helidon's,
