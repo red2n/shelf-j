@@ -113,8 +113,14 @@ export default function ({ tenant, rival, store, variantId, cashier }) {
 
   const third = sale(1);
   const thirdCard = pay(third.id, num(third.total).toFixed(2), 'CARD');
-  const hurried = must(record(chargeback(thirdCard.id, { evidenceDueBy: new Date(Date.now() + 2500).toISOString() })), 201, 'a chargeback due in moments');
-  sleep(3);
+  // The deadline has to be in the future to be recorded at all, so this waits past it rather than
+  // setting it in the past. The margin is deliberately generous: k6 runs on the host and the service
+  // in a container, and their clocks differ by hundreds of milliseconds on this machine (the same
+  // divergence SJ-D66 exposed in the gateway's token verifier). A 2.5s deadline with a 3s sleep left
+  // 500ms of margin and lost the race. Three seconds of margin measures the rule; half a second
+  // measures the clocks.
+  const hurried = must(record(chargeback(thirdCard.id, { evidenceDueBy: new Date(Date.now() + 1500).toISOString() })), 201, 'a chargeback due in moments');
+  sleep(4.5);
   expect(call('POST', `${DISPUTES}/${hurried.id}/evidence`, { token: owner, body: { notes: 'Here is the receipt' } }), '[abuse] an answer after its date is refused', 409, 'DISPUTE_EVIDENCE_LATE');
   truthy('[+] and the register says the dispute is overdue', data(call('GET', `${DISPUTES}/${hurried.id}`, { token: owner })).dispute.overdue === true);
   expect(call('POST', `${DISPUTES}/${hurried.id}/resolve`, { token: owner, body: { outcome: 'LOST' } }), '[+] what is left is to say it was lost', 200);
