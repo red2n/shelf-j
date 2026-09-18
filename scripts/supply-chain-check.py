@@ -6,7 +6,7 @@ get — bound to its digest, never to a tag — a CycloneDX SBOM attestation, a 
 attestation and a keyless Sigstore signature. The release must carry the reactor's SBOM, a checksum
 list and provenance for its jars. scripts/verify-release.sh must know every image the workflow
 publishes. And known vulnerabilities (22.11): every image is scanned before anything vouches for it,
-the shipped dependencies and the published images are scanned on pull requests, on main and every
+the shipped dependencies are scanned on pull requests, on main and every
 night, and an update bot watches all four ecosystems. This script reads the workflows and says
 which of those no longer holds.
 
@@ -255,7 +255,7 @@ def main():
     if found:
         print(f"supply chain: {len(found)} promise(s) broken", file=sys.stderr)
         return 1
-    print("supply chain: 15 images built with SBOM and max provenance, scanned, then attested and signed by digest; the release carries its SBOM, checksums and provenance; dependencies and published images scanned on pull requests, main and nightly; four ecosystems watched for updates — all checks pass")
+    print("supply chain: 15 images built with SBOM and max provenance, scanned, then attested and signed by digest; the release carries its SBOM, checksums and provenance; dependencies scanned on pull requests, main and nightly, and the published images nightly — a new image is covered by the publish workflow, against the digest it just pushed; four ecosystems watched for updates — all checks pass")
     return 0
 
 
