@@ -76,10 +76,13 @@ class _Till implements HttpClientAdapter {
           '{"data":[{"variantId":"v-YOG","productName":"Greek yoghurt 500g","sku":"YOG-500"}]}';
     } else if (o.path.endsWith('/weighing-instruments')) {
       body = '{"data":[]}';
-    } else if (o.path.contains('/catalog/variants/by-barcode/')) {
-      final code = parts.last;
+    } else if (o.path.contains('/catalog/scan')) {
+      // /catalog/scan (07.15): one route for every kind of code, with the code in a query
+      // parameter because a GS1 Digital Link is a URI, and the item wrapped in `item` beside
+      // what the code itself carried in `code`.
+      final code = '${o.queryParameters['code']}';
       body =
-          '{"data":{"variantId":"v-YOG","sku":"$code","productName":"Greek yoghurt 500g"}}';
+          '{"data":{"item":{"variantId":"v-YOG","sku":"$code","productName":"Greek yoghurt 500g"}}}';
     } else if (o.path.contains('/prices/resolve')) {
       body = '{"data":{"unitPrice":2.99,"currency":"GBP"}}';
     } else if (o.path.endsWith('/age-check')) {
@@ -169,7 +172,7 @@ void main() {
       );
       expect(
         till.requests.any(
-          (r) => r.path.contains('/catalog/variants/by-barcode/'),
+          (r) => r.path.contains('/catalog/scan'),
         ),
         isFalse,
       );
@@ -214,7 +217,7 @@ void main() {
       expect(line.unitPrice, 2.99);
       expect(
         till.requests.any(
-          (r) => r.path.contains('/catalog/variants/by-barcode/$_unknown'),
+          (r) => r.queryParameters['code'] == _unknown,
         ),
         isTrue,
       );

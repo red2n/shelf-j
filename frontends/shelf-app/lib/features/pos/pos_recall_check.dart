@@ -107,13 +107,64 @@ class RecallCheckPack extends RecallCheckResult {
   const RecallCheckPack(this.items);
 }
 
-RecallCheckResult checkRecall(String variantId, List<ActiveRecallItem> items) {
+/// Whether one recall line covers a pack whose lot and expiry are known.
+///
+/// Both halves must agree, and an absent half means "any": a recall naming only
+/// a lot covers that lot whatever its date, and one naming only dates covers
+/// every lot inside them. A pack whose batch is known and differs is not the
+/// recalled stock, and refusing it would take saleable food off sale.
+bool _coversPack(ActiveRecallItem i, String? batchNo, DateTime? expiry) {
+  if (i.batchNo != null) {
+    if (batchNo == null || i.batchNo != batchNo) return false;
+  }
+  if (i.expiryFrom != null || i.expiryTo != null) {
+    if (expiry == null) return false;
+    if (i.expiryFrom != null && expiry.isBefore(i.expiryFrom!)) return false;
+    if (i.expiryTo != null && expiry.isAfter(i.expiryTo!)) return false;
+  }
+  return true;
+}
+
+/// Checks an item against the open recalls.
+///
+/// [batchNo] and [expiry] are what the pack itself said — a GS1 2D code carries
+/// them (07.15) and a linear barcode carries neither. When they are known the
+/// till can decide about *this pack* instead of asking the cashier to read the
+/// jar: the recalled lot is stopped and every other lot goes on selling. That is
+/// the whole reason the 2D code matters here, and it cuts both ways — without a
+/// batch the till must keep asking, because guessing would either sell recalled
+/// food or condemn good stock.
+RecallCheckResult checkRecall(
+  String variantId,
+  List<ActiveRecallItem> items, {
+  String? batchNo,
+  DateTime? expiry,
+}) {
   final matching = items.where((i) => i.variantId == variantId).toList();
   if (matching.isEmpty) return const RecallClear();
   for (final i in matching) {
     if (i.coversEveryPack) return RecallBlocked(i);
   }
-  return RecallCheckPack(matching);
+  // Nothing known about the pack: the cashier is told what to look for, as before.
+  if (batchNo == null && expiry == null) return RecallCheckPack(matching);
+
+  // The pack identified itself. A line it matches is a block; one it does not is
+  // not this pack's recall at all.
+  final hit = matching.where((i) => _coversPack(i, batchNo, expiry)).toList();
+  if (hit.isNotEmpty) return RecallBlocked(hit.first);
+  // Every remaining line is scoped to a lot or dates the pack is outside of. But
+  // a line the pack cannot be compared against — it names dates and the code
+  // carried none — still has to go to the cashier rather than be waved through.
+  final undecidable =
+      matching.where((i) => !_comparable(i, batchNo, expiry)).toList();
+  return undecidable.isEmpty ? const RecallClear() : RecallCheckPack(undecidable);
+}
+
+/// Whether the pack carries what a recall line is scoped by.
+bool _comparable(ActiveRecallItem i, String? batchNo, DateTime? expiry) {
+  if (i.batchNo != null && batchNo == null) return false;
+  if ((i.expiryFrom != null || i.expiryTo != null) && expiry == null) return false;
+  return true;
 }
 
 class ActiveRecallsNotifier extends Notifier<RecallList> {

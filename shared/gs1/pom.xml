@@ -1,0 +1,27 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<project xmlns="http://maven.apache.org/POM/4.0.0"
+         xmlns:xsi="http://www.w3.org/2001/XMLSchema-instance"
+         xsi:schemaLocation="http://maven.apache.org/POM/4.0.0 http://maven.apache.org/xsd/maven-4.0.0.xsd">
+    <modelVersion>4.0.0</modelVersion>
+
+    <parent>
+        <groupId>com.shelfj</groupId>
+        <artifactId>shelf-j-parent</artifactId>
+        <version>0.1.0-SNAPSHOT</version>
+        <relativePath>../../pom.xml</relativePath>
+    </parent>
+
+    <artifactId>gs1</artifactId>
+    <name>Shelf-J :: shared :: gs1</name>
+    <description>GS1 identification as a format: one reading taken from a plain GTIN, a GS1 element string
+        (DataMatrix, GS1-128, QR) or a GS1 Digital Link URI. No service state, no network, no business
+        decisions — product-svc decides what item a GTIN names and inventory-svc what a batch means.</description>
+
+    <dependencies>
+        <dependency>
+            <groupId>org.junit.jupiter</groupId>
+            <artifactId>junit-jupiter</artifactId>
+            <scope>test</scope>
+        </dependency>
+    </dependencies>
+</project>

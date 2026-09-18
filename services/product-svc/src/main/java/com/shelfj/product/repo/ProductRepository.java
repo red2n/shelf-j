@@ -672,6 +672,43 @@ public class ProductRepository extends BaseOutboxRepository {
   }
 
   /**
+   * Looks up a variant by the GTIN a 2D code carried, in the one form every GTIN length shares.
+   *
+   * <p>Separate from {@link #findVariantByBarcode} and not a replacement for it. That one matches
+   * the barcode column exactly, which is what an internal code, a PLU or a shelf label needs; this
+   * one matches the generated {@code gtin14}, so a packet whose DataMatrix carries {@code
+   * 05012345678900} finds the variant a shop entered as {@code 5012345678900}. Both are wanted, and
+   * the caller tries the GTIN form first when the scan produced one.
+   *
+   * <p>Ordered and limited rather than assumed unique: a tenant may hold the same item twice under
+   * two spellings of its barcode, entered by different people at different times. The migration
+   * declines to fail on that data, so the lookup picks the same one every time instead of depending
+   * on the order the database happens to return.
+   */
+  public Optional<VariantWithProduct> findVariantByGtin(UUID tenantId, String gtin14) {
+    return query(
+            "SELECT v.id AS v_id, v.tenant_id AS v_tid, v.product_id, v.sku, v.barcode,"
+                + " v.manufacturer_pn, v.attributes, v.unit, v.status AS v_status,"
+                + " v.created_at AS v_cat, v.updated_at AS v_uat,"
+                + " p.id AS p_id, p.name, p.description, p.brand_id, p.category_id,"
+                + " p.status AS p_status, p.sellable_online, p.sellable_pos,"
+                + " p.created_at AS p_cat, p.updated_at AS p_uat, p.launch_on, p.discontinued_at"
+                + " FROM product_variants v"
+                + " JOIN products p ON p.id = v.product_id AND p.tenant_id = v.tenant_id"
+                + " WHERE v.tenant_id = ? AND v.gtin14 = ?"
+                + " AND v.status = 'ACTIVE' AND p.status <> 'DELISTED'"
+                + " ORDER BY v.created_at, v.id LIMIT 1",
+            ps -> {
+              ps.setObject(1, tenantId);
+              ps.setString(2, gtin14);
+            },
+            ProductRepository::mapVariantWithProduct,
+            "find variant by GTIN")
+        .stream()
+        .findFirst();
+  }
+
+  /**
    * Resolves a batch of variant ids to their variant + parent product in one query. Unlike the
    * storefront barcode lookup this does NOT filter on {@code status='ACTIVE'} — admin screens need
    * to resolve names/SKUs for every variant they show, including inactive ones. tenant_id is

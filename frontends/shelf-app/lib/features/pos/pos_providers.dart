@@ -42,6 +42,15 @@ class PosLine {
   /// pricing-svc says the law allows (03.12); null when it allows none.
   final double? originalPrice;
 
+  /// The lot the pack itself declared, from a GS1 2D code (07.15). Null for a
+  /// linear barcode, which carries no lot. Sent with the order so a later recall
+  /// can find the sale, and used at the till so a lot-scoped recall stops the
+  /// recalled pack and nothing else.
+  final String? batchNo;
+
+  /// The expiry the pack declared (AI 17). Null for a linear barcode.
+  final DateTime? expiry;
+
   /// The drinks container the item comes in — PET, ALUMINIUM, STEEL or GLASS —
   /// when the catalogue records one (09.16). Null for everything else.
   final String? depositMaterial;
@@ -65,6 +74,8 @@ class PosLine {
     this.soldBy = 'EACH',
     this.unit,
     this.weighingInstrumentId,
+    this.batchNo,
+    this.expiry,
     this.markdownId,
     this.originalPrice,
     this.depositMaterial,
@@ -96,6 +107,8 @@ class PosLine {
     String? soldBy,
     String? unit,
     String? weighingInstrumentId,
+    String? batchNo,
+    DateTime? expiry,
   }) => PosLine(
     variantId: variantId,
     sku: sku,
@@ -106,6 +119,8 @@ class PosLine {
     soldBy: soldBy ?? this.soldBy,
     unit: unit ?? this.unit,
     weighingInstrumentId: weighingInstrumentId ?? this.weighingInstrumentId,
+    batchNo: batchNo ?? this.batchNo,
+    expiry: expiry ?? this.expiry,
     markdownId: markdownId,
     originalPrice: originalPrice,
     depositMaterial: depositMaterial,
@@ -277,18 +292,29 @@ final posDepositSchemeProvider =
   return scheme is Map<String, dynamic> ? DepositScheme.fromJson(scheme) : null;
 });
 
-/// Looks a barcode up in the catalog, resolves its POS price, and returns a
+/// Looks a scanned code up in the catalog, resolves its POS price, and returns a
 /// ready-to-add line. Throws on not-found / pricing failures so the UI can show
 /// a clear message.
+///
+/// One route for every kind of code (07.15). A linear EAN or UPC is matched as it
+/// always was; a GS1 DataMatrix or Digital Link QR — what GS1 Sunrise 2027 asks a
+/// till to read by 31 December 2027 — is parsed by product-svc and matched on the
+/// GTIN it carried, so the packet in the customer's hand finds the item the shop
+/// entered from the shelf edge. What such a code carries besides the GTIN is used
+/// rather than discarded: the net weight prices a loose item with no scale, and
+/// the lot and expiry let the recall check decide about this pack.
 Future<PosLine> scanBarcode(WidgetRef ref, String rawCode) async {
   final code = rawCode.trim();
   final dio = ref.read(apiClientProvider).dio;
 
-  // 1. Resolve the barcode/SKU to a catalog variant (one round-trip).
+  // 1. Resolve the code to a catalog variant, and read what the code carried.
   final scanResp = await dio.get(
-    '/${ApiConstants.product}/catalog/variants/by-barcode/$code',
+    '/${ApiConstants.product}/catalog/scan',
+    queryParameters: {'code': code},
   );
-  final v = scanResp.data['data'] as Map<String, dynamic>;
+  final data = scanResp.data['data'] as Map<String, dynamic>;
+  final v = data['item'] as Map<String, dynamic>? ?? const {};
+  final scanned = data['code'] as Map<String, dynamic>?;
   final variantId = v['variantId'] as String? ?? '';
   if (variantId.isEmpty) {
     throw Exception('No product found for "$code"');
@@ -317,16 +343,30 @@ Future<PosLine> scanBarcode(WidgetRef ref, String rawCode) async {
   }
   final covered = scheme != null && scheme.covers(material, volumeMl);
 
+  // 4. What the code said about the pack (07.15). A net weight on the label has
+  // already been measured by a certified scale at the packing bench, so the line
+  // is sold by weight at that reading without a scale at the till — but only when
+  // the catalogue agrees the item is sold that way. A weight on a code for an
+  // item sold by the each is a misread, and honouring it would price one packet
+  // as though it were a kilogram of them.
+  final soldBy = v['soldBy'] as String? ?? 'EACH';
+  final labelWeight = double.tryParse('${scanned?['netWeightKg'] ?? ''}');
+  final measured = soldBy == 'WEIGHT' && labelWeight != null && labelWeight > 0;
+
   return PosLine(
     variantId: variantId,
     sku: v['sku'] as String? ?? code,
     name: v['productName'] as String? ?? (v['sku'] as String? ?? code),
-    qty: 1,
+    qty: measured ? labelWeight : 1,
+    soldBy: measured ? 'WEIGHT' : 'EACH',
+    unit: measured ? 'kg' : null,
     unitPrice: (p['unitPrice'] as num?)?.toDouble() ?? 0,
     currency: p['currency'] as String? ?? '',
     depositMaterial: material,
     depositVolumeMl: volumeMl,
     depositEach: covered ? scheme.depositEach : 0,
+    batchNo: scanned?['batch'] as String?,
+    expiry: DateTime.tryParse('${scanned?['expiry'] ?? ''}'),
   );
 }
 

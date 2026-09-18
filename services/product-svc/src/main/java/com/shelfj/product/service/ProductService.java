@@ -749,8 +749,18 @@ public class ProductService {
                 () ->
                     ApiException.notFound(
                         "VARIANT_NOT_FOUND", "No active variant found for barcode: " + barcode));
-    // Item lifecycle: a new line is listed before it goes on sale; the till says so rather than
-    // selling it early or pretending it does not exist.
+    requireOnSale(found);
+    return found;
+  }
+
+  /**
+   * Item lifecycle: a new line is listed before it goes on sale, and the till says so rather than
+   * selling it early or pretending it does not exist.
+   *
+   * <p>Shared by both lookups on purpose. A second scan path that forgot this check would sell a
+   * line before its launch date, and the two paths reach the same variants.
+   */
+  private static void requireOnSale(com.shelfj.product.domain.Domain.VariantWithProduct found) {
     if (Product.STATUS_NEW_LINE.equals(found.product().status())) {
       throw ApiException.conflict(
           "PRODUCT_NOT_ON_SALE_YET",
@@ -758,7 +768,62 @@ public class ProductService {
               ? "this line is not on sale yet"
               : "this line goes on sale on " + found.product().launchOn());
     }
-    return found;
+  }
+
+  /**
+   * What a scanned code found, and what the code itself carried besides the item (07.15).
+   *
+   * @param scan the reading, or null when the code was not a GS1 code at all — an internal code, a
+   *     PLU or a shelf label, which are matched exactly and carry nothing
+   */
+  public record ScanResult(
+      com.shelfj.product.domain.Domain.VariantWithProduct found, com.shelfj.gs1.Gs1Scan scan) {}
+
+  /**
+   * Looks a scanned code up, whatever it was encoded as (07.15).
+   *
+   * <p>GS1 Sunrise 2027 asks a till to read a GTIN from a DataMatrix or a Digital Link QR, and
+   * those carry more than the GTIN: a batch, an expiry, a weight. So this reads the code first and
+   * then looks up by <b>the GTIN form</b>, which is what lets a packet whose 2D code says {@code
+   * 05012345678900} find the variant a shop entered as {@code 5012345678900}.
+   *
+   * <p>Two fallbacks, in this order, because the codes a shop scans are not all GS1 codes:
+   *
+   * <ol>
+   *   <li>the GTIN form, when the reading produced one;
+   *   <li>the barcode column exactly — which is how an internal code, a PLU and a shelf label have
+   *       always worked, and must go on working.
+   * </ol>
+   *
+   * <p>The raw string is tried even when the code <em>did</em> read as GS1: a shop is entitled to
+   * have typed the whole element string into the barcode field, and refusing to find it because the
+   * platform now understands the format better would be a regression for that shop.
+   *
+   * @throws ApiException 404 {@code VARIANT_NOT_FOUND}; 409 {@code PRODUCT_NOT_ON_SALE_YET} for a
+   *     line that is listed but not yet launched
+   */
+  public ScanResult scan(UUID tenantId, String scanned) {
+    com.shelfj.gs1.Gs1Scan reading = com.shelfj.gs1.Gs1Reader.read(scanned).orElse(null);
+    var byGtin =
+        reading == null || reading.gtin() == null
+            ? java.util.Optional.<com.shelfj.product.domain.Domain.VariantWithProduct>empty()
+            : repo.findVariantByGtin(tenantId, reading.gtin());
+    var found = byGtin.or(() -> repo.findVariantByBarcode(tenantId, scanned.trim()));
+    // A code that read as GS1 but matches nothing names the GTIN in the refusal, not the raw
+    // string:
+    // "no variant carries GTIN 05012345678900" is something a shopkeeper can act on, where the
+    // element
+    // string it came in is not.
+    var variant =
+        found.orElseThrow(
+            () ->
+                ApiException.notFound(
+                    "VARIANT_NOT_FOUND",
+                    reading != null && reading.gtin() != null
+                        ? "No active variant carries GTIN " + reading.gtin()
+                        : "No active variant found for barcode: " + scanned.trim()));
+    requireOnSale(variant);
+    return new ScanResult(variant, reading);
   }
 
   /**

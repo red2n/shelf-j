@@ -5,6 +5,7 @@ import com.shelfj.product.dto.Dtos.AllergenDeclarationResponse;
 import com.shelfj.product.dto.Dtos.AllergenResponse;
 import com.shelfj.product.dto.Dtos.CategoryResponse;
 import com.shelfj.product.dto.Dtos.ProductResponse;
+import com.shelfj.product.dto.Dtos.ScanResponse;
 import com.shelfj.product.dto.Dtos.VariantComplianceResponse;
 import com.shelfj.product.dto.Dtos.VariantResponse;
 import com.shelfj.product.dto.Dtos.VariantScanResponse;
@@ -203,6 +204,43 @@ public class CatalogResource {
             .depositContainers(tenantId, java.util.List.of(vp.variant().id()))
             .get(vp.variant().id());
     return ApiResponse.ok(Mappers.toVariantScan(vp.variant(), vp.product(), null, container));
+  }
+
+  /**
+   * Scans a code of any kind (07.15).
+   *
+   * <p>A query parameter and not a path segment, because a GS1 Digital Link is a URI: it carries
+   * slashes and a query string of its own, and neither survives a path segment — a path-encoded one
+   * arrives as a 404 with the code silently cut at its first slash.
+   */
+  @Operation(
+      summary = "Look up a scanned code — plain barcode, GS1 DataMatrix or Digital Link QR",
+      description =
+          "One route for every kind of code a till meets. A plain EAN or UPC is matched as it always"
+              + " was; a GS1 element string (DataMatrix, GS1-128, GS1 QR) or a GS1 Digital Link URI is"
+              + " read first, and the item is then found by the GTIN it carried — which is what lets a"
+              + " packet whose 2D code says 05012345678900 find the variant a shop entered as"
+              + " 5012345678900. What the code carried besides the item — batch, expiry, weight, price"
+              + " — comes back in `code`, unconverted and uninterpreted. A code that is not GS1 at all"
+              + " (an internal code, a PLU, a shelf label) is matched exactly and `code` is null.")
+  @APIResponse(responseCode = "400", description = "code is blank")
+  @APIResponse(responseCode = "404", description = "No active variant matches the code")
+  @APIResponse(responseCode = "409", description = "The line is listed but not yet on sale")
+  @GET
+  @Path("/scan")
+  public ApiResponse<ScanResponse> scan(@QueryParam("code") String code) {
+    UUID tenantId = requireTenant();
+    if (code == null || code.isBlank()) {
+      throw ApiException.badRequest("INVALID_BARCODE", "code must not be blank");
+    }
+    var result = service.scan(tenantId, code);
+    var variant = result.found().variant();
+    var container =
+        service.depositContainers(tenantId, java.util.List.of(variant.id())).get(variant.id());
+    return ApiResponse.ok(
+        new ScanResponse(
+            Mappers.toVariantScan(variant, result.found().product(), null, container),
+            Mappers.toScannedCode(result.scan())));
   }
 
   private UUID requireTenant() {

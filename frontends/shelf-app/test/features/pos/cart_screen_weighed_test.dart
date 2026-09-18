@@ -61,9 +61,12 @@ class _Till implements HttpClientAdapter {
       } else {
         body = '{"data":$certified}';
       }
-    } else if (o.path.contains('/catalog/variants/by-barcode/')) {
-      final code = parts.last;
-      body = '{"data":{"variantId":"v-$code","sku":"$code","productName":"Item $code"}}';
+    } else if (o.path.contains('/catalog/scan')) {
+      // /catalog/scan (07.15): one route for every kind of code, with the code in a query
+      // parameter because a GS1 Digital Link is a URI, and the item wrapped in `item` beside
+      // what the code itself carried in `code`.
+      final code = '${o.queryParameters['code']}';
+      body = '{"data":{"item":{"variantId":"v-$code","sku":"$code","productName":"Item $code"}}}';
     } else if (o.path.contains('/prices/resolve')) {
       body = '{"data":{"unitPrice":12.0,"currency":"GBP"}}';
     } else if (o.path.endsWith('/age-check')) {
@@ -269,7 +272,7 @@ void main() {
     expect(line.qty, 0.375);
     expect(line.soldBy, 'WEIGHT');
     expect(line.weighingInstrumentId, 'label-1');
-    expect(till.requests.where((r) => r.path.endsWith('/by-barcode/12345')).length, 1);
+    expect(till.requests.where((r) => r.queryParameters['code'] == '12345').length, 1);
   });
 
   testWidgets('a label whose check digit is wrong is treated as an ordinary code',
@@ -280,7 +283,7 @@ void main() {
     final bad = good.substring(0, 12) + ((int.parse(good[12]) + 1) % 10).toString();
     await _scan(tester, bad);
     // Looked up as a barcode in its own right, not parsed as a label.
-    expect(till.requests.where((r) => r.path.endsWith('/by-barcode/$bad')).length, 1);
+    expect(till.requests.where((r) => r.queryParameters['code'] == bad).length, 1);
   });
 
   testWidgets('a label is not read when the labelling scale is not certified', (tester) async {
@@ -288,6 +291,6 @@ void main() {
     till.certified = '[$_counterScale]';
     final code = withCheck('201234500450');
     await _scan(tester, code);
-    expect(till.requests.where((r) => r.path.endsWith('/by-barcode/$code')).length, 1);
+    expect(till.requests.where((r) => r.queryParameters['code'] == code).length, 1);
   });
 }

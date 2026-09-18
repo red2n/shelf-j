@@ -197,6 +197,31 @@ public final class Mappers {
    * @param p the product
    * @return its API representation
    */
+  /**
+   * What a scanned code carried, as the wire sends it (07.15).
+   *
+   * <p>Money and measures go out as strings, for the same reason every other amount on this
+   * platform does: a JSON number is a double by the time a browser has parsed it, and 1.250 kg
+   * priced by weight is money.
+   */
+  public static com.shelfj.product.dto.Dtos.ScannedCodeResponse toScannedCode(
+      com.shelfj.gs1.Gs1Scan scan) {
+    if (scan == null) return null;
+    return new com.shelfj.product.dto.Dtos.ScannedCodeResponse(
+        scan.format().name(),
+        scan.gtin(),
+        scan.batch().orElse(null),
+        scan.serial().orElse(null),
+        scan.sscc().orElse(null),
+        scan.expiry().map(Object::toString).orElse(null),
+        scan.bestBefore().map(Object::toString).orElse(null),
+        scan.productionDate().map(Object::toString).orElse(null),
+        scan.netWeightKg().map(java.math.BigDecimal::toPlainString).orElse(null),
+        scan.netWeightLb().map(java.math.BigDecimal::toPlainString).orElse(null),
+        scan.amountPayable().map(java.math.BigDecimal::toPlainString).orElse(null),
+        scan.currencyNumeric().orElse(null));
+  }
+
   public static VariantScanResponse toVariantScan(Variant v, Product p) {
     return toVariantScan(v, p, null);
   }

@@ -46,9 +46,12 @@ class _Till implements HttpClientAdapter {
     var body = '{"data":[]}';
     if (o.path.endsWith('/admin/inventory/recalls/active')) {
       (status, body) = recalls;
-    } else if (o.path.contains('/catalog/variants/by-barcode/')) {
-      final code = o.path.split('/').last;
-      body = '{"data":{"variantId":"v-$code","sku":"$code","productName":"Item $code"}}';
+    } else if (o.path.contains('/catalog/scan')) {
+      // /catalog/scan (07.15): one route for every kind of code, with the code in a query
+      // parameter because a GS1 Digital Link is a URI, and the item wrapped in `item` beside
+      // what the code itself carried in `code`.
+      final code = '${o.queryParameters['code']}';
+      body = '{"data":{"item":{"variantId":"v-$code","sku":"$code","productName":"Item $code"}}}';
     } else if (o.path.contains('/prices/resolve')) {
       body = '{"data":{"unitPrice":3.0,"currency":"GBP"}}';
     } else if (o.path.endsWith('/compliance')) {

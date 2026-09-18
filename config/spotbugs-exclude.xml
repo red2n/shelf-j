@@ -34,6 +34,18 @@
     </Match>
 
     <!--
+      Gs1Scan is the reading taken from a scanned code: a record in shared/gs1, outside the
+      dto/domain/service packages the rule above covers. Its elements map is BOTH defensively
+      copied in the canonical constructor AND wrapped unmodifiable, so the accessor cannot hand
+      out anything a caller could change — a stronger guarantee than the records already exempted.
+      SpotBugs does not see through Collections.unmodifiableMap and flags the field return anyway.
+    -->
+    <Match>
+        <Bug pattern="EI_EXPOSE_REP,EI_EXPOSE_REP2"/>
+        <Class name="com.shelfj.gs1.Gs1Scan"/>
+    </Match>
+
+    <!--
       ReserveOutcome/ReserveBatchItem are lightweight, immutable-by-convention records nested
       inside InventoryRepository for the reserveBatch(...) batch-reservation result/input — the
       same record-accessor pattern already exempted for dto/domain/service records above, just
