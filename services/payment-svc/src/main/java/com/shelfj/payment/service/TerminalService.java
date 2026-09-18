@@ -168,7 +168,7 @@ public class TerminalService {
 
     Attempt claimed =
         repo.claim(
-            new Attempt(
+            Terminals.requested(
                 Ids.newId(),
                 tenantId,
                 t.storeId(),
@@ -178,20 +178,8 @@ public class TerminalService {
                 currency,
                 Terminals.SALE,
                 null,
-                Terminals.REQUESTED,
-                null,
-                null,
-                null,
-                null,
-                null,
-                null,
-                null,
-                null,
-                null,
-                null,
-                Instant.now(),
                 actorId,
-                null),
+                Instant.now()),
             idempotencyKey);
     // The retry's whole purpose: the same key finds the attempt that already went to the terminal,
     // and
@@ -236,7 +224,7 @@ public class TerminalService {
 
     Attempt claimed =
         repo.claim(
-            new Attempt(
+            Terminals.requested(
                 Ids.newId(),
                 tenantId,
                 t.storeId(),
@@ -246,20 +234,8 @@ public class TerminalService {
                 original.currency(),
                 Terminals.REFUND,
                 original.id(),
-                Terminals.REQUESTED,
-                null,
-                null,
-                null,
-                null,
-                null,
-                null,
-                null,
-                null,
-                null,
-                null,
-                Instant.now(),
                 actorId,
-                null),
+                Instant.now()),
             idempotencyKey);
     if (claimed.settled()) return claimed;
 
@@ -347,17 +323,8 @@ public class TerminalService {
   }
 
   private static Terminals.Outcome failure(String detail) {
-    return new Terminals.Outcome(
-        Terminals.FAILED,
-        null,
-        null,
-        null,
-        null,
-        null,
-        null,
-        null,
-        null,
-        detail == null ? "The terminal could not be reached" : detail);
+    return Terminals.refused(
+        Terminals.FAILED, null, detail == null ? "The terminal could not be reached" : detail);
   }
 
   private CardTerminal.Request requestFor(Attempt attempt, Terminal t) {

@@ -187,6 +187,71 @@ public final class Terminals {
   }
 
   /**
+   * An outcome that carries no card data: a decline, a cancellation, a failure or a timeout.
+   *
+   * <p>{@link Outcome} has ten components and eight of them are the card's. Every refusal therefore
+   * writes the same run of nulls, and it was written three times over — in the service's failure
+   * path and twice in the simulator. One factory instead, because a refusal has exactly three
+   * facts: what happened, the vendor's reference if it gave one, and what it said.
+   *
+   * <p>The reference is kept even for a timeout, deliberately: it is the only way to find the
+   * attempt in the acquirer's settlement file, which is the only way to learn whether the card was
+   * charged.
+   */
+  public static Outcome refused(String state, String providerRef, String detail) {
+    return new Outcome(state, null, null, null, null, null, null, null, providerRef, detail);
+  }
+
+  /**
+   * A new attempt, before the terminal has said anything.
+   *
+   * <p>A factory rather than the canonical constructor, because {@link Attempt} has twenty-three
+   * components and everything the terminal will later fill in is null at this point. Written out,
+   * that is a call with ten consecutive nulls in it — and in a list that long, two transposed nulls
+   * compile, pass every type check and put the scheme where the authorisation code belongs. This
+   * takes only what a request actually knows.
+   */
+  public static Attempt requested(
+      UUID id,
+      UUID tenantId,
+      UUID storeId,
+      UUID terminalId,
+      UUID orderId,
+      BigDecimal amount,
+      String currency,
+      String kind,
+      UUID refundOf,
+      UUID requestedBy,
+      Instant at) {
+    return new Attempt(
+        id,
+        tenantId,
+        storeId,
+        terminalId,
+        orderId,
+        amount,
+        currency,
+        kind,
+        refundOf,
+        REQUESTED,
+        // Everything from here to paymentId is the terminal's to say, and is named so that a reader
+        // can check the order against the record rather than counting nulls.
+        null, // outcomeDetail
+        null, // scheme
+        null, // panLast4
+        null, // authCode
+        null, // aid
+        null, // applicationLabel
+        null, // entryMode
+        null, // verification
+        null, // providerRef
+        null, // paymentId — set only once an approval becomes a tender
+        at,
+        requestedBy,
+        null); // settledAt: an unsettled attempt has none, which the schema's CHECK enforces
+  }
+
+  /**
    * Whether a string could be a card number, so a caller cannot smuggle one in.
    *
    * <p>Belt to the gateway's braces. The gateway already refuses card-shaped request bodies, and
