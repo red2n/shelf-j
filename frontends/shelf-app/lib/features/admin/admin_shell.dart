@@ -87,6 +87,14 @@ const _navItems = [
   ),
   _AdminNavItem(
     destination: AdaptiveNavDestination(
+      label: 'Statutory returns',
+      icon: Icons.event_note_outlined,
+      selectedIcon: Icons.event_note,
+    ),
+    route: '/admin/statutory-returns',
+  ),
+  _AdminNavItem(
+    destination: AdaptiveNavDestination(
       label: 'Chargebacks',
       icon: Icons.report_gmailerrorred_outlined,
       selectedIcon: Icons.report_gmailerrorred,

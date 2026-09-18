@@ -53,6 +53,10 @@ public class ExportableData extends TenantDataSpec {
             "dunning_policy",
             "the platform's own tolerance for late payment: the same for every business"),
         Map.entry(
+            "statutory_returns",
+            "the platform's reference data: what each jurisdiction requires, the same for every"
+                + " business in it"),
+        Map.entry(
             "jurisdiction_members",
             "the platform's reference data: the law as recorded for every business"),
         Map.entry(
