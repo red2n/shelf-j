@@ -51,7 +51,10 @@ export default function ({ admin }) {
   truthy('[+] and says nobody set it, rather than inventing somebody who did', policy.set === false, policy);
   expect(dun('PUT', '/policy', { enabled: true, reminderDays: [1, 3, 20], suspendAfterDays: 14, uncollectibleAfterDays: 30 }), '[-] the service cannot be interrupted before the last reminder has gone', 400, 'DUNNING_POLICY_INVALID');
   expect(dun('PUT', '/policy', { enabled: true, reminderDays: [1], suspendAfterDays: 20, uncollectibleAfterDays: 10 }), '[-] nor the debt given up on before the service was interrupted', 400, 'DUNNING_POLICY_INVALID');
-  expect(dun('PUT', '/policy', { enabled: true, reminderDays: [], suspendAfterDays: 5, uncollectibleAfterDays: 10 }), '[-] nor anything taken away with no notice at all', 400, 'DUNNING_POLICY_INVALID');
+  // No code asserted here on purpose: "at least one reminder" is a shape rule and the DTO catches it
+  // on the way in, before the service's named refusal can fire. Both are wanted — the shape rule for
+  // the wire and the service's own guard for programmatic callers — so the check asserts the status.
+  expect(dun('PUT', '/policy', { enabled: true, reminderDays: [], suspendAfterDays: 5, uncollectibleAfterDays: 10 }), '[-] nor anything taken away with no notice at all', 400);
   const tight = dun('PUT', '/policy', { enabled: true, reminderDays: [1, 2], suspendAfterDays: 3, uncollectibleAfterDays: 6 });
   expect(tight, '[+] a platform sets its own tolerance', 200);
 

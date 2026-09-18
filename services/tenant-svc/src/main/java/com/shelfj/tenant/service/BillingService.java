@@ -308,17 +308,28 @@ public class BillingService {
    */
   private void settleUp(UUID tenantId) {
     repo.ofTenant(tenantId)
-        .filter(s -> Subscriptions.PAST_DUE.equals(s.status()))
+        // Behind **or** suspended. Only PAST_DUE was lifted here, so a business that let dunning
+        // take
+        // the platform away and then paid in full got its tenant reactivated and its subscription
+        // left
+        // SUSPENDED — which is not billable, so it was never invoiced again and quietly stopped
+        // being a
+        // customer while still using the platform. k6 dunning-flow found it on its first live run.
+        .filter(
+            s ->
+                Subscriptions.PAST_DUE.equals(s.status())
+                    || Subscriptions.SUSPENDED.equals(s.status()))
         .filter(s -> repo.invoicesOf(tenantId, 100).stream().noneMatch(Invoice::open))
         .ifPresent(
             s -> {
-              if (repo.moveStatus(s.id(), Subscriptions.PAST_DUE, Subscriptions.ACTIVE)) {
+              // Named as the status it moves from, so two callers racing cannot both claim it.
+              if (repo.moveStatus(s.id(), s.status(), Subscriptions.ACTIVE)) {
                 repo.record(
                     Ids.newId(),
                     tenantId,
                     s.id(),
                     Subscriptions.PAID_UP,
-                    "everything owed has been paid",
+                    "everything owed has been paid; it was " + s.status(),
                     null);
               }
             });

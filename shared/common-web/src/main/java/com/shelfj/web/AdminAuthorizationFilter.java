@@ -61,6 +61,14 @@ import java.util.Set;
 public class AdminAuthorizationFilter implements ContainerRequestFilter {
 
   private static final Set<String> MANAGEMENT_ROLES = Set.of("PLATFORM_ADMIN", "OWNER", "MANAGER");
+
+  /**
+   * The platform operator alone. Deliberately <b>not</b> {@link #MANAGEMENT_ROLES}: a business's
+   * owner and manager are management of <em>their business</em>, and nothing under {@code
+   * /platform/} is theirs.
+   */
+  private static final Set<String> PLATFORM_ROLES = Set.of("PLATFORM_ADMIN");
+
   private static final Set<String> STAFF_ROLES =
       Set.of("PLATFORM_ADMIN", "OWNER", "MANAGER", "STOREKEEPER", "CASHIER");
 
@@ -95,6 +103,13 @@ public class AdminAuthorizationFilter implements ContainerRequestFilter {
     String path = stripGatewayPrefix("/" + req.getUriInfo().getPath());
     String method = req.getMethod();
 
+    // The platform operator's own surface, checked before anything else and gated to one role.
+    if (isPlatformOperator(path)) {
+      if (!hasAny(PLATFORM_ROLES)) {
+        req.abortWith(forbidden());
+      }
+      return;
+    }
     if (requiresManagement(path, method)) {
       if (!hasAny(MANAGEMENT_ROLES)) {
         req.abortWith(forbidden());
@@ -500,6 +515,31 @@ public class AdminAuthorizationFilter implements ContainerRequestFilter {
    * @param method the HTTP method
    * @return {@code true} if this request requires a {@link #MANAGEMENT_ROLES} role
    */
+  /**
+   * Everything under {@code /platform/}: the price list, the businesses on the platform, its books,
+   * its incident register.
+   *
+   * <p>It was gated by each resource's own {@code requireAnyRole} and by nothing else — precisely
+   * the shape SJ-D65 was, a claim that reads as correct with no filter behind it. A new {@code
+   * /platform/} route that forgot the call would have been reachable by any staff role of any
+   * business. Denying here makes forgetting fail closed, which is what this filter is for, and the
+   * resources keep their own assertions as the second line.
+   *
+   * <p>It also puts authorisation <em>before</em> Bean Validation, which runs on the way into the
+   * resource method: an owner poking at a platform route used to learn whether its body was
+   * well-formed before being told it had no business there. A k6 abuse check caught that — it
+   * wanted 403 and was given 400.
+   *
+   * <p>By prefix with the trailing slash, so the public catalogue at {@code /plans} and anything
+   * else that merely begins with the word is untouched.
+   *
+   * @param path the service-local request path
+   * @return {@code true} for the operator's own surface
+   */
+  private static boolean isPlatformOperator(String path) {
+    return path.startsWith("/platform/");
+  }
+
   private static boolean requiresManagement(String path, String method) {
     // Bootstrap carve-out — see isOpenMutation.
     if (path.endsWith("/admin/tenant") && "POST".equalsIgnoreCase(method)) return false;

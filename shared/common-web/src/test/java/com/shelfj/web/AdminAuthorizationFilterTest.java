@@ -591,6 +591,49 @@ class AdminAuthorizationFilterTest {
     assertNotAborted(invoke("GET", "/admin/tenant/retention/runs"));
   }
 
+  // ── /platform/ is the operator's own, and default-deny ───────────────────────
+
+  @Test
+  void everythingUnderPlatformNeedsManagementBeforeItsBodyIsEvenRead() throws Exception {
+    // Found by a k6 abuse check that wanted 403 from an owner and got 400: the route's own
+    // requireAnyRole runs *after* Bean Validation, so an owner with no business there learned
+    // whether
+    // its body was well-formed first. And a new /platform/ route that forgot the call would have
+    // been
+    // open to any staff role — the SJ-D65 shape again.
+    ctx.set(null, null, Set.of("OWNER"), null, null);
+    for (String path :
+        new String[] {
+          "/platform/plans",
+          "/platform/tenants",
+          "/platform/billing/profile",
+          "/platform/billing/dunning/policy",
+          "/platform/security-incidents"
+        }) {
+      assertAborted(invoke("GET", path), 403);
+      assertAborted(invoke("PUT", path), 403);
+      assertAborted(invoke("POST", path), 403);
+    }
+
+    ctx.set(null, null, Set.of("MANAGER"), null, null);
+    assertAborted(invoke("GET", "/platform/tenants"), 403);
+    ctx.set(null, null, Set.of("CASHIER"), null, null);
+    assertAborted(invoke("GET", "/platform/tenants"), 403);
+    ctx.set(null, null, Set.of("CUSTOMER"), null, null);
+    assertAborted(invoke("GET", "/platform/tenants"), 403);
+
+    ctx.set(null, null, Set.of("PLATFORM_ADMIN"), null, null);
+    assertNotAborted(invoke("GET", "/platform/tenants"));
+    assertNotAborted(invoke("PUT", "/platform/billing/profile"));
+
+    // By prefix with its slash, so a path that merely begins with the word is not caught by it and
+    // falls through to the ordinary tiers instead. (A staff role still gets it there — the point
+    // here
+    // is only that the platform tier did not claim it.)
+    ctx.set(null, null, Set.of("CASHIER"), null, null);
+    assertNotAborted(invoke("GET", "/platformx/anything"));
+  }
+
   // ── 21.12: the pay link in a dunning notice ──────────────────────────────────
 
   @Test
