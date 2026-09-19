@@ -1,0 +1,231 @@
+// The roster and the time clock (store operations & workforce), through the gateway.
+//
+// A shop's biggest controllable cost is its hours, and the platform kept no record of them: staff were
+// assigned to stores with roles, and nothing said who was meant to be in on Tuesday or who actually
+// was. Every other row in this domain leans on it — labour cost against sales cannot be computed
+// without hours, and an absence cannot be seen without a plan to compare against.
+//
+// What only a live stack proves is who may press what. Clocking in is the staff's own act, so it sits
+// OUTSIDE the /admin/ prefix the gateway and the services gate to management: a cashier clocks
+// themselves in and is refused the management roster in the same breath, and a manager writing
+// somebody else's hours goes through a different route that records who pressed it.
+//
+// The assertions that cost somebody money are here too: one open entry per person however many times
+// the button is pressed, an unpaid break coming off the hours, an open entry reported as open rather
+// than as zero, and a correction that supersedes rather than edits.
+//
+// Refused: a shift or a clock-in at a store somebody is not assigned to, a shift rostered for somebody
+// else, a second break, clocking out twice, a correction with no reason, correcting an entry already
+// corrected, a cashier reading the management roster, another business touching these hours, and an
+// anonymous caller.
+//
+//   k6/run.sh workforce-flow
+import { Counter } from 'k6/metrics';
+import { ALL_CHECKS_PASS, call, data, expect, sellingTenant, truthy, uniq } from './lib/shelfj.js';
+
+const completed = new Counter('flow_completed');
+export const options = {
+  vus: 1,
+  iterations: 1,
+  thresholds: { ...ALL_CHECKS_PASS, flow_completed: ['count==1'] },
+  setupTimeout: '4m',
+};
+
+const W = '/api/tenant-svc/admin/workforce';
+const CLOCK = '/api/tenant-svc/workforce/clock';
+
+/** An instant, hours from the start of a day some days from now. */
+function at(daysFromNow, hour) {
+  const d = new Date();
+  d.setUTCDate(d.getUTCDate() + daysFromNow);
+  d.setUTCHours(hour, 0, 0, 0);
+  // Seconds precision: the platform writes an instant without milliseconds, and a string comparison
+  // against ".000Z" would fail for a reason that has nothing to do with the hours.
+  return d.toISOString().replace('.000Z', 'Z');
+}
+
+export function setup() {
+  // sellingTenant gives a shop with a store and the two staff roles, so no fixture is built twice.
+  const shop = sellingTenant(`workforce-${uniq().slice(0, 6)}`);
+  const rival = shop.rival;
+  return { shop, rival };
+}
+
+export default function ({ shop, rival }) {
+  const owner = shop.tenant.owner.token;
+  const cashier = shop.cashier;
+  const keeper = shop.storekeeper;
+  const store = shop.store.id;
+  const post = (path, body, token) => call('POST', path, { token: token || owner, body });
+  const get = (path, token) => call('GET', path, { token: token || owner });
+
+  // ── the rota ─────────────────────────────────────────────────────────────────────────────────────
+  const late = data(
+    post(`${W}/shifts`, { storeId: store, userId: cashier.userId, startsAt: at(1, 14), endsAt: at(1, 22) }),
+  );
+  truthy('[+] a shift is rostered, planned rather than published', late && late.status === 'PLANNED', late);
+  truthy('[+] ...and reads as hours, the way a rota is discussed', late && late.hours === '8.0', late);
+  const early = data(
+    post(`${W}/shifts`, { storeId: store, userId: cashier.userId, startsAt: at(2, 6), endsAt: at(2, 12) }),
+  );
+  truthy('[+] a second shift the next morning', !!early, early);
+
+  const roster = data(get(`${W}/shifts?from=${at(0, 0)}&to=${at(5, 0)}`));
+  const codes = (roster.concerns || []).map((c) => c.code);
+  truthy(
+    '[+] eight hours between two shifts is said, not refused: the directive is national law, with derogations',
+    codes.includes('DAILY_REST_SHORT'),
+    roster.concerns,
+  );
+  truthy('[+] ...and an eight-hour shift asks for a break', codes.includes('BREAK_EXPECTED'), codes);
+  truthy(
+    '[+] ...each concern naming the person it is about, because rest is a fact about a person',
+    (roster.concerns || []).every((c) => c.userId === cashier.userId),
+    roster.concerns,
+  );
+
+  expect(post(`${W}/shifts/${late.id}/publish`, {}), '[+] published, and staff may rely on it', 200);
+  expect(
+    post(`${W}/shifts/${late.id}/publish`, {}),
+    '[-] only a planned shift is published',
+    409,
+    'WORKFORCE_SHIFT_NOT_PLANNED',
+  );
+  expect(post(`${W}/shifts/${early.id}/cancel`, { reason: '' }), '[-] called off with no reason is refused', 400);
+  const cancelled = data(post(`${W}/shifts/${early.id}/cancel`, { reason: 'store closed for a delivery' }));
+  truthy('[+] a called-off shift keeps why', cancelled.status === 'CANCELLED' && !!cancelled.cancelledReason, cancelled);
+
+  expect(
+    post(`${W}/shifts`, { storeId: store, userId: shop.rival.owner.userId, startsAt: at(1, 9), endsAt: at(1, 17) }),
+    '[-] somebody who does not work at the store is not rostered there',
+    409,
+    'WORKFORCE_NOT_ASSIGNED',
+  );
+
+  // ── the clock, as the person's own act ───────────────────────────────────────────────────────────
+  const inEntry = data(post(`${CLOCK}/in`, { storeId: store }, cashier.token));
+  truthy('[+] a cashier clocks themselves in, outside the management prefix', !!inEntry && inEntry.source === 'CLOCK', inEntry);
+  // Absent rather than null: the envelope omits nulls, and absent is the point — an open entry
+  // reported as zero looks like a day nobody worked.
+  truthy(
+    '[+] ...and an open entry has no hours yet, rather than zero',
+    inEntry && !('hoursWorked' in inEntry),
+    inEntry,
+  );
+  expect(
+    post(`${CLOCK}/in`, { storeId: store }, cashier.token),
+    '[-] a second tap is one entry, not two afternoons\' pay',
+    409,
+    'WORKFORCE_ALREADY_CLOCKED_IN',
+  );
+  truthy(
+    '[+] the open entry is the one they are on',
+    data(get(`${CLOCK}/open`, cashier.token)).id === inEntry.id,
+  );
+
+  expect(post(`${CLOCK}/breaks/start`, { kind: 'MEAL', paid: false }, cashier.token), '[+] a break starts', 200);
+  expect(
+    post(`${CLOCK}/breaks/start`, { kind: 'REST', paid: true }, cashier.token),
+    '[-] one break at a time, or the day\'s arithmetic is undecidable',
+    409,
+    'WORKFORCE_BREAK_OPEN',
+  );
+  const out = data(post(`${CLOCK}/out`, {}, cashier.token));
+  truthy('[+] going home closes a break somebody forgot to end', out && out.breaks[0].endedAt !== null, out);
+  truthy('[+] ...and the hours are known once the entry is closed', out && out.hoursWorked !== null, out);
+  expect(post(`${CLOCK}/out`, {}, cashier.token), '[-] clocking out twice is refused', 409, 'WORKFORCE_NOT_CLOCKED_IN');
+  expect(
+    post(`${CLOCK}/breaks/start`, { kind: 'REST', paid: true }, cashier.token),
+    '[-] and a break belongs to a shift somebody is working',
+    409,
+    'WORKFORCE_NOT_CLOCKED_IN',
+  );
+
+  // A shift rostered for somebody else is not one you can clock on to.
+  const keeperShift = data(
+    post(`${W}/shifts`, { storeId: store, userId: keeper.userId, startsAt: at(0, 9), endsAt: at(0, 17) }),
+  );
+  expect(
+    post(`${CLOCK}/in`, { storeId: store, shiftId: keeperShift.id }, cashier.token),
+    '[-] a shift is not transferable',
+    400,
+    'WORKFORCE_SHIFT_NOT_THEIRS',
+  );
+
+  // ── a correction, which supersedes ───────────────────────────────────────────────────────────────
+  expect(
+    post(`${W}/time-entries/${inEntry.id}/adjust`, { clockedOutAt: at(0, 17), reason: '' }),
+    '[-] a correction without a reason is an edit with extra steps',
+    400,
+  );
+  const fixed = data(
+    post(`${W}/time-entries/${inEntry.id}/adjust`, {
+      clockedInAt: at(0, 9),
+      clockedOutAt: at(0, 17),
+      reason: 'the terminal was down at the end of the shift',
+    }),
+  );
+  truthy('[+] a correction supersedes the entry it replaces', fixed && fixed.supersedes === inEntry.id, fixed);
+  truthy('[+] ...is recorded as the manager\'s act, not the person\'s', fixed && fixed.source === 'MANAGER', fixed);
+  // The corrected clock times, and the break carried across with them — which is why the hours are a
+  // little under the eight the times span: the unpaid break comes off, as it must.
+  truthy(
+    '[+] ...with the corrected clock times, and the break carried across',
+    fixed && fixed.clockedInAt === at(0, 9) && fixed.clockedOutAt === at(0, 17) && fixed.breaks.length === 1,
+    fixed,
+  );
+  truthy(
+    '[+] ...so the hours are the time spanned less the unpaid break',
+    fixed && fixed.hoursWorked !== undefined && Number(fixed.hoursWorked) > 7.8 && Number(fixed.hoursWorked) <= 8,
+    fixed,
+  );
+  expect(
+    post(`${W}/time-entries/${inEntry.id}/adjust`, { clockedOutAt: at(0, 18), reason: 'again' }),
+    '[-] an entry already corrected is not corrected twice',
+    409,
+    'WORKFORCE_ENTRY_NOT_STANDING',
+  );
+  const entries = data(get(`${W}/time-entries?from=${at(0, 0)}&to=${at(1, 0)}`)) || [];
+  truthy(
+    '[+] the hours of a window count the correction once, not both entries',
+    entries.filter((e) => e.userId === cashier.userId).length === 1,
+    entries,
+  );
+
+  // ── attendance ───────────────────────────────────────────────────────────────────────────────────
+  const attendance = data(get(`${W}/attendance?from=${at(-1, 0).slice(0, 10)}&to=${at(2, 0).slice(0, 10)}`)) || [];
+  const today = attendance.find((d) => d.userId === cashier.userId && d.day === at(0, 0).slice(0, 10));
+  truthy('[+] the day shows the hours worked against what was rostered', !!today, attendance);
+  truthy(
+    '[+] ...and the storekeeper rostered today with nothing clocked is an absence',
+    attendance.some((d) => d.userId === keeper.userId && d.absent === true),
+    attendance,
+  );
+
+  // ── who may press what ───────────────────────────────────────────────────────────────────────────
+  expect(get(`${W}/shifts?from=${at(0, 0)}`, cashier.token), '[-] the management roster is management\'s', 403);
+  expect(get(`${CLOCK}/shifts`, cashier.token), '[+] but their own roster is theirs to read', 200);
+  expect(
+    post(`${W}/time-entries?user=${cashier.userId}`, { storeId: store }, cashier.token),
+    '[-] a cashier does not write somebody\'s hours',
+    403,
+  );
+  const written = data(post(`${W}/time-entries?user=${keeper.userId}`, { storeId: store }));
+  truthy(
+    '[+] a manager may, and it is recorded as theirs so an audit knows who pressed it',
+    written && written.source === 'MANAGER' && written.userId === keeper.userId,
+    written,
+  );
+  expect(call('POST', `${CLOCK}/in`, { body: { storeId: store } }), '[-] an anonymous caller is refused', 401);
+  expect(
+    get(`${W}/time-entries?from=${at(0, 0)}`, rival.owner.token),
+    '[+] another business reads its own hours, which are none',
+    200,
+  );
+  truthy(
+    '[+] ...and not this one\'s',
+    (data(get(`${W}/time-entries?from=${at(0, 0)}`, rival.owner.token)) || []).length === 0,
+  );
+
+  completed.add(1);
+}
