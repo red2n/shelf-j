@@ -4,7 +4,8 @@
 // picks it, and the supplier's item code is remembered so its next invoice matches on its own. An
 // invoice from a sender nobody knows waits for its supplier, and once matched the sender's address is
 // remembered. A credit note closes the return it credits, but only for someone who may record one.
-// Refused: a VAT number or address that does not parse, a storekeeper setting them, half an address on a
+// Where a Polish buyer fetches from, and a readiness check that asks before a first fetch rather than
+// leaving an inbox quietly empty. Refused: a VAT number or address that does not parse, a storekeeper setting them, half an address on a
 // supplier, an address another supplier holds, an order that is not the supplier's, a line not on the
 // order or not on the invoice, a line chosen twice, matching a non-compliant or misdirected invoice,
 // refusing without the permission, without a reason or twice. Abuse: the same bytes twice, the same
@@ -277,6 +278,36 @@ export default function ({ tenant, rival, store, variantId, manager, storekeeper
   const busy = answers.filter((r) => r.status === 409 && ['PURCHASE_EINVOICE_BUSY', 'PURCHASE_EINVOICE_SETTLED'].includes(errorCode(r))).length;
   truthy('[abuse] ten matches at once: one captures, nine are told it is taken', oks === 1 && busy === 9, answers.map((r) => `${r.status} ${errorCode(r) || ''}`));
   truthy('[abuse] ...and the order has exactly one invoice', data(einvoice(race.id)).status === 'CAPTURED' && invoicesOn(racePo.id).length === 1, invoicesOn(racePo.id));
+
+  // ── where invoices are fetched from, and whether any could arrive (07.13) ────
+  // Poland is the one network that delivers nothing: a buyer there asks, or receives nothing for
+  // ever. This stack holds no KSeF endpoint, and the settings and the readiness check both say so
+  // rather than leaving a shop with an inbox that is quietly empty.
+  const INBOX = `${P}/admin/e-invoices/inbox`;
+  const inboxSettings = (body, token = owner) => call('PUT', `${INBOX}/settings`, { token, body });
+  const inboxReadiness = (token = owner) => call('GET', `${INBOX}/readiness`, { token });
+  const NIP = '5260250991';
+
+  const unset = inboxReadiness();
+  expect(unset, '[+] a business that never chose where to fetch from is told what to do', 200);
+  truthy('[+] ...and nothing is asked of any ministry', data(unset).ready === false && (data(unset).outstanding || []).some((o) => /choose where/.test(o)) && !data(unset).networkState, data(unset));
+
+  expect(inboxSettings({ network: 'POST', provider: 'KSEF', providerAccount: NIP }), '[-] a network that does not exist is refused', 400, 'PURCHASE_INBOX_NETWORK_UNKNOWN');
+  expect(inboxSettings({ network: 'KSEF', provider: 'ACCESS_POINT', providerAccount: NIP }), '[-] as is a provider that does not serve it', 400, 'PURCHASE_INBOX_PROVIDER_UNKNOWN');
+  expect(inboxSettings({ network: 'KSEF', provider: 'KSEF', providerAccount: '123' }), '[-] KSeF knows a business by its NIP, and that is not one', 400, 'PURCHASE_INBOX_ACCOUNT_INVALID');
+  expect(inboxSettings({ network: 'KSEF', provider: 'KSEF', providerAccount: NIP, secret: 'a-token' }), '[-] the ministry cannot be chosen on a deployment that holds no endpoint for it', 409, 'PURCHASE_INBOX_NOT_DEPLOYED');
+  expect(inboxSettings({ network: 'KSEF', provider: 'SIMULATED', providerAccount: NIP }, storekeeper.token), '[-] a storekeeper does not choose where invoices are fetched from', 403);
+  expect(inboxReadiness(storekeeper.token), '[-] nor asks whether any could arrive', 403);
+
+  const standIn = inboxSettings({ network: 'KSEF', provider: 'SIMULATED', providerAccount: NIP });
+  expect(standIn, '[+] the platform can stand in for the ministry, so the flow can be walked', 200);
+  truthy('[+] ...and no token is asked for, nor given back', data(standIn).hasSecret === false && !/token/.test(JSON.stringify(data(standIn).providerSecret || '')), data(standIn));
+  const standInReady = inboxReadiness();
+  truthy('[+] and the check refuses to call that ready: nothing leaves the platform, so nothing arrives', data(standInReady).ready === false && data(standInReady).networkState === 'REFUSED' && /nothing arrives/.test(data(standInReady).networkDetail || ''), data(standInReady));
+  const fetched = call('POST', `${INBOX}/fetch`, { token: owner, body: {} });
+  expect(fetched, '[+] a fetch answers plainly rather than as an empty success', 200);
+  truthy('[+] ...nothing left it, so nothing arrived', data(fetched).received === 0 && (data(fetched).notes || []).some((n) => /nothing left it/.test(n)), data(fetched));
+  truthy('[abuse] a rival asking sees its own inbox, never this one', data(inboxReadiness(rival.owner.token)).provider !== 'SIMULATED', data(inboxReadiness(rival.owner.token)));
 
   completed.add(1);
 }

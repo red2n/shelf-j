@@ -77,11 +77,16 @@ class EInvoiceTransportIT {
   private static final String S_FR = Ids.newId().toString();
   private static final String C_FR = Ids.newId().toString();
   private static final String C_FR_REFUSE = Ids.newId().toString();
+  private static final String T_RDY = Ids.newId().toString();
+  private static final String S_RDY = Ids.newId().toString();
   private static final String T_PL = Ids.newId().toString();
   private static final String S_PL = Ids.newId().toString();
   private static final String C_PL = Ids.newId().toString();
 
   private static final String[] LEEDS = {"2 Mill Lane", "Leeds", "LS1 4AB"};
+
+  /** How the access point answers a readiness check's participant lookup. */
+  private static final AtomicReference<String> PROBE = new AtomicReference<>("known");
 
   /** What the access point stub does with the next document: deliver, accept, reject or down. */
   private static final AtomicReference<String> MODE = new AtomicReference<>("deliver");
@@ -124,6 +129,10 @@ class EInvoiceTransportIT {
             .withIdentity(T_FR, "FR32123456789", null, null)
             .withLegalName(T_FR, "Épicerie du Port SARL")
             .withStore(T_FR, S_FR, "FR", "3 rue du Port", "Paris", "75001")
+            .with(T_RDY, "GBP", "GB")
+            .withIdentity(T_RDY, "GB444444444", "9932", "GB444444444")
+            .withLegalName(T_RDY, "Readiness Ltd")
+            .withStore(T_RDY, S_RDY, "GB", "9 Dock Road", "Hull", "HU1 2AA")
             .with(T_PL, "PLN", "PL")
             .withIdentity(T_PL, "PL5260250991", null, null)
             .withLegalName(T_PL, "Sklep Portowy sp. z o.o.")
@@ -198,6 +207,15 @@ class EInvoiceTransportIT {
     // The access point's facade: one document id, answered as MODE says.
     SERVICES.on("POST", "/documents", EInvoiceTransportIT::accessPointSend);
     SERVICES.on("GET", "/documents/AP-1", EInvoiceTransportIT::accessPointStatus);
+    SERVICES.on(
+        "GET",
+        "/participants/9932:GB444444444",
+        call ->
+            switch (PROBE.get()) {
+              case "nokey" -> new Answer(401, "{\"message\":\"bad key\"}");
+              case "down" -> new Answer(503, "{\"message\":\"maintenance\"}");
+              default -> new Answer(200, "{\"participant\":\"known\"}");
+            });
     System.setProperty("shelfj.einvoice.inbound.key", DELIVERY_KEY);
     SERVICES.on(
         "POST",
@@ -363,6 +381,81 @@ class EInvoiceTransportIT {
 
   private JsonArray transmissions(String id) {
     return dataArray(till().get("/admin/sales-invoices/" + id + "/transmissions", T));
+  }
+
+  // ── readiness ──────────────────────────────────────────────────────────────
+
+  @Test
+  @DisplayName("Readiness names what is missing, and asks the network rather than assuming it")
+  void readiness() {
+    // A business that never chose: told what to do, and nothing is asked of any network.
+    JsonObject none = data(till().get("/admin/einvoicing/readiness", T_RDY));
+    assertThat(none.getBoolean("ready"), is(false));
+    assertThat(none.getString("network"), is("NONE"));
+    assertThat(check(none, "NETWORK_CHOSEN").getBoolean("satisfied"), is(false));
+    assertThat(
+        check(none, "NETWORK_CHOSEN").getString("detail"), containsString("no network is chosen"));
+    // Identity is a fact about the business, and holds before any network is chosen.
+    assertThat(check(none, "SELLER_VAT_ID").getBoolean("satisfied"), is(true));
+    assertThat(check(none, "SELLER_VAT_ID").getString("detail"), containsString("GB444444444"));
+    assertThat(none.containsKey("networkState") && !none.isNull("networkState"), is(false));
+
+    // A business whose own details cannot be read is told that, not told to record a VAT number it
+    // recorded last year: the two look the same at the boundary and send a shop to different
+    // places.
+    JsonObject unread = data(till().get("/admin/einvoicing/readiness", Ids.newId().toString()));
+    assertThat(check(unread, "SELLER_VAT_ID").getBoolean("satisfied"), is(false));
+    assertThat(
+        check(unread, "SELLER_VAT_ID").getString("detail"), containsString("could not be read"));
+    assertThat(
+        check(unread, "SELLER_VAT_ID").getString("detail"),
+        containsString("nothing is wrong with the settings"));
+
+    // The platform standing in: ready, and saying what ready means here — nothing leaves.
+    assertThat(setTransport(T_RDY, transport("PEPPOL", "SIMULATED")).getStatus(), is(200));
+    JsonObject simulated = data(till().get("/admin/einvoicing/readiness", T_RDY));
+    assertThat(simulated.getBoolean("ready"), is(true));
+    assertThat(simulated.getString("networkState"), is("READY"));
+    assertThat(simulated.getString("networkDetail"), containsString("nothing leaves it"));
+    assertThat(simulated.getString("networkDetail"), containsString("provider contract"));
+    assertThat(
+        check(simulated, "SENDER_ADDRESS").getString("detail"), containsString("9932:GB444444444"));
+    assertThat(check(simulated, "CREDENTIAL_HELD").getBoolean("satisfied"), is(true));
+
+    // A real access point, asked with the key this deployment holds.
+    assertThat(setTransport(T_RDY, transport("PEPPOL", "ACCESS_POINT")).getStatus(), is(200));
+    int sent = AP_POSTS.get();
+    JsonObject ready = data(till().get("/admin/einvoicing/readiness", T_RDY));
+    assertThat(ready.getBoolean("ready"), is(true));
+    assertThat(ready.getString("networkState"), is("READY"));
+    assertThat(check(ready, "PROVIDER_DEPLOYED").getBoolean("satisfied"), is(true));
+
+    // The two answers a shop must never see as one: a key someone has to fix, and a wait.
+    PROBE.set("nokey");
+    JsonObject refused = data(till().get("/admin/einvoicing/readiness", T_RDY));
+    assertThat(refused.getBoolean("ready"), is(false));
+    assertThat(refused.getString("networkState"), is("REFUSED"));
+    assertThat(refused.getString("networkDetail"), containsString("key"));
+    PROBE.set("down");
+    JsonObject unreachable = data(till().get("/admin/einvoicing/readiness", T_RDY));
+    assertThat(unreachable.getBoolean("ready"), is(false));
+    assertThat(unreachable.getString("networkState"), is("UNREACHABLE"));
+    PROBE.set("known");
+    // Whatever the network answered, no document was handed to it by a check.
+    assertThat(AP_POSTS.get(), is(sent));
+
+    // The readiness of a business is management's business, and only its own.
+    assertThat(till().getAs("/admin/einvoicing/readiness", T_RDY, "CASHIER").getStatus(), is(403));
+    assertThat(
+        data(till().get("/admin/einvoicing/readiness", T_OTHER)).getString("network"), is("NONE"));
+  }
+
+  /** One item of the checklist, by its code. */
+  private static JsonObject check(JsonObject readiness, String code) {
+    for (JsonObject c : readiness.getJsonArray("checks").getValuesAs(JsonObject.class)) {
+      if (code.equals(c.getString("code"))) return c;
+    }
+    throw new AssertionError("no check " + code + " in " + readiness);
   }
 
   // ── settings ───────────────────────────────────────────────────────────────

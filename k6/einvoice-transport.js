@@ -109,6 +109,8 @@ export default function ({ gb, noaddr, cafe, nobody, slow, offline, inbox, inbox
   const send = (id, token = t) => call('POST', `${O}/admin/sales-invoices/${id}/transmissions`, { token, body: {} });
   const attempts = (id, token = t) => call('GET', `${O}/admin/sales-invoices/${id}/transmissions`, { token });
   const outbox = (query = '', token = t) => call('GET', `${O}/admin/einvoicing/transmissions${query}`, { token });
+  const readiness = (token = t) => call('GET', `${O}/admin/einvoicing/readiness`, { token });
+  const checkOf = (r, code) => (data(r).checks || []).find((c) => c.code === code) || {};
   const documentOf = (id) => data(call('GET', `${O}/admin/sales-invoices/${id}`, { token: t }));
 
   // A till sale, paid for in cash, invoiced on payment; the invoice once it exists.
@@ -163,6 +165,27 @@ export default function ({ gb, noaddr, cafe, nobody, slow, offline, inbox, inbox
   const chosen = choose({ network: 'PEPPOL', provider: 'SIMULATED', providerAccount: 'LE-K6' });
   expect(chosen, '[+] the owner chooses Peppol over the simulated provider', 200);
   truthy('[+] ...and reads it back', data(chosen).network === 'PEPPOL' && data(chosen).provider === 'SIMULATED' && data(chosen).providerAccount === 'LE-K6', data(chosen));
+
+  // ── can a document go? ───────────────────────────────────────────────────────────────────────────
+  // For the day a provider contract lands: what stands between this business and its first
+  // e-invoice, with the network asked rather than assumed. Nothing is ever sent by a check.
+  const nothingChosen = readiness(gb.rival.owner.token);
+  expect(nothingChosen, '[+] a business that never chose is told what stands in the way', 200);
+  truthy('[+] ...no network chosen, and no network asked anything', data(nothingChosen).ready === false && checkOf(nothingChosen, 'NETWORK_CHOSEN').satisfied === false && /no network is chosen/.test(checkOf(nothingChosen, 'NETWORK_CHOSEN').detail) && !data(nothingChosen).networkState, data(nothingChosen));
+  // A business that never recorded a VAT number is told to record one — and told that, rather than
+  // told its own details could not be read, which is the other way that check can fail and sends
+  // somebody looking somewhere else entirely.
+  truthy('[+] ...and is told to record the VAT number it never recorded, not that it could not be read', checkOf(nothingChosen, 'SELLER_VAT_ID').satisfied === false && /record the business/.test(checkOf(nothingChosen, 'SELLER_VAT_ID').detail) && !/could not be read/.test(checkOf(nothingChosen, 'SELLER_VAT_ID').detail), checkOf(nothingChosen, 'SELLER_VAT_ID'));
+
+  const sentBefore = (data(outbox('?limit=100')) || []).length;
+  const ready = readiness();
+  expect(ready, '[+] with Peppol chosen the network is tried with what this business holds', 200);
+  truthy('[+] ...ready, over the simulated network, every piece in place', data(ready).ready === true && data(ready).network === 'PEPPOL' && data(ready).networkState === 'READY' && (data(ready).checks || []).every((c) => c.satisfied), data(ready));
+  truthy('[+] ...and ready says what it means on a stack with no contract: nothing leaves the platform', /nothing leaves it/.test(data(ready).networkDetail || '') && /provider contract/.test(data(ready).networkDetail || ''), data(ready).networkDetail);
+  truthy('[+] ...the business is named by its address and its VAT number', /0088:/.test(checkOf(ready, 'SENDER_ADDRESS').detail || '') && checkOf(ready, 'SELLER_VAT_ID').satisfied === true, { sender: checkOf(ready, 'SENDER_ADDRESS'), vat: checkOf(ready, 'SELLER_VAT_ID') });
+  truthy('[+] ...and a check sends nothing: the outbox is where it was', (data(outbox('?limit=100')) || []).length === sentBefore, sentBefore);
+  expect(readiness(gb.cashier.token), '[-] a cashier does not ask whether the business can send', 403);
+  truthy("[abuse] a rival asking sees its own readiness, never this business's network", data(readiness(gb.rival.owner.token)).network === 'NONE', data(readiness(gb.rival.owner.token)));
 
   // ── delivered, refused, deferred, nowhere to go ──────────────────────────────────────────────────
   const inv = invoiced(cafe);
@@ -259,6 +282,7 @@ export default function ({ gb, noaddr, cafe, nobody, slow, offline, inbox, inbox
   const kept = invoiced(cafe);
   expect(send(kept.id), '[-] with no network chosen a document is issued and kept, never sent', 409, 'EINVOICE_TRANSPORT_NOT_SET');
   truthy('[-] ...and nothing was queued', !documentOf(kept.id).transmission, documentOf(kept.id));
+  truthy('[-] ...and readiness says so too, asking no network', data(readiness()).ready === false && !data(readiness()).networkState, data(readiness()));
 
   completed.add(1);
 }

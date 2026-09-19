@@ -267,6 +267,43 @@ public class IrpTransport implements EInvoiceTransport {
 
   // ── signing in ───────────────────────────────────────────────────────────────
 
+  /**
+   * Signs in to the portal and stops there.
+   *
+   * <p>India's portal refuses a wrong credential rather than failing, so a check answers the
+   * question a business actually has the day it registers: will my next invoice reach the IRP.
+   */
+  @Override
+  public Readiness check(Outbound credentials) {
+    if (credentials.sellerVatId() == null || credentials.sellerVatId().isBlank()) {
+      return Readiness.refused("the portal knows a business by its GSTIN, and none is recorded");
+    }
+    if (credentials.providerAccount() == null || credentials.providerSecret() == null) {
+      return Readiness.refused(
+          "the portal signs a business in as its own user, and the user or the password is missing");
+    }
+    try {
+      Session opened =
+          session(
+              credentials.sellerVatId(),
+              credentials.providerAccount(),
+              credentials.providerSecret());
+      // The portal refuses a sign-in with a 200 and a Status of its own, so a null session is a
+      // refusal and not an absence: reporting it as ready would be the check lying.
+      return opened == null
+          ? Readiness.refused(
+              "the portal answered and would not sign the business in: check the user, the password"
+                  + " and that the GSTIN is enrolled for e-invoicing")
+          : Readiness.ready("the portal signed the business in");
+    } catch (SignInRefused e) {
+      return Readiness.refused(e.getMessage());
+    } catch (TransportException e) {
+      return Readiness.unreachable(e.getMessage());
+    } catch (RuntimeException e) {
+      return Readiness.refused("the portal would not sign the business in: " + e.getMessage());
+    }
+  }
+
   private Session session(String gstin, String user, String password) {
     String k = key(gstin, user, password);
     Session s = sessions.get(k);
@@ -297,6 +334,12 @@ public class IrpTransport implements EInvoiceTransport {
     } catch (RuntimeException e) {
       throw new TransportException("the portal could not be reached: " + e.getMessage(), e);
     }
+    if (status == 401 || status == 403)
+      throw new SignInRefused(
+          "the portal answered HTTP "
+              + status
+              + " to the sign-in: the credentials it holds for this"
+              + " business are not the ones we sent");
     if (status < 200 || status >= 300)
       throw new TransportException("the portal answered HTTP " + status + " to the sign-in", null);
     JsonObject o = object(answer);
@@ -316,6 +359,21 @@ public class IrpTransport implements EInvoiceTransport {
     Session fresh = new Session(d.getString("AuthToken"), sek, until);
     sessions.put(k, fresh);
     return fresh;
+  }
+
+  /**
+   * The portal turned the sign-in away at the door.
+   *
+   * <p>A {@link TransportException} still, so the sending path treats it exactly as it always has —
+   * a sign-in that failed is worth trying again, credentials do get fixed. Only the readiness check
+   * looks for it, because there it is the difference between "wait" and "someone must act".
+   */
+  static final class SignInRefused extends TransportException {
+    private static final long serialVersionUID = 1L;
+
+    SignInRefused(String message) {
+      super(message, null);
+    }
   }
 
   private HttpClientRequest signed(HttpClientRequest req, String gstin, String user, String token) {

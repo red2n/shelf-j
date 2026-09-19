@@ -98,6 +98,47 @@ abstract class BearerFacadeTransport implements EInvoiceTransport {
   }
 
   /**
+   * Asks the facade whether it knows us, without sending a document.
+   *
+   * <p>A HEAD-shaped question against a path the facade serves for exactly this: an answer of any
+   * kind means it is reachable, an authentication refusal means the key is wrong, and a timeout
+   * means the network is down. Distinguishing those three is the whole value of a check — "it did
+   * not work" is what a shop already knows.
+   */
+  final Readiness probe(String path) {
+    if (!isConfigured()) {
+      return Readiness.refused(
+          "this deployment holds no address or key for " + facade() + ", so nothing can be sent");
+    }
+    int status;
+    // Deliberately not get(): that reading throws for anything it does not recognise, so a facade
+    // answering "not you" would arrive here as "could not be reached" — the one confusion the check
+    // exists to prevent, since a wrong key is fixed by a person and a network down is fixed by
+    // waiting.
+    try (HttpClientResponse res =
+        web.get(baseUrl + path)
+            .header(HeaderNames.AUTHORIZATION, "Bearer " + apiKey)
+            .header(HeaderNames.ACCEPT, "application/json")
+            .request()) {
+      status = res.status().code();
+    } catch (RuntimeException e) {
+      return Readiness.unreachable(facade() + " could not be reached: " + e.getMessage());
+    }
+    if (status == 401 || status == 403) {
+      return Readiness.refused(
+          facade() + " answered but would not have us: the key it holds is not the one we sent");
+    }
+    if (status >= 500) {
+      return Readiness.unreachable(
+          facade() + " answered HTTP " + status + ": it is there, and having trouble of its own");
+    }
+    // Anything else — including a 404 for a probe path a provider does not serve — means it is
+    // there
+    // and talking to us, which is what a check can honestly establish.
+    return Readiness.ready(facade() + " answered, and took the key we hold");
+  }
+
+  /**
    * What a deposit came to: the facade's refusal as a rejection, its acceptance as the outcome it
    * states, under the id it gave the document.
    *

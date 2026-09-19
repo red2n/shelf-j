@@ -74,6 +74,22 @@ public class PeppolAccessPointTransport extends BearerFacadeTransport {
     return "shelfj.einvoice.peppol.base-url and shelfj.einvoice.peppol.api-key";
   }
 
+  /**
+   * Asks the access point about the business's own participant identifier.
+   *
+   * <p>The right question for a check: an access point that cannot find <em>us</em> in the
+   * network's directory cannot send on our behalf, and that is the failure a shop meets on its
+   * first invoice.
+   */
+  @Override
+  public Readiness check(Outbound credentials) {
+    if (credentials.sender() == null || credentials.sender().isBlank()) {
+      return Readiness.refused(
+          "the business has no electronic address, so no access point can send on its behalf");
+    }
+    return probe("/participants/" + credentials.sender());
+  }
+
   @Override
   public Dispatch send(Outbound d) {
     JsonObject body =

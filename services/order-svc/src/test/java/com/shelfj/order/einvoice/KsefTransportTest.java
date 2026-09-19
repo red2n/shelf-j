@@ -20,6 +20,7 @@ import com.shelfj.order.einvoice.EInvoiceTransport.Dispatch;
 import com.shelfj.order.einvoice.EInvoiceTransport.Outbound;
 import com.shelfj.order.einvoice.EInvoiceTransport.Outcome;
 import com.shelfj.order.einvoice.EInvoiceTransport.TransportException;
+import com.shelfj.order.support.Checks;
 import com.shelfj.order.support.KsefStub;
 import com.shelfj.test.JsonStub;
 import java.math.BigDecimal;
@@ -151,6 +152,34 @@ class KsefTransportTest {
     system.mode("down");
     assertThrows(TransportException.class, () -> transport.send(document(TOKEN)));
     system.mode("accept");
+  }
+
+  @Test
+  void aCheckSignsInAndStopsThereTellingARefusedTokenFromAMinistryThatIsDown() {
+    system.mode("accept");
+    int invoicesBefore = system.sessionsOpened();
+    EInvoiceTransport.Readiness ready = transport.check(document(TOKEN));
+    assertEquals(EInvoiceTransport.Readiness.READY, ready.state());
+    assertEquals("KSeF signed the business in", ready.detail());
+    assertEquals(
+        invoicesBefore, system.sessionsOpened(), "a check opens no session for a document");
+
+    EInvoiceTransport.Readiness wrong = transport.check(document("not-the-token"));
+    assertEquals(EInvoiceTransport.Readiness.REFUSED, wrong.state());
+    assertTrue(wrong.detail().contains("refused the business's token"));
+    EInvoiceTransport.Readiness none = transport.check(document(null));
+    assertEquals(EInvoiceTransport.Readiness.REFUSED, none.state());
+    assertTrue(none.detail().contains("none is held"));
+
+    // A business KSeF cannot know: its VAT number is not a NIP, so nothing is asked at all.
+    Outbound english = Checks.credentials(null, "GB123456789", null, TOKEN);
+    EInvoiceTransport.Readiness notPolish = transport.check(english);
+    assertEquals(EInvoiceTransport.Readiness.REFUSED, notPolish.state());
+    assertTrue(notPolish.detail().contains("not a Polish number"));
+
+    // Nothing listening where the ministry should be: a wait, not something a person can fix.
+    KsefTransport nowhere = KsefTransport.forTest("http://127.0.0.1:1", "Shelf-J test");
+    assertEquals(EInvoiceTransport.Readiness.UNREACHABLE, nowhere.check(document(TOKEN)).state());
   }
 
   @Test

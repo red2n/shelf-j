@@ -128,4 +128,28 @@ class SimulatedTransportTest {
     assertThat(with(inbox).send(to("9932:GB1LATER")).outcome().state(), is("PENDING"));
     assertThat(inbox.deliveries.isEmpty(), is(true));
   }
+
+  @Test
+  void aCheckIsReadyAndSaysExactlyWhatReadyMeansOnAPlatformWithNoContract() {
+    Inbox inbox = new Inbox(true, 201, "{\"data\":{\"id\":\"1\"}}");
+    EInvoiceTransport.Readiness r =
+        with(inbox)
+            .check(
+                new Outbound(
+                    Ids.newId(),
+                    Ids.newId(),
+                    "Check",
+                    "readiness",
+                    "0088:1",
+                    null,
+                    "",
+                    null,
+                    "GB123456789",
+                    null,
+                    null));
+    assertThat(r.state(), is(EInvoiceTransport.Readiness.READY));
+    assertThat(r.detail(), containsString("nothing leaves it"));
+    assertThat(r.detail(), containsString("a provider contract"));
+    assertThat("a check delivers nothing", inbox.deliveries, is(List.of()));
+  }
 }

@@ -77,6 +77,9 @@ class KsefInboxIT {
   /** What the metadata query answers with next: both invoices, one, or none. */
   private static final AtomicReference<String> HOLDING = new AtomicReference<>("both");
 
+  /** Whether the ministry answers at all, for the readiness check. */
+  private static final AtomicReference<String> MINISTRY_UP = new AtomicReference<>("up");
+
   /** What a download does next: give the document, or fail as a network that is down. */
   private static final AtomicReference<String> DOWNLOAD = new AtomicReference<>("ok");
 
@@ -139,6 +142,9 @@ class KsefInboxIT {
   }
 
   private static JsonStub.Answer challenge() {
+    if (!"up".equals(MINISTRY_UP.get())) {
+      return new JsonStub.Answer(503, "{\"exception\":\"the system is unavailable\"}");
+    }
     return new JsonStub.Answer(
         200, "{\"challenge\":\"CH-1\",\"timestampMs\":" + System.currentTimeMillis() + "}");
   }
@@ -394,6 +400,84 @@ class KsefInboxIT {
     JsonObject fetched = data(post("/admin/e-invoices/inbox/fetch", tenant, "OWNER"), 200);
     assertThat(fetched.getInt("waiting"), is(0));
     assertThat(fetched.getJsonArray("notes").toString(), containsString("nothing left it"));
+  }
+
+  @Test
+  @DisplayName("Readiness signs in and stops: what is missing, a token refused, a ministry down")
+  void readiness() {
+    String tenant = Ids.newId().toString();
+
+    // A buyer that never chose: told what to do, and nothing is asked of the ministry.
+    JsonObject none = data(as("/admin/e-invoices/inbox/readiness", tenant, "OWNER").get(), 200);
+    assertThat(none.getBoolean("ready"), is(false));
+    assertThat(none.getJsonArray("outstanding").toString(), containsString("choose where"));
+    assertThat(none.containsKey("networkState") && !none.isNull("networkState"), is(false));
+
+    // The platform standing in: not ready, and said plainly — an empty inbox for ever otherwise.
+    data(
+        put(
+            "/admin/e-invoices/inbox/settings",
+            "{\"network\":\"KSEF\",\"provider\":\"SIMULATED\",\"providerAccount\":\""
+                + OUR_NIP
+                + "\"}",
+            tenant),
+        200);
+    JsonObject simulated =
+        data(as("/admin/e-invoices/inbox/readiness", tenant, "OWNER").get(), 200);
+    assertThat(simulated.getBoolean("ready"), is(false));
+    assertThat(simulated.getString("networkState"), is("REFUSED"));
+    assertThat(simulated.getString("networkDetail"), containsString("nothing arrives"));
+
+    // The ministry itself, with the business's own token: signed in, and nothing fetched.
+    MINISTRY_UP.set("up");
+    fetchesFromKsef(tenant);
+    int fetchesBefore = metadataQueries();
+    JsonObject ready = data(as("/admin/e-invoices/inbox/readiness", tenant, "OWNER").get(), 200);
+    assertThat(ready.toString(), ready.getBoolean("ready"), is(true));
+    assertThat(ready.getString("networkState"), is("READY"));
+    assertThat(ready.getJsonArray("outstanding").toString(), is("[]"));
+    assertThat("a check fetches nothing", metadataQueries(), is(fetchesBefore));
+    // And the window is untouched: a check is not a fetch, so it must not move where the next asks
+    // from.
+    JsonObject settings = data(as("/admin/e-invoices/inbox/settings", tenant, "OWNER").get(), 200);
+    assertThat(settings.containsKey("fetchedTo") && !settings.isNull("fetchedTo"), is(false));
+
+    // A token the ministry will not have: someone must act, and asking again would never help.
+    data(
+        put(
+            "/admin/e-invoices/inbox/settings",
+            "{\"network\":\"KSEF\",\"provider\":\"KSEF\",\"providerAccount\":\""
+                + OUR_NIP
+                + "\",\"secret\":\"not-the-token\"}",
+            tenant),
+        200);
+    JsonObject refused = data(as("/admin/e-invoices/inbox/readiness", tenant, "OWNER").get(), 200);
+    assertThat(refused.getBoolean("ready"), is(false));
+    assertThat(refused.getString("networkState"), is("REFUSED"));
+
+    // The ministry down: the same shop, the same token, and a wait rather than a fix.
+    fetchesFromKsef(tenant);
+    MINISTRY_UP.set("down");
+    try {
+      JsonObject down = data(as("/admin/e-invoices/inbox/readiness", tenant, "OWNER").get(), 200);
+      assertThat(down.getBoolean("ready"), is(false));
+      assertThat(down.getString("networkState"), is("UNREACHABLE"));
+    } finally {
+      MINISTRY_UP.set("up");
+    }
+
+    // Whether a business can receive is management's business.
+    assertThat(
+        as("/admin/e-invoices/inbox/readiness", tenant, "CASHIER").get().getStatus(), is(403));
+  }
+
+  /** How many times the ministry has been asked what it is holding. */
+  private static int metadataQueries() {
+    int n = 0;
+    for (JsonStub.Call call : KSEF.calls()) {
+      if ("/ksef/invoices/query/metadata".equals(call.path())) n++;
+    }
+    return n;
   }
 
   @Test

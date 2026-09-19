@@ -11,6 +11,7 @@ import com.shelfj.order.einvoice.EInvoiceTransport.Dispatch;
 import com.shelfj.order.einvoice.EInvoiceTransport.Outbound;
 import com.shelfj.order.einvoice.EInvoiceTransport.Outcome;
 import com.shelfj.order.einvoice.EInvoiceTransport.TransportException;
+import com.shelfj.order.support.Checks;
 import com.shelfj.test.JsonStub;
 import java.nio.charset.StandardCharsets;
 import java.util.Base64;
@@ -39,7 +40,13 @@ class PeppolAccessPointTransportTest {
             "/documents/D-BAD",
             200,
             "{\"id\":\"D-BAD\",\"status\":\"failed\",\"reason\":\"receiver unreachable\"}")
-        .on("GET", "/documents/D-DOWN", 503, "{\"message\":\"down\"}");
+        .on("GET", "/documents/D-DOWN", 503, "{\"message\":\"down\"}")
+        // What a readiness check asks: does the access point know this participant?
+        .on("GET", "/participants/0088:5790000435975", 200, "{\"participant\":\"known\"}")
+        .on("GET", "/participants/9932:NOKEY", 401, "{\"message\":\"bad key\"}")
+        .on("GET", "/participants/9932:FORBIDDEN", 403, "{\"message\":\"not you\"}")
+        .on("GET", "/participants/9932:UNKNOWN", 404, "{\"message\":\"no such participant\"}")
+        .on("GET", "/participants/9932:DOWN", 503, "{\"message\":\"maintenance\"}");
     transport = PeppolAccessPointTransport.forTest(ap.baseUrl(), "key");
   }
 
@@ -79,6 +86,20 @@ class PeppolAccessPointTransportTest {
         "GB123456789",
         "LE-1",
         null);
+  }
+
+  /** What the service hands a check: the sender, and nothing to send. */
+  private static Outbound from(String sender) {
+    return Checks.credentials(sender, "GB123456789", null, null);
+  }
+
+  /** How many documents the access point has been handed. */
+  private static int posts() {
+    int posts = 0;
+    for (JsonStub.Call call : ap.calls()) {
+      if ("POST".equals(call.method())) posts++;
+    }
+    return posts;
   }
 
   private static String lastBody() {
@@ -126,6 +147,41 @@ class PeppolAccessPointTransportTest {
     assertEquals("receiver unreachable", failed.detail());
     assertEquals(EInvoiceTransports.STATUS_REJECTED, transport.status(d, "D-GONE").state());
     assertThrows(TransportException.class, () -> transport.status(d, "D-DOWN"));
+  }
+
+  @Test
+  void aCheckAsksTheAccessPointAndTellsAWrongKeyFromANetworkThatIsDown() {
+    int postsBefore = posts();
+    EInvoiceTransport.Readiness ready = transport.check(from("0088:5790000435975"));
+    assertEquals(EInvoiceTransport.Readiness.READY, ready.state());
+    assertTrue(ready.detail().contains("took the key we hold"));
+
+    // The distinction the whole check exists for: a key someone must fix, against a wait.
+    assertEquals(EInvoiceTransport.Readiness.REFUSED, transport.check(from("9932:NOKEY")).state());
+    assertEquals(
+        EInvoiceTransport.Readiness.REFUSED, transport.check(from("9932:FORBIDDEN")).state());
+    EInvoiceTransport.Readiness down = transport.check(from("9932:DOWN"));
+    assertEquals(EInvoiceTransport.Readiness.UNREACHABLE, down.state());
+    assertTrue(down.detail().contains("503"));
+
+    // A probe path this access point does not serve still proves it is there and talking to us.
+    assertEquals(EInvoiceTransport.Readiness.READY, transport.check(from("9932:UNKNOWN")).state());
+
+    // Nothing is sent by a check, whatever it answered.
+    assertEquals(postsBefore, posts(), "a check must never send a document");
+  }
+
+  @Test
+  void aBusinessWithNoElectronicAddressIsRefusedWithoutAskingTheNetwork() {
+    EInvoiceTransport.Readiness none = transport.check(from(null));
+    assertEquals(EInvoiceTransport.Readiness.REFUSED, none.state());
+    assertTrue(none.detail().contains("no electronic address"));
+    assertEquals(EInvoiceTransport.Readiness.REFUSED, transport.check(from("   ")).state());
+    // And a deployment with no access point of its own says so rather than trying.
+    EInvoiceTransport.Readiness undeployed =
+        PeppolAccessPointTransport.forTest("", "").check(from("0088:5790000435975"));
+    assertEquals(EInvoiceTransport.Readiness.REFUSED, undeployed.state());
+    assertTrue(undeployed.detail().contains("no address or key"));
   }
 
   @Test
