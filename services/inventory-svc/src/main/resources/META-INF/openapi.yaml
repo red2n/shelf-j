@@ -48,6 +48,10 @@ tags:
     description: Full physical-inventory counts (headers, tags, completion).
   - name: Planning Configuration
     description: Lot UOM conversions and PAR level configuration.
+  - name: Shelf Gaps
+    description: >
+      What it would take to fill a store's shelves: the capacity of the layouts in force, projected
+      from product-svc's planograms, against stock that is not held for an order.
 components:
   schemas:
     Problem:

@@ -44,6 +44,15 @@ tags:
     description: Structured attribute-group definitions/fields and a variant's attribute values.
   - name: Category Sets
     description: Alternate category-hierarchy ("category set") CRUD, membership, and variant assignment.
+  - name: Merchandising
+    description: >
+      Shelf space: the shelving a layout is drawn for, planograms version by version, a line's facing
+      width, a category's promised share of a store measured against the layouts in force, and the
+      resets that put a category on the shelf all at once.
+  - name: Assortment
+    description: >
+      Range: store clusters to decide against, dated and reasoned range changes with the sweep that
+      puts them into force on the day, and the range review whose figures stay beside its decisions.
 components:
   schemas:
     Problem:

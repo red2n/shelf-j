@@ -104,6 +104,16 @@ const _navItems = [
   ),
   _AdminNavItem(
     destination: AdaptiveNavDestination(
+      label: 'Shelf space',
+      icon: Icons.shelves,
+      selectedIcon: Icons.shelves,
+    ),
+    route: '/admin/shelf-space',
+    // A storekeeper fills the shelves, so the gaps are their morning's work.
+    storekeeperVisible: true,
+  ),
+  _AdminNavItem(
+    destination: AdaptiveNavDestination(
       label: 'Card machines',
       icon: Icons.point_of_sale_outlined,
       selectedIcon: Icons.point_of_sale,

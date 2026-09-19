@@ -9,6 +9,67 @@ final class Events {
 
   private Events() {}
 
+  /**
+   * What a published planogram says a shelf should hold, per variant, for one store (07.17).
+   *
+   * <p>The one thing merchandising owes replenishment. inventory-svc projects it and uses capacity
+   * as the shelf target and {@code minPresentation} as the point below which the shelf looks picked
+   * over — which is a different number from a stockroom minimum, and the reason replenishment is
+   * driven from the shelf at all.
+   *
+   * <p>Sent whole per store rather than as a delta: a layout is replaced version by version, and a
+   * consumer that missed one delta would hold a shelf that never existed. Whole means a projection
+   * can be rebuilt from the latest event alone.
+   */
+  static String shelfCapacityPublished(
+      UUID tenantId,
+      UUID storeId,
+      UUID planogramId,
+      int version,
+      UUID fixtureId,
+      List<UUID> variantIds,
+      List<Integer> capacities,
+      List<Integer> minPresentations) {
+    StringBuilder shelves = new StringBuilder("[");
+    for (int i = 0; i < variantIds.size(); i++) {
+      if (i > 0) shelves.append(',');
+      shelves
+          .append("{\"variantId\":\"")
+          .append(variantIds.get(i))
+          .append("\",\"capacity\":")
+          .append(capacities.get(i))
+          .append(",\"minPresentation\":")
+          .append(minPresentations.get(i))
+          .append('}');
+    }
+    shelves.append(']');
+    return EventPayload.base("ShelfCapacityPublished", tenantId, planogramId)
+        + ",\"storeId\":\""
+        + storeId
+        + "\",\"fixtureId\":\""
+        + fixtureId
+        + "\",\"planogramId\":\""
+        + planogramId
+        + "\",\"version\":"
+        + version
+        + ",\"positions\":"
+        + shelves
+        + "}";
+  }
+
+  /**
+   * A fixture is gone. Its capacity goes with it: a projection holding the shelf of a bay that has
+   * been taken out would have replenishment filling furniture nobody can see.
+   */
+  static String fixtureRetired(UUID tenantId, UUID storeId, UUID fixtureId) {
+    return EventPayload.base("FixtureRetired", tenantId, fixtureId)
+        + ",\"storeId\":\""
+        + storeId
+        + "\",\"fixtureId\":\""
+        + fixtureId
+        + "\"}";
+  }
+
   static String productCreated(UUID tenantId, UUID productId, String name) {
     return EventPayload.base("ProductCreated", tenantId, productId)
         + ",\"name\":\""
