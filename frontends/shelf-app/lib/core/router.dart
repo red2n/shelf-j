@@ -227,6 +227,13 @@ final routerProvider = Provider<GoRouter>((ref) {
             ),
           ),
           GoRoute(
+            path: '/admin/shelf-space',
+            builder: (_, _) => DeferredWidget(
+              libraryLoader: admin_lib.loadLibrary,
+              builder: (_) => admin_lib.ShelfSpaceScreen(),
+            ),
+          ),
+          GoRoute(
             path: '/admin/terminals',
             builder: (_, _) => DeferredWidget(
               libraryLoader: admin_lib.loadLibrary,
