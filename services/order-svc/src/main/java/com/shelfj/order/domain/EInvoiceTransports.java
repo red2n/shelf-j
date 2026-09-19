@@ -33,6 +33,16 @@ public final class EInvoiceTransports {
    */
   public static final Set<String> ADDRESSED = Set.of(NETWORK_PEPPOL, NETWORK_FR_PDP);
 
+  /**
+   * The networks with an e-reporting flow of their own.
+   *
+   * <p>France's, and only France's: e-reporting is that reform's second limb, deposited with the
+   * same partner platform. A Peppol access point carries invoices, KSeF carries invoices, India's
+   * portal registers them — none of them takes a report, and a platform that sent one anyway would
+   * leave a business believing it had reported.
+   */
+  public static final Set<String> REPORTING = Set.of(NETWORK_FR_PDP);
+
   /** The platform standing in for the network: what a stack with no provider contract sends on. */
   public static final String PROVIDER_SIMULATED = "SIMULATED";
 

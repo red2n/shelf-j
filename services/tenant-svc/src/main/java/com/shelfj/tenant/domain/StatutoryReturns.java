@@ -25,11 +25,18 @@ public final class StatutoryReturns {
 
   private StatutoryReturns() {}
 
+  /**
+   * Three ten-day periods a month: 1–10, 11–20, and the 21st to the end. France's e-reporting
+   * cadence for a business on the ordinary monthly VAT regime, and a real frequency rather than a
+   * rounding of "monthly" — a business reports three times a month.
+   */
+  public static final String DECADAL = "DECADAL";
+
   public static final String MONTHLY = "MONTHLY";
   public static final String QUARTERLY = "QUARTERLY";
   public static final String ANNUAL = "ANNUAL";
 
-  public static final Set<String> FREQUENCIES = Set.of(MONTHLY, QUARTERLY, ANNUAL);
+  public static final Set<String> FREQUENCIES = Set.of(DECADAL, MONTHLY, QUARTERLY, ANNUAL);
 
   /** Where a filing went. {@code SIMULATED} says on the record that nothing left the building. */
   public static final Set<String> PROVIDERS = Set.of("HMRC_MTD", "MANUAL", "SIMULATED");
@@ -158,6 +165,10 @@ public final class StatutoryReturns {
    */
   public static LocalDate periodStart(String frequency, LocalDate day) {
     return switch (frequency) {
+      // The month's three ten-day periods. Not arithmetic on a day count: the last one is 11 days
+      // long in March and 8 in February, because it ends when the month does.
+      case DECADAL ->
+          day.withDayOfMonth(day.getDayOfMonth() <= 10 ? 1 : day.getDayOfMonth() <= 20 ? 11 : 21);
       case MONTHLY -> day.withDayOfMonth(1);
       // Calendar quarters: a business's own VAT stagger is a per-business setting and not the
       // law's,
@@ -172,6 +183,12 @@ public final class StatutoryReturns {
   /** The day after a period's last, since every period here is half-open. */
   public static LocalDate periodEnd(String frequency, LocalDate periodStart) {
     return switch (frequency) {
+      case DECADAL ->
+          switch (periodStart.getDayOfMonth()) {
+            case 1 -> periodStart.withDayOfMonth(11);
+            case 11 -> periodStart.withDayOfMonth(21);
+            default -> periodStart.withDayOfMonth(1).plusMonths(1);
+          };
       case MONTHLY -> periodStart.plusMonths(1);
       case QUARTERLY -> periodStart.plusMonths(3);
       case ANNUAL -> periodStart.plusYears(1);
@@ -182,6 +199,12 @@ public final class StatutoryReturns {
   /** The period before a given one, for walking a calendar backwards. */
   public static LocalDate previousPeriod(String frequency, LocalDate periodStart) {
     return switch (frequency) {
+      case DECADAL ->
+          switch (periodStart.getDayOfMonth()) {
+            case 21 -> periodStart.withDayOfMonth(11);
+            case 11 -> periodStart.withDayOfMonth(1);
+            default -> periodStart.minusMonths(1).withDayOfMonth(21);
+          };
       case MONTHLY -> periodStart.minusMonths(1);
       case QUARTERLY -> periodStart.minusMonths(3);
       case ANNUAL -> periodStart.minusYears(1);

@@ -107,6 +107,31 @@ public interface EInvoiceTransport {
   Dispatch send(Outbound document);
 
   /**
+   * Whether this provider carries e-reporting as well as invoices.
+   *
+   * <p>False by default, and that is the honest default: e-reporting is a French duty deposited
+   * with a partner platform, so a Peppol access point, KSeF and India's portal do not take one. A
+   * network that silently accepted a report it does not carry would leave a business believing it
+   * had reported.
+   */
+  default boolean carriesReports() {
+    return false;
+  }
+
+  /**
+   * Deposits e-reporting data.
+   *
+   * <p>The {@code ubl} field carries the report, and {@code number} names the return and its
+   * period. A provider that does not carry reports refuses here rather than pretending; the service
+   * asks {@link #carriesReports()} first and never gets this far.
+   *
+   * @throws TransportException when the network could not be reached
+   */
+  default Dispatch sendReport(Outbound report) {
+    throw new TransportException(name() + " does not carry e-reporting", null);
+  }
+
+  /**
    * Asks after a document the network took but has not answered for.
    *
    * @throws TransportException as {@link #send}

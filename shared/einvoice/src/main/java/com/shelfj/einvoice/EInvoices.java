@@ -12,7 +12,14 @@ public final class EInvoices {
   /** The XML syntax an invoice was written in. */
   public enum Syntax {
     UBL,
-    CII
+    CII,
+    /**
+     * Poland's FA(3). Not an EN 16931 syntax: KSeF hands its invoices out in this structure and
+     * takes no EN 16931 document, so a Polish buyer's invoices arrive in it and are read into the
+     * same model — which is what lets everything downstream stay unaware of where a document came
+     * from.
+     */
+    FA3
   }
 
   /** How the XML arrived: on its own, or inside a hybrid PDF. */
@@ -78,11 +85,14 @@ public final class EInvoices {
           parsed.emptyLeaves(),
           numericIndicators(root, "Indicator"));
     }
+    if (Fa3Reader.accepts(root)) {
+      return new Received(container, Syntax.FA3, filename, Fa3Reader.read(root), 0, 0);
+    }
     String found = "{" + root.namespace() + "}" + root.name();
     throw new EInvoiceFormatException(
         "NOT_AN_INVOICE",
         "the document is neither a UBL Invoice or CreditNote nor a UN/CEFACT Cross Industry Invoice;"
-            + " its root is "
+            + " nor Poland's FA(3); its root is "
             + (found.length() > 120 ? found.substring(0, 120) + "…" : found));
   }
 
@@ -115,6 +125,11 @@ public final class EInvoices {
    * the XML itself that the model cannot see.
    */
   public static List<Violation> validate(Received received) {
+    // FA(3) is checked against FA(3)'s rules, not EN 16931's: the structures carry different
+    // fields,
+    // and reporting a Polish invoice as breaking a Peppol rule it was never written to would be
+    // noise a buyer has to learn to ignore — which is how a real violation gets missed.
+    if (received.syntax() == Syntax.FA3) return Fa3.check(received.invoice());
     Rules.Profile profile = Rules.profileOf(received.invoice());
     List<Violation> out = new ArrayList<>(Rules.check(received.invoice(), profile));
     if (profile == Rules.Profile.PEPPOL_BIS_3

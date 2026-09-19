@@ -20,9 +20,13 @@ public final class SupplierEInvoices {
   /** Delivered by the platform itself, standing in for a network (the simulated provider). */
   public static final String CHANNEL_SIMULATED = "SIMULATED";
 
+  /** Fetched from KSeF by the buyer, because Poland's system delivers nothing (07.13). */
+  public static final String CHANNEL_KSEF = "KSEF";
+
   /**
    * The networks that deliver in, as {@code POST /e-invoices/inbound/{network}} names them. KSeF is
-   * pulled by the buyer and India's portal delivers nothing, so neither is here.
+   * not among them and has its own channel: a Polish buyer asks the ministry's system for its
+   * invoices, and nothing is ever pushed to it. India's portal delivers nothing at all.
    */
   public static final List<String> NETWORKS =
       List.of(CHANNEL_PEPPOL, CHANNEL_FR_PDP, CHANNEL_SIMULATED);

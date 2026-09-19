@@ -109,6 +109,39 @@ public class SimulatedTransport implements EInvoiceTransport {
             json(ref, "REJECTED", in.reason(), in.json().orElse(null))));
   }
 
+  /** The platform stands in for the administration too: the report is taken, and nothing leaves. */
+  @Override
+  public boolean carriesReports() {
+    return true;
+  }
+
+  @Override
+  public Dispatch sendReport(Outbound report) {
+    String ref =
+        "SIM-ER-"
+            + report
+                .invoiceId()
+                .toString()
+                .replace("-", "")
+                .substring(0, 10)
+                .toUpperCase(Locale.ROOT);
+    // One refusal the tests rely on, chosen to be a real failure mode rather than a magic string: a
+    // report the platform could not sign as the business — no VAT number on the identity — is what
+    // a
+    // partner platform refuses, because it deposits under the taxpayer's own number.
+    if (report.sellerVatId() == null || report.sellerVatId().isBlank()) {
+      return new Dispatch(
+          ref,
+          Outcome.rejected(
+              "the business has no VAT number, and a report is deposited under the taxpayer's own",
+              json(ref, "REJECTED", "no taxpayer number", null)));
+    }
+    return new Dispatch(
+        ref,
+        Outcome.accepted(
+            "taken for " + report.number(), json(ref, "DEPOSITED", "taken by the platform", null)));
+  }
+
   @Override
   public Outcome status(Outbound d, String providerRef) {
     return Outcome.accepted("delivered", json(providerRef, "DELIVERED", "delivered", null));
