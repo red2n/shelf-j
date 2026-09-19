@@ -314,6 +314,33 @@ public class KsefTransport implements EInvoiceTransport {
   // ── signing in ───────────────────────────────────────────────────────────────
 
   /** The access token for the taxpayer's KSeF token, or null when the system refused it. */
+  /**
+   * Signs the business in and stops there.
+   *
+   * <p>The whole of what can go wrong before a first invoice: the ministry unreachable, its keys
+   * unreadable, the business's token refused. Nothing is sent, and no session is opened for a
+   * document that does not exist.
+   */
+  @Override
+  public Readiness check(Outbound credentials) {
+    String nip = Fa3.nipOf(credentials.sellerVatId());
+    if (nip == null) {
+      return Readiness.refused(
+          "KSeF knows a business by its NIP, and this one's VAT number is not a Polish number");
+    }
+    if (credentials.providerSecret() == null || credentials.providerSecret().isBlank()) {
+      return Readiness.refused("KSeF signs a business in with its own token, and none is held");
+    }
+    try {
+      String token = accessToken(nip, credentials.providerSecret(), keys());
+      return token == null
+          ? Readiness.refused("KSeF answered and refused the business's token")
+          : Readiness.ready("KSeF signed the business in");
+    } catch (TransportException e) {
+      return Readiness.unreachable(e.getMessage());
+    }
+  }
+
   private String accessToken(String nip, String ksefToken, Keys k) {
     String key = nip + "/" + b64(sha256(ksefToken.getBytes(StandardCharsets.UTF_8)));
     Access a = access.get(key);

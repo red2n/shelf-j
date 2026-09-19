@@ -72,4 +72,30 @@ public final class EInvoiceTransportDtos {
       String createdAt,
       String sentAt,
       String settledAt) {}
+
+  @Schema(name = "EInvoiceReadinessCheck")
+  public record ReadinessCheckResponse(
+      @Schema(
+              description =
+                  "NETWORK_CHOSEN, SELLER_VAT_ID, SENDER_ADDRESS, PROVIDER_DEPLOYED or"
+                      + " CREDENTIAL_HELD.")
+          String code,
+      boolean satisfied,
+      @Schema(description = "What holds, or what to do about it.") String detail) {}
+
+  @Schema(name = "EInvoiceReadiness")
+  public record ReadinessResponse(
+      String network,
+      String provider,
+      @Schema(description = "True when every condition holds and the network answered.")
+          boolean ready,
+      List<ReadinessCheckResponse> checks,
+      @Schema(description = "READY, UNREACHABLE or REFUSED; absent when there is nothing to ask.")
+          String networkState,
+      String networkDetail) {
+
+    public ReadinessResponse {
+      checks = checks == null ? List.of() : List.copyOf(checks);
+    }
+  }
 }

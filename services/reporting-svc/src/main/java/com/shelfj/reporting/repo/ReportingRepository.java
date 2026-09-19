@@ -2,6 +2,7 @@ package com.shelfj.reporting.repo;
 
 import com.shelfj.ids.Ids;
 import com.shelfj.reporting.domain.Domain.InventoryProjection;
+import com.shelfj.reporting.domain.Domain.LabourDayStat;
 import com.shelfj.reporting.domain.Domain.MovementStat;
 import com.shelfj.reporting.domain.Domain.OpenSupplyLine;
 import com.shelfj.reporting.domain.Domain.SalesDayStat;
@@ -13,6 +14,7 @@ import java.sql.PreparedStatement;
 import java.sql.ResultSet;
 import java.sql.SQLException;
 import java.time.Instant;
+import java.time.LocalDate;
 import java.time.OffsetDateTime;
 import java.time.ZoneOffset;
 import java.util.List;
@@ -378,5 +380,129 @@ public class ReportingRepository extends BaseJdbcRepository {
         rs.getObject("bucket", OffsetDateTime.class).toLocalDate().toString(),
         rs.getBigDecimal("total_in"),
         rs.getBigDecimal("total_out"));
+  }
+
+  // ── Labour projection and the report that reads it ───────────────────────
+
+  /**
+   * Records what one time entry cost, and takes back out the entry it corrects.
+   *
+   * <p>One transaction and one statement each way. Keyed on the entry, so the same event twice is
+   * one row — at-least-once delivery is the rule, not the exception — and the correction's own row
+   * replaces the figure rather than adding to it, which is what stops a corrected day being counted
+   * twice.
+   */
+  public void recordLabour(
+      UUID tenantId,
+      UUID entryId,
+      UUID supersedes,
+      UUID storeId,
+      LocalDate day,
+      long minutes,
+      BigDecimal cost,
+      String currency) {
+    inTx(
+        c -> {
+          if (supersedes != null) {
+            try (PreparedStatement ps =
+                c.prepareStatement(
+                    "DELETE FROM labour_facts WHERE tenant_id = ? AND entry_id = ?")) {
+              ps.setObject(1, tenantId);
+              ps.setObject(2, supersedes);
+              ps.executeUpdate();
+            }
+          }
+          try (PreparedStatement ps =
+              c.prepareStatement(
+                  "INSERT INTO labour_facts (tenant_id, entry_id, store_id, day, minutes, cost,"
+                      + " currency, recorded_at) VALUES (?,?,?,?,?,?,?,now())"
+                      + " ON CONFLICT (tenant_id, entry_id) DO UPDATE SET"
+                      + " store_id = EXCLUDED.store_id, day = EXCLUDED.day,"
+                      + " minutes = EXCLUDED.minutes, cost = EXCLUDED.cost,"
+                      + " currency = EXCLUDED.currency, recorded_at = now()")) {
+            ps.setObject(1, tenantId);
+            ps.setObject(2, entryId);
+            ps.setObject(3, storeId);
+            ps.setObject(4, day);
+            ps.setLong(5, Math.max(0, minutes));
+            ps.setBigDecimal(6, cost);
+            ps.setString(7, cost == null ? null : currency);
+            ps.executeUpdate();
+          }
+          return null;
+        },
+        "record labour");
+  }
+
+  /**
+   * Takings and the cost of the hours that earned them, day by day.
+   *
+   * <p>A full outer join in spirit: a day with takings and no hours recorded is as real as a day
+   * with hours and no sales, and both are worth seeing. The currency comes from the sales, because
+   * that is what the shop took; labour in another currency is summed apart and its minutes still
+   * counted, so the hours are never lost even where the money cannot be added up.
+   */
+  public List<LabourDayStat> labourByDay(UUID tenantId, Instant from, Instant to, UUID storeId) {
+    String sql =
+        """
+        WITH sales AS (
+            SELECT date_trunc('day', confirmed_at)::date AS day, currency,
+                   COALESCE(SUM(gross_amount),0) AS gross,
+                   COALESCE(SUM(refunded_amount),0) AS refunded
+            FROM sales_facts
+            WHERE tenant_id = ? AND confirmed_at >= ? AND confirmed_at < ?
+              AND (?::uuid IS NULL OR store_id = ?)
+            GROUP BY 1, 2
+        ),
+        labour AS (
+            SELECT day, SUM(minutes)::bigint AS minutes,
+                   SUM(CASE WHEN cost IS NULL THEN minutes ELSE 0 END)::bigint AS uncosted,
+                   SUM(cost) AS cost,
+                   MAX(currency) AS currency
+            FROM labour_facts
+            WHERE tenant_id = ? AND day >= ?::date AND day < ?::date
+              AND (?::uuid IS NULL OR store_id = ?)
+            GROUP BY 1
+        )
+        SELECT COALESCE(s.day, l.day) AS day,
+               COALESCE(s.currency, l.currency) AS currency,
+               -- Scaled, not bare: a day with hours and no sales would otherwise answer 0 where a
+               -- trading day answers 0.00, and a column of mixed scales reads as broken.
+               COALESCE(s.gross, 0)::numeric(18,2) AS gross,
+               COALESCE(s.refunded, 0)::numeric(18,2) AS refunded,
+               COALESCE(l.minutes, 0) AS minutes,
+               COALESCE(l.uncosted, 0) AS uncosted,
+               l.cost AS cost
+        FROM sales s FULL OUTER JOIN labour l ON l.day = s.day
+        ORDER BY 1 DESC LIMIT ?""";
+    return query(
+        sql,
+        ps -> {
+          int i = 1;
+          ps.setObject(i++, tenantId);
+          ps.setObject(i++, from.atOffset(ZoneOffset.UTC));
+          ps.setObject(i++, to.atOffset(ZoneOffset.UTC));
+          ps.setObject(i++, storeId);
+          ps.setObject(i++, storeId);
+          ps.setObject(i++, tenantId);
+          ps.setObject(i++, from.atOffset(ZoneOffset.UTC).toLocalDate());
+          ps.setObject(i++, to.atOffset(ZoneOffset.UTC).toLocalDate());
+          ps.setObject(i++, storeId);
+          ps.setObject(i++, storeId);
+          ps.setInt(i, REPORTING_SAFETY_CAP);
+        },
+        ReportingRepository::mapLabourDay,
+        "labour by day");
+  }
+
+  private static LabourDayStat mapLabourDay(ResultSet rs) throws SQLException {
+    return new LabourDayStat(
+        rs.getObject("day", LocalDate.class).toString(),
+        rs.getString("currency"),
+        rs.getBigDecimal("gross"),
+        rs.getBigDecimal("refunded"),
+        rs.getLong("minutes"),
+        rs.getLong("uncosted"),
+        rs.getBigDecimal("cost"));
   }
 }

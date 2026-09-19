@@ -11,6 +11,7 @@ import com.shelfj.order.domain.EInvoiceTransports;
 import com.shelfj.order.einvoice.EInvoiceTransport.Dispatch;
 import com.shelfj.order.einvoice.EInvoiceTransport.Outbound;
 import com.shelfj.order.einvoice.EInvoiceTransport.TransportException;
+import com.shelfj.order.support.Checks;
 import com.shelfj.order.support.IrpPortalStub;
 import com.shelfj.test.JsonStub;
 import org.junit.jupiter.api.AfterAll;
@@ -112,6 +113,54 @@ class IrpTransportTest {
     } finally {
       portal.mode("register");
     }
+  }
+
+  @Test
+  void aCheckOpensASessionAndStopsThereAndAWrongPasswordIsNotAnOutage() {
+    portal.mode("register");
+    String invoiceBefore = portal.lastInvoice();
+    EInvoiceTransport.Readiness ready = transport.check(document("user1", "pass1", null));
+    assertEquals(EInvoiceTransport.Readiness.READY, ready.state());
+    assertEquals("the portal signed the business in", ready.detail());
+    assertEquals(invoiceBefore, portal.lastInvoice(), "a check registers no invoice");
+
+    // The portal refuses a sign-in with a 200 and a status of its own: someone must act, and
+    // reporting that as an outage would have a shop waiting for a day that never comes.
+    EInvoiceTransport.Readiness wrong = transport.check(document("user1", "nope", null));
+    assertEquals(EInvoiceTransport.Readiness.REFUSED, wrong.state());
+    assertTrue(wrong.detail().contains("would not sign the business in"));
+
+    EInvoiceTransport.Readiness noUser = transport.check(document(null, "pass1", null));
+    assertEquals(EInvoiceTransport.Readiness.REFUSED, noUser.state());
+    Outbound noGstin = Checks.credentials(null, null, "user1", "pass1");
+    assertEquals(EInvoiceTransport.Readiness.REFUSED, transport.check(noGstin).state());
+
+    // The deployment's own credentials wrong: the portal turns us away at the door, which is a
+    // refusal and not a network down.
+    IrpTransport mistyped =
+        IrpTransport.forTest(
+            stub.baseUrl(),
+            IrpPortalStub.AUTH_PATH,
+            IrpPortalStub.INVOICE_PATH,
+            "wrong",
+            "wrong",
+            portal.publicKeyBase64());
+    EInvoiceTransport.Readiness turnedAway = mistyped.check(document("user1", "pass1", null));
+    assertEquals(EInvoiceTransport.Readiness.REFUSED, turnedAway.state());
+    assertTrue(turnedAway.detail().contains("401"));
+
+    // Nothing listening: a wait, not a refusal.
+    IrpTransport nowhere =
+        IrpTransport.forTest(
+            "http://127.0.0.1:1",
+            IrpPortalStub.AUTH_PATH,
+            IrpPortalStub.INVOICE_PATH,
+            "cid",
+            "csec",
+            portal.publicKeyBase64());
+    assertEquals(
+        EInvoiceTransport.Readiness.UNREACHABLE,
+        nowhere.check(document("user1", "pass1", null)).state());
   }
 
   @Test

@@ -180,6 +180,25 @@ public class KsefInbox {
     return reply.body().getBytes(StandardCharsets.UTF_8);
   }
 
+  /**
+   * Signs in and stops there: everything that can be wrong before a first fetch.
+   *
+   * <p>The ministry unreachable, its keys unreadable, the business's token refused — three
+   * different problems with three different remedies, and a check that could not tell them apart
+   * would be no better than the fetch failing.
+   *
+   * @return null when the sign-in worked; otherwise why it did not, and whether asking again may
+   *     help
+   */
+  public KsefException checkSignIn(String nip, String ksefToken) {
+    try {
+      accessToken(nip, ksefToken);
+      return null;
+    } catch (KsefException e) {
+      return e;
+    }
+  }
+
   // ── signing in ──────────────────────────────────────────────────────────────
 
   /**

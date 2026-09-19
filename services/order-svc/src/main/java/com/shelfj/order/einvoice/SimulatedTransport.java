@@ -48,6 +48,21 @@ public class SimulatedTransport implements EInvoiceTransport {
         + " this platform gets the document in its inbox";
   }
 
+  /**
+   * Nothing to ask: there is no network to ask.
+   *
+   * <p>Ready, because a document really will be taken and a receiver on this platform really will
+   * find it — and said in the words that stop a shop believing more than that. A check that
+   * answered a bare "READY" here would be the reason someone went live on a stack with no provider
+   * contract.
+   */
+  @Override
+  public Readiness check(Outbound credentials) {
+    return Readiness.ready(
+        "the platform stands in for the network: documents are taken and reach a receiver on this"
+            + " platform, and nothing leaves it — a provider contract is what sends them further");
+  }
+
   @Override
   public Dispatch send(Outbound d) {
     String ref =

@@ -2,8 +2,11 @@ package com.shelfj.order.mapper;
 
 import com.shelfj.order.domain.EInvoiceTransports.Settings;
 import com.shelfj.order.domain.EInvoiceTransports.Transmission;
+import com.shelfj.order.dto.EInvoiceTransportDtos.ReadinessCheckResponse;
+import com.shelfj.order.dto.EInvoiceTransportDtos.ReadinessResponse;
 import com.shelfj.order.dto.EInvoiceTransportDtos.TransmissionResponse;
 import com.shelfj.order.dto.EInvoiceTransportDtos.TransportSettingsResponse;
+import com.shelfj.order.service.EInvoiceTransportService.Readiness;
 import com.shelfj.order.service.EInvoiceTransportService.SettingsView;
 
 /** Transport settings and transmissions to their DTOs. */
@@ -48,5 +51,18 @@ public final class EInvoiceTransportMappers {
 
   private static String str(Object o) {
     return o == null ? null : o.toString();
+  }
+
+  /** What stands between a business and its first e-invoice, on the wire. */
+  public static ReadinessResponse toDto(Readiness r) {
+    return new ReadinessResponse(
+        r.network(),
+        r.provider(),
+        r.ready(),
+        r.checks().stream()
+            .map(c -> new ReadinessCheckResponse(c.code(), c.satisfied(), c.detail()))
+            .toList(),
+        r.probe() == null ? null : r.probe().state(),
+        r.probe() == null ? null : r.probe().detail());
   }
 }

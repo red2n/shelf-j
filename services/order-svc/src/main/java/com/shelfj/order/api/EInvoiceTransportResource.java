@@ -60,6 +60,26 @@ public class EInvoiceTransportResource {
   }
 
   @Operation(
+      summary = "What stands between this business and its first e-invoice",
+      description =
+          "Every condition that must hold, checked — and the network **asked**, not assumed. A key that"
+              + " was right last month and a network that is up are different facts from a field being"
+              + " filled in, and only one of them can be established by reading the database. Nothing"
+              + " is sent: the network is asked whether it knows us, which is the only question a"
+              + " check can answer honestly. Built for the day a provider contract lands, so a shop"
+              + " presses one button instead of learning from the first invoice that does not arrive."
+              + " `ready` is true when every condition holds and the network answered.")
+  @APIResponse(
+      responseCode = "200",
+      description = "The conditions, and what asking the network came to")
+  @GET
+  @Path("/einvoicing/readiness")
+  public Response readiness() {
+    var r = svc.readiness(ctx.requireTenantId());
+    return Response.ok(ApiResponse.ok(EInvoiceTransportMappers.toDto(r))).build();
+  }
+
+  @Operation(
       summary = "Choose the network and the provider",
       description =
           "Documents issued from now on are queued and sent; those already issued can be sent by"

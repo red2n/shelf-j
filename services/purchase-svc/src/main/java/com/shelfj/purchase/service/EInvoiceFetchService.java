@@ -148,6 +148,99 @@ public class EInvoiceFetchService {
   }
 
   /**
+   * One thing that must be true before a first fetch, and what to do when it is not.
+   *
+   * @param state {@code READY}, {@code UNREACHABLE} or {@code REFUSED} for the network itself
+   */
+  public record Readiness(
+      String network,
+      String provider,
+      boolean ready,
+      List<String> outstanding,
+      String state,
+      String detail) {
+
+    public Readiness {
+      outstanding = outstanding == null ? List.of() : List.copyOf(outstanding);
+    }
+  }
+
+  /**
+   * What stands between a business and its first fetched invoice — the network asked, not assumed.
+   *
+   * <p>For the day a KSeF token is issued: a shop presses one button and knows whether tomorrow's
+   * invoices will arrive, rather than finding out from an inbox that stays empty. Nothing is
+   * fetched; the ministry is asked whether it knows us.
+   */
+  public Readiness readiness(UUID tenantId) {
+    Settings s = repo.find(tenantId).orElseGet(() -> Settings.none(tenantId));
+    List<String> outstanding = new ArrayList<>();
+    if (!s.fetching()) {
+      outstanding.add("choose where this business fetches from: KSEF, with its NIP and its token");
+    }
+    if (s.fetching() && s.providerAccount() == null) {
+      outstanding.add("record the business's NIP: KSeF knows a business by it");
+    }
+    if (EInvoiceInbox.PROVIDER_KSEF.equals(s.provider()) && !s.hasSecret()) {
+      outstanding.add("record the business's KSeF token");
+    }
+    if (EInvoiceInbox.PROVIDER_KSEF.equals(s.provider()) && !ksef.isConfigured()) {
+      outstanding.add("this deployment holds no KSeF endpoint (shelfj.einvoice.ksef.base-url)");
+    }
+    if (!outstanding.isEmpty()) {
+      return new Readiness(s.network(), s.provider(), false, outstanding, null, null);
+    }
+    if (EInvoiceInbox.PROVIDER_SIMULATED.equals(s.provider())) {
+      return new Readiness(
+          s.network(),
+          s.provider(),
+          false,
+          List.of("the platform is standing in for KSeF, so nothing will ever arrive"),
+          "REFUSED",
+          "the platform stands in for the ministry: nothing leaves it, so nothing arrives");
+    }
+    String token;
+    try {
+      token = secrets.open(s.providerSecret());
+    } catch (IllegalStateException keyGone) {
+      // The deployment's key changed under a credential sealed with the old one: a person must
+      // record the token again, which is a refusal and not something waiting will mend.
+      return new Readiness(
+          s.network(),
+          s.provider(),
+          false,
+          List.of("record the business's KSeF token again: the one held cannot be opened"),
+          "REFUSED",
+          "the business's credential could not be opened: " + keyGone.getMessage());
+    }
+    KsefException failed;
+    try {
+      failed = ksef.checkSignIn(s.providerAccount(), token);
+    } catch (RuntimeException e) {
+      // A check must never be the thing that breaks: whatever the ministry does, the answer is what
+      // it did.
+      return new Readiness(
+          s.network(),
+          s.provider(),
+          false,
+          List.of(),
+          "UNREACHABLE",
+          String.valueOf(e.getMessage()));
+    }
+    if (failed == null) {
+      return new Readiness(
+          s.network(), s.provider(), true, List.of(), "READY", "KSeF signed the business in");
+    }
+    return new Readiness(
+        s.network(),
+        s.provider(),
+        false,
+        List.of(),
+        failed.retryable() ? "UNREACHABLE" : "REFUSED",
+        failed.getMessage());
+  }
+
+  /**
    * Fetches what the network is holding for the business.
    *
    * @param from the first day to ask about, or null to carry on from the last fetch

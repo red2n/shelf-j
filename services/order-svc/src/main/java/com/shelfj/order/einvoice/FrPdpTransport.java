@@ -98,6 +98,17 @@ public class FrPdpTransport extends BearerFacadeTransport {
    * The platform carries e-reporting as well as invoices — that is what a PDP is for: the reform
    * gives it both limbs, and a business that has chosen one has chosen the other.
    */
+  /**
+   * The platform's own directory read: it answers to a taxpayer it knows, and refuses one it does
+   * not.
+   */
+  @Override
+  public Readiness check(Outbound credentials) {
+    return probe(
+        "/participants/"
+            + (credentials.providerAccount() == null ? "" : credentials.providerAccount()));
+  }
+
   @Override
   public boolean carriesReports() {
     return true;

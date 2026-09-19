@@ -396,3 +396,81 @@ Future<TransportSettings> saveTransportSettings(
       .put('/${ApiConstants.order}/admin/einvoicing/transport', data: body);
   return TransportSettings.fromJson(resp.data['data'] as Map<String, dynamic>);
 }
+
+// ── Readiness (07.13, 18.9) ──────────────────────────────────────────────────
+//
+// What stands between this business and its first e-invoice, with the network
+// asked rather than assumed. Built for the day a provider contract lands: a
+// shop presses one button and knows, instead of finding out from the first
+// document that never arrives.
+
+/// One thing that must be true, and what to do when it is not.
+class ReadinessCheck {
+  final String code;
+  final bool satisfied;
+  final String detail;
+
+  const ReadinessCheck({
+    required this.code,
+    required this.satisfied,
+    required this.detail,
+  });
+
+  factory ReadinessCheck.fromJson(Map<String, dynamic> j) => ReadinessCheck(
+        code: j['code'] as String? ?? '',
+        satisfied: j['satisfied'] as bool? ?? false,
+        detail: j['detail'] as String? ?? '',
+      );
+
+  /// What the check is about, in a few words a shopkeeper reads.
+  String get title => switch (code) {
+        'NETWORK_CHOSEN' => 'A network to send over',
+        'SELLER_VAT_ID' => 'The business identified',
+        'SENDER_ADDRESS' => 'An electronic address to send from',
+        'PROVIDER_DEPLOYED' => 'The provider reachable from this deployment',
+        'CREDENTIAL_HELD' => "The business's credential",
+        _ => code,
+      };
+}
+
+/// Everything checked, with what the network itself answered.
+class TransportReadiness {
+  final String network;
+  final String? provider;
+  final bool ready;
+  final List<ReadinessCheck> checks;
+
+  /// `READY`, `UNREACHABLE` or `REFUSED`; null while something is missing and
+  /// no network was asked.
+  final String? networkState;
+  final String? networkDetail;
+
+  const TransportReadiness({
+    required this.network,
+    required this.provider,
+    required this.ready,
+    required this.checks,
+    required this.networkState,
+    required this.networkDetail,
+  });
+
+  factory TransportReadiness.fromJson(Map<String, dynamic> j) =>
+      TransportReadiness(
+        network: j['network'] as String? ?? 'NONE',
+        provider: j['provider'] as String?,
+        ready: j['ready'] as bool? ?? false,
+        checks: ((j['checks'] as List?) ?? const [])
+            .map((e) => ReadinessCheck.fromJson(e as Map<String, dynamic>))
+            .toList(),
+        networkState: j['networkState'] as String?,
+        networkDetail: j['networkDetail'] as String?,
+      );
+}
+
+/// Asks now: never cached, because the answer is about this minute — a key that
+/// worked last month and a network that is up are not facts a screen can keep.
+Future<TransportReadiness> fetchTransportReadiness(Dio dio) async {
+  final resp =
+      await dio.get('/${ApiConstants.order}/admin/einvoicing/readiness');
+  return TransportReadiness.fromJson(resp.data['data'] as Map<String, dynamic>);
+}

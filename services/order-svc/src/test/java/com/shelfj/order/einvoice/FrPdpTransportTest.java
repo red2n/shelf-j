@@ -11,6 +11,7 @@ import com.shelfj.order.einvoice.EInvoiceTransport.Dispatch;
 import com.shelfj.order.einvoice.EInvoiceTransport.Outbound;
 import com.shelfj.order.einvoice.EInvoiceTransport.Outcome;
 import com.shelfj.order.einvoice.EInvoiceTransport.TransportException;
+import com.shelfj.order.support.Checks;
 import com.shelfj.test.JsonStub;
 import org.junit.jupiter.api.AfterAll;
 import org.junit.jupiter.api.BeforeAll;
@@ -43,7 +44,11 @@ class FrPdpTransportTest {
             "{\"status\":{\"code\":\"213\",\"reason\":\"SIRET du destinataire inconnu\"}}")
         .on("GET", "/invoices/F-4/lifecycle", 200, "{\"code\":201}")
         .on("GET", "/invoices/F-5/lifecycle", 200, "{\"status\":{\"code\":212}}")
-        .on("GET", "/invoices/F-DOWN/lifecycle", 503, "{}");
+        .on("GET", "/invoices/F-DOWN/lifecycle", 503, "{}")
+        // What a readiness check asks: is this taxpayer known to the platform?
+        .on("GET", "/participants/123456789", 200, "{\"siren\":\"123456789\"}")
+        .on("GET", "/participants/999999999", 403, "{\"message\":\"clé inconnue\"}")
+        .on("GET", "/participants/888888888", 502, "{\"message\":\"passerelle\"}");
     transport = FrPdpTransport.forTest(pdp.baseUrl(), "key");
   }
 
@@ -106,6 +111,29 @@ class FrPdpTransportTest {
     assertEquals(EInvoiceTransports.STATUS_ACCEPTED, transport.status(d, "F-5").state());
     assertEquals(EInvoiceTransports.STATUS_REJECTED, transport.status(d, "F-GONE").state());
     assertThrows(TransportException.class, () -> transport.status(d, "F-DOWN"));
+  }
+
+  @Test
+  void aCheckAsksThePlatformAboutTheTaxpayerAndNeverDepositsAnything() {
+    int deposits = pdp.calls().size();
+    assertEquals(EInvoiceTransport.Readiness.READY, transport.check(taxpayer("123456789")).state());
+    assertEquals(
+        EInvoiceTransport.Readiness.REFUSED, transport.check(taxpayer("999999999")).state());
+    assertEquals(
+        EInvoiceTransport.Readiness.UNREACHABLE, transport.check(taxpayer("888888888")).state());
+    assertEquals(
+        EInvoiceTransport.Readiness.REFUSED,
+        FrPdpTransport.forTest("", "").check(taxpayer("123456789")).state());
+    // Three questions asked, and not one document deposited: the reform's limbs both count a
+    // deposit, so a check that deposited would be a filing nobody made.
+    for (JsonStub.Call call : pdp.calls().subList(deposits, pdp.calls().size())) {
+      assertEquals("GET", call.method());
+    }
+  }
+
+  /** What the service hands a check: who the business is at the platform, and nothing to send. */
+  private static Outbound taxpayer(String siren) {
+    return Checks.credentials(null, "FR32123456789", siren, null);
   }
 
   @Test

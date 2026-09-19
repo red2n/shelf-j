@@ -18,6 +18,7 @@ import com.shelfj.order.repo.EInvoiceTransportRepository;
 import com.shelfj.order.repo.SalesInvoiceRepository;
 import com.shelfj.service.Jurisdictions;
 import com.shelfj.service.TenantProfiles;
+import com.shelfj.service.TenantProfiles.Identity;
 import com.shelfj.web.ApiException;
 import jakarta.enterprise.context.ApplicationScoped;
 import jakarta.inject.Inject;
@@ -27,6 +28,7 @@ import java.time.Duration;
 import java.time.Instant;
 import java.time.LocalDate;
 import java.time.ZoneOffset;
+import java.util.ArrayList;
 import java.util.List;
 import java.util.Locale;
 import java.util.Map;
@@ -223,6 +225,169 @@ public class EInvoiceTransportService {
       LOG.log(Level.DEBUG, () -> "no suggestion for " + tenantId + ": " + e.getMessage());
       return null;
     }
+  }
+
+  /**
+   * What stands between a business and its first e-invoice.
+   *
+   * @param checks one per thing that must be true, each either satisfied or with what to do about
+   *     it
+   * @param network the network as the settings have it
+   * @param probe what asking the network came to, or null when there is nothing to ask
+   */
+  public record Readiness(
+      String network, String provider, List<Check> checks, EInvoiceTransport.Readiness probe) {
+
+    public Readiness {
+      checks = checks == null ? List.of() : List.copyOf(checks);
+    }
+
+    /** Whether a document could go now. */
+    public boolean ready() {
+      return checks.stream().allMatch(Check::satisfied)
+          && (probe == null || EInvoiceTransport.Readiness.READY.equals(probe.state()));
+    }
+  }
+
+  /** One thing that must be true, and what to do when it is not. */
+  public record Check(String code, boolean satisfied, String detail) {}
+
+  /**
+   * Everything that must be true before a business's first e-invoice goes, checked — including
+   * asking the network.
+   *
+   * <p>Built for the day a provider contract lands. Until then a business is told exactly what is
+   * missing rather than discovering it from the first document that does not arrive, and the two
+   * rows this platform cannot close by itself (07.13 and 18.9 wait on a certified provider, which
+   * is not code) at least stop being a surprise.
+   *
+   * <p>The network is asked, not assumed: a key that was right last month and a network that is up
+   * are different facts from a field being filled in, and only one of them can be checked by
+   * reading the database.
+   */
+  public Readiness readiness(UUID tenantId) {
+    Settings st =
+        repo.findSettings(tenantId)
+            .orElseGet(
+                () ->
+                    new Settings(
+                        tenantId,
+                        EInvoiceTransports.NETWORK_NONE,
+                        EInvoiceTransports.PROVIDER_SIMULATED,
+                        null,
+                        null,
+                        null,
+                        null));
+    List<Check> checks = new ArrayList<>();
+    boolean sending = !EInvoiceTransports.NETWORK_NONE.equals(st.network());
+    checks.add(
+        new Check(
+            "NETWORK_CHOSEN",
+            sending,
+            sending
+                ? "documents go over " + st.network() + " through " + st.provider()
+                : "no network is chosen, so nothing is sent; choose one under the transport settings"));
+
+    // One read of the business's own details, and the two questions asked of it kept apart from the
+    // read having failed: tenant-svc unreadable and a field never filled in look the same at the
+    // boundary, and telling a shop to record a VAT number it recorded last year would send it
+    // looking in the wrong place.
+    Optional<Identity> identity = profiles.identity(tenantId);
+    String unread =
+        "the business's own details could not be read just now, so what names it cannot be checked;"
+            + " nothing is wrong with the settings — ask again";
+    String vatId =
+        identity.map(Identity::vatNumber).filter(EInvoiceTransportService::present).orElse(null);
+    checks.add(
+        new Check(
+            "SELLER_VAT_ID",
+            vatId != null,
+            vatId != null
+                ? "the business is identified as " + vatId
+                : identity.isEmpty()
+                    ? unread
+                    : "record the business's VAT number: every document states who issued it"));
+
+    String sender =
+        identity
+            .filter(i -> present(i.einvoiceScheme()) && present(i.einvoiceId()))
+            .map(i -> i.einvoiceScheme() + ":" + i.einvoiceId())
+            .orElse(null);
+    boolean addressed = EInvoiceTransports.ADDRESSED.contains(st.network());
+    checks.add(
+        new Check(
+            "SENDER_ADDRESS",
+            !addressed || sender != null,
+            sender != null
+                ? "documents are sent from " + sender
+                : !addressed
+                    ? st.network() + " does not address documents, so none is needed"
+                    : identity.isEmpty()
+                        ? unread
+                        : st.network()
+                            + " addresses documents; record the business's own electronic"
+                            + " address"));
+
+    EInvoiceTransport transport =
+        sending ? transports.forNetwork(st.network(), st.provider()) : null;
+    checks.add(
+        new Check(
+            "PROVIDER_DEPLOYED",
+            !sending || (transport != null && transport.isConfigured()),
+            transport == null
+                ? sending
+                    ? st.provider() + " is not deployed for " + st.network()
+                    : "nothing to deploy while no network is chosen"
+                : transport.isConfigured()
+                    ? "this deployment can reach " + st.provider()
+                    : "this deployment lacks " + transport.configuration()));
+    checks.add(
+        new Check(
+            "CREDENTIAL_HELD",
+            transport == null || !transport.needsSecret() || st.hasSecret(),
+            transport == null || !transport.needsSecret()
+                ? "this provider signs in without a credential of the business's own"
+                : st.hasSecret()
+                    ? "the business's credential is held, sealed"
+                    : "record the business's own credential at " + st.provider()));
+
+    EInvoiceTransport.Readiness probe = null;
+    if (transport != null && transport.isConfigured()) {
+      String secret = null;
+      if (st.hasSecret()) {
+        try {
+          secret = secrets.open(st.providerSecret());
+        } catch (IllegalStateException e) {
+          probe =
+              EInvoiceTransport.Readiness.refused(
+                  "the business's credential could not be opened: " + e.getMessage());
+        }
+      }
+      if (probe == null) {
+        try {
+          probe =
+              transport.check(
+                  new Outbound(
+                      tenantId,
+                      tenantId,
+                      "Check",
+                      "readiness",
+                      sender,
+                      null,
+                      "",
+                      null,
+                      vatId,
+                      st.providerAccount(),
+                      secret));
+        } catch (RuntimeException e) {
+          // A check must never be the thing that breaks: whatever the network does, the answer is
+          // what
+          // it did.
+          probe = EInvoiceTransport.Readiness.unreachable(e.getMessage());
+        }
+      }
+    }
+    return new Readiness(st.network(), st.provider(), checks, probe);
   }
 
   // ── sending ──────────────────────────────────────────────────────────────────

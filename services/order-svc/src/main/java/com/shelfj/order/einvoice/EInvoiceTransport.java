@@ -107,6 +107,48 @@ public interface EInvoiceTransport {
   Dispatch send(Outbound document);
 
   /**
+   * What a live check of the provider came to.
+   *
+   * @param state {@code READY} when the network answered and took the credentials, {@code
+   *     UNREACHABLE} when it could not be reached, {@code REFUSED} when it answered and would not
+   *     have us
+   * @param detail what happened, in words a shop can act on
+   */
+  record Readiness(String state, String detail) {
+
+    public static final String READY = "READY";
+    public static final String UNREACHABLE = "UNREACHABLE";
+    public static final String REFUSED = "REFUSED";
+
+    public static Readiness ready(String detail) {
+      return new Readiness(READY, detail);
+    }
+
+    public static Readiness unreachable(String detail) {
+      return new Readiness(UNREACHABLE, detail);
+    }
+
+    public static Readiness refused(String detail) {
+      return new Readiness(REFUSED, detail);
+    }
+  }
+
+  /**
+   * Tries the network with the credentials the business holds, without sending anything.
+   *
+   * <p>The point is the day a provider contract lands: a shop should be able to press one button
+   * and know whether its next invoice will go, rather than find out from the first one that does
+   * not. A document is never sent by a check — the network is asked whether it knows us, which is
+   * the only question a check can answer honestly.
+   *
+   * <p>The default is {@code READY} with nothing to say, because a provider that needs no
+   * credentials has nothing that can be wrong. A provider that signs in overrides it.
+   */
+  default Readiness check(Outbound credentials) {
+    return Readiness.ready(name() + " needs no credentials, so there is nothing to check");
+  }
+
+  /**
    * Whether this provider carries e-reporting as well as invoices.
    *
    * <p>False by default, and that is the honest default: e-reporting is a French duty deposited

@@ -51,6 +51,53 @@ Map<String, dynamic> _settings({String network = 'NONE', String? provider}) => {
       'hasSecret': false,
     };
 
+Map<String, dynamic> _readiness({
+  bool ready = true,
+  bool addressed = true,
+  String? state = 'READY',
+  String? detail = 'the access point answered, and took the key we hold',
+}) =>
+    {
+      'network': 'PEPPOL',
+      'provider': 'ACCESS_POINT',
+      'ready': ready,
+      'checks': [
+        {
+          'code': 'NETWORK_CHOSEN',
+          'satisfied': true,
+          'detail': 'documents go over PEPPOL through ACCESS_POINT',
+        },
+        {
+          'code': 'SELLER_VAT_ID',
+          'satisfied': true,
+          'detail': 'the business is identified as GB123456789',
+        },
+        {
+          'code': 'SENDER_ADDRESS',
+          'satisfied': addressed,
+          'detail': addressed
+              ? 'documents are sent from 0088:5790000435975'
+              : "PEPPOL addresses documents; record the business's own "
+                  'electronic address',
+        },
+        {
+          'code': 'PROVIDER_DEPLOYED',
+          'satisfied': true,
+          'detail': 'this deployment can reach ACCESS_POINT',
+        },
+        {
+          'code': 'CREDENTIAL_HELD',
+          'satisfied': true,
+          'detail': 'this provider signs in without a credential of the '
+              "business's own",
+        },
+      ],
+      // The server omits both while nothing was asked of the network (JSON-B leaves nulls out), so
+      // the fixture must too, or a test could pass on a field a client never sees.
+      'networkState': ?state,
+      'networkDetail': ?detail,
+    };
+
 Map<String, dynamic> _doc(String id, {Map<String, dynamic>? transmission}) => {
       'id': id,
       'orderId': 'o-1',
@@ -89,6 +136,8 @@ class _Server implements HttpClientAdapter {
   String saveRefusal =
       '{"error":{"code":"EINVOICE_SENDER_ADDRESS_MISSING","message":"Peppol needs the business\'s own electronic address; set it on the tenant first"}}';
   List<Map<String, dynamic>> documents = [];
+  Map<String, dynamic> readiness = _readiness();
+  int readinessStatus = 200;
   int sendStatus = 200;
   Map<String, dynamic> sendAnswer = _tx('ACCEPTED', ref: 'SIM-1');
   Completer<void>? gate;
@@ -117,6 +166,14 @@ class _Server implements HttpClientAdapter {
         'providerAccount': body['providerAccount']
       };
       return jsonResponse('{"data":${jsonEncode(settings)}}');
+    }
+    if (o.method == 'GET' && path.endsWith('/admin/einvoicing/readiness')) {
+      if (readinessStatus != 200) {
+        return jsonResponse(
+            '{"error":{"code":"EINVOICE_READINESS_FAILED","message":"could not ask the network"}}',
+            readinessStatus);
+      }
+      return jsonResponse('{"data":${jsonEncode(readiness)}}');
     }
     if (o.method == 'GET' && path.endsWith('/admin/orders/o-1/invoices')) {
       return jsonResponse('{"data":${jsonEncode(documents)}}');
@@ -263,6 +320,103 @@ void main() {
       await tester.tap(find.byKey(const Key('einvoice-transport-save')));
       await tester.pumpAndSettle();
       expect(_body(_of(server, 'PUT').single), {'network': 'NONE'});
+    });
+  });
+
+  group('the readiness check', () {
+    testWidgets('asks the network and says an e-invoice can go', (tester) async {
+      final server = _Server()
+        ..settings = _settings(network: 'PEPPOL', provider: 'ACCESS_POINT');
+      await _pumpTile(tester, server: server);
+      await tester.tap(find.byKey(const Key('einvoice-readiness-check')));
+      await tester.pumpAndSettle();
+      expect(
+          find.textContaining('Yes — everything holds'), findsOneWidget);
+      expect(find.text('The network answered'), findsOneWidget);
+      expect(find.textContaining('took the key we hold'), findsOneWidget);
+      expect(_of(server, 'GET').last.path,
+          endsWith('/order-svc/admin/einvoicing/readiness'));
+      // A check sends nothing: it asks, and only asks.
+      expect(_of(server, 'POST'), isEmpty);
+      expect(_of(server, 'PUT'), isEmpty);
+    });
+
+    testWidgets('a refusal and a network that is down are told apart',
+        (tester) async {
+      final server = _Server()
+        ..settings = _settings(network: 'PEPPOL', provider: 'ACCESS_POINT')
+        ..readiness = _readiness(
+          ready: false,
+          state: 'REFUSED',
+          detail: 'the access point answered but would not have us: the key it '
+              'holds is not the one we sent',
+        );
+      await _pumpTile(tester, server: server);
+      await tester.tap(find.byKey(const Key('einvoice-readiness-check')));
+      await tester.pumpAndSettle();
+      expect(find.text('Not yet.'), findsOneWidget);
+      expect(find.text('The network would not have us — someone must act'),
+          findsOneWidget);
+
+      // Asked again after the key was fixed: the same button, a fresh answer.
+      server.readiness = _readiness();
+      await tester.tap(find.byKey(const Key('einvoice-readiness-again')));
+      await tester.pumpAndSettle();
+      expect(find.textContaining('Yes — everything holds'), findsOneWidget);
+
+      server.readiness = _readiness(
+        ready: false,
+        state: 'UNREACHABLE',
+        detail: 'the access point could not be reached: connection refused',
+      );
+      await tester.tap(find.byKey(const Key('einvoice-readiness-again')));
+      await tester.pumpAndSettle();
+      expect(
+          find.text('The network could not be reached — try again later'),
+          findsOneWidget);
+    });
+
+    testWidgets('what is missing is named, and nothing is asked of the network',
+        (tester) async {
+      final server = _Server()
+        ..settings = _settings(network: 'PEPPOL', provider: 'ACCESS_POINT')
+        ..readiness = _readiness(
+            ready: false, addressed: false, state: null, detail: null);
+      await _pumpTile(tester, server: server);
+      await tester.tap(find.byKey(const Key('einvoice-readiness-check')));
+      await tester.pumpAndSettle();
+      expect(find.text('Not yet.'), findsOneWidget);
+      expect(find.textContaining('record the business'), findsOneWidget);
+      expect(find.byKey(const Key('einvoice-readiness-network')), findsNothing);
+    });
+
+    testWidgets("a refusal of the check itself is shown in the server's words",
+        (tester) async {
+      final server = _Server()
+        ..settings = _settings(network: 'PEPPOL', provider: 'ACCESS_POINT')
+        ..readinessStatus = 403;
+      await _pumpTile(tester, server: server);
+      await tester.tap(find.byKey(const Key('einvoice-readiness-check')));
+      await tester.pumpAndSettle();
+      expect(find.byKey(const Key('einvoice-readiness-error')), findsOneWidget);
+      expect(find.textContaining('could not ask the network'), findsOneWidget);
+    });
+
+    testWidgets('is not offered to someone who cannot change the network',
+        (tester) async {
+      final s = _Server()
+        ..settings = _settings(network: 'PEPPOL', provider: 'ACCESS_POINT');
+      final dio = Dio(BaseOptions(baseUrl: 'http://test'))
+        ..httpClientAdapter = s;
+      await tester.pumpWidget(ProviderScope(
+        overrides: [apiClientProvider.overrideWithValue(FakeApiClient(dio))],
+        child: const MaterialApp(
+          home: Scaffold(body: TransportSettingsTile(canEdit: false)),
+        ),
+      ));
+      await tester.pumpAndSettle();
+      expect(find.byKey(const Key('einvoice-readiness-check')), findsNothing);
+      expect(find.byKey(const Key('einvoice-transport-edit')), findsNothing);
     });
   });
 

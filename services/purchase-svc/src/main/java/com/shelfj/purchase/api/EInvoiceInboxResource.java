@@ -133,6 +133,42 @@ public class EInvoiceInboxResource {
                 ctx.requireUserId())));
   }
 
+  @Schema(name = "EInvoiceInboxReadiness")
+  public record ReadinessResponse(
+      String network,
+      String provider,
+      @Schema(description = "True when everything holds and the ministry signed the business in.")
+          boolean ready,
+      @Schema(description = "What is still missing, in the order worth doing it.")
+          List<String> outstanding,
+      @Schema(
+              description =
+                  "READY, UNREACHABLE or REFUSED; absent while something is still missing.")
+          String networkState,
+      String networkDetail) {
+
+    public ReadinessResponse {
+      outstanding = outstanding == null ? List.of() : List.copyOf(outstanding);
+    }
+  }
+
+  @Operation(
+      summary = "What stands between this business and its first fetched invoice",
+      description =
+          "The network **asked**, not assumed: the ministry unreachable, its keys unreadable and a"
+              + " token refused are three different problems with three different remedies. Nothing is"
+              + " fetched. For the day a KSeF token is issued, so a shop knows whether tomorrow's"
+              + " invoices will arrive rather than finding out from an inbox that stays empty.")
+  @GET
+  @Path("/readiness")
+  public ApiResponse<ReadinessResponse> readiness() {
+    ctx.requireAnyRole("OWNER", "MANAGER");
+    var r = svc.readiness(ctx.requireTenantId());
+    return ApiResponse.ok(
+        new ReadinessResponse(
+            r.network(), r.provider(), r.ready(), r.outstanding(), r.state(), r.detail()));
+  }
+
   @Operation(
       summary = "Fetch what the network is holding",
       description =

@@ -234,6 +234,151 @@ class _TransportSettingsDialogState
       };
 }
 
+
+/// What stands between this business and its first e-invoice, asked now.
+///
+/// The network is tried with the credentials actually held, and nothing is
+/// sent. Three answers are kept apart on purpose: ready, a refusal someone has
+/// to act on, and a network that is simply down — "it did not work" is what a
+/// shop already knows.
+class TransportReadinessDialog extends ConsumerStatefulWidget {
+  const TransportReadinessDialog({super.key});
+
+  @override
+  ConsumerState<TransportReadinessDialog> createState() =>
+      _TransportReadinessDialogState();
+}
+
+class _TransportReadinessDialogState
+    extends ConsumerState<TransportReadinessDialog> {
+  TransportReadiness? _answer;
+  String? _error;
+  bool _busy = true;
+
+  @override
+  void initState() {
+    super.initState();
+    _check();
+  }
+
+  Future<void> _check() async {
+    setState(() {
+      _busy = true;
+      _error = null;
+    });
+    try {
+      final r =
+          await fetchTransportReadiness(ref.read(apiClientProvider).dio);
+      if (!mounted) return;
+      setState(() {
+        _answer = r;
+        _busy = false;
+      });
+    } catch (e) {
+      if (!mounted) return;
+      setState(() {
+        _busy = false;
+        _error = friendlyError(e, fallback: 'Could not check.');
+      });
+    }
+  }
+
+  @override
+  Widget build(BuildContext context) {
+    final cs = Theme.of(context).colorScheme;
+    final r = _answer;
+    return AlertDialog(
+      title: const Text('Can an e-invoice go?'),
+      content: SizedBox(
+        width: 480,
+        child: SingleChildScrollView(
+          child: Column(
+            mainAxisSize: MainAxisSize.min,
+            crossAxisAlignment: CrossAxisAlignment.stretch,
+            children: [
+              if (_busy)
+                const Padding(
+                  padding: EdgeInsets.symmetric(vertical: 24),
+                  child: Center(child: CircularProgressIndicator()),
+                ),
+              if (_error != null)
+                Text(
+                  _error!,
+                  key: const Key('einvoice-readiness-error'),
+                  style: TextStyle(color: cs.error),
+                ),
+              if (r != null) ...[
+                Text(
+                  r.ready
+                      ? 'Yes — everything holds and '
+                          '${networkLabel(r.network)} answered.'
+                      : 'Not yet.',
+                  key: const Key('einvoice-readiness-verdict'),
+                  style: TextStyle(
+                    color: r.ready ? cs.primary : cs.error,
+                    fontWeight: FontWeight.w600,
+                  ),
+                ),
+                const SizedBox(height: 8),
+                for (final c in r.checks)
+                  ListTile(
+                    key: Key('einvoice-readiness-${c.code}'),
+                    dense: true,
+                    contentPadding: EdgeInsets.zero,
+                    leading: Icon(
+                      c.satisfied ? Icons.check_circle_outline : Icons.cancel_outlined,
+                      color: c.satisfied ? cs.primary : cs.error,
+                      size: 20,
+                    ),
+                    title: Text(c.title),
+                    subtitle: Text(c.detail),
+                    isThreeLine: c.detail.length > 60,
+                  ),
+                if (r.networkState != null) ...[
+                  const Divider(),
+                  ListTile(
+                    key: const Key('einvoice-readiness-network'),
+                    dense: true,
+                    contentPadding: EdgeInsets.zero,
+                    leading: Icon(
+                      switch (r.networkState) {
+                        'READY' => Icons.cloud_done_outlined,
+                        'UNREACHABLE' => Icons.cloud_off_outlined,
+                        _ => Icons.block_outlined,
+                      },
+                      color: r.networkState == 'READY' ? cs.primary : cs.error,
+                      size: 20,
+                    ),
+                    title: Text(switch (r.networkState) {
+                      'READY' => 'The network answered',
+                      'UNREACHABLE' =>
+                        'The network could not be reached — try again later',
+                      _ => 'The network would not have us — someone must act',
+                    }),
+                    subtitle: Text(r.networkDetail ?? ''),
+                    isThreeLine: (r.networkDetail ?? '').length > 60,
+                  ),
+                ],
+              ],
+            ],
+          ),
+        ),
+      ),
+      actions: [
+        TextButton(
+          key: const Key('einvoice-readiness-again'),
+          onPressed: _busy ? null : _check,
+          child: const Text('Check again'),
+        ),
+        FilledButton(
+          onPressed: () => Navigator.of(context).pop(),
+          child: const Text('Close'),
+        ),
+      ],
+    );
+  }
+}
+
 /// The line on the E-invoices tab that says where invoices leave, with the
 /// edit for management.
 class TransportSettingsTile extends ConsumerWidget {
@@ -274,14 +419,28 @@ class TransportSettingsTile extends ConsumerWidget {
                         '${networkLabel(s.suggestedNetwork!)}.',
       ),
       trailing: canEdit && s != null
-          ? IconButton(
-              key: const Key('einvoice-transport-edit'),
-              tooltip: 'Choose where invoices leave',
-              icon: const Icon(Icons.edit_outlined),
-              onPressed: () => showDialog<void>(
-                context: context,
-                builder: (_) => TransportSettingsDialog(current: s),
-              ),
+          ? Row(
+              mainAxisSize: MainAxisSize.min,
+              children: [
+                IconButton(
+                  key: const Key('einvoice-readiness-check'),
+                  tooltip: 'Can an e-invoice go?',
+                  icon: const Icon(Icons.network_check_outlined),
+                  onPressed: () => showDialog<void>(
+                    context: context,
+                    builder: (_) => const TransportReadinessDialog(),
+                  ),
+                ),
+                IconButton(
+                  key: const Key('einvoice-transport-edit'),
+                  tooltip: 'Choose where invoices leave',
+                  icon: const Icon(Icons.edit_outlined),
+                  onPressed: () => showDialog<void>(
+                    context: context,
+                    builder: (_) => TransportSettingsDialog(current: s),
+                  ),
+                ),
+              ],
             )
           : null,
     );
