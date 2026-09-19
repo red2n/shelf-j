@@ -50,6 +50,21 @@ class StatutoryReturnsTest {
         null);
   }
 
+  private static Return decadal() {
+    return new Return(
+        "EREPORTING_TX_FR",
+        "COUNTRY",
+        "FR",
+        "E-reporting: transaction data",
+        StatutoryReturns.DECADAL,
+        "P10D",
+        "order-svc",
+        "/admin/ereporting/periods",
+        "CGI art. 290",
+        LocalDate.of(2026, 9, 1),
+        null);
+  }
+
   @Test
   @DisplayName("Portugal's SAF-T is due on the 5th of the month after the month it reports")
   void aMonthlyReturn() {
@@ -265,5 +280,66 @@ class StatutoryReturnsTest {
 
     assertFalse(superseded.stands(), "both stay on the record, but only one stands");
     assertTrue(correction.stands());
+  }
+
+  @Test
+  @DisplayName("A ten-day period is the month's own third, not ten days counted off")
+  void decadalPeriods() {
+    // France reports transactions three times a month on the ordinary monthly VAT regime. The third
+    // period is the trap: it runs from the 21st to the end of the month, which is 11 days in March
+    // and 8 in February, so counting ten days would put a February sale in a March period and leave
+    // three days of March reported twice.
+    assertEquals(
+        LocalDate.of(2026, 3, 1),
+        StatutoryReturns.periodStart(StatutoryReturns.DECADAL, LocalDate.of(2026, 3, 10)),
+        "the 10th is still the first period");
+    assertEquals(
+        LocalDate.of(2026, 3, 11),
+        StatutoryReturns.periodStart(StatutoryReturns.DECADAL, LocalDate.of(2026, 3, 11)));
+    assertEquals(
+        LocalDate.of(2026, 3, 21),
+        StatutoryReturns.periodStart(StatutoryReturns.DECADAL, LocalDate.of(2026, 3, 31)));
+
+    assertEquals(
+        LocalDate.of(2026, 3, 11),
+        StatutoryReturns.periodEnd(StatutoryReturns.DECADAL, LocalDate.of(2026, 3, 1)));
+    assertEquals(
+        LocalDate.of(2026, 4, 1),
+        StatutoryReturns.periodEnd(StatutoryReturns.DECADAL, LocalDate.of(2026, 3, 21)),
+        "the last period of a month ends when the month does");
+    assertEquals(
+        LocalDate.of(2026, 3, 1),
+        StatutoryReturns.periodEnd(StatutoryReturns.DECADAL, LocalDate.of(2026, 2, 21)),
+        "and February's last period is eight days long, not ten");
+  }
+
+  @Test
+  @DisplayName("Walking the ten-day calendar backwards crosses a month end correctly")
+  void decadalWalksBack() {
+    assertEquals(
+        LocalDate.of(2026, 3, 11),
+        StatutoryReturns.previousPeriod(StatutoryReturns.DECADAL, LocalDate.of(2026, 3, 21)));
+    assertEquals(
+        LocalDate.of(2026, 3, 1),
+        StatutoryReturns.previousPeriod(StatutoryReturns.DECADAL, LocalDate.of(2026, 3, 11)));
+    assertEquals(
+        LocalDate.of(2026, 2, 21),
+        StatutoryReturns.previousPeriod(StatutoryReturns.DECADAL, LocalDate.of(2026, 3, 1)),
+        "the period before a month's first is the last of the month before");
+  }
+
+  @Test
+  @DisplayName("E-reporting is due ten days after the period it reports")
+  void eReportingIsDueTenDaysLater() {
+    // The offset is added to the day AFTER the period, as every offset here is. A period ending on
+    // the 10th (exclusive end: the 11th) is due on the 21st.
+    Return fr = decadal();
+    assertEquals(
+        LocalDate.of(2026, 9, 21),
+        fr.dueOn(StatutoryReturns.periodEnd(StatutoryReturns.DECADAL, LocalDate.of(2026, 9, 1))));
+    assertEquals(
+        LocalDate.of(2026, 10, 11),
+        fr.dueOn(StatutoryReturns.periodEnd(StatutoryReturns.DECADAL, LocalDate.of(2026, 9, 21))),
+        "the period to 30 September is due on 11 October");
   }
 }

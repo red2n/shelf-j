@@ -94,6 +94,38 @@ public class FrPdpTransport extends BearerFacadeTransport {
     return dispatched(post("/invoices", body), FrPdpTransport::outcome);
   }
 
+  /**
+   * The platform carries e-reporting as well as invoices — that is what a PDP is for: the reform
+   * gives it both limbs, and a business that has chosen one has chosen the other.
+   */
+  @Override
+  public boolean carriesReports() {
+    return true;
+  }
+
+  /**
+   * Deposits e-reporting data with the platform.
+   *
+   * <p>Its own route, not {@code /invoices}: the reform's two limbs are separate flows with
+   * separate statuses, and a report deposited as an invoice would be refused — or worse, accepted
+   * and counted as one. The taxpayer is named by SIREN and VAT number, as a deposit under the
+   * reform is.
+   */
+  @Override
+  public Dispatch sendReport(Outbound report) {
+    JsonObject body =
+        Json.createObjectBuilder()
+            .add("format", "EREPORTING")
+            .add("stream", report.number() == null ? "" : report.number())
+            .add("taxpayerSiren", report.providerAccount() == null ? "" : report.providerAccount())
+            .add("taxpayerVatId", report.sellerVatId() == null ? "" : report.sellerVatId())
+            .add(
+                "data",
+                Base64.getEncoder().encodeToString(report.ubl().getBytes(StandardCharsets.UTF_8)))
+            .build();
+    return dispatched(post("/ereporting", body), FrPdpTransport::outcome);
+  }
+
   @Override
   public Outcome status(Outbound d, String providerRef) {
     Reply reply = get("/invoices/" + providerRef + "/lifecycle");
