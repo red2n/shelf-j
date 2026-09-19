@@ -116,6 +116,32 @@ public final class WorkforceDtos {
           @Size(max = 300)
           String reason) {}
 
+  @Schema(name = "PayRate")
+  public record PayRateResponse(
+      String id,
+      String userId,
+      @Schema(
+              description =
+                  "The day the rate takes effect; the past keeps the rate it was worked at.")
+          String effectiveFrom,
+      String hourlyRate,
+      String currency,
+      String note,
+      String createdAt) {}
+
+  @Schema(name = "AddPayRateRequest")
+  public record AddPayRateRequest(
+      @NotBlank String userId,
+      @Schema(description = "The day it takes effect; today when left out.") @Size(max = 10)
+          String effectiveFrom,
+      @Schema(description = "What an hour costs. Zero is meaningful; less than zero is not.")
+          @NotBlank
+          @Size(max = 20)
+          String hourlyRate,
+      @Schema(description = "The business's own currency when left out.") @Size(max = 3)
+          String currency,
+      @Size(max = 300) String note) {}
+
   /**
    * One person's day, planned against worked.
    *

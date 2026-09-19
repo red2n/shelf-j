@@ -1,10 +1,13 @@
 package com.shelfj.tenant.service;
 
 import com.shelfj.ids.Ids;
+import com.shelfj.service.OutboxRow;
+import com.shelfj.service.TenantProfiles;
 import com.shelfj.tenant.domain.Workforce;
 import com.shelfj.tenant.domain.Workforce.AttendanceDay;
 import com.shelfj.tenant.domain.Workforce.Concern;
 import com.shelfj.tenant.domain.Workforce.Entry;
+import com.shelfj.tenant.domain.Workforce.PayRate;
 import com.shelfj.tenant.domain.Workforce.Rest;
 import com.shelfj.tenant.domain.Workforce.Shift;
 import com.shelfj.tenant.repo.WorkforceRepository;
@@ -48,6 +51,7 @@ import java.util.UUID;
 public class WorkforceService {
 
   @Inject WorkforceRepository repo;
+  @Inject TenantProfiles profiles;
 
   /** A roster, with what is worth saying about it. */
   public record Roster(List<Shift> shifts, Map<UUID, List<Concern>> concerns) {
@@ -209,7 +213,12 @@ public class WorkforceService {
                 () ->
                     ApiException.conflict(
                         "WORKFORCE_NOT_CLOCKED_IN", "that person is not on the clock"));
-    if (!repo.clockOut(tenantId, open.id(), Instant.now())) {
+    Instant at = Instant.now();
+    // The cost is worked out from the entry as it will stand — the breaks it already has, closed
+    // with
+    // it — so the announcement and the hours are written in one transaction.
+    Entry closed = closedCopy(open, at);
+    if (!repo.clockOut(tenantId, open.id(), at, labour(closed, null))) {
       throw ApiException.conflict("WORKFORCE_NOT_CLOCKED_IN", "that entry closed as it was read");
     }
     return repo.entry(tenantId, open.id()).orElse(open);
@@ -299,12 +308,116 @@ public class WorkforceService {
             now,
             actorId,
             original.breaks());
-    repo.adjust(correction, original.breaks());
+    repo.adjust(correction, original.breaks(), labour(correction, original.id()));
     return repo.entry(tenantId, correction.id()).orElse(correction);
   }
 
   public List<Entry> entries(UUID tenantId, UUID storeId, UUID userId, Instant from, Instant to) {
     return repo.entries(tenantId, storeId, userId, from, to);
+  }
+
+  /**
+   * What an entry cost, as an event — or null when it cannot be costed.
+   *
+   * <p>Null in two cases, and both are honest: the entry is still open, so there are no hours yet;
+   * or no rate was in force on the day it was worked, which a reader must report as unknown rather
+   * than as zero, since zero is a real rate somebody may be on. The event carries the store and the
+   * money and <b>not the person</b>: a labour figure is a fact about a shop's Saturday, and who
+   * earned what stays here.
+   */
+  private OutboxRow labour(Entry entry, UUID supersedes) {
+    java.time.Duration worked = entry.worked();
+    if (worked == null) return null;
+    List<PayRate> rates = repo.rates(entry.tenantId(), entry.userId());
+    java.math.BigDecimal cost = Workforce.cost(entry, rates);
+    String currency =
+        rates.stream()
+            .filter(r -> !r.effectiveFrom().isAfter(entry.day()))
+            .map(PayRate::currency)
+            .findFirst()
+            .orElse(null);
+    return new OutboxRow(
+        "LabourRecorded",
+        "shelfj.tenant.labour-recorded",
+        entry.tenantId(),
+        entry.id(),
+        Events.labourRecorded(
+            entry.tenantId(),
+            entry.storeId(),
+            entry.id(),
+            supersedes,
+            entry.day(),
+            worked.toMinutes(),
+            cost,
+            currency));
+  }
+
+  /** The entry as it will stand once closed, for costing before the write. */
+  private static Entry closedCopy(Entry open, Instant at) {
+    List<Rest> breaks = new ArrayList<>();
+    for (Rest r : open.breaks()) {
+      breaks.add(
+          r.endedAt() == null
+              ? new Rest(
+                  r.id(), r.tenantId(), r.timeEntryId(), r.startedAt(), at, r.kind(), r.paid())
+              : r);
+    }
+    return new Entry(
+        open.id(),
+        open.tenantId(),
+        open.storeId(),
+        open.userId(),
+        open.shiftId(),
+        open.clockedInAt(),
+        at,
+        open.source(),
+        open.note(),
+        open.adjustedReason(),
+        open.supersedes(),
+        open.supersededBy(),
+        open.createdAt(),
+        open.createdBy(),
+        breaks);
+  }
+
+  // ── what an hour costs ──────────────────────────────────────────────────────
+
+  /**
+   * Records what an hour of somebody's time costs, from a date.
+   *
+   * <p>Dated because a rise must not re-cost the past: a labour figure that moved when somebody got
+   * a pay rise would make last quarter's report disagree with itself.
+   *
+   * @throws ApiException 400 on a negative rate or an unknown currency; 409 when a rate already
+   *     starts that day
+   */
+  public PayRate addRate(
+      UUID tenantId,
+      UUID userId,
+      java.time.LocalDate from,
+      java.math.BigDecimal hourlyRate,
+      String currency,
+      String note,
+      UUID actorId) {
+    if (hourlyRate == null || hourlyRate.signum() < 0) {
+      throw ApiException.badRequest(
+          "WORKFORCE_RATE_INVALID", "an hour costs nothing or something, never less than nothing");
+    }
+    return repo.addRate(
+        new PayRate(
+            Ids.newId(),
+            tenantId,
+            userId,
+            from == null ? java.time.LocalDate.now(ZoneOffset.UTC) : from,
+            hourlyRate,
+            profiles.currencyOr(tenantId, currency),
+            blankToNull(note),
+            Instant.now(),
+            actorId));
+  }
+
+  public List<PayRate> rates(UUID tenantId, UUID userId) {
+    return repo.rates(tenantId, userId);
   }
 
   // ── attendance ──────────────────────────────────────────────────────────────

@@ -91,6 +91,21 @@ public final class WorkforceMappers {
     return all.stream().map(WorkforceMappers::toDto).toList();
   }
 
+  public static WorkforceDtos.PayRateResponse toDto(Workforce.PayRate r) {
+    return new WorkforceDtos.PayRateResponse(
+        r.id().toString(),
+        r.userId().toString(),
+        r.effectiveFrom().toString(),
+        r.hourlyRate().toPlainString(),
+        r.currency(),
+        r.note(),
+        text(r.createdAt()));
+  }
+
+  public static List<WorkforceDtos.PayRateResponse> rates(List<Workforce.PayRate> all) {
+    return all.stream().map(WorkforceMappers::toDto).toList();
+  }
+
   private static String text(Instant at) {
     return at == null ? null : at.toString();
   }

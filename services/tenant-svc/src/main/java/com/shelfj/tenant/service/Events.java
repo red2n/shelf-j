@@ -68,6 +68,44 @@ final class Events {
    * A staff role bound at a store. {@code role} is the tier iam-svc binds; {@code roleCode} and
    * {@code permissions} ride beside it when the assignment was made through a custom role (20.10).
    */
+  /**
+   * What an hour of work cost a store, for a labour report.
+   *
+   * <p>Carries the <b>store, the day and the money</b> — and deliberately <b>not the person</b>. A
+   * labour figure is a fact about a shop's Saturday; who earned what is this service's business and
+   * nobody else's, and an event naming both would put pay data in every consumer's database for
+   * ever.
+   *
+   * @param supersedes the entry this correction replaces, so a reader can take the old figure back
+   *     out rather than count the day twice
+   * @param cost null when no rate was in force on the day, which a reader reports as unknown rather
+   *     than as zero: zero is a real rate somebody may be on
+   */
+  static String labourRecorded(
+      UUID tenantId,
+      UUID storeId,
+      UUID entryId,
+      UUID supersedes,
+      java.time.LocalDate day,
+      long minutes,
+      java.math.BigDecimal cost,
+      String currency) {
+    return """
+                {"eventId":"%s","eventType":"LabourRecorded","tenantId":"%s","aggregateId":"%s","occurredAt":"%s",\
+                "storeId":"%s","day":"%s","minutes":%s,"cost":%s,"currency":%s,"supersedes":%s}"""
+        .formatted(
+            Ids.newId(),
+            tenantId,
+            entryId,
+            Instant.now(),
+            storeId,
+            day,
+            minutes,
+            cost == null ? "null" : cost.toPlainString(),
+            currency == null ? "null" : "\"" + esc(currency) + "\"",
+            supersedes == null ? "null" : "\"" + supersedes + "\"");
+  }
+
   static String staffAssigned(
       UUID tenantId,
       UUID userId,

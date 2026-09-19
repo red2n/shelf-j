@@ -102,4 +102,31 @@ public class SalesReportResource {
   private static String blankToNull(String s) {
     return s == null || s.isBlank() ? null : s;
   }
+
+  /** Labour against sales, day by day. */
+  @Operation(
+      summary = "What each day took, and what its hours cost",
+      description =
+          "The two numbers a manager puts side by side, and neither means much alone: takings without"
+              + " the cost of the hours that earned them is half a story, and a labour cost without"
+              + " takings is a number to worry about for no reason. Labour comes from tenant-svc's"
+              + " clock, projected here — the event carries a store, a day and money and **no person**,"
+              + " so pay stays in the service that keeps it. A day with takings and no hours recorded"
+              + " is as real as a day with hours and no sales, and both appear. Where some of a day's"
+              + " hours had no pay rate in force the cost is **null rather than zero**, and"
+              + " `uncostedHours` says how much could not be costed: a Saturday shown as free labour"
+              + " would be worse than one that says it does not know.")
+  @APIResponse(responseCode = "200", description = "One row per day, newest first")
+  @APIResponse(
+      responseCode = "400",
+      description = "from/to is not a yyyy-MM-dd date, or storeId is not a UUID")
+  @GET
+  @Path("/labour")
+  public ApiResponse<Object> labour(
+      @QueryParam("from") String from,
+      @QueryParam("to") String to,
+      @QueryParam("storeId") String storeId) {
+    var rows = service.labourByDay(ctx.tenantId(), fromDay(from), toDay(to), optUuid(storeId));
+    return ApiResponse.ok(Mappers.toLabourReport(rows));
+  }
 }

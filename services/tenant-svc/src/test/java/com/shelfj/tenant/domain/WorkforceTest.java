@@ -245,4 +245,70 @@ class WorkforceTest {
     assertEquals("7.5", Workforce.hours(Duration.ofMinutes(450)));
     assertEquals("0.0", Workforce.hours(Duration.ofMinutes(-30)), "never negative");
   }
+
+  @Test
+  @DisplayName("An hour costs what it cost on the day, not what it costs now")
+  void costUsesTheRateOfTheDay() {
+    // A rise in April must not re-cost January, or last quarter's labour figure would disagree with
+    // itself the day somebody got a pay rise.
+    var january =
+        new Workforce.PayRate(
+            Ids.newId(),
+            T,
+            WHO,
+            java.time.LocalDate.of(2026, 1, 1),
+            new java.math.BigDecimal("12.00"),
+            "GBP",
+            null,
+            at("2026-01-01T00:00:00Z"),
+            WHO);
+    var april =
+        new Workforce.PayRate(
+            Ids.newId(),
+            T,
+            WHO,
+            java.time.LocalDate.of(2026, 4, 1),
+            new java.math.BigDecimal("13.50"),
+            "GBP",
+            null,
+            at("2026-04-01T00:00:00Z"),
+            WHO);
+    var rates = List.of(april, january); // newest first, as the repository reads them
+
+    Entry inJanuary = entry("2026-01-20T09:00:00Z", "2026-01-20T17:00:00Z", List.of());
+    assertEquals(new java.math.BigDecimal("96.00"), Workforce.cost(inJanuary, rates));
+
+    Entry inMay = entry("2026-05-20T09:00:00Z", "2026-05-20T17:00:00Z", List.of());
+    assertEquals(new java.math.BigDecimal("108.00"), Workforce.cost(inMay, rates));
+  }
+
+  @Test
+  @DisplayName("An unpaid break is not paid for, and an uncosted day is unknown rather than free")
+  void costRespectsBreaksAndSilence() {
+    var rate =
+        new Workforce.PayRate(
+            Ids.newId(),
+            T,
+            WHO,
+            java.time.LocalDate.of(2026, 1, 1),
+            new java.math.BigDecimal("12.00"),
+            "GBP",
+            null,
+            at("2026-01-01T00:00:00Z"),
+            WHO);
+    Entry withLunch =
+        entry(
+            "2026-02-02T08:00:00Z",
+            "2026-02-02T16:30:00Z",
+            List.of(rest("2026-02-02T12:00:00Z", "2026-02-02T12:30:00Z", false)));
+    assertEquals(new java.math.BigDecimal("96.00"), Workforce.cost(withLunch, List.of(rate)));
+
+    // No rate in force yet: unknown, not free. Zero is a rate somebody may be on, and a day shown
+    // as
+    // free labour is worse than one that says it does not know.
+    Entry before = entry("2025-12-31T09:00:00Z", "2025-12-31T17:00:00Z", List.of());
+    assertNull(Workforce.cost(before, List.of(rate)));
+    // And an open entry has no cost, because it has no hours.
+    assertNull(Workforce.cost(entry("2026-02-03T09:00:00Z", null, List.of()), List.of(rate)));
+  }
 }

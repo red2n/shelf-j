@@ -160,6 +160,38 @@ public class ReportingService {
     repo.recordSaleOnce(tenantId, orderId, storeId, channel, customerId, gross, currency);
   }
 
+  /**
+   * Project one time entry's hours and cost into the labour facts.
+   *
+   * <p>Idempotent by the entry, not by the event: the same entry may be announced again, and the
+   * last word about an entry is the right one. A correction names the entry it replaces so the
+   * figure it replaced comes back out — a report that counted a corrected day twice would look
+   * right and be wrong, which is the worst of the two.
+   */
+  public void recordLabour(
+      UUID tenantId,
+      UUID entryId,
+      UUID supersedes,
+      UUID storeId,
+      java.time.LocalDate day,
+      long minutes,
+      BigDecimal cost,
+      String currency) {
+    repo.recordLabour(tenantId, entryId, supersedes, storeId, day, minutes, cost, currency);
+  }
+
+  /**
+   * What each day took, and what its hours cost.
+   *
+   * @param from inclusive start, UTC
+   * @param to exclusive end, UTC
+   * @param storeId one store, or null for every store in the business
+   */
+  public java.util.List<com.shelfj.reporting.domain.Domain.LabourDayStat> labourByDay(
+      UUID tenantId, Instant from, Instant to, UUID storeId) {
+    return repo.labourByDay(tenantId, from, to, storeId);
+  }
+
   /** Add a refund to a sale's projected total, deduped on the payment event's eventId. */
   public void applySalesRefund(
       UUID eventId, String consumer, UUID tenantId, UUID orderId, BigDecimal amount) {

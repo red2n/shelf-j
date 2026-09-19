@@ -139,6 +139,33 @@ public final class Mappers {
     return new SalesByDayReport(dtoRows);
   }
 
+  /**
+   * Labour against sales on the wire. Hours rather than minutes, because that is how a rota reads.
+   */
+  public static com.shelfj.reporting.dto.Dtos.LabourReport toLabourReport(
+      List<com.shelfj.reporting.domain.Domain.LabourDayStat> rows) {
+    return new com.shelfj.reporting.dto.Dtos.LabourReport(
+        rows.stream()
+            .map(
+                r ->
+                    new com.shelfj.reporting.dto.Dtos.LabourDayRow(
+                        r.day(),
+                        r.currency(),
+                        r.gross(),
+                        r.refunded(),
+                        r.net(),
+                        r.hours(),
+                        java.math.BigDecimal.valueOf(r.uncostedMinutes())
+                            .divide(
+                                java.math.BigDecimal.valueOf(60),
+                                2,
+                                java.math.RoundingMode.HALF_UP),
+                        r.labourCost(),
+                        r.labourPercent(),
+                        r.salesPerHour()))
+            .toList());
+  }
+
   private static String key(UUID storeId, UUID variantId) {
     return storeId + ":" + variantId;
   }

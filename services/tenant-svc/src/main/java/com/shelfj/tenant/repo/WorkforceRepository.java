@@ -1,8 +1,10 @@
 package com.shelfj.tenant.repo;
 
-import com.shelfj.service.BaseJdbcRepository;
+import com.shelfj.service.BaseOutboxRepository;
+import com.shelfj.service.OutboxRow;
 import com.shelfj.tenant.domain.Workforce;
 import com.shelfj.tenant.domain.Workforce.Entry;
+import com.shelfj.tenant.domain.Workforce.PayRate;
 import com.shelfj.tenant.domain.Workforce.Rest;
 import com.shelfj.tenant.domain.Workforce.Shift;
 import com.shelfj.web.ApiException;
@@ -33,7 +35,7 @@ import java.util.UUID;
  * they would the moment the same rule existed in SQL as well.
  */
 @ApplicationScoped
-public class WorkforceRepository extends BaseJdbcRepository {
+public class WorkforceRepository extends BaseOutboxRepository {
 
   private static final String SHIFT_COLUMNS =
       "id, tenant_id, store_id, user_id, starts_at, ends_at, duty, status, note,"
@@ -159,6 +161,56 @@ public class WorkforceRepository extends BaseJdbcRepository {
         .isEmpty();
   }
 
+  // ── what an hour costs ──────────────────────────────────────────────────────
+
+  private static final String RATE_COLUMNS =
+      "id, tenant_id, user_id, effective_from, hourly_rate, currency, note, created_at, created_by";
+
+  /**
+   * Records a rate from a date.
+   *
+   * @throws ApiException 409 {@code WORKFORCE_RATE_EXISTS} when one already starts that day: two
+   *     rates effective the same morning is an undecidable cost
+   */
+  public PayRate addRate(PayRate r) {
+    return inTx(
+        c -> {
+          try (PreparedStatement ps =
+              c.prepareStatement(
+                  "INSERT INTO staff_pay_rates (id, tenant_id, user_id, effective_from,"
+                      + " hourly_rate, currency, note, created_at, created_by)"
+                      + " VALUES (?,?,?,?,?,?,?,?,?)")) {
+            ps.setObject(1, r.id());
+            ps.setObject(2, r.tenantId());
+            ps.setObject(3, r.userId());
+            ps.setObject(4, r.effectiveFrom());
+            ps.setBigDecimal(5, r.hourlyRate());
+            ps.setString(6, r.currency());
+            ps.setString(7, r.note());
+            ps.setObject(8, r.createdAt().atOffset(ZoneOffset.UTC));
+            ps.setObject(9, r.createdBy());
+            ps.executeUpdate();
+          }
+          return r;
+        },
+        "record a pay rate");
+  }
+
+  /** A person's rates, newest first — which is the order the costing rule reads them in. */
+  public List<PayRate> rates(UUID tenantId, UUID userId) {
+    return query(
+        "SELECT "
+            + RATE_COLUMNS
+            + " FROM staff_pay_rates WHERE tenant_id = ? AND user_id = ?"
+            + " ORDER BY effective_from DESC",
+        ps -> {
+          ps.setObject(1, tenantId);
+          ps.setObject(2, userId);
+        },
+        WorkforceRepository::readRate,
+        "a person's pay rates");
+  }
+
   // ── the clock ───────────────────────────────────────────────────────────────
 
   /**
@@ -241,7 +293,7 @@ public class WorkforceRepository extends BaseJdbcRepository {
    * @return false when the entry was not open, so the caller can answer 409 rather than report
    *     success
    */
-  public boolean clockOut(UUID tenantId, UUID entryId, Instant at) {
+  public boolean clockOut(UUID tenantId, UUID entryId, Instant at, OutboxRow labour) {
     return inTx(
         c -> {
           try (PreparedStatement ps =
@@ -260,8 +312,13 @@ public class WorkforceRepository extends BaseJdbcRepository {
             ps.setObject(1, at.atOffset(ZoneOffset.UTC));
             ps.setObject(2, tenantId);
             ps.setObject(3, entryId);
-            return ps.executeUpdate() == 1;
+            if (ps.executeUpdate() != 1) return false;
           }
+          // In the same transaction as the hours: a cost announced for hours that were rolled back
+          // would make a labour report disagree with the clock, and nothing would say which was
+          // right. Null when the day has no rate in force, which is reported as unknown, not zero.
+          if (labour != null) insertOutbox(c, labour);
+          return true;
         },
         "clock out");
   }
@@ -274,7 +331,7 @@ public class WorkforceRepository extends BaseJdbcRepository {
    * filing and a planogram — and for the same reason: a record that can be edited is a record
    * nobody can be held to.
    */
-  public Entry adjust(Entry correction, List<Rest> breaks) {
+  public Entry adjust(Entry correction, List<Rest> breaks, OutboxRow labour) {
     return inTx(
         c -> {
           try (PreparedStatement ps =
@@ -308,6 +365,9 @@ public class WorkforceRepository extends BaseJdbcRepository {
             }
             ps.executeBatch();
           }
+          // The correction's cost, carrying the entry it replaces so a reader can take the old
+          // figure back out: a report that counted both would double the day.
+          if (labour != null) insertOutbox(c, labour);
           return correction;
         },
         "correct a time entry");
@@ -481,6 +541,19 @@ public class WorkforceRepository extends BaseJdbcRepository {
         rs.getBoolean("paid"));
   }
 
+  private static PayRate readRate(ResultSet rs) throws SQLException {
+    return new PayRate(
+        rs.getObject("id", UUID.class),
+        rs.getObject("tenant_id", UUID.class),
+        rs.getObject("user_id", UUID.class),
+        rs.getObject("effective_from", java.time.LocalDate.class),
+        rs.getBigDecimal("hourly_rate"),
+        rs.getString("currency"),
+        rs.getString("note"),
+        instant(rs, "created_at"),
+        rs.getObject("created_by", UUID.class));
+  }
+
   private static Instant instant(ResultSet rs, String column) throws SQLException {
     OffsetDateTime at = rs.getObject(column, OffsetDateTime.class);
     return at == null ? null : at.toInstant();
@@ -493,6 +566,10 @@ public class WorkforceRepository extends BaseJdbcRepository {
       if (e.getMessage().contains("uq_time_entry_open")) {
         return ApiException.conflict(
             "WORKFORCE_ALREADY_CLOCKED_IN", "that person is already on the clock");
+      }
+      if (e.getMessage().contains("uq_pay_rate_day")) {
+        return ApiException.conflict(
+            "WORKFORCE_RATE_EXISTS", "a rate already starts on that day for that person");
       }
       if (e.getMessage().contains("uq_break_open")) {
         return ApiException.conflict(

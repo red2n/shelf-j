@@ -89,4 +89,36 @@ public final class Dtos {
 
   @Schema(name = "SalesByDayReport", description = "Daily sales revenue buckets, newest day first.")
   public record SalesByDayReport(List<SalesDayRow> rows) {}
+
+  @Schema(
+      name = "LabourDayRow",
+      description = "What a day took, and what the hours that earned it cost.")
+  public record LabourDayRow(
+      @Schema(description = "Calendar day, ISO yyyy-MM-dd.") String day,
+      String currency,
+      BigDecimal gross,
+      BigDecimal refunded,
+      @Schema(description = "gross - refunded.") BigDecimal net,
+      @Schema(description = "Hours worked, to two decimal places.") BigDecimal hours,
+      @Schema(
+              description =
+                  "Hours that could not be costed because no pay rate was in force that day. The"
+                      + " caveat travels with the figure rather than being left to be noticed.")
+          BigDecimal uncostedHours,
+      @Schema(description = "Null when some of the day's hours had no rate: unknown, not zero.")
+          BigDecimal labourCost,
+      @Schema(
+              description =
+                  "Labour as a percentage of net takings — the figure a shop is run on. Null when the"
+                      + " cost is unknown, and null when nothing was taken: a percentage of nothing is"
+                      + " no percentage, and reporting one would raise an alarm for a day the shop was"
+                      + " closed.")
+          BigDecimal labourPercent,
+      @Schema(description = "Net takings per hour worked, the other way the same pair is read.")
+          BigDecimal salesPerHour) {}
+
+  @Schema(
+      name = "LabourReport",
+      description = "Labour against sales, day by day, newest day first.")
+  public record LabourReport(List<LabourDayRow> rows) {}
 }

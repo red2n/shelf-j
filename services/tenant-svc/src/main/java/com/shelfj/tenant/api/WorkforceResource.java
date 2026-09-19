@@ -206,6 +206,58 @@ public class WorkforceResource {
     return Response.status(201).entity(ApiResponse.ok(WorkforceMappers.toDto(entry))).build();
   }
 
+  // ── what an hour costs ──────────────────────────────────────────────────────
+
+  @Operation(
+      summary = "Record what an hour of somebody's time costs",
+      description =
+          "Dated, and append-only: a rise must not re-cost the past, or last quarter's labour figure"
+              + " would disagree with itself the day somebody got a pay rise. This is a rate and"
+              + " nothing else — no salary, no deductions, no payroll — because the question a shop"
+              + " asks is what a Saturday cost against what it took. Zero is meaningful (an unpaid"
+              + " trial, a proprietor drawing no wage); less than zero is not.")
+  @APIResponse(responseCode = "201", description = "Recorded")
+  @APIResponse(
+      responseCode = "409",
+      description = "A rate already starts on that day for that person")
+  @POST
+  @Path("/pay-rates")
+  public Response addRate(WorkforceDtos.AddPayRateRequest req) {
+    ctx.requireAnyRole("OWNER", "MANAGER");
+    Validations.validate(req);
+    java.math.BigDecimal rate;
+    try {
+      rate = new java.math.BigDecimal(req.hourlyRate().strip());
+    } catch (NumberFormatException e) {
+      throw new ApiException(
+          400, "WORKFORCE_RATE_INVALID", "hourlyRate is an amount such as 12.50", List.of(), e);
+    }
+    var saved =
+        svc.addRate(
+            ctx.requireTenantId(),
+            TimeClockResource.uuid(req.userId(), "userId"),
+            req.effectiveFrom() == null || req.effectiveFrom().isBlank()
+                ? null
+                : day(req.effectiveFrom(), "effectiveFrom"),
+            rate,
+            req.currency(),
+            req.note(),
+            ctx.requireUserId());
+    return Response.status(201).entity(ApiResponse.ok(WorkforceMappers.toDto(saved))).build();
+  }
+
+  @Operation(
+      summary = "What somebody's hours have cost, rate by rate",
+      description = "Newest first, which is the order the costing rule reads them in.")
+  @GET
+  @Path("/pay-rates")
+  public ApiResponse<List<WorkforceDtos.PayRateResponse>> rates(@QueryParam("user") String user) {
+    ctx.requireAnyRole("OWNER", "MANAGER");
+    return ApiResponse.ok(
+        WorkforceMappers.rates(
+            svc.rates(ctx.requireTenantId(), TimeClockResource.uuid(user, "user"))));
+  }
+
   // ── attendance ──────────────────────────────────────────────────────────────
 
   @Operation(

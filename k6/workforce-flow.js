@@ -21,7 +21,7 @@
 //
 //   k6/run.sh workforce-flow
 import { Counter } from 'k6/metrics';
-import { ALL_CHECKS_PASS, call, data, expect, sellingTenant, truthy, uniq } from './lib/shelfj.js';
+import { ALL_CHECKS_PASS, call, data, expect, poll, sellingTenant, truthy, uniq } from './lib/shelfj.js';
 
 const completed = new Counter('flow_completed');
 export const options = {
@@ -225,6 +225,110 @@ export default function ({ shop, rival }) {
   truthy(
     '[+] ...and not this one\'s',
     (data(get(`${W}/time-entries?from=${at(0, 0)}`, rival.owner.token)) || []).length === 0,
+  );
+
+  // ── labour against sales: the hop only a live stack proves ───────────────────────────────────────
+  //
+  // What an hour costs is tenant-svc's, the sales are order-svc's, and the report is reporting-svc's.
+  // The event that joins them carries a store, a day and money and NO PERSON, so pay never leaves the
+  // service that keeps it — and that is exactly what cannot be checked without the three of them
+  // running.
+  expect(
+    post(`${W}/pay-rates`, { userId: keeper.userId, hourlyRate: '12.00' }),
+    '[+] what an hour of somebody\'s time costs, from a date',
+    201,
+  );
+  expect(
+    post(`${W}/pay-rates`, { userId: keeper.userId, hourlyRate: '13.50' }),
+    '[-] two rates starting the same morning is an undecidable cost',
+    409,
+    'WORKFORCE_RATE_EXISTS',
+  );
+  expect(
+    post(`${W}/pay-rates`, { userId: keeper.userId, hourlyRate: '-1.00', effectiveFrom: '2026-01-01' }),
+    '[-] an hour costs nothing or something, never less than nothing',
+    400,
+    'WORKFORCE_RATE_INVALID',
+  );
+  expect(get(`${W}/pay-rates?user=${keeper.userId}`, cashier.token), '[-] and what people are paid is management\'s', 403);
+
+  // A shift worked, and a sale taken, on the same day. The clock-out is then corrected to the shift
+  // actually worked — as a manager does for a terminal that was down — which is also how a real
+  // number of hours gets into a live test without waiting eight hours for it.
+  const openKeeper = data(get(`${CLOCK}/open`, keeper.token));
+  const keeperEntry = openKeeper ? openKeeper.id : data(post(`${CLOCK}/in`, { storeId: store }, keeper.token)).id;
+  const worked = data(post(`${CLOCK}/out`, {}, keeper.token));
+  truthy('[+] the storekeeper\'s hours are recorded', worked && worked.hoursWorked !== undefined, worked);
+  const fullShift = data(
+    post(`${W}/time-entries/${keeperEntry}/adjust`, {
+      clockedInAt: at(0, 9),
+      clockedOutAt: at(0, 17),
+      reason: 'the back-store terminal was down all morning',
+    }),
+  );
+  truthy('[+] ...and corrected to the shift they actually worked', fullShift && fullShift.hoursWorked === '8.0', fullShift);
+  const sale = data(
+    call('POST', '/api/order-svc/orders', {
+      token: owner,
+      idem: true,
+      body: {
+        storeId: store,
+        channel: 'POS',
+        fulfilmentType: 'INSTORE',
+        paymentMethod: 'CASH',
+        items: [{ variantId: shop.variantId, qty: 2 }],
+      },
+    }),
+  );
+  call('POST', '/api/payment-svc/payments', {
+    token: owner,
+    idem: true,
+    body: { orderId: sale.id, amount: sale.total, method: 'CASH', storeId: store, currency: shop.tenant.currency },
+  });
+
+  const reportFrom = at(0, 0).slice(0, 10);
+  const reportTo = at(1, 0).slice(0, 10);
+  let row = null;
+  const seconds = poll(90, () => {
+    const report = data(call('GET', `/api/reporting-svc/admin/reports/sales/labour?from=${reportFrom}&to=${reportTo}`, { token: owner }));
+    row = ((report || {}).rows || []).find((r) => r.day === reportFrom);
+    return !!row && Number(row.hours) > 0 && Number(row.net) > 0;
+  });
+  truthy(`[+] the day's hours and its takings meet in one report, ${seconds}s after the clock`, seconds >= 0, row);
+  truthy(
+    '[+] ...with the eight hours costed at the 12.00 rate in force on the day',
+    row && row.labourCost !== null && Number(row.labourCost) >= 96,
+    row,
+  );
+  truthy(
+    '[+] ...the correction having replaced the figure it superseded rather than adding to it',
+    row && Number(row.hours) < 20,
+    row,
+  );
+  truthy(
+    '[+] ...and labour as a share of what was taken, which is the figure a shop is run on',
+    row && row.labourPercent !== null && Number(row.labourPercent) > 0,
+    row,
+  );
+  truthy(
+    '[+] ...while the cashier\'s hours, which nobody set a rate for, are counted and called uncosted rather than free',
+    row && Number(row.uncostedHours) > 0,
+    row,
+  );
+  expect(
+    call('GET', `/api/reporting-svc/admin/reports/sales/labour?from=${reportFrom}&to=${reportTo}`, { token: cashier.token }),
+    '[-] a cashier does not read the labour report',
+    403,
+  );
+  truthy(
+    '[+] and another business sees none of it',
+    (
+      (data(
+        call('GET', `/api/reporting-svc/admin/reports/sales/labour?from=${reportFrom}&to=${reportTo}`, {
+          token: rival.owner.token,
+        }),
+      ) || {}).rows || []
+    ).every((r) => Number(r.hours) === 0),
   );
 
   completed.add(1);

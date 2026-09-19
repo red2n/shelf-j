@@ -286,4 +286,47 @@ public final class Workforce {
       return planned == 0 && entries > 0;
     }
   }
+
+  /**
+   * What an hour of somebody's time costs, from a date.
+   *
+   * <p>Not payroll: no salary, no deductions, no tax. A platform holding payroll would owe a great
+   * deal more than this one promises, and the question a shop actually asks — what did this
+   * Saturday cost me against what it took — needs only this.
+   */
+  public record PayRate(
+      UUID id,
+      UUID tenantId,
+      UUID userId,
+      LocalDate effectiveFrom,
+      java.math.BigDecimal hourlyRate,
+      String currency,
+      String note,
+      Instant createdAt,
+      UUID createdBy) {}
+
+  /**
+   * What an entry cost, at the rate in force on the day it was worked.
+   *
+   * <p><b>The day, not today.</b> A rate that rose in April must not re-cost January: a labour
+   * figure that moved when somebody got a pay rise would make last quarter's report disagree with
+   * itself.
+   *
+   * @param rates the person's rates, newest first
+   * @return the cost, or null when no rate was in force then — which is reported as unknown rather
+   *     than as zero, because zero is a real rate somebody may be on
+   */
+  public static java.math.BigDecimal cost(Entry entry, List<PayRate> rates) {
+    Duration worked = entry.worked();
+    if (worked == null) return null;
+    LocalDate day = entry.day();
+    for (PayRate r : rates) {
+      if (!r.effectiveFrom().isAfter(day)) {
+        return r.hourlyRate()
+            .multiply(java.math.BigDecimal.valueOf(worked.toMinutes()))
+            .divide(java.math.BigDecimal.valueOf(60), 2, java.math.RoundingMode.HALF_UP);
+      }
+    }
+    return null;
+  }
 }
