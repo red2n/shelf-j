@@ -54,8 +54,13 @@ export default function ({ yen, pound, dinar, variantId, bare, bareVariant, bare
   const stamp = Date.now();
   const store = yen.stores[0];
   const from = new Date(Date.now() - 86400000).toISOString();
+  // Letters only, never digits: `Math.random()` writes a seventeen-digit run, and a body carrying a
+  // digit run the gateway reads as a Luhn-valid card number is refused CARD_DATA_NOT_ACCEPTED — which
+  // failed this suite's malformed-currency check about one run in twenty, on the run's digits alone.
+  const slug = () => Math.random().toString(36).replace(/[^a-z]/g, '').slice(0, 8) || 'kx';
+
   const priceList = (tenant, extra = {}) =>
-    call('POST', '/api/pricing-svc/admin/price-lists', { token: tenant.owner.token, body: { name: `defaults ${stamp} ${Math.random()}`, channel: 'ONLINE', effectiveFrom: from, ...extra } });
+    call('POST', '/api/pricing-svc/admin/price-lists', { token: tenant.owner.token, body: { name: `defaults ${stamp} ${slug()}`, channel: 'ONLINE', effectiveFrom: from, ...extra } });
 
   // ── a price list: the tenant's own currency ──────────────────────────────────
   const yenList = priceList(yen);
