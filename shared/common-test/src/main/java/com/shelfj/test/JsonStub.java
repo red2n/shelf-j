@@ -202,6 +202,13 @@ public final class JsonStub implements AutoCloseable {
     return "http://" + server.getAddress().getHostString() + ":" + server.getAddress().getPort();
   }
 
+  /** The request's body, for a stub route registered directly on the server. */
+  static String body(HttpExchange exchange) throws IOException {
+    try (InputStream in = exchange.getRequestBody()) {
+      return new String(in.readAllBytes(), StandardCharsets.UTF_8);
+    }
+  }
+
   static void reply(HttpExchange exchange, int status, String body) throws IOException {
     byte[] bytes = body.getBytes(StandardCharsets.UTF_8);
     exchange.getResponseHeaders().add("Content-Type", "application/json");

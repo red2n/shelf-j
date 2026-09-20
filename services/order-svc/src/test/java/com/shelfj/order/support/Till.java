@@ -19,9 +19,25 @@ import jakarta.ws.rs.core.Response;
 public final class Till {
 
   private final WebTarget target;
+  private final String user;
 
   public Till(WebTarget target) {
+    this(target, null);
+  }
+
+  private Till(WebTarget target, String user) {
     this.target = target;
+    this.user = user;
+  }
+
+  /**
+   * The same till, operated by somebody.
+   *
+   * <p>Needed wherever a route reads who is acting rather than only which business: a till sale is
+   * credited to whoever is at the till, and a statement records who approved it.
+   */
+  public Till operatedBy(String userId) {
+    return new Till(target, userId);
   }
 
   public Response post(String path, String json, String tenant) {
@@ -29,21 +45,19 @@ public final class Till {
   }
 
   public Response postAs(String path, String json, String tenant, String role) {
-    return target
-        .path(path)
-        .request()
-        .header("X-Tenant-Id", tenant)
-        .header("X-Roles", role)
-        .header("Idempotency-Key", Ids.newId().toString())
+    return withUser(
+            target
+                .path(path)
+                .request()
+                .header("X-Tenant-Id", tenant)
+                .header("X-Roles", role)
+                .header("Idempotency-Key", Ids.newId().toString()))
         .post(Entity.entity(json, MediaType.APPLICATION_JSON));
   }
 
   public Response put(String path, String json, String tenant, String role) {
-    return target
-        .path(path)
-        .request()
-        .header("X-Tenant-Id", tenant)
-        .header("X-Roles", role)
+    return withUser(
+            target.path(path).request().header("X-Tenant-Id", tenant).header("X-Roles", role))
         .put(Entity.entity(json, MediaType.APPLICATION_JSON));
   }
 
@@ -54,7 +68,20 @@ public final class Till {
   public Response getAs(String path, String tenant, String role, String... params) {
     WebTarget t = target.path(path);
     for (int i = 0; i < params.length; i += 2) t = t.queryParam(params[i], params[i + 1]);
-    return t.request().header("X-Tenant-Id", tenant).header("X-Roles", role).get();
+    return withUser(t.request().header("X-Tenant-Id", tenant).header("X-Roles", role)).get();
+  }
+
+  /** Stamps the operator, when this till has one. */
+  private jakarta.ws.rs.client.Invocation.Builder withUser(
+      jakarta.ws.rs.client.Invocation.Builder b) {
+    return user == null ? b : b.header("X-User-Id", user);
+  }
+
+  /** A DELETE, for the routes that throw a working document away. */
+  public Response delete(String path, String tenant, String role) {
+    return withUser(
+            target.path(path).request().header("X-Tenant-Id", tenant).header("X-Roles", role))
+        .delete();
   }
 
   /** Places a till basket; the order id. */

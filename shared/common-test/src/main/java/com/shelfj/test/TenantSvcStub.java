@@ -26,6 +26,18 @@ public final class TenantSvcStub implements AutoCloseable {
   private final Map<String, java.util.List<String>> stores = new ConcurrentHashMap<>();
   private final java.util.Map<String, String> retention =
       new java.util.concurrent.ConcurrentHashMap<>();
+
+  /** Percentage of net each business's people earn, for the commission rating route. */
+  private final Map<String, String> commissionPercent = new ConcurrentHashMap<>();
+
+  /** The last rating request received, so a test can assert what figures were sent. */
+  private final java.util.concurrent.atomic.AtomicReference<String> lastRating =
+      new java.util.concurrent.atomic.AtomicReference<>();
+
+  /** When true the rating route fails, so a caller's fail-closed behaviour can be proven. */
+  private final java.util.concurrent.atomic.AtomicBoolean ratingDown =
+      new java.util.concurrent.atomic.AtomicBoolean();
+
   private final java.util.concurrent.atomic.AtomicInteger requests =
       new java.util.concurrent.atomic.AtomicInteger();
 
@@ -53,6 +65,23 @@ public final class TenantSvcStub implements AutoCloseable {
     // Which business holds an e-invoicing address (07.13, the transport seam): tenant-svc's
     // platform-wide lookup, answered from the identities registered here. By scheme and id, else
     // by VAT number; 404 when none holds it, 409 when more than one does.
+    // What a period of sales earns, as tenant-svc answers it (store operations & workforce). A flat
+    // percentage per business here: the marginal-band rule is tenant-svc's own to prove, and what a
+    // caller's test needs is a deterministic answer and the figures it was asked about.
+    server.createContext(
+        "/admin/workforce/commission/rate",
+        exchange -> {
+          stub.requests.incrementAndGet();
+          String body = JsonStub.body(exchange);
+          stub.lastRating.set(body);
+          if (stub.ratingDown.get()) {
+            JsonStub.reply(exchange, 503, "{\"error\":{\"code\":\"DOWN\",\"message\":\"no\"}}");
+            return;
+          }
+          String tenant = exchange.getRequestHeaders().getFirst("X-Tenant-Id");
+          String percent = tenant == null ? null : stub.commissionPercent.get(tenant);
+          JsonStub.reply(exchange, 200, rated(body, percent));
+        });
     server.createContext(
         "/platform/tenants/by-einvoice-address",
         exchange -> {
@@ -373,6 +402,95 @@ public final class TenantSvcStub implements AutoCloseable {
   public int requests() {
     return requests.get();
   }
+
+  /** Puts every one of a business's people on a flat percentage of net, for the rating route. */
+  public TenantSvcStub withCommission(String tenantId, String percentOfNet) {
+    commissionPercent.put(tenantId, percentOfNet);
+    return this;
+  }
+
+  /** The body of the last rating call, so a test can assert which days and figures were sent. */
+  public String lastRating() {
+    return lastRating.get();
+  }
+
+  /**
+   * Makes the rating route fail, so a caller that must refuse rather than pay zeros can be proven.
+   */
+  public TenantSvcStub ratingDown(boolean down) {
+    ratingDown.set(down);
+    return this;
+  }
+
+  /**
+   * Rates a request as one segment per person at a flat percentage.
+   *
+   * <p>Deliberately simple, and deliberately not a second implementation of the marginal bands:
+   * those are tenant-svc's rule and tenant-svc's tests. What a caller needs from a stub is an
+   * answer it can predict.
+   */
+  private static String rated(String body, String percentOfNet) {
+    StringBuilder out = new StringBuilder("{\"data\":[");
+    java.util.regex.Matcher sellers =
+        java.util.regex.Pattern.compile("\\{\"userId\":\"([0-9a-fA-F-]+)\",\"days\":\\[(.*?)\\]\\}")
+            .matcher(body == null ? "" : body);
+    boolean first = true;
+    while (sellers.find()) {
+      String userId = sellers.group(1);
+      String days = sellers.group(2);
+      java.math.BigDecimal net = java.math.BigDecimal.ZERO;
+      String from = null;
+      String to = null;
+      java.util.regex.Matcher day =
+          java.util.regex.Pattern.compile("\"day\":\"([0-9-]+)\",\"net\":(-?[0-9.]+)")
+              .matcher(days);
+      while (day.find()) {
+        if (from == null) from = day.group(1);
+        to = day.group(1);
+        net = net.add(new java.math.BigDecimal(day.group(2)));
+      }
+      if (from == null) continue;
+      java.math.BigDecimal rate =
+          percentOfNet == null ? java.math.BigDecimal.ZERO : new java.math.BigDecimal(percentOfNet);
+      java.math.BigDecimal commission =
+          net.signum() <= 0
+              ? java.math.BigDecimal.ZERO.setScale(2)
+              : net.multiply(rate)
+                  .divide(java.math.BigDecimal.valueOf(100), 2, java.math.RoundingMode.HALF_UP);
+      if (!first) out.append(',');
+      first = false;
+      out.append("{\"userId\":\"").append(userId).append("\",\"segments\":[");
+      out.append("{\"schemeId\":")
+          .append(percentOfNet == null ? "null" : "\"" + STUB_SCHEME + "\"")
+          .append(",\"schemeName\":")
+          .append(percentOfNet == null ? "null" : "\"stub scheme\"")
+          .append(",\"from\":\"")
+          .append(from)
+          .append("\",\"to\":\"")
+          .append(to)
+          .append("\",\"amount\":\"")
+          .append(net.setScale(2, java.math.RoundingMode.HALF_UP).toPlainString())
+          .append("\",\"bands\":[");
+      if (percentOfNet != null && net.signum() > 0) {
+        out.append("{\"thresholdFrom\":\"0.00\",\"rate\":\"")
+            .append(rate.toPlainString())
+            .append("\",\"amountInBand\":\"")
+            .append(net.setScale(2, java.math.RoundingMode.HALF_UP).toPlainString())
+            .append("\",\"commission\":\"")
+            .append(commission.toPlainString())
+            .append("\"}");
+      }
+      out.append("],\"commission\":\"")
+          .append(commission.toPlainString())
+          .append("\"}],\"commission\":\"")
+          .append(commission.toPlainString())
+          .append("\"}");
+    }
+    return out.append("]}").toString();
+  }
+
+  /** The scheme id this stub claims to have rated under. */
+  public static final String STUB_SCHEME = "01900000-0000-7000-8000-000000000001";
 
   @Override
   public void close() {

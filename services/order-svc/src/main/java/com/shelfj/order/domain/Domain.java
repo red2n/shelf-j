@@ -300,7 +300,14 @@ public final class Domain {
        * row (SJ-D6). This one is automatic and answers to a rule. Summing them would put
        * promotional money inside the role-ceiling check.
        */
-      BigDecimal promotionDiscount) {
+      BigDecimal promotionDiscount,
+      /**
+       * Who is credited with the sale, which is not the same as who rang it up (the POS journal's
+       * cashier). On a counter an assistant sells and a supervisor takes the money, and a shop that
+       * pays commission pays the seller. Null for a sale nobody is credited with — the ordinary
+       * case online.
+       */
+      UUID sellerUserId) {
     public static final String CHANNEL_ONLINE = "ONLINE";
     public static final String CHANNEL_POS = "POS";
     public static final String FULFILMENT_PICKUP = "PICKUP";

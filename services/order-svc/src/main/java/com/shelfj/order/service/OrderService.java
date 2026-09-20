@@ -224,6 +224,35 @@ public class OrderService {
    * @throws ApiException {@code ORDER_NO_ITEMS} (400) when the order has no lines; a conflict when
    *     the tenant or store is not trading
    */
+  /**
+   * Who a sale is credited to: what the till named, else the person operating the till.
+   *
+   * <p>Named explicitly because the two are not the same question. The POS journal already records
+   * who rang a sale up; this records who <em>sold</em> it, which on a counter is somebody else, and
+   * which is who a shop paying commission pays. Online is nobody: a website does the selling, and
+   * crediting whoever confirmed the order would pay somebody for it.
+   *
+   * @throws ApiException 400 when a seller is named on an online order, or is not an id
+   */
+  private static UUID sellerOf(PlaceOrderRequest req, TenantContext ctx) {
+    boolean till = "POS".equalsIgnoreCase(req.channel());
+    String named = req.sellerUserId();
+    if (named != null && !named.isBlank()) {
+      if (!till) {
+        throw ApiException.badRequest(
+            "ORDER_SELLER_POS_ONLY",
+            "an online sale is credited to nobody; a seller belongs to a sale somebody made");
+      }
+      try {
+        return UUID.fromString(named.strip());
+      } catch (IllegalArgumentException e) {
+        throw new ApiException(
+            400, "ORDER_SELLER_INVALID", "sellerUserId is not an id: " + named, List.of(), e);
+      }
+    }
+    return till ? ctx.userId() : null;
+  }
+
   public Order placeOrder(PlaceOrderRequest req, TenantContext ctx, String idempotencyKey) {
     if (req.items() == null || req.items().isEmpty())
       throw ApiException.badRequest("ORDER_NO_ITEMS", "order must have at least one item");
@@ -463,6 +492,12 @@ public class OrderService {
     boolean taxExempt = req.taxExempt() != null && req.taxExempt();
     // SJ-D41: a catalog-mode till order is placed without prices and waits for a manager; it is
     // not PENDING, so the stranded-order sweeper leaves it alone.
+    // Who is credited with the sale. The till may name an assistant — on a counter, one person
+    // sells
+    // and another takes the money — and when it does not, a till sale is credited to whoever is
+    // operating it. An online order is credited to nobody: crediting whoever happened to confirm it
+    // would pay commission for a website doing the selling.
+    UUID seller = sellerOf(req, ctx);
     boolean awaitingPrice = Boolean.TRUE.equals(req.awaitingPrice());
     if (awaitingPrice && !"POS".equalsIgnoreCase(req.channel())) {
       throw ApiException.badRequest(
@@ -497,7 +532,8 @@ public class OrderService {
             delivery ? req.deliveryRecipientPhone() : null,
             req.contactPhone(),
             paymentMethod,
-            promoDiscount);
+            promoDiscount,
+            seller);
 
     try {
       Order placed =
