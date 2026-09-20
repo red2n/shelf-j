@@ -43,9 +43,20 @@ public final class Domain {
   public static final String NAME_STOCK = "Stock";
   public static final String NAME_GRIR = "Goods Received Not Invoiced";
 
+  /**
+   * Where a landed charge waits for the carrier's or broker's bill (07.x): credited when the charge
+   * is applied to the stock, cleared when that bill is settled. Not GR/IR, so the goods supplier's
+   * reconciliation is not muddied by what a different party charged.
+   */
+  public static final String CODE_LANDED_ACCRUAL = "2110";
+
+  public static final String NAME_LANDED_ACCRUAL = "Landed Costs Accrued";
+
   // ── What produced a ledger posting ────────────────────────────────────────────
   public static final String SOURCE_GOODS_RECEIPT = "GOODS_RECEIPT";
   public static final String SOURCE_SUPPLIER_INVOICE = "SUPPLIER_INVOICE";
+  public static final String SOURCE_LANDED_COST = "LANDED_COST";
+  public static final String SOURCE_LANDED_COST_REVERSAL = "LANDED_COST_REVERSAL";
   public static final String SOURCE_INVOICE_REVERSAL = "INVOICE_REVERSAL";
   public static final String SOURCE_CREDIT_NOTE = "CREDIT_NOTE";
   public static final String SOURCE_INTERCOMPANY = "INTERCOMPANY";

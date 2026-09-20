@@ -384,6 +384,42 @@ public class InventoryService {
         dedupeId, consumerName, tenantId, storeId, variantId, qty, returnId, event);
   }
 
+  /**
+   * Lifts, or on a reversal lowers, the unit cost of the batches one receipt created by a landed
+   * charge's per-unit share (07.x), once per event line. No stock moves, so nothing is announced;
+   * valuation reads the batch. A receipt inventory has not booked yet answers 503 so the consumer
+   * redelivers rather than losing the charge.
+   *
+   * @param perUnit what a unit's cost changes by, signed
+   * @param amount the line's whole share, signed — what an AVERAGE pool takes in over what is on
+   *     hand
+   * @param sourceType {@code LANDED_COST} or {@code LANDED_COST_REVERSAL}
+   * @param sourceId the charge
+   */
+  public boolean revalueReceiptOnce(
+      UUID dedupeId,
+      String consumerName,
+      UUID tenantId,
+      UUID storeId,
+      UUID variantId,
+      UUID grId,
+      BigDecimal perUnit,
+      BigDecimal amount,
+      String sourceType,
+      UUID sourceId) {
+    return repo.revalueReceiptOnce(
+        dedupeId,
+        consumerName,
+        tenantId,
+        storeId,
+        variantId,
+        grId,
+        perUnit,
+        amount,
+        sourceType,
+        sourceId);
+  }
+
   private static Batch returnBatch(
       UUID tenantId, UUID storeId, UUID variantId, BigDecimal qty, UUID orderId) {
     return new Batch(

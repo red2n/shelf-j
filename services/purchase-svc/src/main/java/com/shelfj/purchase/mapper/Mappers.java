@@ -8,11 +8,14 @@ import com.shelfj.purchase.domain.Domain.NominalLedgerEntry;
 import com.shelfj.purchase.domain.Domain.PurchaseOrder;
 import com.shelfj.purchase.domain.Domain.PurchaseOrderLine;
 import com.shelfj.purchase.domain.Domain.Supplier;
+import com.shelfj.purchase.domain.LandedCost;
 import com.shelfj.purchase.domain.SpendAuthority;
 import com.shelfj.purchase.dto.Dtos;
 import com.shelfj.purchase.dto.Dtos.GoodsReceiptLineResponse;
 import com.shelfj.purchase.dto.Dtos.GoodsReceiptResponse;
 import com.shelfj.purchase.dto.Dtos.IntercompanyInvoiceResponse;
+import com.shelfj.purchase.dto.Dtos.LandedCostLineResponse;
+import com.shelfj.purchase.dto.Dtos.LandedCostResponse;
 import com.shelfj.purchase.dto.Dtos.NominalLedgerEntryResponse;
 import com.shelfj.purchase.dto.Dtos.PurchaseOrderLineProgressResponse;
 import com.shelfj.purchase.dto.Dtos.PurchaseOrderLineResponse;
@@ -488,5 +491,35 @@ public final class Mappers {
         a.sendsSepa(),
         a.setBy(),
         a.setAt());
+  }
+
+  // ── Landed cost (07.x) ──────────────────────────────────────────────────────
+
+  /** A landed charge and its lines, on the wire. */
+  public static LandedCostResponse toDto(LandedCost.Charge c, List<LandedCost.Line> lines) {
+    return new LandedCostResponse(
+        c.id(),
+        c.grId(),
+        c.poId(),
+        c.storeId(),
+        c.chargeType(),
+        c.basis(),
+        c.currency(),
+        c.amount(),
+        c.reference(),
+        c.chargedBy(),
+        c.notes(),
+        c.status(),
+        c.appliedAt(),
+        c.appliedBy(),
+        c.reversedAt(),
+        c.reversedBy(),
+        c.reversedReason(),
+        lines.stream().map(Mappers::toDto).toList());
+  }
+
+  public static LandedCostLineResponse toDto(LandedCost.Line l) {
+    return new LandedCostLineResponse(
+        l.id(), l.grLineId(), l.variantId(), l.qty(), l.lineValue(), l.amount(), l.perUnit());
   }
 }

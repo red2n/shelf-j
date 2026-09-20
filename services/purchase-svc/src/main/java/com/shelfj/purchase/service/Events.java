@@ -4,6 +4,7 @@ import com.shelfj.events.EventPayload;
 import com.shelfj.purchase.domain.Domain;
 import com.shelfj.purchase.domain.Domain.GoodsReceiptLine;
 import com.shelfj.purchase.domain.Domain.VendorReturnLine;
+import com.shelfj.purchase.domain.LandedCost;
 import com.shelfj.service.OutboxRow;
 import java.util.List;
 import java.util.UUID;
@@ -56,7 +57,12 @@ final class Events {
    * order back then, so nothing was lost that a join cannot recover.
    */
   static OutboxRow goodsReceived(
-      UUID tenantId, UUID grId, UUID storeId, UUID poId, List<GoodsReceiptLine> lines) {
+      UUID tenantId,
+      UUID grId,
+      UUID storeId,
+      UUID poId,
+      List<GoodsReceiptLine> lines,
+      java.util.Map<UUID, java.math.BigDecimal> unitPrice) {
     StringBuilder sb = new StringBuilder();
     sb.append("{\"eventId\":\"")
         .append(grId)
@@ -75,12 +81,69 @@ final class Events {
       sb.append("{\"variantId\":\"")
           .append(l.variantId())
           .append("\",\"qty\":")
-          .append(l.qtyReceived())
-          .append("}");
+          .append(l.qtyReceived());
+      // The order's price is what the batch cost (07.x): a receipt without one is still recorded,
+      // but its stock is reported unvalued rather than valued at zero.
+      java.math.BigDecimal price = unitPrice.get(l.variantId());
+      if (price != null) {
+        sb.append(",\"costPrice\":").append(price.toPlainString());
+      }
+      sb.append("}");
     }
     sb.append("]}");
     return new OutboxRow(
         "GoodsReceived", "shelfj.purchase.goods-received", tenantId, grId, sb.toString());
+  }
+
+  static final String LANDED_COST_APPLIED = "LandedCostApplied";
+  static final String LANDED_COST_REVERSED = "LandedCostReversed";
+
+  /**
+   * A charge landed on a receipt, or was taken off it again (07.x): what inventory-svc lifts the
+   * cost of the receipt's batches by, per unit, or lowers it by on a reversal. Both kinds share one
+   * topic and one key — the charge — so a reversal never overtakes what it reverses. The event id
+   * is the charge id on application and a derived id on reversal; a consumer dedupes on it.
+   */
+  static OutboxRow landedCost(
+      String eventType, LandedCost.Charge c, List<LandedCost.Line> lines, UUID eventId) {
+    StringBuilder sb = new StringBuilder();
+    sb.append("{\"eventId\":\"")
+        .append(eventId)
+        .append("\",\"eventType\":\"")
+        .append(eventType)
+        .append("\",\"tenantId\":\"")
+        .append(c.tenantId())
+        .append("\",\"storeId\":\"")
+        .append(c.storeId())
+        .append("\",\"refId\":\"")
+        .append(c.grId())
+        .append("\",\"landedCostId\":\"")
+        .append(c.id())
+        .append("\",\"poId\":\"")
+        .append(c.poId())
+        .append("\",\"chargeType\":\"")
+        .append(c.chargeType())
+        .append("\",\"currency\":\"")
+        .append(c.currency())
+        .append("\",\"amount\":")
+        .append(c.amount().toPlainString())
+        .append(",\"lines\":[");
+    for (int i = 0; i < lines.size(); i++) {
+      if (i > 0) sb.append(",");
+      LandedCost.Line l = lines.get(i);
+      sb.append("{\"variantId\":\"")
+          .append(l.variantId())
+          .append("\",\"qty\":")
+          .append(l.qty().toPlainString())
+          .append(",\"amount\":")
+          .append(l.amount().toPlainString())
+          .append(",\"perUnit\":")
+          .append(l.perUnit().toPlainString())
+          .append("}");
+    }
+    sb.append("]}");
+    return new OutboxRow(
+        eventType, "shelfj.purchase.landed-cost-applied", c.tenantId(), c.id(), sb.toString());
   }
 
   /**

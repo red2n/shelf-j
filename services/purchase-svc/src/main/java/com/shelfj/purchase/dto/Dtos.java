@@ -838,4 +838,67 @@ public final class Dtos {
       UUID releasedBy,
       Instant releasedAt,
       String releaseReason) {}
+
+  // ── Landed cost (07.x) ──────────────────────────────────────────────────────
+
+  @Schema(
+      name = "ApplyLandedCostRequest",
+      description =
+          "A charge against a goods receipt — freight, duty, insurance — spread over its lines.")
+  public record ApplyLandedCostRequest(
+      @NotNull UUID grId,
+      @Schema(description = "FREIGHT, DUTY, INSURANCE, HANDLING or OTHER.") @NotBlank
+          String chargeType,
+      @Schema(
+              description =
+                  "BY_VALUE spreads by each line's value at the order's prices; BY_QUANTITY by units.")
+          @NotBlank
+          String basis,
+      @NotNull @DecimalMin("0.01") BigDecimal amount,
+      @Schema(description = "ISO 4217. Must be the order's currency; defaults to it.")
+          @Size(max = 3)
+          String currency,
+      @Schema(description = "The carrier's or broker's document number.") @Size(max = 64)
+          String reference,
+      @Schema(
+              description =
+                  "The supplier on file who charged it — a carrier or a customs broker — or null"
+                      + " when the goods supplier did.")
+          UUID chargedBy,
+      @Size(max = 500) String notes) {}
+
+  @Schema(name = "ReverseLandedCostRequest")
+  public record ReverseLandedCostRequest(@NotBlank @Size(max = 500) String reason) {}
+
+  @Schema(name = "LandedCostLineResponse")
+  public record LandedCostLineResponse(
+      UUID id,
+      UUID grLineId,
+      UUID variantId,
+      BigDecimal qty,
+      @Schema(description = "The receipt line's value at the order's price.") BigDecimal lineValue,
+      @Schema(description = "This line's share of the charge; the lines sum to it exactly.")
+          BigDecimal amount,
+      @Schema(description = "What one unit's cost rose by.") BigDecimal perUnit) {}
+
+  @Schema(name = "LandedCostResponse")
+  public record LandedCostResponse(
+      UUID id,
+      UUID grId,
+      UUID poId,
+      UUID storeId,
+      String chargeType,
+      String basis,
+      String currency,
+      BigDecimal amount,
+      String reference,
+      UUID chargedBy,
+      String notes,
+      @Schema(description = "APPLIED or REVERSED.") String status,
+      Instant appliedAt,
+      UUID appliedBy,
+      Instant reversedAt,
+      UUID reversedBy,
+      String reversedReason,
+      List<LandedCostLineResponse> lines) {}
 }
