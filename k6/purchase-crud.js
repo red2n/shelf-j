@@ -7,7 +7,7 @@
 // the currency they were raised in.
 //
 //   k6/run.sh purchase-crud
-import { ALL_CHECKS_PASS, addStore, call, data, expect, must, onboardTenant, poll, sellableVariant, staffUser, truthy } from './lib/shelfj.js';
+import { ALL_CHECKS_PASS, addStore, call, data, expect, must, onboardTenant, poll, sellableVariant, staffUser, truthy } from './lib/storeql.js';
 
 export const options = { vus: 1, iterations: 1, thresholds: ALL_CHECKS_PASS };
 

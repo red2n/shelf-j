@@ -1,9 +1,9 @@
-# TLS (cert-manager + Let's Encrypt) + routing. shelf-app is ONE Flutter build with four
+# TLS (cert-manager + Let's Encrypt) + routing. storeql-app is ONE Flutter build with four
 # GoRouter shells selected client-side by URL hash (#/store, #/pos, #/admin, #/platform —
-# see frontends/shelf-app/lib/core/router.dart), all served from the single app.storeql.com
+# see frontends/storeql-app/lib/core/router.dart), all served from the single app.storeql.com
 # Ingress below. storeql.com/www./pos. are therefore just Traefik redirects into that same
 # app with the right hash pre-filled — not separate deployments:
-#   app.storeql.com      -> shelf-app (staff/admin/platform login entry point)
+#   app.storeql.com      -> storeql-app (staff/admin/platform login entry point)
 #   api.storeql.com      -> gateway (API)
 #   storeql.com          -> redirect to https://app.storeql.com/#/store (customer storefront)
 #   www.storeql.com      -> redirect to https://app.storeql.com/#/store (customer storefront)
@@ -33,8 +33,8 @@ spec:
 apiVersion: networking.k8s.io/v1
 kind: Ingress
 metadata:
-  name: shelfj-web
-  namespace: shelf-j
+  name: storeql-web
+  namespace: storeql
   annotations:
     cert-manager.io/cluster-issuer: letsencrypt-prod
 spec:
@@ -49,14 +49,14 @@ spec:
           - path: /
             pathType: Prefix
             backend:
-              service: { name: shelf-app, port: { number: 8080 } }
+              service: { name: storeql-app, port: { number: 8080 } }
 
 ---
 apiVersion: networking.k8s.io/v1
 kind: Ingress
 metadata:
-  name: shelfj-api
-  namespace: shelf-j
+  name: storeql-api
+  namespace: storeql
   annotations:
     cert-manager.io/cluster-issuer: letsencrypt-prod
 spec:
@@ -75,7 +75,7 @@ spec:
 
 ---
 # Traefik sets X-Forwarded-For/-Proto/-Host on every proxied request by default (no
-# middleware needed for that — SHELFJ_GATEWAY_TRUST_FORWARDED_HEADERS=true in
+# middleware needed for that — STOREQL_GATEWAY_TRUST_FORWARDED_HEADERS=true in
 # 40-gateway.yaml just needs to trust what Traefik already sends).
 #
 # Bare-domain redirect: storeql.com/www. -> https://app.storeql.com/?tenant=<default>#/store,
@@ -88,7 +88,7 @@ apiVersion: traefik.io/v1alpha1
 kind: Middleware
 metadata:
   name: redirect-to-storefront
-  namespace: shelf-j
+  namespace: storeql
 spec:
   redirectRegex:
     regex: "^https?://(?:www\\.)?storeql\\.com/(.*)"
@@ -97,13 +97,13 @@ spec:
 
 ---
 # pos.storeql.com -> https://app.storeql.com/#/pos, landing in-store staff on the POS
-# shell. Same underlying shelf-app build/Deployment as everything else — router.dart's
+# shell. Same underlying storeql-app build/Deployment as everything else — router.dart's
 # auth guard still requires a cashier/admin login before the POS screens render.
 apiVersion: traefik.io/v1alpha1
 kind: Middleware
 metadata:
   name: redirect-to-pos
-  namespace: shelf-j
+  namespace: storeql
 spec:
   redirectRegex:
     regex: "^https?://pos\\.storeql\\.com/(.*)"
@@ -114,8 +114,8 @@ spec:
 apiVersion: traefik.io/v1alpha1
 kind: IngressRoute
 metadata:
-  name: shelfj-bare-domain-redirect
-  namespace: shelf-j
+  name: storeql-bare-domain-redirect
+  namespace: storeql
 spec:
   entryPoints: ["web", "websecure"]
   routes:
@@ -124,14 +124,14 @@ spec:
       middlewares:
         - name: redirect-to-storefront
       services:
-        - name: shelf-app # unused (middleware redirects before reaching it) but required by the CRD schema
+        - name: storeql-app # unused (middleware redirects before reaching it) but required by the CRD schema
           port: 8080
     - match: Host(`pos.storeql.com`)
       kind: Rule
       middlewares:
         - name: redirect-to-pos
       services:
-        - name: shelf-app # unused (middleware redirects before reaching it) but required by the CRD schema
+        - name: storeql-app # unused (middleware redirects before reaching it) but required by the CRD schema
           port: 8080
   tls:
     secretName: storeql-com-tls
@@ -141,7 +141,7 @@ apiVersion: cert-manager.io/v1
 kind: Certificate
 metadata:
   name: storeql-com-tls
-  namespace: shelf-j
+  namespace: storeql
 spec:
   secretName: storeql-com-tls
   issuerRef: { name: letsencrypt-prod, kind: ClusterIssuer }

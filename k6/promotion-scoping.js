@@ -8,7 +8,7 @@
 //
 //   k6/run.sh promotion-scoping
 import http from 'k6/http';
-import { ALL_CHECKS_PASS, BASE, call, data, expect, must, onboardTenant, poll, staffUser, truthy, uniq } from './lib/shelfj.js';
+import { ALL_CHECKS_PASS, BASE, call, data, expect, must, onboardTenant, poll, staffUser, truthy, uniq } from './lib/storeql.js';
 
 export const options = { vus: 1, iterations: 1, thresholds: ALL_CHECKS_PASS, setupTimeout: '3m' };
 

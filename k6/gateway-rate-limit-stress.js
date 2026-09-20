@@ -1,4 +1,4 @@
-// Gateway rate limit: each client IP gets shelfj.gateway.rate-limit.requests-per-minute requests in
+// Gateway rate limit: each client IP gets storeql.gateway.rate-limit.requests-per-minute requests in
 // a 60-second window, then 429 RATE_LIMITED with Retry-After — and never a 5xx.
 //
 // Fires a little over the budget within one window at a path the gateway itself rejects (no token
@@ -11,7 +11,7 @@
 import http from 'k6/http';
 import { check } from 'k6';
 import { Counter } from 'k6/metrics';
-import { BASE } from './lib/shelfj.js';
+import { BASE } from './lib/storeql.js';
 
 const LIMIT = Number(__ENV.RATE_LIMIT_REQUESTS_PER_MINUTE || 30000);
 const OVER = Math.max(200, Math.round(LIMIT * 0.02));

@@ -15,7 +15,7 @@
 //   k6/run.sh mfa-flow
 import { sleep } from 'k6';
 import { Counter } from 'k6/metrics';
-import { ALL_CHECKS_PASS, PASSWORD, answerSecondFactor, call, claims, data, expect, login, must, onboardTenant, platformAdmin, register, staffUser, totp, truthy } from './lib/shelfj.js';
+import { ALL_CHECKS_PASS, PASSWORD, answerSecondFactor, call, claims, data, expect, login, must, onboardTenant, platformAdmin, register, staffUser, totp, truthy } from './lib/storeql.js';
 import { SoftwarePasskey } from './lib/passkey.js';
 
 const completed = new Counter('flow_completed');
@@ -78,7 +78,7 @@ export default async function ({ tenant, cashier, manager, shopper, bystander, a
   // ── an authenticator app ─────────────────────────────────────────────────────────────────────────
   truthy('[+] a login starts with no second factor, and none required of it', status(owner.token).totp === false && status(owner.token).required === false);
   const begun = must(call('POST', `${AUTH}/mfa/totp`, { token: owner.token }), 200, 'begin authenticator');
-  truthy('[+] setting one up answers a secret and the URI an app scans', /^[A-Z2-7]{32}$/.test(begun.secret) && begun.otpauthUri.includes(`secret=${begun.secret}`) && begun.otpauthUri.includes('issuer=Shelf-J'), begun.otpauthUri);
+  truthy('[+] setting one up answers a secret and the URI an app scans', /^[A-Z2-7]{32}$/.test(begun.secret) && begun.otpauthUri.includes(`secret=${begun.secret}`) && begun.otpauthUri.includes('issuer=StoreQL'), begun.otpauthUri);
   truthy('[+] it is no factor until a code confirms it: sign-in still answers tokens', !!data(login(owner)).accessToken);
   expect(call('POST', `${AUTH}/mfa/totp/confirm`, { token: owner.token, body: { code: '000000' } }), '[-] a wrong code confirms nothing', 400, 'MFA_CODE_INVALID');
   const ownerApp = { secret: begun.secret, lastStep: 0 };
@@ -187,7 +187,7 @@ export default async function ({ tenant, cashier, manager, shopper, bystander, a
   truthy('[+] the shopper\'s sign-in now owes the passkey', passkeyOwed.mfaRequired === true && JSON.stringify(passkeyOwed.mfaMethods) === '["PASSKEY","RECOVERY_CODE"]', passkeyOwed.mfaMethods);
   const request = must(call('POST', `${AUTH}/mfa/login/passkey-options`, { body: { mfaToken: passkeyOwed.mfaToken } }), 200, 'passkey request options');
   truthy('[+] the challenge names the passkey it may be answered with', request.allowCredentials.length === 1 && request.allowCredentials[0] === key.credentialIdText && request.rpId === 'localhost', request);
-  const forPhisher = await key.assert(request, 'https://shelf-j.evil.test');
+  const forPhisher = await key.assert(request, 'https://storeql.evil.test');
   expect(call('POST', `${AUTH}/mfa/login`, { body: { mfaToken: passkeyOwed.mfaToken, method: 'PASSKEY', assertion: forPhisher } }), '[abuse] an assertion signed for a phishing site\'s origin is no use here', 401, 'MFA_CODE_INVALID');
   const stranger = await SoftwarePasskey.create('localhost');
   const forged = { ...(await stranger.assert(request, ORIGIN)), credentialId: key.credentialIdText };

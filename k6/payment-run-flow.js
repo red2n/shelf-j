@@ -23,7 +23,7 @@ import {
   sellableVariant,
   staffUser,
   truthy,
-} from './lib/shelfj.js';
+} from './lib/storeql.js';
 
 // A script exception ends the iteration with every check run so far green; the counter is only
 // added on the last line, so a flow that stopped part-way fails instead of passing on five checks.

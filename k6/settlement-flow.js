@@ -16,7 +16,7 @@
 //   k6/run.sh settlement-flow
 import http from 'k6/http';
 import { Counter } from 'k6/metrics';
-import { ALL_CHECKS_PASS, BASE, call, data, expect, must, newId, poll, sellingTenant, truthy, uniq } from './lib/shelfj.js';
+import { ALL_CHECKS_PASS, BASE, call, data, expect, must, newId, poll, sellingTenant, truthy, uniq } from './lib/storeql.js';
 
 const completed = new Counter('flow_completed');
 export const options = {
@@ -57,7 +57,7 @@ export default function ({ tenant, rival, store, variantId, cashier }) {
   const payout = (reference, lines, extra = {}) => {
     const net = round(lines.reduce((t, l) => t + l.gross - (l.fee || 0), 0));
     const content = HEADER + lines.map((l) => `${l.type},${l.reference || ''},${l.original || ''},${money(l.gross)},${money(l.fee || 0)},${money(l.gross - (l.fee || 0))}`).join('\n') + '\n';
-    return { body: { provider: 'Worldpay', format: 'SHELFJ', reference, payoutDate: today, declaredNet: net, content, ...extra }, net };
+    return { body: { provider: 'Worldpay', format: 'STOREQL', reference, payoutDate: today, declaredNet: net, content, ...extra }, net };
   };
   const importFile = (body, token = owner, idem = true) => call('POST', SETTLEMENTS, { token, idem, body });
   const batch = (id, query = '', token = owner) => call('GET', `${SETTLEMENTS}/${id}${query}`, { token });
@@ -193,7 +193,7 @@ export default function ({ tenant, rival, store, variantId, cashier }) {
   truthy('[+] and so does Adyen\'s, with the fee worked out from what was kept', fromAdyen.reference === `B${tag}` && num(fromAdyen.feeAmount) === 0.8 && num(fromAdyen.netAmount) === 39.2 && fromAdyen.status === 'EXCEPTIONS', fromAdyen);
   expect(importFile({ provider: 'Stripe', format: 'STRIPE', content: stripe.split(`po_${tag}`).join(`po_${tag}_eur`).split(',gbp,').join(',eur,') }), '[-] a payout in a currency the business does not trade in', 400, 'SETTLEMENT_CURRENCY_MIXED');
   const formats = data(call('GET', `${SETTLEMENTS}/formats`, { token: owner }));
-  truthy('[+] the layouts read are listed, with the most lines a file may have', JSON.stringify(formats.formats) === '["ADYEN","SHELFJ","STRIPE"]' && formats.maxLines === 20000, formats);
+  truthy('[+] the layouts read are listed, with the most lines a file may have', JSON.stringify(formats.formats) === '["ADYEN","STOREQL","STRIPE"]' && formats.maxLines === 20000, formats);
 
   // ── what cannot be imported ──────────────────────────────────────────────────────────────────────
   const one = [{ type: 'SALE', reference: `Z-${tag}`, gross: 10, fee: 0.1 }];
@@ -207,7 +207,7 @@ export default function ({ tenant, rival, store, variantId, cashier }) {
   expect(importFile({ ...payout('', one).body }), '[-] a payout with no number', 400, 'SETTLEMENT_REFERENCE_MISSING');
   expect(importFile({ ...payout(`BAD-${tag}-5`, one).body, payoutDate: '2099-01-01' }), '[-] paid in the future', 400, 'SETTLEMENT_PAYOUT_DATE_INVALID');
   expect(importFile({ ...payout(`BAD-${tag}-6`, one).body, storeId: newId() }), '[-] for a store that is not the business\'s', 400, 'SETTLEMENT_STORE_UNKNOWN');
-  expect(importFile({ provider: 'Worldpay', format: 'SHELFJ' }), '[-] with no file at all', 400);
+  expect(importFile({ provider: 'Worldpay', format: 'STOREQL' }), '[-] with no file at all', 400);
   expect(importFile({ ...payout(`BAD-${tag}-7`, one).body, content: `${HEADER}SALE,4111 1111 1111 1111,,10.00,0.10,9.90\n` }), '[abuse] a file carrying a full card number is stopped at the gateway', 400, 'CARD_DATA_NOT_ACCEPTED');
   const long = HEADER + Array.from({ length: 20001 }, (_, i) => `SALE,L${i}-${tag},,1.00,0.00,1.00`).join('\n');
   const tooLong = importFile({ ...payout(`BAD-${tag}-8`, one).body, content: long });

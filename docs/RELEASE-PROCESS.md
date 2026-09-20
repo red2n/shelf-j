@@ -1,6 +1,6 @@
 # Release process
 
-How Shelf-J cuts a version, and what happens automatically once you do. Read this before pushing a `v*` tag.
+How StoreQL cuts a version, and what happens automatically once you do. Read this before pushing a `v*` tag.
 
 ## Tag format
 
@@ -30,7 +30,7 @@ Maven module versions are **not** bumped to match — every `pom.xml` stays `0.1
    - **`release.yml`** — rebuilds, deploys module JARs to GitHub Packages (Maven), collects every `target/*.jar` and attaches them to a new GitHub Release named after the tag.
    - **`docker-publish.yml`** — builds and pushes every service + the web image to GHCR, each tagged with `<version>`, `<major>.<minor>`, `<major>`, and `sha-<short>` (in addition to what every push already gets: `sha-<short>`, plus `latest` on `main`). See [Image tags](#image-tags-per-push) below.
    Both also say what the release is made of and where it was built — see [Verifying a release](#verifying-a-release-what-it-is-made-of-and-where-it-was-built).
-4. Watch it: `gh run watch --repo red2n/shelf-j <run-id>`, or check the Releases page / GHCR packages once both finish.
+4. Watch it: `gh run watch --repo red2n/storeql <run-id>`, or check the Releases page / GHCR packages once both finish.
 
 ## Image tags per push
 
@@ -52,17 +52,17 @@ Every image `docker-publish.yml` pushes is built with BuildKit's own SBOM and ma
 | SLSA build-provenance attestation | `actions/attest-build-provenance` | which repository, workflow, commit and runner built it |
 | Sigstore signature, keyless | `cosign sign` | that this repository's publish workflow vouches for it — no private key exists to steal; the ten-minute certificate names the workflow and ref, and the signature is in the public transparency log |
 
-`release.yml` attaches `shelf-j-<tag>.cdx.json` / `.cdx.xml` (one CycloneDX 1.6 SBOM for the whole reactor: every module and every dependency that ships — `scripts/sbom.sh` makes the same document locally) and `SHA256SUMS`, and attests build provenance and the SBOM to every jar.
+`release.yml` attaches `storeql-<tag>.cdx.json` / `.cdx.xml` (one CycloneDX 1.6 SBOM for the whole reactor: every module and every dependency that ships — `scripts/sbom.sh` makes the same document locally) and `SHA256SUMS`, and attests build provenance and the SBOM to every jar.
 
 To check a release before running it:
 
 ```
 scripts/verify-release.sh 0.2.0            # all 15 images of that version
 scripts/verify-release.sh latest gateway   # one image
-gh attestation verify gateway.jar --repo red2n/shelf-j
+gh attestation verify gateway.jar --repo red2n/storeql
 ```
 
-The script resolves each tag to a digest once, then requires the signature to come from `red2n/shelf-j`'s `docker-publish.yml` (GitHub's OIDC issuer) and both attestations to verify against that digest; it exits non-zero if anything did not. A cluster can enforce the same rule at admission (Kyverno `verifyImages` or Sigstore's policy-controller) with that identity and issuer.
+The script resolves each tag to a digest once, then requires the signature to come from `red2n/storeql`'s `docker-publish.yml` (GitHub's OIDC issuer) and both attestations to verify against that digest; it exits non-zero if anything did not. A cluster can enforce the same rule at admission (Kyverno `verifyImages` or Sigstore's policy-controller) with that identity and issuer.
 
 `scripts/supply-chain-check.py` runs in CI and fails the build if either workflow stops doing any of this — an SBOM switched off, a tag signed instead of a digest, a stored key instead of keyless, an image the verifier does not know; `--self-test` breaks each promise in memory and fails unless the check notices. `scripts/supply-chain-selftest.sh` drives the mechanism end to end against a local registry (build with attestations, sign, attest, verify; then a wrong key, an unsigned image and a moved tag, each refused).
 

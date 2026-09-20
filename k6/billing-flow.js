@@ -13,7 +13,7 @@
 //
 //   k6/run.sh billing-flow
 import { Counter } from 'k6/metrics';
-import { ALL_CHECKS_PASS, call, data, expect, must, newId, onboardTenant, platformAdmin, poll, staffUser, truthy, uniq } from './lib/shelfj.js';
+import { ALL_CHECKS_PASS, call, data, expect, must, newId, onboardTenant, platformAdmin, poll, staffUser, truthy, uniq } from './lib/storeql.js';
 
 const completed = new Counter('flow_completed');
 export const options = {
@@ -41,7 +41,7 @@ export default function ({ admin }) {
   expect(asRoot('POST', '/run'), '[-] and nothing can be billed', 409, 'BILLING_PROFILE_NOT_SET');
 
   const profile = asRoot('PUT', '/profile', {
-    legalName: `Shelf-J Platform ${tag} Ltd`,
+    legalName: `StoreQL Platform ${tag} Ltd`,
     addressLine1: '1 Quay Street',
     city: 'Dublin',
     postcode: 'D02 XY45',
@@ -94,7 +94,7 @@ export default function ({ admin }) {
 
   const file = (id, token) => data(call('GET', `${MINE}/invoices/${id}`, { token: token || owner }));
   const firstFile = file(first.id);
-  truthy('[+] it prints both sides as they stood that day', /Shelf-J Platform/.test(firstFile.sellerSnapshot) && !!firstFile.buyerSnapshot, { seller: firstFile.sellerSnapshot, buyer: firstFile.buyerSnapshot });
+  truthy('[+] it prints both sides as they stood that day', /StoreQL Platform/.test(firstFile.sellerSnapshot) && !!firstFile.buyerSnapshot, { seller: firstFile.sellerSnapshot, buyer: firstFile.buyerSnapshot });
   truthy('[+] one line for the period, naming it', (firstFile.lines || []).length === 1 && firstFile.lines[0].kind === 'PLAN', firstFile.lines);
   truthy('[+] no reverse-charge wording on a domestic invoice', !firstFile.taxNote, firstFile.taxNote);
 

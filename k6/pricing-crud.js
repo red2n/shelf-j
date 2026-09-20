@@ -14,7 +14,7 @@ import {
   sellableVariant,
   truthy,
   uniq,
-} from './lib/shelfj.js';
+} from './lib/storeql.js';
 
 export const options = { vus: 1, iterations: 1, thresholds: ALL_CHECKS_PASS, setupTimeout: '3m' };
 

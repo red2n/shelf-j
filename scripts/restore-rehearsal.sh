@@ -7,16 +7,16 @@
 # the running stack makes meanwhile cannot make a good restore look wrong, or a bad one look right.
 #
 # Usage: scripts/restore-rehearsal.sh [report.md]
-#   SHELFJ_PG_CONTAINER (shelfj-postgres), SHELFJ_PG_DB (shelfj), SHELFJ_PG_USER (shelfj)
+#   STOREQL_PG_CONTAINER (storeql-postgres), STOREQL_PG_DB (storeql), STOREQL_PG_USER (storeql)
 # Appends a dated entry to the report (default docs/RESTORE-REHEARSAL.md); exits 1 on any mismatch.
 set -euo pipefail
 cd "$(dirname "$0")/.."
 
-SRC="${SHELFJ_PG_CONTAINER:-shelfj-postgres}"
-DB="${SHELFJ_PG_DB:-shelfj}"
-PGUSER_="${SHELFJ_PG_USER:-shelfj}"
+SRC="${STOREQL_PG_CONTAINER:-storeql-postgres}"
+DB="${STOREQL_PG_DB:-storeql}"
+PGUSER_="${STOREQL_PG_USER:-storeql}"
 REPORT="${1:-docs/RESTORE-REHEARSAL.md}"
-SCRATCH="shelfj-restore-rehearsal"
+SCRATCH="storeql-restore-rehearsal"
 IMAGE="postgres:16-alpine"
 WORK="$(mktemp -d)"
 
@@ -67,8 +67,8 @@ snap_in="${SNAP[1]}"
 eval "exec ${snap_in}>&-"
 wait "$SNAP_PID" || true
 docker cp "$SRC":/tmp/rehearsal-source.txt "$WORK/source.txt"
-docker cp "$SRC":/tmp/rehearsal.dump "$WORK/shelfj.dump"
-dump_bytes=$(stat -c %s "$WORK/shelfj.dump")
+docker cp "$SRC":/tmp/rehearsal.dump "$WORK/storeql.dump"
+dump_bytes=$(stat -c %s "$WORK/storeql.dump")
 t_copied=$(now)
 
 # 2. A fresh server, the dump restored into it, and the roles every service connects as.
@@ -79,8 +79,8 @@ for _ in $(seq 1 60); do
   sleep 1
 done
 t_ready=$(now)
-docker cp "$WORK/shelfj.dump" "$SCRATCH":/tmp/shelfj.dump
-docker exec "$SCRATCH" pg_restore -U "$PGUSER_" -d "$DB" --no-owner --no-privileges -j 4 /tmp/shelfj.dump
+docker cp "$WORK/storeql.dump" "$SCRATCH":/tmp/storeql.dump
+docker exec "$SCRATCH" pg_restore -U "$PGUSER_" -d "$DB" --no-owner --no-privileges -j 4 /tmp/storeql.dump
 t_restored=$(now)
 docker exec -i "$SCRATCH" psql -U "$PGUSER_" -d "$DB" -q -v ON_ERROR_STOP=1 < infra/postgres-init-roles.sql >/dev/null
 t_roles=$(now)

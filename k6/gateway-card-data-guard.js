@@ -1,6 +1,6 @@
 // The PCI DSS scope as a control: the gateway refuses any request carrying a payment card number.
 //
-// Shelf-J is SAQ-A because no card detail reaches any Shelf-J service — the customer completes
+// StoreQL is SAQ-A because no card detail reaches any StoreQL service — the customer completes
 // against the payment provider. That is true of the checkout and false of every free-text field
 // until something enforces it. The gateway scans every body and query string for a card number
 // (15/16/19 digits, Luhn-valid, an issuer range that is issued at that length) and answers
@@ -10,7 +10,7 @@
 // real sale must still go through with the guard in place.
 //
 //   k6/run.sh gateway-card-data-guard
-import { ALL_CHECKS_PASS, call, data, expect, must, onboardTenant, priceVariants, receive, sellableVariant, truthy } from './lib/shelfj.js';
+import { ALL_CHECKS_PASS, call, data, expect, must, onboardTenant, priceVariants, receive, sellableVariant, truthy } from './lib/storeql.js';
 
 export const options = { vus: 1, iterations: 1, thresholds: ALL_CHECKS_PASS };
 

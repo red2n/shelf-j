@@ -1,6 +1,6 @@
 # Security policy
 
-Shelf-J runs the tills, the online shop and the books of the businesses that use it. A weakness in it
+StoreQL runs the tills, the online shop and the books of the businesses that use it. A weakness in it
 can expose their customers' personal data or their money, so reports are welcome and taken seriously.
 
 ## Reporting a vulnerability

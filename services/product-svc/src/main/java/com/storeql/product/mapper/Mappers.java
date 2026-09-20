@@ -1,0 +1,595 @@
+package com.storeql.product.mapper;
+
+import com.storeql.product.domain.Domain;
+import com.storeql.product.domain.Domain.Brand;
+import com.storeql.product.domain.Domain.CatalogGroup;
+import com.storeql.product.domain.Domain.CatalogGroupElement;
+import com.storeql.product.domain.Domain.Category;
+import com.storeql.product.domain.Domain.CategorySet;
+import com.storeql.product.domain.Domain.CategorySetMember;
+import com.storeql.product.domain.Domain.ContainerType;
+import com.storeql.product.domain.Domain.ItemAttributeGroup;
+import com.storeql.product.domain.Domain.ItemAttributeGroupField;
+import com.storeql.product.domain.Domain.ItemCrossReference;
+import com.storeql.product.domain.Domain.ItemRelationship;
+import com.storeql.product.domain.Domain.ItemRevision;
+import com.storeql.product.domain.Domain.ItemTemplate;
+import com.storeql.product.domain.Domain.ItemTemplateApplication;
+import com.storeql.product.domain.Domain.Product;
+import com.storeql.product.domain.Domain.UomClass;
+import com.storeql.product.domain.Domain.UomDefinition;
+import com.storeql.product.domain.Domain.UomItemConversion;
+import com.storeql.product.domain.Domain.Variant;
+import com.storeql.product.domain.Domain.VariantAttributeGroupValues;
+import com.storeql.product.domain.Domain.VariantCatalogAssignment;
+import com.storeql.product.domain.Domain.VariantCategorySetAssignment;
+import com.storeql.product.domain.Domain.VariantContainerLink;
+import com.storeql.product.dto.Dtos.AgeRestrictionRuleResponse;
+import com.storeql.product.dto.Dtos.AllergenEntry;
+import com.storeql.product.dto.Dtos.AllergenResponse;
+import com.storeql.product.dto.Dtos.BrandResponse;
+import com.storeql.product.dto.Dtos.CatalogAssignmentResponse;
+import com.storeql.product.dto.Dtos.CatalogGroupElementResponse;
+import com.storeql.product.dto.Dtos.CatalogGroupResponse;
+import com.storeql.product.dto.Dtos.CategoryResponse;
+import com.storeql.product.dto.Dtos.CategorySetMemberResponse;
+import com.storeql.product.dto.Dtos.CategorySetResponse;
+import com.storeql.product.dto.Dtos.ContainerTypeResponse;
+import com.storeql.product.dto.Dtos.ItemAttributeGroupFieldResponse;
+import com.storeql.product.dto.Dtos.ItemAttributeGroupResponse;
+import com.storeql.product.dto.Dtos.ItemCrossReferenceResponse;
+import com.storeql.product.dto.Dtos.ItemRelationshipResponse;
+import com.storeql.product.dto.Dtos.ItemRevisionResponse;
+import com.storeql.product.dto.Dtos.ItemTemplateApplicationResponse;
+import com.storeql.product.dto.Dtos.ItemTemplateResponse;
+import com.storeql.product.dto.Dtos.ProductResponse;
+import com.storeql.product.dto.Dtos.UomClassResponse;
+import com.storeql.product.dto.Dtos.UomDefinitionResponse;
+import com.storeql.product.dto.Dtos.UomItemConversionResponse;
+import com.storeql.product.dto.Dtos.VariantAttributeGroupValuesResponse;
+import com.storeql.product.dto.Dtos.VariantCategorySetAssignmentResponse;
+import com.storeql.product.dto.Dtos.VariantComplianceResponse;
+import com.storeql.product.dto.Dtos.VariantContainerLinkResponse;
+import com.storeql.product.dto.Dtos.VariantResponse;
+import com.storeql.product.dto.Dtos.VariantScanResponse;
+import java.time.Instant;
+import java.util.List;
+
+/** Entity → DTO conversion. */
+public final class Mappers {
+
+  private Mappers() {}
+
+  /**
+   * Converts a brand to its wire form.
+   *
+   * @param b the brand to convert
+   * @return its API representation
+   */
+  public static BrandResponse toBrand(Brand b) {
+    return new BrandResponse(
+        b.id().toString(), b.name(), b.status(), ts(b.createdAt()), ts(b.updatedAt()));
+  }
+
+  /**
+   * Converts a category to its wire form.
+   *
+   * @param c the category to convert
+   * @return its API representation
+   */
+  public static CategoryResponse toCategory(Category c) {
+    return new CategoryResponse(
+        c.id().toString(),
+        c.parentId() == null ? null : c.parentId().toString(),
+        c.name(),
+        c.status(),
+        ts(c.createdAt()),
+        ts(c.updatedAt()));
+  }
+
+  /**
+   * Converts a product to its wire form.
+   *
+   * @param p the product to convert
+   * @return its API representation
+   */
+  public static ProductResponse toProduct(Product p) {
+    return new ProductResponse(
+        p.id().toString(),
+        p.name(),
+        p.description(),
+        p.brandId() == null ? null : p.brandId().toString(),
+        p.categoryId() == null ? null : p.categoryId().toString(),
+        p.status(),
+        p.sellableOnline(),
+        p.sellablePos(),
+        ts(p.createdAt()),
+        ts(p.updatedAt()),
+        p.launchOn() == null ? null : p.launchOn().toString(),
+        p.discontinuedAt() == null ? null : ts(p.discontinuedAt()));
+  }
+
+  /**
+   * Converts a variant to its wire form.
+   *
+   * @param v the variant to convert
+   * @return its API representation
+   */
+  public static VariantResponse toVariant(Variant v) {
+    return new VariantResponse(
+        v.id().toString(),
+        v.productId().toString(),
+        v.sku(),
+        v.barcode(),
+        v.manufacturerPn(),
+        v.attributes(),
+        v.unit(),
+        v.status(),
+        ts(v.createdAt()),
+        ts(v.updatedAt()));
+  }
+
+  /**
+   * Converts an allergen to its wire form.
+   *
+   * @param a the allergen to convert
+   * @return its API representation
+   */
+  public static AllergenResponse toAllergen(Domain.Allergen a) {
+    return new AllergenResponse(a.code(), a.name(), a.detail(), a.regulation());
+  }
+
+  /**
+   * Converts an allergen entry to its wire form.
+   *
+   * @param a the allergen entry to convert
+   * @return its API representation
+   */
+  public static AllergenEntry toAllergenEntry(Domain.VariantAllergen a) {
+    return new AllergenEntry(a.allergenCode(), a.presence());
+  }
+
+  /**
+   * Converts a compliance to its wire form.
+   *
+   * @param c the compliance to convert
+   * @return its API representation
+   */
+  public static VariantComplianceResponse toCompliance(Domain.VariantCompliance c) {
+    return new VariantComplianceResponse(
+        c.variantId().toString(),
+        c.countryOfOrigin(),
+        c.originDetail(),
+        c.restrictionCategory(),
+        c.allergenStatus(),
+        c.ingredients(),
+        c.hsnCode(),
+        c.soldBy(),
+        c.netContent(),
+        c.netContentUom(),
+        c.tareWeight(),
+        c.catchWeight(),
+        c.depositMaterial(),
+        c.depositVolumeMl());
+  }
+
+  /**
+   * Converts an age rule to its wire form.
+   *
+   * @param r the age rule to convert
+   * @return its API representation
+   */
+  public static AgeRestrictionRuleResponse toAgeRule(Domain.AgeRestrictionRule r) {
+    return new AgeRestrictionRuleResponse(
+        r.country(),
+        r.category(),
+        r.minimumAge(),
+        r.note(),
+        r.tenantId() != null,
+        r.bornBefore() == null ? null : r.bornBefore().toString(),
+        r.bornBeforeFrom() == null ? null : r.bornBeforeFrom().toString());
+  }
+
+  /**
+   * Converts a variant scan to its wire form.
+   *
+   * @param v the variant
+   * @param p the product
+   * @return its API representation
+   */
+  /**
+   * What a scanned code carried, as the wire sends it (07.15).
+   *
+   * <p>Money and measures go out as strings, for the same reason every other amount on this
+   * platform does: a JSON number is a double by the time a browser has parsed it, and 1.250 kg
+   * priced by weight is money.
+   */
+  public static com.storeql.product.dto.Dtos.ScannedCodeResponse toScannedCode(
+      com.storeql.gs1.Gs1Scan scan) {
+    if (scan == null) return null;
+    return new com.storeql.product.dto.Dtos.ScannedCodeResponse(
+        scan.format().name(),
+        scan.gtin(),
+        scan.batch().orElse(null),
+        scan.serial().orElse(null),
+        scan.sscc().orElse(null),
+        scan.expiry().map(Object::toString).orElse(null),
+        scan.bestBefore().map(Object::toString).orElse(null),
+        scan.productionDate().map(Object::toString).orElse(null),
+        scan.netWeightKg().map(java.math.BigDecimal::toPlainString).orElse(null),
+        scan.netWeightLb().map(java.math.BigDecimal::toPlainString).orElse(null),
+        scan.amountPayable().map(java.math.BigDecimal::toPlainString).orElse(null),
+        scan.currencyNumeric().orElse(null));
+  }
+
+  public static VariantScanResponse toVariantScan(Variant v, Product p) {
+    return toVariantScan(v, p, null);
+  }
+
+  /**
+   * Converts a variant and its product to the scan form, with its HSN or SAC code.
+   *
+   * @param v the variant
+   * @param p its product
+   * @param hsnCode the code recorded for the variant, or null
+   * @return its API representation
+   */
+  public static VariantScanResponse toVariantScan(Variant v, Product p, String hsnCode) {
+    return toVariantScan(v, p, hsnCode, null);
+  }
+
+  /**
+   * Converts a variant and its product to the scan form, with its HSN code and drinks container.
+   *
+   * @param v the variant
+   * @param p its product
+   * @param hsnCode the code recorded for the variant, or null
+   * @param container the drinks container it is sold in, or null (09.16)
+   * @return its API representation
+   */
+  public static VariantScanResponse toVariantScan(
+      Variant v, Product p, String hsnCode, Domain.DepositContainer container) {
+    return new VariantScanResponse(
+        v.id().toString(),
+        p.id().toString(),
+        p.name(),
+        v.sku(),
+        v.barcode(),
+        v.manufacturerPn(),
+        v.attributes(),
+        v.unit(),
+        v.status(),
+        ts(v.createdAt()),
+        ts(v.updatedAt()),
+        hsnCode,
+        container == null ? null : container.material(),
+        container == null ? null : container.volumeMl());
+  }
+
+  /**
+   * Converts an uom class to its wire form.
+   *
+   * @param c the uom class to convert
+   * @return its API representation
+   */
+  public static UomClassResponse toUomClass(UomClass c) {
+    return new UomClassResponse(c.code(), c.name());
+  }
+
+  /**
+   * Converts an uom definition to its wire form.
+   *
+   * @param d the uom definition to convert
+   * @return its API representation
+   */
+  public static UomDefinitionResponse toUomDefinition(UomDefinition d) {
+    return new UomDefinitionResponse(d.code(), d.name(), d.classCode());
+  }
+
+  /**
+   * Converts an uom item conversion to its wire form.
+   *
+   * @param c the uom item conversion to convert
+   * @return its API representation
+   */
+  public static UomItemConversionResponse toUomItemConversion(UomItemConversion c) {
+    return new UomItemConversionResponse(
+        c.id().toString(), c.variantId().toString(), c.fromUom(), c.toUom(), c.factor());
+  }
+
+  /**
+   * Converts a template to its wire form.
+   *
+   * @param t the template to convert
+   * @return its API representation
+   */
+  public static ItemTemplateResponse toTemplate(ItemTemplate t) {
+    return new ItemTemplateResponse(
+        t.id().toString(),
+        t.name(),
+        t.description(),
+        t.attributes(),
+        t.status(),
+        ts(t.createdAt()));
+  }
+
+  /**
+   * Converts a template application to its wire form.
+   *
+   * @param a the template application to convert
+   * @return its API representation
+   */
+  public static ItemTemplateApplicationResponse toTemplateApplication(ItemTemplateApplication a) {
+    return new ItemTemplateApplicationResponse(
+        a.id().toString(), a.variantId().toString(), a.templateId().toString(), ts(a.appliedAt()));
+  }
+
+  /**
+   * Converts a cross reference to its wire form.
+   *
+   * @param x the cross reference to convert
+   * @return its API representation
+   */
+  public static ItemCrossReferenceResponse toCrossReference(ItemCrossReference x) {
+    return new ItemCrossReferenceResponse(
+        x.id().toString(),
+        x.variantId().toString(),
+        x.partyType(),
+        x.partyId().toString(),
+        x.partyName(),
+        x.crossRefNumber(),
+        ts(x.createdAt()));
+  }
+
+  /**
+   * Converts a relationship to its wire form.
+   *
+   * @param r the relationship to convert
+   * @return its API representation
+   */
+  public static ItemRelationshipResponse toRelationship(ItemRelationship r) {
+    return new ItemRelationshipResponse(
+        r.id().toString(),
+        r.variantId().toString(),
+        r.relatedVariantId().toString(),
+        r.relationshipType(),
+        ts(r.createdAt()));
+  }
+
+  /**
+   * Converts a revision to its wire form.
+   *
+   * @param r the revision to convert
+   * @return its API representation
+   */
+  public static ItemRevisionResponse toRevision(ItemRevision r) {
+    return new ItemRevisionResponse(
+        r.id().toString(),
+        r.variantId().toString(),
+        r.revision(),
+        r.description(),
+        r.effectiveDate().toString(),
+        r.status(),
+        ts(r.createdAt()));
+  }
+
+  // ── Catalog Groups (Gap #35) ─────────────────────────────────────────────
+
+  /**
+   * Converts a catalog group to its wire form.
+   *
+   * @param g the group
+   * @param elements its elements
+   * @return its API representation
+   */
+  public static CatalogGroupResponse toCatalogGroup(
+      CatalogGroup g, List<CatalogGroupElementResponse> elements) {
+    return new CatalogGroupResponse(
+        g.id().toString(),
+        g.name(),
+        g.description(),
+        g.status(),
+        ts(g.createdAt()),
+        ts(g.updatedAt()),
+        elements);
+  }
+
+  /**
+   * Converts a catalog group element to its wire form.
+   *
+   * @param e the catalog group element to convert
+   * @return its API representation
+   */
+  public static CatalogGroupElementResponse toCatalogGroupElement(CatalogGroupElement e) {
+    return new CatalogGroupElementResponse(
+        e.id().toString(),
+        e.groupId().toString(),
+        e.elementName(),
+        e.dataType(),
+        e.required(),
+        e.defaultVal(),
+        e.sortOrder(),
+        ts(e.createdAt()));
+  }
+
+  /**
+   * Converts a catalog assignment to its wire form.
+   *
+   * @param a the catalog assignment to convert
+   * @return its API representation
+   */
+  public static CatalogAssignmentResponse toCatalogAssignment(VariantCatalogAssignment a) {
+    return new CatalogAssignmentResponse(
+        a.id().toString(),
+        a.variantId().toString(),
+        a.groupId().toString(),
+        a.elementVals(),
+        ts(a.createdAt()),
+        ts(a.updatedAt()));
+  }
+
+  /**
+   * Converts a container type to its wire form.
+   *
+   * @param c the container type to convert
+   * @return its API representation
+   */
+  public static ContainerTypeResponse toContainerType(ContainerType c) {
+    return new ContainerTypeResponse(
+        c.id().toString(),
+        c.code(),
+        c.name(),
+        c.description(),
+        c.lengthMm(),
+        c.widthMm(),
+        c.heightMm(),
+        c.maxWeightKg(),
+        c.tareWeightKg(),
+        c.maxUnits(),
+        c.status(),
+        ts(c.createdAt()),
+        ts(c.updatedAt()));
+  }
+
+  /**
+   * Converts a variant container link to its wire form.
+   *
+   * @param l the link
+   * @param containerTypeCode the container type code
+   * @param containerTypeName the container type name
+   * @return its API representation
+   */
+  public static VariantContainerLinkResponse toVariantContainerLink(
+      VariantContainerLink l, String containerTypeCode, String containerTypeName) {
+    return new VariantContainerLinkResponse(
+        l.id().toString(),
+        l.variantId().toString(),
+        l.containerTypeId().toString(),
+        containerTypeCode,
+        containerTypeName,
+        l.qtyPerContainer(),
+        l.isPrimary(),
+        ts(l.createdAt()));
+  }
+
+  /**
+   * Converts an attribute group field to its wire form.
+   *
+   * @param f the attribute group field to convert
+   * @return its API representation
+   */
+  public static ItemAttributeGroupFieldResponse toAttributeGroupField(ItemAttributeGroupField f) {
+    return new ItemAttributeGroupFieldResponse(
+        f.fieldCode(), f.label(), f.dataType(), f.required(), f.sortOrder());
+  }
+
+  /**
+   * Converts an attribute group to its wire form.
+   *
+   * @param g the group
+   * @param fields its fields
+   * @return its API representation
+   */
+  public static ItemAttributeGroupResponse toAttributeGroup(
+      ItemAttributeGroup g, List<ItemAttributeGroupFieldResponse> fields) {
+    return new ItemAttributeGroupResponse(g.groupCode(), g.name(), g.description(), fields);
+  }
+
+  /**
+   * Converts a variant attribute group values to its wire form.
+   *
+   * @param v the variant
+   * @return its API representation
+   */
+  public static VariantAttributeGroupValuesResponse toVariantAttributeGroupValues(
+      VariantAttributeGroupValues v) {
+    return new VariantAttributeGroupValuesResponse(
+        v.id().toString(),
+        v.variantId().toString(),
+        v.groupCode(),
+        v.values(),
+        ts(v.createdAt()),
+        ts(v.updatedAt()));
+  }
+
+  // ── Gap #39: Category sets ─────────────────────────────────────────────────
+
+  /**
+   * Converts a category set to its wire form.
+   *
+   * @param s the category set to convert
+   * @return its API representation
+   */
+  public static CategorySetResponse toCategorySet(CategorySet s) {
+    return new CategorySetResponse(
+        s.id().toString(),
+        s.name(),
+        s.description(),
+        s.purpose(),
+        s.defaultCatId() == null ? null : s.defaultCatId().toString(),
+        s.controlled(),
+        s.status(),
+        ts(s.createdAt()),
+        ts(s.updatedAt()));
+  }
+
+  /**
+   * Converts a category set member to its wire form.
+   *
+   * @param m the category set member to convert
+   * @return its API representation
+   */
+  public static CategorySetMemberResponse toCategorySetMember(CategorySetMember m) {
+    return new CategorySetMemberResponse(
+        m.id().toString(), m.setId().toString(), m.categoryId().toString(), ts(m.createdAt()));
+  }
+
+  /**
+   * Converts a variant category set assignment to its wire form.
+   *
+   * @param a the variant category set assignment to convert
+   * @return its API representation
+   */
+  public static VariantCategorySetAssignmentResponse toVariantCategorySetAssignment(
+      VariantCategorySetAssignment a) {
+    return new VariantCategorySetAssignmentResponse(
+        a.id().toString(),
+        a.variantId().toString(),
+        a.setId().toString(),
+        a.categoryId().toString(),
+        ts(a.createdAt()),
+        ts(a.updatedAt()));
+  }
+
+  private static String ts(Instant i) {
+    return i == null ? null : i.toString();
+  }
+
+  // ── product safety information (01.12) ────────────────────────────────────
+
+  public static com.storeql.product.dto.Dtos.SafetyInformationResponse toSafetyInformation(
+      com.storeql.product.domain.Domain.SafetySheet sheet) {
+    var s = sheet.safety();
+    return new com.storeql.product.dto.Dtos.SafetyInformationResponse(
+        sheet.productId().toString(),
+        s != null,
+        s == null ? null : s.manufacturerName(),
+        s == null ? null : s.manufacturerAddress(),
+        s == null ? null : s.manufacturerContact(),
+        s == null ? null : s.manufacturerCountry(),
+        s == null ? null : s.responsiblePersonName(),
+        s == null ? null : s.responsiblePersonAddress(),
+        s == null ? null : s.responsiblePersonContact(),
+        s == null ? null : s.warnings(),
+        s != null && s.noWarnings(),
+        sheet.required(),
+        sheet.missing(),
+        s == null ? null : ts(s.updatedAt()));
+  }
+
+  public static com.storeql.product.dto.Dtos.MissingSafetyInformationResponse toMissingSafety(
+      com.storeql.product.domain.Domain.MissingSafety m) {
+    return new com.storeql.product.dto.Dtos.MissingSafetyInformationResponse(
+        m.productId().toString(), m.name(), m.missing());
+  }
+}

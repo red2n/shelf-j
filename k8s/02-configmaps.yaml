@@ -3,32 +3,32 @@
 apiVersion: v1
 kind: ConfigMap
 metadata:
-  name: shelfj-common-env
-  namespace: shelf-j
+  name: storeql-common-env
+  namespace: storeql
 data:
   # SERVER_PORT maps to the "server.port" MP Config property per the spec's standard
   # env-var mapping rules (dots/hyphens -> underscore, uppercased) — same for every
-  # SHELFJ_* key below (e.g. SHELFJ_DB_URL -> shelfj.db.url). No literal-dotted env var
+  # STOREQL_* key below (e.g. STOREQL_DB_URL -> storeql.db.url). No literal-dotted env var
   # names needed; Helidon resolves them the same way docker-compose.yml's dotted keys do.
   SERVER_PORT: "8080"
   # Runtime app pool goes through PgBouncer; Flyway migrates straight to Postgres
   # (its DDL runs as multi-statement transactions that need full session affinity,
   # which PgBouncer's transaction pool_mode breaks — see infra/postgres note in
   # docker-compose.yml x-svc-env).
-  SHELFJ_DB_URL: "jdbc:postgresql://pgbouncer:6432/shelfj?prepareThreshold=0"
-  SHELFJ_DB_MIGRATION_URL: "jdbc:postgresql://postgres:5432/shelfj"
-  SHELFJ_CONSUL_HOST: "consul"
-  SHELFJ_CONSUL_PORT: "8500"
-  SHELFJ_KAFKA_BOOTSTRAP: "kafka:29092"
-  SHELFJ_CONFIG_URL: "http://config:8080"
+  STOREQL_DB_URL: "jdbc:postgresql://pgbouncer:6432/storeql?prepareThreshold=0"
+  STOREQL_DB_MIGRATION_URL: "jdbc:postgresql://postgres:5432/storeql"
+  STOREQL_CONSUL_HOST: "consul"
+  STOREQL_CONSUL_PORT: "8500"
+  STOREQL_KAFKA_BOOTSTRAP: "kafka:29092"
+  STOREQL_CONFIG_URL: "http://config:8080"
   # No config-repo/*.properties files are shipped for any profile (server-side
   # stub only) — every service falls back to its own baked-in defaults regardless
   # of this value. Kept as "docker" to match the exact behavior already exercised
   # in docker-compose.yml; there is nothing to gain by inventing a "k8s" profile
   # with no backing config files.
-  SHELFJ_CONFIG_PROFILE: "docker"
-  SHELFJ_REDIS_HOST: "redis"
-  SHELFJ_REDIS_PORT: "6379"
+  STOREQL_CONFIG_PROFILE: "docker"
+  STOREQL_REDIS_HOST: "redis"
+  STOREQL_REDIS_PORT: "6379"
 
 ---
 # All Helidon MP services expose /metrics in Prometheus format — same scrape config as
@@ -38,15 +38,15 @@ data:
 apiVersion: v1
 kind: ConfigMap
 metadata:
-  name: shelfj-prometheus-config
-  namespace: shelf-j
+  name: storeql-prometheus-config
+  namespace: storeql
 data:
   prometheus.yml: |
     global:
       scrape_interval: 15s
       evaluation_interval: 15s
       external_labels:
-        project: 'shelf-j'
+        project: 'storeql'
         env: 'k3s'
 
     scrape_configs:
@@ -143,7 +143,7 @@ data:
       # ── Infrastructure exporters ─────────────────────────────────────────────
       - job_name: 'node'
         static_configs:
-          - targets: ['node-exporter.shelf-j-nodes:9100']
+          - targets: ['node-exporter.storeql-nodes:9100']
             labels: { service: 'node', layer: 'infra' }
 
       - job_name: 'postgres'
@@ -171,15 +171,15 @@ data:
 apiVersion: v1
 kind: ConfigMap
 metadata:
-  name: shelfj-grafana-datasources
-  namespace: shelf-j
+  name: storeql-grafana-datasources
+  namespace: storeql
 data:
   datasources.yml: |
     apiVersion: 1
     datasources:
       - name: Prometheus
         type: prometheus
-        uid: prometheus-shelfj
+        uid: prometheus-storeql
         url: http://prometheus:9090
         access: proxy
         isDefault: true
@@ -193,13 +193,13 @@ data:
 apiVersion: v1
 kind: ConfigMap
 metadata:
-  name: shelfj-grafana-dashboard-provider
-  namespace: shelf-j
+  name: storeql-grafana-dashboard-provider
+  namespace: storeql
 data:
   provider.yml: |
     apiVersion: 1
     providers:
-      - name: shelf-j
+      - name: storeql
         orgId: 1
         type: file
         disableDeletion: false

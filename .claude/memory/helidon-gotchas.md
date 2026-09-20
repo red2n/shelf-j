@@ -1,6 +1,6 @@
 ---
 name: helidon-gotchas
-description: Helidon 4.4.x + Java 21 known pitfalls specific to Shelf-J. Read before scaffolding or debugging any back-end service.
+description: Helidon 4.4.x + Java 21 known pitfalls specific to StoreQL. Read before scaffolding or debugging any back-end service.
 metadata:
   type: project
 ---
@@ -18,7 +18,7 @@ These bite silently and waste hours — apply them automatically.
 | 5 | Fat jar won't start (ClassNotFoundException) | `target/libs/` not populated | Add `maven-dependency-plugin:copy-dependencies` to package phase |
 | 6 | Build or runtime failure with JDK 25 | Default `java` on dev machine is 25 | Set `JAVA_HOME=/usr/lib/jvm/temurin-21-jdk-amd64` for build + run |
 | 7 | `PSQLException: ERROR: could not determine data type of parameter $1` | `setObject(i, null)` for a UUID column | Use a separate `col IS NULL` query branch |
-| 8 | Flyway histories collide between services | All services share one Postgres DB in compose | Set `shelfj.db.schema`; call `setCurrentSchema(schema)` and `.schemas(s).defaultSchema(s).createSchemas(true)` on Flyway |
+| 8 | Flyway histories collide between services | All services share one Postgres DB in compose | Set `storeql.db.schema`; call `setCurrentSchema(schema)` and `.schemas(s).defaultSchema(s).createSchemas(true)` on Flyway |
 | 9 | Kafka consumer / outbox publisher never runs | CDI is lazy; `@ApplicationScoped` bean not instantiated | Add `void onStart(@Observes @Initialized(ApplicationScoped.class) Object e) {}` |
 
 **Why:** These were discovered during iam-svc and inventory-svc implementation. The scaffold-service skill already applies them but they can re-appear when adding a new bean type or upgrading a dependency.

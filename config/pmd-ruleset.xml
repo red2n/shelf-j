@@ -1,6 +1,6 @@
 <?xml version="1.0"?>
 <!--
-  PMD ruleset for Shelf-J.
+  PMD ruleset for StoreQL.
 
   Uses a focused subset of PMD's built-in rules:
     - errorprone  : patterns that are almost always wrong (high signal, low noise)
@@ -9,13 +9,13 @@
   Rules that produce too many CDI/framework false-positives are explicitly excluded.
   Add exclusions with a comment explaining WHY — never exclude silently.
 -->
-<ruleset name="shelf-j"
+<ruleset name="storeql"
          xmlns="http://pmd.sourceforge.net/ruleset/2.0.0"
          xmlns:xsi="http://www.w3.org/2001/XMLSchema-instance"
          xsi:schemaLocation="http://pmd.sourceforge.net/ruleset/2.0.0
                              https://pmd.sourceforge.io/ruleset_2_0_0.xsd">
 
-    <description>Shelf-J quality ruleset — errorprone + bestpractices, CDI-aware exclusions</description>
+    <description>StoreQL quality ruleset — errorprone + bestpractices, CDI-aware exclusions</description>
 
     <!-- ── Error-prone patterns ────────────────────────────────────────────── -->
     <rule ref="category/java/errorprone.xml">
@@ -94,13 +94,13 @@
 
     </rule>
 
-    <!-- ── Shelf-J rules ───────────────────────────────────────────────────── -->
+    <!-- ── StoreQL rules ───────────────────────────────────────────────────── -->
     <rule name="UseTimeOrderedIds"
           language="java"
-          message="Shelf-J ids are UUIDv7: use Ids.newId(), or Ids.derived(source, name) for a deterministic key"
+          message="StoreQL ids are UUIDv7: use Ids.newId(), or Ids.derived(source, name) for a deterministic key"
           class="net.sourceforge.pmd.lang.rule.xpath.XPathRule">
         <description>
-            UUID.randomUUID() makes version-4 ids and UUID.nameUUIDFromBytes() version-3 ones. Shelf-J
+            UUID.randomUUID() makes version-4 ids and UUID.nameUUIDFromBytes() version-3 ones. StoreQL
             stores only UUIDv7: new rows append at the right-hand edge of a B-tree instead of landing
             on a random page. Use Ids.newId(); for a key that must come out the same every time (a
             dedupe id per event line) use Ids.derived(source, name). A random value that is not an

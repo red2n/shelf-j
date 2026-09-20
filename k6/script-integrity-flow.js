@@ -7,7 +7,7 @@
 import http from 'k6/http';
 import crypto from 'k6/crypto';
 import { Counter } from 'k6/metrics';
-import { ALL_CHECKS_PASS, call, data, expect, onboardTenant, platformAdmin, truthy } from './lib/shelfj.js';
+import { ALL_CHECKS_PASS, call, data, expect, onboardTenant, platformAdmin, truthy } from './lib/storeql.js';
 
 const WEB = __ENV.WEB_URL || 'http://localhost:8088';
 const completed = new Counter('flow_completed');

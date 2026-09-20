@@ -1,9 +1,9 @@
-# Shelf-J — local development stack.
+# StoreQL — local development stack.
 #
 # Startup is health-check driven: each layer waits for the previous to be ready.
 # Infra → Platform (config/consul) → Business services (parallel) → Gateway
 #
-# All services share `shelfj_network`; inter-container addressing is by service
+# All services share `storeql_network`; inter-container addressing is by service
 # name on port 8080 (e.g. http://iam-svc:8080).
 #
 # Usage:
@@ -12,7 +12,7 @@
 #   docker compose up -d --build        # build images + start everything
 #
 # Ports exposed to the host (developers need these):
-#   8088  shelf-app (web UI: admin/storefront/POS)
+#   8088  storeql-app (web UI: admin/storefront/POS)
 #   8090  gateway (public entry point)    3100  grafana
 #   5555  pgadmin                         8500  consul UI
 #   8081  kafka-ui                        9411  zipkin
@@ -26,11 +26,11 @@
 #   loki (3100), tempo (3200), node/postgres/redis exporters (9100/9187/9121),
 #   pgbouncer (6432), config-svc (8080)
 
-name: shelf-j
+name: storeql
 
 networks:
-  shelfj_network:
-    name: shelfj_network
+  storeql_network:
+    name: storeql_network
     driver: bridge
     ipam:
       config:
@@ -76,26 +76,26 @@ volumes:
 # ── YAML anchors — shared blocks to avoid repeating 8 env vars per service ──
 x-svc-env: &svc-env
   server.port: "8080"
-  # Application log level, applied to com.shelfj at startup by LogLevelConfigurer. INFO keeps
+  # Application log level, applied to com.storeql at startup by LogLevelConfigurer. INFO keeps
   # steady-state volume sane — every record here is formatted, shipped over OTLP and stored, so
-  # FINE across 14 services is paid for three times. Set SHELFJ_LOG_LEVEL=FINE (or DEBUG) in .env
+  # FINE across 14 services is paid for three times. Set STOREQL_LOG_LEVEL=FINE (or DEBUG) in .env
   # while debugging; it needs no rebuild, only a restart of the affected service.
-  SHELFJ_LOG_LEVEL: ${SHELFJ_LOG_LEVEL:-INFO}
+  STOREQL_LOG_LEVEL: ${STOREQL_LOG_LEVEL:-INFO}
   # Runtime app pool goes through PgBouncer (golden rule: don't orphan provisioned infra).
   # Flyway gets its own direct-to-Postgres URL below — its DDL migrations run as multi-statement
   # transactions that need full session affinity, which PgBouncer's transaction pool_mode breaks.
-  shelfj.db.url: jdbc:postgresql://pgbouncer:6432/${POSTGRES_DB:-shelfj}?prepareThreshold=0
-  shelfj.db.migration-url: jdbc:postgresql://postgres:5432/${POSTGRES_DB:-shelfj}
-  shelfj.db.user: ${POSTGRES_USER:-shelfj}
-  shelfj.db.password: ${POSTGRES_PASSWORD:-shelfj_dev_change_me}
-  shelfj.consul.host: consul
-  shelfj.consul.port: "8500"
-  shelfj.kafka.bootstrap: kafka:29092
+  storeql.db.url: jdbc:postgresql://pgbouncer:6432/${POSTGRES_DB:-storeql}?prepareThreshold=0
+  storeql.db.migration-url: jdbc:postgresql://postgres:5432/${POSTGRES_DB:-storeql}
+  storeql.db.user: ${POSTGRES_USER:-storeql}
+  storeql.db.password: ${POSTGRES_PASSWORD:-storeql_dev_change_me}
+  storeql.consul.host: consul
+  storeql.consul.port: "8500"
+  storeql.kafka.bootstrap: kafka:29092
   # Central config: each service pulls non-secret overrides from config-svc at startup and layers
   # them over its baked defaults (falls back to local defaults if config-svc is unreachable).
-  shelfj.config.url: http://config:8080
-  shelfj.config.profile: docker
-  shelfj.config.token: ${SHELFJ_CONFIG_TOKEN:?SHELFJ_CONFIG_TOKEN must be set (>= 32 chars) - see .env.example}
+  storeql.config.url: http://config:8080
+  storeql.config.profile: docker
+  storeql.config.token: ${STOREQL_CONFIG_TOKEN:?STOREQL_CONFIG_TOKEN must be set (>= 32 chars) - see .env.example}
   # OTLP is the only telemetry path — traces AND logs, to the collector (no Promtail/Zipkin-direct).
   otel.exporter.otlp.endpoint: http://otel-collector:4317
 
@@ -121,7 +121,7 @@ services:
   # Defaults sized for a 4–8 GB dev host; override via .env (PG_SHARED_BUFFERS, etc.).
   postgres:
     image: postgres:16-alpine
-    container_name: shelfj-postgres
+    container_name: storeql-postgres
     restart: unless-stopped
     command:
       - postgres
@@ -164,9 +164,9 @@ services:
       - -c
       - log_min_duration_statement=${PG_LOG_MIN_DURATION:-200}
     environment:
-      POSTGRES_DB: ${POSTGRES_DB:-shelfj}
-      POSTGRES_USER: ${POSTGRES_USER:-shelfj}
-      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:-shelfj_dev_change_me}
+      POSTGRES_DB: ${POSTGRES_DB:-storeql}
+      POSTGRES_USER: ${POSTGRES_USER:-storeql}
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:-storeql_dev_change_me}
     # Host publish is for local tooling only — services reach Postgres at postgres:5432 (Flyway)
     # and pgbouncer:6432 (runtime) on the compose network. Configurable because another Compose
     # project on this machine binds 0.0.0.0:5432, which blocks even a loopback bind here.
@@ -178,17 +178,17 @@ services:
       # the script for the exact `docker compose exec` invocation.
       - ./infra/postgres-init-roles.sql:/docker-entrypoint-initdb.d/01-roles.sql:ro
     networks:
-      shelfj_network:
+      storeql_network:
         ipv4_address: *postgres-ip
     healthcheck:
-      test: ["CMD-SHELL", "pg_isready -U ${POSTGRES_USER:-shelfj}"]
+      test: ["CMD-SHELL", "pg_isready -U ${POSTGRES_USER:-storeql}"]
       interval: 5s
       timeout: 3s
       retries: 12
 
   # PgBouncer — connection pooler (transaction mode, 2000 app → 150 real connections).
-  # Business services route their runtime pool through pgbouncer:6432 (shelfj.db.url, set in
-  # x-svc-env above). Flyway uses its own shelfj.db.migration-url straight to postgres:5432 —
+  # Business services route their runtime pool through pgbouncer:6432 (storeql.db.url, set in
+  # x-svc-env above). Flyway uses its own storeql.db.migration-url straight to postgres:5432 —
   # its DDL migrations are multi-statement transactions that need full session affinity, which
   # this pooler's transaction pool_mode does not guarantee mid-migration.
   # NOTE: auth_type=trust is fine for local dev (no external access). Change to
@@ -197,7 +197,7 @@ services:
     # pgbouncer/pgbouncer does not publish consistent versioned tags beyond 1.15.0;
     # latest is the only way to get a current release from this image.
     image: pgbouncer/pgbouncer:latest
-    container_name: shelfj-pgbouncer
+    container_name: storeql-pgbouncer
     restart: unless-stopped
     environment:
       # Raw DATABASES entry with no fixed user/password: each connecting service
@@ -206,7 +206,7 @@ services:
       # via the credential stored for it in userlist.txt. A fixed DATABASES_USER would
       # collapse every connection back to one shared identity and defeat the
       # per-service GRANTs.
-      DATABASES: "* = host=postgres port=5432 dbname=${POSTGRES_DB:-shelfj}"
+      DATABASES: "* = host=postgres port=5432 dbname=${POSTGRES_DB:-storeql}"
       PGBOUNCER_POOL_MODE: transaction
       PGBOUNCER_MAX_CLIENT_CONN: "2000"
       PGBOUNCER_DEFAULT_POOL_SIZE: "50"
@@ -241,7 +241,7 @@ services:
       postgres: *postgres-ip
     depends_on:
       postgres: { condition: service_healthy }
-    networks: [shelfj_network]
+    networks: [storeql_network]
     healthcheck:
       # 127.0.0.1, not localhost: pgbouncer listens on IPv4 only, and busybox nc in the current image
       # resolves localhost to ::1 first, so "nc -z localhost" failed and held every service back.
@@ -252,11 +252,11 @@ services:
 
   consul:
     image: hashicorp/consul:1.22.0
-    container_name: shelfj-consul
+    container_name: storeql-consul
     restart: unless-stopped
     command: agent -dev -client=0.0.0.0
     ports: ["127.0.0.1:8500:8500"]
-    networks: [shelfj_network]
+    networks: [storeql_network]
     healthcheck:
       test: ["CMD", "consul", "members"]
       interval: 5s
@@ -266,7 +266,7 @@ services:
   # Kafka in KRaft mode (no Zookeeper — Kafka 3.6+).
   kafka:
     image: confluentinc/cp-kafka:7.6.1
-    container_name: shelfj-kafka
+    container_name: storeql-kafka
     restart: unless-stopped
     # Host publish is for local tooling only — every service reaches Kafka at kafka:29092 on the
     # compose network, so changing this cannot affect the stack. Configurable because another
@@ -293,7 +293,7 @@ services:
       KAFKA_JVM_PERFORMANCE_OPTS: "-XX:+UseG1GC -XX:MaxGCPauseMillis=20 -XX:+ExplicitGCInvokesConcurrent"
     volumes: ["kafka_data:/var/lib/kafka/data"]
     mem_limit: ${KAFKA_MEM_LIMIT:-1300m}
-    networks: [shelfj_network]
+    networks: [storeql_network]
     healthcheck:
       test: ["CMD-SHELL", "kafka-broker-api-versions --bootstrap-server localhost:9092 || exit 1"]
       interval: 10s
@@ -304,17 +304,17 @@ services:
   # Kafka UI — browse topics, consumer groups, and messages.
   kafka-ui:
     image: provectuslabs/kafka-ui:v0.7.2
-    container_name: shelfj-kafka-ui
+    container_name: storeql-kafka-ui
     restart: unless-stopped
     ports: ["127.0.0.1:${KAFKA_UI_PORT:-8081}:8080"]
     environment:
-      KAFKA_CLUSTERS_0_NAME: shelfj-local
+      KAFKA_CLUSTERS_0_NAME: storeql-local
       KAFKA_CLUSTERS_0_BOOTSTRAPSERVERS: kafka:29092
       JAVA_OPTS: "${KAFKA_UI_JAVA_OPTS:--Xms128m -Xmx384m}"
     mem_limit: ${KAFKA_UI_MEM_LIMIT:-550m}
     depends_on:
       kafka: { condition: service_healthy }
-    networks: [shelfj_network]
+    networks: [storeql_network]
 
   # Swagger UI — browses every business service's MicroProfile OpenAPI contract (served at
   # /api/<service>/openapi through the gateway; that path is whitelisted as public in
@@ -323,7 +323,7 @@ services:
   # routableServices in GatewayConfig and to this URLS list.
   swagger-ui:
     image: swaggerapi/swagger-ui:v5.17.14
-    container_name: shelfj-swagger-ui
+    container_name: storeql-swagger-ui
     restart: unless-stopped
     ports: ["127.0.0.1:${SWAGGER_UI_PORT:-8082}:8080"]
     environment:
@@ -342,7 +342,7 @@ services:
         {"url": "http://localhost:${GATEWAY_HOST_PORT:-8090}/api/v1/reporting-svc/openapi", "name": "reporting-svc"}]
       URLS_PRIMARY_NAME: iam-svc
     mem_limit: ${SWAGGER_UI_MEM_LIMIT:-256m}
-    networks: [shelfj_network]
+    networks: [storeql_network]
     healthcheck:
       # 127.0.0.1, not localhost: busybox wget in this image resolves localhost to ::1 first,
       # and nginx here only binds the IPv4 wildcard, so that would always fail with "connection
@@ -354,7 +354,7 @@ services:
 
   redis:
     image: redis:7-alpine
-    container_name: shelfj-redis
+    container_name: storeql-redis
     restart: unless-stopped
     command: >
       redis-server
@@ -363,7 +363,7 @@ services:
       --maxmemory-policy allkeys-lru
     ports: ["127.0.0.1:${REDIS_HOST_PORT:-6379}:6379"]
     volumes: ["redis_data:/data"]
-    networks: [shelfj_network]
+    networks: [storeql_network]
     healthcheck:
       test: ["CMD", "redis-cli", "-a", "${REDIS_PASSWORD:-redis_dev_change_me}", "ping"]
       interval: 5s
@@ -371,10 +371,10 @@ services:
       retries: 12
 
   # MQTT broker for notification-svc's device-facing push channel (POS terminals, kiosk/back-store
-  # displays, platform console). Only exercised when shelfj.notification.channel=mqtt — the default
+  # displays, platform console). Only exercised when storeql.notification.channel=mqtt — the default
   # (app) never talks to it, so it's deliberately not in x-svc-depends.
   #
-  # EMQX (not Mosquitto): a device authenticates with its existing shelfj platform access token,
+  # EMQX (not Mosquitto): a device authenticates with its existing storeql platform access token,
   # which the broker verifies against the public keys iam-svc publishes (20.15) — it holds nothing
   # that can sign one. notification-svc's publisher connection has its own password instead
   # (MQTT_PUBLISHER_PASSWORD), loaded from the bootstrap file below. Auth+ACL config is in
@@ -384,7 +384,7 @@ services:
   # Flutter admin/platform-console/POS shells, which can't open a raw TCP socket from a browser).
   mqtt:
     image: emqx/emqx:5.8.0
-    container_name: shelfj-mqtt
+    container_name: storeql-mqtt
     restart: unless-stopped
     configs:
       - source: mqtt_auth_bootstrap
@@ -397,7 +397,7 @@ services:
       - "127.0.0.1:1883:1883"
       - "127.0.0.1:8083:8083"
       - "127.0.0.1:18083:18083" # dashboard — local debugging only, admin/public by default
-    networks: [shelfj_network]
+    networks: [storeql_network]
     healthcheck:
       test: ["CMD-SHELL", "emqx ctl status || exit 1"]
       interval: 10s
@@ -407,13 +407,13 @@ services:
 
   zipkin:
     image: openzipkin/zipkin:3.6.1
-    container_name: shelfj-zipkin
+    container_name: storeql-zipkin
     restart: unless-stopped
     ports: ["127.0.0.1:9411:9411"]
     environment:
       JAVA_OPTS: "${ZIPKIN_JAVA_OPTS:--Xms128m -Xmx512m}"
     mem_limit: ${ZIPKIN_MEM_LIMIT:-700m}
-    networks: [shelfj_network]
+    networks: [storeql_network]
     healthcheck:
       test: ["CMD-SHELL", "wget -q -O /dev/null http://localhost:9411/health || exit 1"]
       interval: 10s
@@ -425,7 +425,7 @@ services:
   # (against the rest of the dockerized stack) can still ship via OTLP.
   otel-collector:
     image: otel/opentelemetry-collector-contrib:0.104.0
-    container_name: shelfj-otel-collector
+    container_name: storeql-otel-collector
     restart: unless-stopped
     command: ["--config=/etc/otel-collector-config.yaml"]
     volumes:
@@ -445,12 +445,12 @@ services:
       zipkin: { condition: service_healthy }
       loki:   { condition: service_healthy }
       tempo:  { condition: service_healthy }
-    networks: [shelfj_network]
+    networks: [storeql_network]
 
   # node_exporter — host CPU, memory, disk, network metrics (internal only).
   node-exporter:
     image: prom/node-exporter:v1.8.1
-    container_name: shelfj-node-exporter
+    container_name: storeql-node-exporter
     restart: unless-stopped
     command:
       - '--path.procfs=/host/proc'
@@ -459,7 +459,7 @@ services:
     volumes:
       - /proc:/host/proc:ro
       - /sys:/host/sys:ro
-    networks: [shelfj_network]
+    networks: [storeql_network]
     healthcheck:
       test: ["CMD-SHELL", "wget -qO- http://localhost:9100/metrics > /dev/null || exit 1"]
       interval: 10s
@@ -469,13 +469,13 @@ services:
   # postgres_exporter — internal; scraped by Prometheus.
   postgres-exporter:
     image: prometheuscommunity/postgres-exporter:v0.15.0
-    container_name: shelfj-postgres-exporter
+    container_name: storeql-postgres-exporter
     restart: unless-stopped
     environment:
-      DATA_SOURCE_NAME: "postgresql://${POSTGRES_USER:-shelfj}:${POSTGRES_PASSWORD:-shelfj_dev_change_me}@postgres:5432/${POSTGRES_DB:-shelfj}?sslmode=disable"
+      DATA_SOURCE_NAME: "postgresql://${POSTGRES_USER:-storeql}:${POSTGRES_PASSWORD:-storeql_dev_change_me}@postgres:5432/${POSTGRES_DB:-storeql}?sslmode=disable"
     depends_on:
       postgres: { condition: service_healthy }
-    networks: [shelfj_network]
+    networks: [storeql_network]
     healthcheck:
       test: ["CMD-SHELL", "wget -qO- http://localhost:9187/metrics > /dev/null || exit 1"]
       interval: 10s
@@ -485,18 +485,18 @@ services:
   # redis_exporter — internal; scraped by Prometheus.
   redis-exporter:
     image: oliver006/redis_exporter:v1.62.0
-    container_name: shelfj-redis-exporter
+    container_name: storeql-redis-exporter
     restart: unless-stopped
     environment:
       REDIS_ADDR: redis:6379
       REDIS_PASSWORD: ${REDIS_PASSWORD:-redis_dev_change_me}
     depends_on:
       redis: { condition: service_healthy }
-    networks: [shelfj_network]
+    networks: [storeql_network]
 
   prometheus:
     image: prom/prometheus:v2.53.0
-    container_name: shelfj-prometheus
+    container_name: storeql-prometheus
     restart: unless-stopped
     command:
       - --config.file=/etc/prometheus/prometheus.yml
@@ -509,7 +509,7 @@ services:
       - ./infra/prometheus/prometheus.yml:/etc/prometheus/prometheus.yml:ro
       - ./infra/prometheus/rules:/etc/prometheus/rules:ro
       - prometheus_data:/prometheus
-    networks: [shelfj_network]
+    networks: [storeql_network]
     healthcheck:
       test: ["CMD-SHELL", "wget -qO- http://localhost:9090/-/healthy || exit 1"]
       interval: 10s
@@ -518,7 +518,7 @@ services:
 
   grafana:
     image: grafana/grafana-oss:11.1.0
-    container_name: shelfj-grafana
+    container_name: storeql-grafana
     restart: unless-stopped
     environment:
       GF_SECURITY_ADMIN_USER: ${GRAFANA_USER:-admin}
@@ -534,7 +534,7 @@ services:
       prometheus: { condition: service_healthy }
       loki:       { condition: service_healthy }
       tempo:      { condition: service_healthy }
-    networks: [shelfj_network]
+    networks: [storeql_network]
     healthcheck:
       test: ["CMD-SHELL", "wget -qO- http://localhost:3000/api/health || exit 1"]
       interval: 10s
@@ -544,14 +544,14 @@ services:
   # PgAdmin — http://localhost:5555
   pgadmin:
     image: dpage/pgadmin4:9.15.0
-    container_name: shelfj-pgadmin
+    container_name: storeql-pgadmin
     restart: unless-stopped
     ports: ["127.0.0.1:${PGADMIN_PORT:-5555}:80"]
     environment:
-      PGADMIN_DEFAULT_EMAIL: ${PGADMIN_EMAIL:-admin@shelfj.dev}
+      PGADMIN_DEFAULT_EMAIL: ${PGADMIN_EMAIL:-admin@storeql.dev}
       PGADMIN_DEFAULT_PASSWORD: ${PGADMIN_PASSWORD:-admin_dev_change_me}
     volumes: ["pgadmin_data:/var/lib/pgadmin"]
-    networks: [shelfj_network]
+    networks: [storeql_network]
     healthcheck:
       test: ["CMD-SHELL", "wget -qO- http://localhost:80/ || exit 1"]
       interval: 10s
@@ -563,14 +563,14 @@ services:
   # Loki — log aggregation backend (internal; access via Grafana Explore).
   loki:
     image: grafana/loki:3.1.0
-    container_name: shelfj-loki
+    container_name: storeql-loki
     restart: unless-stopped
     command: -config.file=/etc/loki/loki-config.yaml
     volumes:
       - ./infra/loki-config.yaml:/etc/loki/loki-config.yaml:ro
       - loki_data:/loki
     mem_limit: ${LOKI_MEM_LIMIT:-512m}
-    networks: [shelfj_network]
+    networks: [storeql_network]
     healthcheck:
       test: ["CMD-SHELL", "wget -qO- http://localhost:3100/ready || exit 1"]
       interval: 10s
@@ -581,7 +581,7 @@ services:
   # Tempo — distributed tracing backend (internal; access via Grafana Explore).
   tempo:
     image: grafana/tempo:2.5.0
-    container_name: shelfj-tempo
+    container_name: storeql-tempo
     restart: unless-stopped
     user: root
     command: -config.file=/etc/tempo/tempo-config.yaml
@@ -589,7 +589,7 @@ services:
       - ./infra/tempo-config.yaml:/etc/tempo/tempo-config.yaml:ro
       - tempo_data:/var/tempo
     mem_limit: ${TEMPO_MEM_LIMIT:-512m}
-    networks: [shelfj_network]
+    networks: [storeql_network]
     healthcheck:
       test: ["CMD-SHELL", "wget -qO- http://localhost:3200/ready || exit 1"]
       interval: 10s
@@ -600,22 +600,22 @@ services:
   # ---------------------------------------------------------------- platform services
 
   config:
-    image: ghcr.io/red2n/shelf-j-config:${SHELFJ_TAG:-latest}
+    image: ghcr.io/red2n/storeql-config:${STOREQL_TAG:-latest}
     build:
       context: .
       dockerfile: Dockerfile.svc
       args: { SVC_PATH: platform/config, SVC_JAR: config-svc }
-    container_name: shelfj-config
+    container_name: storeql-config
     restart: unless-stopped
     environment:
       server.port: "8080"
       # Not covered by x-svc-env (config declares its own environment) — see that anchor.
-      SHELFJ_LOG_LEVEL: ${SHELFJ_LOG_LEVEL:-INFO}
+      STOREQL_LOG_LEVEL: ${STOREQL_LOG_LEVEL:-INFO}
       JAVA_TOOL_OPTIONS: "${CONFIG_JAVA_OPTS:--Xms64m -Xmx256m -XX:+UseG1GC}"
-      SHELFJ_CONFIG_TOKEN: ${SHELFJ_CONFIG_TOKEN:?SHELFJ_CONFIG_TOKEN must be set (>= 32 chars) - see .env.example}
+      STOREQL_CONFIG_TOKEN: ${STOREQL_CONFIG_TOKEN:?STOREQL_CONFIG_TOKEN must be set (>= 32 chars) - see .env.example}
       otel.exporter.otlp.endpoint: http://otel-collector:4317
     mem_limit: ${CONFIG_MEM_LIMIT:-384m}
-    networks: [shelfj_network]
+    networks: [storeql_network]
     depends_on:
       consul: { condition: service_healthy }
     healthcheck:
@@ -630,297 +630,297 @@ services:
   # ---------------------------------------------------------------- business services
 
   iam-svc:
-    image: ghcr.io/red2n/shelf-j-iam-svc:${SHELFJ_TAG:-latest}
+    image: ghcr.io/red2n/storeql-iam-svc:${STOREQL_TAG:-latest}
     build:
       context: .
       dockerfile: Dockerfile.svc
       args: { SVC_PATH: services/iam-svc, SVC_JAR: iam-svc }
-    container_name: shelfj-iam
+    container_name: storeql-iam
     restart: unless-stopped
     environment:
       <<: *svc-env
-      shelfj.db.user: iam_svc
-      shelfj.db.password: ${IAM_DB_PASSWORD:-iam_dev_change_me}
+      storeql.db.user: iam_svc
+      storeql.db.password: ${IAM_DB_PASSWORD:-iam_dev_change_me}
       JAVA_TOOL_OPTIONS: "${IAM_JAVA_OPTS:--Xms128m -Xmx512m -XX:+UseG1GC}"
-      SHELFJ_ADVERTISE_HOST: iam-svc
+      STOREQL_ADVERTISE_HOST: iam-svc
       # Seals the token signing keys' private halves at rest (20.15). It signs nothing: tokens are
       # RS256 under a rotating key, and only iam-svc is given this value.
-      shelfj.jwt.secret: ${SHELFJ_JWT_SECRET:?SHELFJ_JWT_SECRET must be set (>= 32 chars) - see .env.example}
+      storeql.jwt.secret: ${STOREQL_JWT_SECRET:?STOREQL_JWT_SECRET must be set (>= 32 chars) - see .env.example}
       # Best-effort: on logout, kick the user's live MQTT push session (infra/emqx-api-key.conf)
       # instead of leaving it connected until the JWT naturally expires. infra/emqx-api-key.conf
       # is a static file, NOT templated from these env vars — if you override
       # EMQX_API_KEY/EMQX_API_SECRET here, update that file to match, or the kick calls will
       # 401 (harmlessly: logout still succeeds, the session just isn't force-disconnected).
-      shelfj.mqtt.admin-api-url: http://mqtt:18083
-      shelfj.mqtt.admin-api-key: ${EMQX_API_KEY:-iam-svc}
-      shelfj.mqtt.admin-api-secret: ${EMQX_API_SECRET:-iam_mqtt_admin_dev_change_me}
+      storeql.mqtt.admin-api-url: http://mqtt:18083
+      storeql.mqtt.admin-api-key: ${EMQX_API_KEY:-iam-svc}
+      storeql.mqtt.admin-api-secret: ${EMQX_API_SECRET:-iam_mqtt_admin_dev_change_me}
     mem_limit: ${IAM_MEM_LIMIT:-700m}
-    networks: [shelfj_network]
+    networks: [storeql_network]
     depends_on: *svc-depends
     healthcheck: *svc-healthcheck
 
   tenant-svc:
-    image: ghcr.io/red2n/shelf-j-tenant-svc:${SHELFJ_TAG:-latest}
+    image: ghcr.io/red2n/storeql-tenant-svc:${STOREQL_TAG:-latest}
     build:
       context: .
       dockerfile: Dockerfile.svc
       args: { SVC_PATH: services/tenant-svc, SVC_JAR: tenant-svc }
-    container_name: shelfj-tenant
+    container_name: storeql-tenant
     restart: unless-stopped
     environment:
       <<: *svc-env
-      shelfj.db.user: tenant_svc
-      shelfj.db.password: ${TENANT_DB_PASSWORD:-tenant_dev_change_me}
+      storeql.db.user: tenant_svc
+      storeql.db.password: ${TENANT_DB_PASSWORD:-tenant_dev_change_me}
       JAVA_TOOL_OPTIONS: "${TENANT_JAVA_OPTS:--Xms128m -Xmx512m -XX:+UseG1GC}"
-      SHELFJ_ADVERTISE_HOST: tenant-svc
+      STOREQL_ADVERTISE_HOST: tenant-svc
       # The billing run may be asked for a day other than today (21.9). On here so a live flow can
       # drive a year of periods in seconds — Stripe ships a test clock for the same reason — and off
       # in k8s, where a platform administrator being able to bill next March is not a feature but a
       # way to issue an invoice nobody owes yet.
-      shelfj.billing.test-clock.enabled: "true"
+      storeql.billing.test-clock.enabled: "true"
     mem_limit: ${TENANT_MEM_LIMIT:-700m}
-    networks: [shelfj_network]
+    networks: [storeql_network]
     depends_on: *svc-depends
     healthcheck: *svc-healthcheck
 
   inventory-svc:
-    image: ghcr.io/red2n/shelf-j-inventory-svc:${SHELFJ_TAG:-latest}
+    image: ghcr.io/red2n/storeql-inventory-svc:${STOREQL_TAG:-latest}
     build:
       context: .
       dockerfile: Dockerfile.svc
       args: { SVC_PATH: services/inventory-svc, SVC_JAR: inventory-svc }
-    container_name: shelfj-inventory
+    container_name: storeql-inventory
     restart: unless-stopped
     environment:
       <<: *svc-env
-      shelfj.db.user: inventory_svc
-      shelfj.db.password: ${INVENTORY_DB_PASSWORD:-inventory_dev_change_me}
+      storeql.db.user: inventory_svc
+      storeql.db.password: ${INVENTORY_DB_PASSWORD:-inventory_dev_change_me}
       JAVA_TOOL_OPTIONS: "${INVENTORY_JAVA_OPTS:--Xms128m -Xmx512m -XX:+UseG1GC}"
-      SHELFJ_ADVERTISE_HOST: inventory-svc
+      STOREQL_ADVERTISE_HOST: inventory-svc
     mem_limit: ${INVENTORY_MEM_LIMIT:-700m}
-    networks: [shelfj_network]
+    networks: [storeql_network]
     depends_on: *svc-depends
     healthcheck: *svc-healthcheck
 
   order-svc:
-    image: ghcr.io/red2n/shelf-j-order-svc:${SHELFJ_TAG:-latest}
+    image: ghcr.io/red2n/storeql-order-svc:${STOREQL_TAG:-latest}
     build:
       context: .
       dockerfile: Dockerfile.svc
       args: { SVC_PATH: services/order-svc, SVC_JAR: order-svc }
-    container_name: shelfj-order
+    container_name: storeql-order
     restart: unless-stopped
     environment:
       <<: *svc-env
-      shelfj.db.user: order_svc
-      shelfj.db.password: ${ORDER_DB_PASSWORD:-order_dev_change_me}
+      storeql.db.user: order_svc
+      storeql.db.password: ${ORDER_DB_PASSWORD:-order_dev_change_me}
       JAVA_TOOL_OPTIONS: "${ORDER_JAVA_OPTS:--Xms128m -Xmx512m -XX:+UseG1GC}"
-      SHELFJ_ADVERTISE_HOST: order-svc
+      STOREQL_ADVERTISE_HOST: order-svc
       # Gap #63 — order-svc resolves prices from pricing-svc, ignoring client-supplied prices.
-      # Defaults to true (secure); set SHELFJ_ORDER_PRICING_ENFORCE=false only for local dev/demo
+      # Defaults to true (secure); set STOREQL_ORDER_PRICING_ENFORCE=false only for local dev/demo
       # with an unseeded price catalogue.
-      shelfj.order.pricing.enforce: ${SHELFJ_ORDER_PRICING_ENFORCE:-true}
+      storeql.order.pricing.enforce: ${STOREQL_ORDER_PRICING_ENFORCE:-true}
       # Checkout stock holds for ONLINE orders. Defaults to false in this dev rig (mirrors
       # pricing.enforce): with no seeded inventory every online checkout would 409 on stock.
-      shelfj.order.inventory.reserve-enforce: ${SHELFJ_ORDER_RESERVE_ENFORCE:-false}
+      storeql.order.inventory.reserve-enforce: ${STOREQL_ORDER_RESERVE_ENFORCE:-false}
       # 18.5 fiscal regimes: the Portuguese signing key and the cloud TSE credentials are secrets
       # passed through from the environment. Empty means PT_SAFT cannot be set and CLOUD is not
       # offered; SIMULATED needs nothing.
-      shelfj.fiscal.pt.private-key: ${SHELFJ_FISCAL_PT_PRIVATE_KEY:-}
-      shelfj.fiscal.pt.producer-tax-id: ${SHELFJ_FISCAL_PT_PRODUCER_TAX_ID:-}
-      shelfj.fiscal.tse.cloud.api-key: ${SHELFJ_FISCAL_TSE_CLOUD_API_KEY:-}
-      shelfj.fiscal.tse.cloud.api-secret: ${SHELFJ_FISCAL_TSE_CLOUD_API_SECRET:-}
+      storeql.fiscal.pt.private-key: ${STOREQL_FISCAL_PT_PRIVATE_KEY:-}
+      storeql.fiscal.pt.producer-tax-id: ${STOREQL_FISCAL_PT_PRODUCER_TAX_ID:-}
+      storeql.fiscal.tse.cloud.api-key: ${STOREQL_FISCAL_TSE_CLOUD_API_KEY:-}
+      storeql.fiscal.tse.cloud.api-secret: ${STOREQL_FISCAL_TSE_CLOUD_API_SECRET:-}
       # 07.13 / 18.9, the e-invoicing transport seam: the key the simulated network presents when it
       # delivers a document into purchase-svc's inbox. The same value purchase-svc holds it against.
-      shelfj.einvoice.inbound.key: ${SHELFJ_EINVOICE_INBOUND_KEY:-dev-einvoice-inbound-key}
+      storeql.einvoice.inbound.key: ${STOREQL_EINVOICE_INBOUND_KEY:-dev-einvoice-inbound-key}
     mem_limit: ${ORDER_MEM_LIMIT:-700m}
-    networks: [shelfj_network]
+    networks: [storeql_network]
     depends_on: *svc-depends
     healthcheck: *svc-healthcheck
 
   purchase-svc:
-    image: ghcr.io/red2n/shelf-j-purchase-svc:${SHELFJ_TAG:-latest}
+    image: ghcr.io/red2n/storeql-purchase-svc:${STOREQL_TAG:-latest}
     build:
       context: .
       dockerfile: Dockerfile.svc
       args: { SVC_PATH: services/purchase-svc, SVC_JAR: purchase-svc }
-    container_name: shelfj-purchase
+    container_name: storeql-purchase
     restart: unless-stopped
     environment:
       <<: *svc-env
-      shelfj.db.user: purchase_svc
-      shelfj.db.password: ${PURCHASE_DB_PASSWORD:-purchase_dev_change_me}
+      storeql.db.user: purchase_svc
+      storeql.db.password: ${PURCHASE_DB_PASSWORD:-purchase_dev_change_me}
       # Spend authority for submitting a purchase order, as CURRENCY:ROLE:amount.
       # Empty by default, which leaves approval OFF and submission behaving as it did before the
       # feature existed — turning mandatory approval on for every tenant already trading is not a
       # change to make in a config default. Per currency because there is no FX to convert with.
-      shelfj.purchase.approval.limits: ${PURCHASE_APPROVAL_LIMITS:-}
+      storeql.purchase.approval.limits: ${PURCHASE_APPROVAL_LIMITS:-}
       # 07.13, the transport seam: the key every network's provider presents when it delivers a
       # supplier's e-invoice (POST /e-invoices/inbound/{network}). Empty means no deliveries at all.
       # A real access point contract gets its own value; the dev default only lets order-svc's
       # simulated network deliver between the businesses on this stack.
-      shelfj.einvoice.inbound.key: ${SHELFJ_EINVOICE_INBOUND_KEY:-dev-einvoice-inbound-key}
+      storeql.einvoice.inbound.key: ${STOREQL_EINVOICE_INBOUND_KEY:-dev-einvoice-inbound-key}
       JAVA_TOOL_OPTIONS: "${PURCHASE_JAVA_OPTS:--Xms128m -Xmx384m -XX:+UseG1GC}"
-      SHELFJ_ADVERTISE_HOST: purchase-svc
+      STOREQL_ADVERTISE_HOST: purchase-svc
     mem_limit: ${PURCHASE_MEM_LIMIT:-512m}
-    networks: [shelfj_network]
+    networks: [storeql_network]
     depends_on: *svc-depends
     healthcheck: *svc-healthcheck
 
   cart-svc:
-    image: ghcr.io/red2n/shelf-j-cart-svc:${SHELFJ_TAG:-latest}
+    image: ghcr.io/red2n/storeql-cart-svc:${STOREQL_TAG:-latest}
     build:
       context: .
       dockerfile: Dockerfile.svc
       args: { SVC_PATH: services/cart-svc, SVC_JAR: cart-svc }
-    container_name: shelfj-cart
+    container_name: storeql-cart
     restart: unless-stopped
     environment:
       <<: *svc-env
-      shelfj.db.user: cart_svc
-      shelfj.db.password: ${CART_DB_PASSWORD:-cart_dev_change_me}
+      storeql.db.user: cart_svc
+      storeql.db.password: ${CART_DB_PASSWORD:-cart_dev_change_me}
       JAVA_TOOL_OPTIONS: "${CART_JAVA_OPTS:--Xms128m -Xmx384m -XX:+UseG1GC}"
-      SHELFJ_ADVERTISE_HOST: cart-svc
+      STOREQL_ADVERTISE_HOST: cart-svc
       # Backs the cart/cart-items cache-aside reads (see CartRepository).
-      shelfj.redis.host: redis
-      shelfj.redis.port: "6379"
-      shelfj.redis.password: ${REDIS_PASSWORD:-redis_dev_change_me}
+      storeql.redis.host: redis
+      storeql.redis.port: "6379"
+      storeql.redis.password: ${REDIS_PASSWORD:-redis_dev_change_me}
     mem_limit: ${CART_MEM_LIMIT:-512m}
-    networks: [shelfj_network]
+    networks: [storeql_network]
     depends_on:
       <<: *svc-depends
       redis: { condition: service_healthy }
     healthcheck: *svc-healthcheck
 
   pricing-svc:
-    image: ghcr.io/red2n/shelf-j-pricing-svc:${SHELFJ_TAG:-latest}
+    image: ghcr.io/red2n/storeql-pricing-svc:${STOREQL_TAG:-latest}
     build:
       context: .
       dockerfile: Dockerfile.svc
       args: { SVC_PATH: services/pricing-svc, SVC_JAR: pricing-svc }
-    container_name: shelfj-pricing
+    container_name: storeql-pricing
     restart: unless-stopped
     environment:
       <<: *svc-env
-      shelfj.db.user: pricing_svc
-      shelfj.db.password: ${PRICING_DB_PASSWORD:-pricing_dev_change_me}
+      storeql.db.user: pricing_svc
+      storeql.db.password: ${PRICING_DB_PASSWORD:-pricing_dev_change_me}
       # 18.5 Making Tax Digital: HMRC's application credentials and the key the taxpayer's tokens
       # are held under. Empty means HMRC is not offered; SIMULATED needs nothing.
-      shelfj.mtd.hmrc.base-url: ${SHELFJ_MTD_HMRC_BASE_URL:-https://test-api.service.hmrc.gov.uk}
-      shelfj.mtd.hmrc.client-id: ${SHELFJ_MTD_HMRC_CLIENT_ID:-}
-      shelfj.mtd.hmrc.client-secret: ${SHELFJ_MTD_HMRC_CLIENT_SECRET:-}
-      shelfj.mtd.token-key: ${SHELFJ_MTD_TOKEN_KEY:-}
+      storeql.mtd.hmrc.base-url: ${STOREQL_MTD_HMRC_BASE_URL:-https://test-api.service.hmrc.gov.uk}
+      storeql.mtd.hmrc.client-id: ${STOREQL_MTD_HMRC_CLIENT_ID:-}
+      storeql.mtd.hmrc.client-secret: ${STOREQL_MTD_HMRC_CLIENT_SECRET:-}
+      storeql.mtd.token-key: ${STOREQL_MTD_TOKEN_KEY:-}
       JAVA_TOOL_OPTIONS: "${PRICING_JAVA_OPTS:--Xms128m -Xmx384m -XX:+UseG1GC}"
-      SHELFJ_ADVERTISE_HOST: pricing-svc
+      STOREQL_ADVERTISE_HOST: pricing-svc
     mem_limit: ${PRICING_MEM_LIMIT:-512m}
-    networks: [shelfj_network]
+    networks: [storeql_network]
     depends_on: *svc-depends
     healthcheck: *svc-healthcheck
 
   payment-svc:
-    image: ghcr.io/red2n/shelf-j-payment-svc:${SHELFJ_TAG:-latest}
+    image: ghcr.io/red2n/storeql-payment-svc:${STOREQL_TAG:-latest}
     build:
       context: .
       dockerfile: Dockerfile.svc
       args: { SVC_PATH: services/payment-svc, SVC_JAR: payment-svc }
-    container_name: shelfj-payment
+    container_name: storeql-payment
     restart: unless-stopped
     environment:
       <<: *svc-env
-      shelfj.db.user: payment_svc
-      shelfj.db.password: ${PAYMENT_DB_PASSWORD:-payment_dev_change_me}
+      storeql.db.user: payment_svc
+      storeql.db.password: ${PAYMENT_DB_PASSWORD:-payment_dev_change_me}
       JAVA_TOOL_OPTIONS: "${PAYMENT_JAVA_OPTS:--Xms128m -Xmx256m -XX:+UseG1GC}"
-      SHELFJ_ADVERTISE_HOST: payment-svc
+      STOREQL_ADVERTISE_HOST: payment-svc
     mem_limit: ${PAYMENT_MEM_LIMIT:-384m}
-    networks: [shelfj_network]
+    networks: [storeql_network]
     depends_on: *svc-depends
     healthcheck: *svc-healthcheck
 
   product-svc:
-    image: ghcr.io/red2n/shelf-j-product-svc:${SHELFJ_TAG:-latest}
+    image: ghcr.io/red2n/storeql-product-svc:${STOREQL_TAG:-latest}
     build:
       context: .
       dockerfile: Dockerfile.svc
       args: { SVC_PATH: services/product-svc, SVC_JAR: product-svc }
-    container_name: shelfj-product
+    container_name: storeql-product
     restart: unless-stopped
     environment:
       <<: *svc-env
-      shelfj.db.user: product_svc
-      shelfj.db.password: ${PRODUCT_DB_PASSWORD:-product_dev_change_me}
+      storeql.db.user: product_svc
+      storeql.db.password: ${PRODUCT_DB_PASSWORD:-product_dev_change_me}
       JAVA_TOOL_OPTIONS: "${PRODUCT_JAVA_OPTS:--Xms128m -Xmx512m -XX:+UseG1GC}"
-      SHELFJ_ADVERTISE_HOST: product-svc
+      STOREQL_ADVERTISE_HOST: product-svc
       # Backs the findProduct cache-aside read (see ProductRepository).
-      shelfj.redis.host: redis
-      shelfj.redis.port: "6379"
-      shelfj.redis.password: ${REDIS_PASSWORD:-redis_dev_change_me}
+      storeql.redis.host: redis
+      storeql.redis.port: "6379"
+      storeql.redis.password: ${REDIS_PASSWORD:-redis_dev_change_me}
     mem_limit: ${PRODUCT_MEM_LIMIT:-700m}
-    networks: [shelfj_network]
+    networks: [storeql_network]
     depends_on:
       <<: *svc-depends
       redis: { condition: service_healthy }
     healthcheck: *svc-healthcheck
 
   customer-svc:
-    image: ghcr.io/red2n/shelf-j-customer-svc:${SHELFJ_TAG:-latest}
+    image: ghcr.io/red2n/storeql-customer-svc:${STOREQL_TAG:-latest}
     build:
       context: .
       dockerfile: Dockerfile.svc
       args: { SVC_PATH: services/customer-svc, SVC_JAR: customer-svc }
-    container_name: shelfj-customer
+    container_name: storeql-customer
     restart: unless-stopped
     environment:
       <<: *svc-env
-      shelfj.db.user: customer_svc
-      shelfj.db.password: ${CUSTOMER_DB_PASSWORD:-customer_dev_change_me}
+      storeql.db.user: customer_svc
+      storeql.db.password: ${CUSTOMER_DB_PASSWORD:-customer_dev_change_me}
       JAVA_TOOL_OPTIONS: "${CUSTOMER_JAVA_OPTS:--Xms128m -Xmx384m -XX:+UseG1GC}"
-      SHELFJ_ADVERTISE_HOST: customer-svc
+      STOREQL_ADVERTISE_HOST: customer-svc
     mem_limit: ${CUSTOMER_MEM_LIMIT:-512m}
-    networks: [shelfj_network]
+    networks: [storeql_network]
     depends_on: *svc-depends
     healthcheck: *svc-healthcheck
 
   notification-svc:
-    image: ghcr.io/red2n/shelf-j-notification-svc:${SHELFJ_TAG:-latest}
+    image: ghcr.io/red2n/storeql-notification-svc:${STOREQL_TAG:-latest}
     build:
       context: .
       dockerfile: Dockerfile.svc
       args: { SVC_PATH: services/notification-svc, SVC_JAR: notification-svc }
-    container_name: shelfj-notification
+    container_name: storeql-notification
     restart: unless-stopped
     environment:
       <<: *svc-env
-      shelfj.db.user: notification_svc
-      shelfj.db.password: ${NOTIFICATION_DB_PASSWORD:-notification_dev_change_me}
+      storeql.db.user: notification_svc
+      storeql.db.password: ${NOTIFICATION_DB_PASSWORD:-notification_dev_change_me}
       JAVA_TOOL_OPTIONS: "${NOTIFICATION_JAVA_OPTS:--Xms128m -Xmx384m -XX:+UseG1GC}"
-      SHELFJ_ADVERTISE_HOST: notification-svc
-      # Only used when shelfj.notification.channel is overridden to mqtt (default: app). The
+      STOREQL_ADVERTISE_HOST: notification-svc
+      # Only used when storeql.notification.channel is overridden to mqtt (default: app). The
       # publisher connection has its own broker password (20.15): notification-svc holds nothing
       # that can sign a platform token.
-      shelfj.notification.channel: ${NOTIFICATION_CHANNEL:-app}
-      shelfj.notification.mqtt.host: mqtt
-      shelfj.notification.mqtt.publisher-password: ${MQTT_PUBLISHER_PASSWORD:?MQTT_PUBLISHER_PASSWORD must be set - see .env.example}
+      storeql.notification.channel: ${NOTIFICATION_CHANNEL:-app}
+      storeql.notification.mqtt.host: mqtt
+      storeql.notification.mqtt.publisher-password: ${MQTT_PUBLISHER_PASSWORD:?MQTT_PUBLISHER_PASSWORD must be set - see .env.example}
     mem_limit: ${NOTIFICATION_MEM_LIMIT:-512m}
-    networks: [shelfj_network]
+    networks: [storeql_network]
     depends_on: *svc-depends
     healthcheck: *svc-healthcheck
 
   reporting-svc:
-    image: ghcr.io/red2n/shelf-j-reporting-svc:${SHELFJ_TAG:-latest}
+    image: ghcr.io/red2n/storeql-reporting-svc:${STOREQL_TAG:-latest}
     build:
       context: .
       dockerfile: Dockerfile.svc
       args: { SVC_PATH: services/reporting-svc, SVC_JAR: reporting-svc }
-    container_name: shelfj-reporting
+    container_name: storeql-reporting
     restart: unless-stopped
     environment:
       <<: *svc-env
-      shelfj.db.user: reporting_svc
-      shelfj.db.password: ${REPORTING_DB_PASSWORD:-reporting_dev_change_me}
+      storeql.db.user: reporting_svc
+      storeql.db.password: ${REPORTING_DB_PASSWORD:-reporting_dev_change_me}
       JAVA_TOOL_OPTIONS: "${REPORTING_JAVA_OPTS:--Xms128m -Xmx384m -XX:+UseG1GC}"
-      SHELFJ_ADVERTISE_HOST: reporting-svc
+      STOREQL_ADVERTISE_HOST: reporting-svc
     mem_limit: ${REPORTING_MEM_LIMIT:-512m}
-    networks: [shelfj_network]
+    networks: [storeql_network]
     depends_on: *svc-depends
     healthcheck: *svc-healthcheck
 
@@ -929,55 +929,55 @@ services:
   # Gateway waits for iam-svc and tenant-svc: these are the services clients hit first.
   # All others register with Consul and are discoverable once healthy.
   gateway:
-    image: ghcr.io/red2n/shelf-j-gateway:${SHELFJ_TAG:-latest}
+    image: ghcr.io/red2n/storeql-gateway:${STOREQL_TAG:-latest}
     build:
       context: .
       dockerfile: Dockerfile.svc
       args: { SVC_PATH: platform/gateway, SVC_JAR: gateway }
-    container_name: shelfj-gateway
+    container_name: storeql-gateway
     restart: unless-stopped
     environment:
       server.port: "8080"
       # Not covered by x-svc-env (the gateway declares its own environment) — see that anchor.
-      SHELFJ_LOG_LEVEL: ${SHELFJ_LOG_LEVEL:-INFO}
+      STOREQL_LOG_LEVEL: ${STOREQL_LOG_LEVEL:-INFO}
       JAVA_TOOL_OPTIONS: "${GATEWAY_JAVA_OPTS:--Xms128m -Xmx512m -XX:+UseG1GC}"
-      shelfj.consul.host: consul
-      shelfj.consul.port: "8500"
+      storeql.consul.host: consul
+      storeql.consul.port: "8500"
       # Per-IP budget. The k6 regression suite drives ~50 VUs from one host IP and peaks
       # well above 10k/min; 10k caused mid-run 429 cascades. Local-dev/load-test value only.
-      shelfj.gateway.rate-limit.requests-per-minute: "30000"
+      storeql.gateway.rate-limit.requests-per-minute: "30000"
       # Script integrity on the web shell (PCI DSS 11.6.1): the monitor reads the shell's inventory
       # and checks the served scripts against it on a schedule; drift is a gauge Prometheus alerts on.
-      shelfj.gateway.script-integrity.web-url: http://shelf-app:8080
-      shelfj.gateway.script-integrity.interval-minutes: "${GATEWAY_SCRIPT_INTEGRITY_INTERVAL_MINUTES:-60}"
+      storeql.gateway.script-integrity.web-url: http://storeql-app:8080
+      storeql.gateway.script-integrity.interval-minutes: "${GATEWAY_SCRIPT_INTEGRITY_INTERVAL_MINUTES:-60}"
       # No token secret here (20.15): the gateway verifies RS256 tokens against the public keys
       # iam-svc publishes and can mint nothing.
       otel.exporter.otlp.endpoint: http://otel-collector:4317
       # Browser origins that may call the API. The web UI (8088) and `flutter run` (40015) on this
       # machine by default; add http://<LAN-IP>:8088 for phone/tablet testing. Never "*": any
       # site a signed-in user visits could then read the API through their browser.
-      shelfj.gateway.cors.allowed-origins: ${GATEWAY_CORS_ALLOWED_ORIGINS:-http://localhost:8088,http://127.0.0.1:8088,http://localhost:40015,http://127.0.0.1:40015}
+      storeql.gateway.cors.allowed-origins: ${GATEWAY_CORS_ALLOWED_ORIGINS:-http://localhost:8088,http://127.0.0.1:8088,http://localhost:40015,http://127.0.0.1:40015}
       # Bulk admin operations (e.g. CSV catalog import) process thousands of rows
       # synchronously upstream; the 10s code default is tuned for normal request/response
       # calls and times out well before a large import finishes server-side.
-      shelfj.gateway.upstream.read-timeout-seconds: "${GATEWAY_UPSTREAM_READ_TIMEOUT_SECONDS:-120}"
+      storeql.gateway.upstream.read-timeout-seconds: "${GATEWAY_UPSTREAM_READ_TIMEOUT_SECONDS:-120}"
       # Rate-limit / brute-force counters live here, shared across every gateway replica.
-      shelfj.redis.host: redis
-      shelfj.redis.port: "6379"
-      shelfj.redis.password: ${REDIS_PASSWORD:-redis_dev_change_me}
+      storeql.redis.host: redis
+      storeql.redis.port: "6379"
+      storeql.redis.password: ${REDIS_PASSWORD:-redis_dev_change_me}
       # /.well-known/security.txt (RFC 9116). Empty means not published — see .env.example.
-      shelfj.gateway.security-txt.contact: ${SECURITY_TXT_CONTACT:-}
-      shelfj.gateway.security-txt.expires: ${SECURITY_TXT_EXPIRES:-}
-      shelfj.gateway.security-txt.policy: ${SECURITY_TXT_POLICY:-}
-      shelfj.gateway.security-txt.canonical: ${SECURITY_TXT_CANONICAL:-}
-      shelfj.gateway.security-txt.preferred-languages: ${SECURITY_TXT_PREFERRED_LANGUAGES:-}
+      storeql.gateway.security-txt.contact: ${SECURITY_TXT_CONTACT:-}
+      storeql.gateway.security-txt.expires: ${SECURITY_TXT_EXPIRES:-}
+      storeql.gateway.security-txt.policy: ${SECURITY_TXT_POLICY:-}
+      storeql.gateway.security-txt.canonical: ${SECURITY_TXT_CANONICAL:-}
+      storeql.gateway.security-txt.preferred-languages: ${SECURITY_TXT_PREFERRED_LANGUAGES:-}
     mem_limit: ${GATEWAY_MEM_LIMIT:-700m}
     # 0.0.0.0 binding: reachable from other devices on the LAN (needed for
     # phone/tablet testing of the storefront/POS). Host firewall is the only thing
     # standing between this and the public internet if this machine is ever
     # directly exposed — keep it behind a router/NAT.
     ports: ["${GATEWAY_HOST_PORT:-8090}:8080"]
-    networks: [shelfj_network]
+    networks: [storeql_network]
     depends_on:
       consul:     { condition: service_healthy }
       iam-svc:    { condition: service_healthy }
@@ -996,14 +996,14 @@ services:
   # endpoint returns 409 if an admin already exists, which we treat as success.
   bootstrap:
     image: curlimages/curl:8.7.1
-    container_name: shelfj-bootstrap
+    container_name: storeql-bootstrap
     restart: "no"
-    networks: [shelfj_network]
+    networks: [storeql_network]
     depends_on:
       gateway: { condition: service_healthy }
       iam-svc: { condition: service_healthy }
     environment:
-      ADMIN_EMAIL: ${PLATFORM_ADMIN_EMAIL:-admin@shelf-j.dev}
+      ADMIN_EMAIL: ${PLATFORM_ADMIN_EMAIL:-admin@storeql.dev}
       ADMIN_PASSWORD: ${PLATFORM_ADMIN_PASSWORD:?PLATFORM_ADMIN_PASSWORD must be set - see .env.example}
       # The administrator's authenticator secret, base 32 (20.12): the account is born with its
       # second factor, so the most powerful login here never exists with a password alone. Put the
@@ -1031,14 +1031,14 @@ services:
 
   # Single-page app (admin console + storefront + in-store POS), served by a
   # non-root nginx. The browser calls the gateway directly at the host URL baked
-  # in at build time (SHELFJ_API_BASE, default http://localhost:8090/api), so the
+  # in at build time (STOREQL_API_BASE, default http://localhost:8090/api), so the
   # UI container itself never needs to reach the gateway over the compose network.
-  shelf-app:
-    image: ghcr.io/red2n/shelf-j-web:${SHELFJ_TAG:-latest}
+  storeql-app:
+    image: ghcr.io/red2n/storeql-web:${STOREQL_TAG:-latest}
     build:
       context: .
       dockerfile: Dockerfile.web
-    container_name: shelfj-web
+    container_name: storeql-web
     restart: unless-stopped
     # Default 8088 to avoid clashing with the dev `flutter run` server (40015).
     # 0.0.0.0 binding: same reasoning as gateway — reachable from other devices on the LAN.
@@ -1051,9 +1051,9 @@ services:
       - ./infra/nginx-spa.conf.template:/etc/nginx/templates/default.conf.template:ro
     environment:
       # The gateway origin the bundle calls, for the Content-Security-Policy's connect-src.
-      # Match the SHELFJ_API_BASE the bundle was built with; empty for a relative /api build.
-      SHELFJ_API_ORIGIN: "${UI_API_ORIGIN:-http://localhost:8090}"
-    networks: [shelfj_network]
+      # Match the STOREQL_API_BASE the bundle was built with; empty for a relative /api build.
+      STOREQL_API_ORIGIN: "${UI_API_ORIGIN:-http://localhost:8090}"
+    networks: [storeql_network]
     depends_on:
       gateway: { condition: service_started }
     healthcheck:

@@ -5,14 +5,14 @@
     <modelVersion>4.0.0</modelVersion>
 
     <parent>
-        <groupId>com.shelfj</groupId>
-        <artifactId>shelf-j-parent</artifactId>
+        <groupId>com.storeql</groupId>
+        <artifactId>storeql-parent</artifactId>
         <version>0.1.0-SNAPSHOT</version>
         <relativePath>../../pom.xml</relativePath>
     </parent>
 
     <artifactId>order-svc</artifactId>
-    <name>Shelf-J :: services :: order-svc</name>
+    <name>StoreQL :: services :: order-svc</name>
     <description>
         Order management service — saga coordinator for online checkout and in-store POS.
         Owns orders, order_items, order_status_history, returns.
@@ -60,28 +60,28 @@
 
         <!-- Shared modules -->
         <dependency>
-            <groupId>com.shelfj</groupId>
+            <groupId>com.storeql</groupId>
             <artifactId>common-ids</artifactId>
         </dependency>
         <dependency>
-            <groupId>com.shelfj</groupId>
+            <groupId>com.storeql</groupId>
             <artifactId>common-web</artifactId>
         </dependency>
         <dependency>
-            <groupId>com.shelfj</groupId>
+            <groupId>com.storeql</groupId>
             <artifactId>events-contract</artifactId>
         </dependency>
         <dependency>
-            <groupId>com.shelfj</groupId>
+            <groupId>com.storeql</groupId>
             <artifactId>discovery</artifactId>
-            <version>${shelfj.version}</version>
+            <version>${storeql.version}</version>
         </dependency>
         <dependency>
-            <groupId>com.shelfj</groupId>
+            <groupId>com.storeql</groupId>
             <artifactId>common-service</artifactId>
         </dependency>
         <dependency>
-            <groupId>com.shelfj</groupId>
+            <groupId>com.storeql</groupId>
             <artifactId>einvoice</artifactId>
         </dependency>
 
@@ -135,7 +135,7 @@
 
         <!-- Tests -->
         <dependency>
-            <groupId>com.shelfj</groupId>
+            <groupId>com.storeql</groupId>
             <artifactId>common-test</artifactId>
             <scope>test</scope>
         </dependency>

@@ -1,5 +1,5 @@
 -- Tenant suspension enforcement: iam-svc keeps a local projection of each tenant's status
--- (fed by shelfj.tenant.tenant-status-changed events) so login/refresh can reject a deactivated
+-- (fed by storeql.tenant.tenant-status-changed events) so login/refresh can reject a deactivated
 -- tenant's staff. Absence of a row = treat as ACTIVE (back-compat for tenants created before this).
 
 CREATE TABLE tenant_status (

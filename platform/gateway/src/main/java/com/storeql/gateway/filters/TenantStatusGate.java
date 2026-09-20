@@ -1,0 +1,99 @@
+package com.storeql.gateway.filters;
+
+import com.storeql.discovery.ServiceRegistry;
+import com.storeql.web.HttpHeaders;
+import io.helidon.webclient.api.WebClient;
+import jakarta.enterprise.context.ApplicationScoped;
+import jakarta.inject.Inject;
+import java.lang.System.Logger;
+import java.lang.System.Logger.Level;
+import java.util.Map;
+import java.util.concurrent.ConcurrentHashMap;
+
+/**
+ * Storefront suspension gate. A deactivated tenant's online shop must stop serving — but the
+ * gateway is stateless about tenant data, so it asks tenant-svc ({@code GET /storefront/active})
+ * and caches the answer for a short TTL to keep the hot path fast.
+ *
+ * <p><strong>Fail-open:</strong> a lookup error (tenant-svc down, timeout) returns {@code active}.
+ * A transient tenant-svc blip must not take every storefront offline; the hard block that matters
+ * (staff login) is enforced in iam-svc independently.
+ */
+@ApplicationScoped
+public class TenantStatusGate {
+
+  private static final Logger LOG = System.getLogger(TenantStatusGate.class.getName());
+  private static final long TTL_MILLIS = 15_000;
+
+  /** Hard cap matching RateLimitFilter.MAX_BUCKETS — bounds memory under tenant-id churn/abuse. */
+  static final int MAX_ENTRIES = 10_000;
+
+  @Inject ServiceRegistry registry;
+  @Inject WebClient webClient;
+
+  private record Cached(boolean active, long expiresAt) {}
+
+  private final Map<String, Cached> cache = new ConcurrentHashMap<>();
+
+  /** True if the tenant may transact. Cached for {@value #TTL_MILLIS}ms; fails open on error. */
+  public boolean isActive(String tenantId) {
+    long now = System.currentTimeMillis();
+    Cached c = cache.get(tenantId);
+    if (c != null && c.expiresAt() > now) {
+      return c.active();
+    }
+    boolean active = lookup(tenantId);
+    if (cache.size() >= MAX_ENTRIES && !cache.containsKey(tenantId)) {
+      evictExpired(now);
+      // Eviction of expired entries freed nothing (cache saturated with live entries) — drop an
+      // arbitrary one so the cap is a real bound, not a suggestion an attacker can blow past.
+      if (cache.size() >= MAX_ENTRIES) {
+        var it = cache.keySet().iterator();
+        if (it.hasNext()) {
+          it.next();
+          it.remove();
+        }
+      }
+    }
+    cache.put(tenantId, new Cached(active, now + TTL_MILLIS));
+    return active;
+  }
+
+  private void evictExpired(long now) {
+    cache.values().removeIf(c -> c.expiresAt() <= now);
+  }
+
+  private boolean lookup(String tenantId) {
+    var instance = registry.resolve("tenant-svc");
+    if (instance.isEmpty()) {
+      return true; // can't resolve tenant-svc → fail open
+    }
+    try (var resp =
+        webClient
+            .get(instance.get().baseUri() + "/storefront/active")
+            .header(io.helidon.http.HeaderNames.create(HttpHeaders.TENANT_ID), tenantId)
+            .request()) {
+      if (resp.status().code() == 404) {
+        // Only logged branch that actually blocks — the fail-open branches below stay quiet on
+        // purpose, matching every other traffic-control filter in the gateway (RateLimitFilter,
+        // BruteForceFilter): expected per-request outcomes aren't worth log volume. This one is
+        // the exception because it's the gate doing its job, not routine traffic.
+        LOG.log(Level.INFO, "Storefront gate: tenant {0} not found — blocking", tenantId);
+        return false; // tenant does not exist → reject, not fail-open
+      }
+      if (resp.status().code() != 200) {
+        return true; // server error / unavailability → fail open (keep storefronts up)
+      }
+      String body = resp.as(String.class);
+      // Inactive only on an explicit, successfully-read negative — otherwise fail open.
+      boolean active = !body.replaceAll("\\s", "").contains("\"active\":false");
+      if (!active) {
+        LOG.log(Level.INFO, "Storefront gate: tenant {0} is suspended — blocking", tenantId);
+      }
+      return active;
+    } catch (RuntimeException e) {
+      LOG.log(Level.WARNING, "tenant-status lookup failed for " + tenantId + ": " + e.getMessage());
+      return true;
+    }
+  }
+}

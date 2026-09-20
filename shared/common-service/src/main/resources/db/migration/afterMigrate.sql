@@ -1,7 +1,7 @@
 -- Flyway runs this after every migrate, in every service (it ships in common-service, on the same
 -- classpath location as each service's own migrations).
 --
--- Shelf-J mints every id in Java with Ids.newId() (UUIDv7). A column that fills in its own uuid
+-- StoreQL mints every id in Java with Ids.newId() (UUIDv7). A column that fills in its own uuid
 -- hands out another version the moment an insert leaves the id out, so migrating fails if one
 -- exists in this service's schema. Remove the DEFAULT and bind Ids.newId() instead.
 --

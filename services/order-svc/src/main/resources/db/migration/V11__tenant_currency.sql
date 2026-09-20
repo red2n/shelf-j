@@ -9,7 +9,7 @@
 -- projected onto the tenant_status row that this service already keeps (V5 flow-guard), fed by the
 -- same TenantCreated event iam-svc already consumes. Nullable: tenants onboarded before this
 -- migration have no row until their next TenantCreated, and resolveCurrency falls back to the
--- configured platform default (shelfj.order.currency.default) exactly as the status projection
+-- configured platform default (storeql.order.currency.default) exactly as the status projection
 -- fails open to ACTIVE.
 ALTER TABLE tenant_status ADD COLUMN currency CHAR(3);
 

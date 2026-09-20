@@ -1,4 +1,4 @@
-# Product Requirements Document — Shelf-J
+# Product Requirements Document — StoreQL
 
 **Stock & Store Management Platform with Customer Commerce**
 **Architecture:** Strict Microservices · Helidon MP · API Gateway + Service Discovery + Centralized Config
@@ -10,7 +10,7 @@
 | **Document status** | Draft v1.0 |
 | **Date** | 2026-06-06 |
 | **Owner** | ksnavinkumar.diary@gmail.com |
-| **Project codename** | Shelf-J (`shelf-j`) |
+| **Project codename** | StoreQL (`storeql`) |
 | **Reference architecture** | [red2n/home](https://github.com/red2n/home) (Spring Cloud patterns, re-implemented in Helidon) |
 
 ---
@@ -23,7 +23,7 @@ Store owners need a single platform to manage inventory across one or more physi
 
 ### 1.2 Product vision
 
-**Shelf-J** is a multi-tenant SaaS platform where:
+**StoreQL** is a multi-tenant SaaS platform where:
 
 - **Store operators** manage products, stock, batches, purchases, suppliers, and staff across multiple stores.
 - **Customers** browse a public storefront and purchase any available product online.
@@ -33,9 +33,9 @@ Every business (tenant) operates in full data isolation. The system is built as 
 
 ### 1.3 How this relates to the reference repo
 
-`red2n/home` is a Property Management System built with **Spring Cloud** (Spring Cloud Gateway + Netflix Eureka + Spring Cloud Config + Kafka + Zipkin tracing, Java 21, multi-module Maven). Shelf-J **borrows the architectural shape** of that project — a gateway module, a discovery module, a configuration module, and independent business services, each owning its own PostgreSQL data and communicating over REST + Kafka events — but implements every service on **Helidon MP** instead of Spring Boot/Spring Cloud.
+`red2n/home` is a Property Management System built with **Spring Cloud** (Spring Cloud Gateway + Netflix Eureka + Spring Cloud Config + Kafka + Zipkin tracing, Java 21, multi-module Maven). StoreQL **borrows the architectural shape** of that project — a gateway module, a discovery module, a configuration module, and independent business services, each owning its own PostgreSQL data and communicating over REST + Kafka events — but implements every service on **Helidon MP** instead of Spring Boot/Spring Cloud.
 
-| Concern | `red2n/home` (reference) | Shelf-J (this project) |
+| Concern | `red2n/home` (reference) | StoreQL (this project) |
 |---|---|---|
 | Service framework | Spring Boot 3 / Spring Web MVC | **Helidon MP 4.x** (MicroProfile) |
 | API gateway | Spring Cloud Gateway | **Helidon MP gateway service** (JAX-RS reverse proxy + filters) |
@@ -46,7 +46,7 @@ Every business (tenant) operates in full data isolation. The system is built as 
 | Tracing | Micrometer + Brave + Zipkin | **Helidon Tracing (OpenTelemetry) + Zipkin/Jaeger** |
 | Build | Multi-module Maven, Java 21 | **Multi-module Maven, Java 21** |
 
-> **Design rule:** keep the *same module roles and conventions* as the reference (one gateway, one discovery, one config, N business services, shared parent POM), so anyone familiar with `red2n/home` can navigate Shelf-J immediately.
+> **Design rule:** keep the *same module roles and conventions* as the reference (one gateway, one discovery, one config, N business services, shared parent POM), so anyone familiar with `red2n/home` can navigate StoreQL immediately.
 
 ### 1.4 Goals
 
@@ -72,7 +72,7 @@ Every business (tenant) operates in full data isolation. The system is built as 
 
 | Persona | Description | Primary channel |
 |---|---|---|
-| **Platform Admin** | Operates the Shelf-J platform; manages tenants, plans, global config. | Admin console |
+| **Platform Admin** | Operates the StoreQL platform; manages tenants, plans, global config. | Admin console |
 | **Tenant Owner** | Owns a business; full control over their stores, staff, catalog, pricing. | Admin console |
 | **Store Manager** | Runs one or more stores; manages stock, purchases, staff scheduling. | Admin console |
 | **Cashier / POS operator** | Rings up in-store sales, handles returns. | POS app |
@@ -312,7 +312,7 @@ Storekeeper → Gateway → purchase-svc.receiveGRN
 Mirrors `red2n/home` (parent POM + `gateway`/`discovery`/`config` + business services), expanded for this domain:
 
 ```
-shelf-j/
+storeql/
 ├── pom.xml                      # parent: Java 21, Helidon BOM, shared plugins
 ├── docker-compose.yml           # postgres, kafka, zookeeper, consul, redis, zipkin, prometheus, grafana
 ├── PRD.md
@@ -408,7 +408,7 @@ The dependency graph is a **mesh, not a line** (see §3.5 and the call/event map
 
 ### 9.2 The replacement for ordering: health probes + resilience
 
-| Mechanism | Question it answers | Action | In Shelf-J |
+| Mechanism | Question it answers | Action | In StoreQL |
 |---|---|---|---|
 | **Startup probe** | "Has the JVM finished booting?" | Hold off liveness checks until boot completes (slow cold starts). | `GET /health/started` |
 | **Liveness probe** | "Is the process alive/not deadlocked?" | If failing → **restart** the pod. | `GET /health/live` |
@@ -451,7 +451,7 @@ STAGE 4 — Frontends  (storefront · admin-console · pos)
 | Concern | Local dev (docker-compose) | Production (Kubernetes) |
 |---|---|---|
 | Ports | Unique per service `8001…8012` (avoid laptop collisions) | **All services on the same `containerPort` (8080)** — isolated per pod |
-| Addressing | `localhost:<port>` | **DNS via k8s `Service`** (`order-svc.shelfj.svc.cluster.local`) + Consul discovery; callers never use raw `host:port` |
+| Addressing | `localhost:<port>` | **DNS via k8s `Service`** (`order-svc.storeql.svc.cluster.local`) + Consul discovery; callers never use raw `host:port` |
 | Scaling | 1 instance each | **N replicas**, autoscaled (HPA) on CPU/latency/lag |
 | Ordering | `depends_on: condition: service_healthy` (see docs/ARCHITECTURE.md §17) | **Stage gates + readiness probes**, no per-service order |
 | Migrations | run-once script before services | **`Job` / Helm hook**, gated before STAGE 3 |
@@ -512,7 +512,7 @@ STAGE 4 — Frontends  (storefront · admin-console · pos)
 
 ## Appendix A — Mapping to `red2n/home` conventions
 
-| `red2n/home` element | Shelf-J equivalent |
+| `red2n/home` element | StoreQL equivalent |
 |---|---|
 | `gateway/` (Spring Cloud Gateway) | `platform/gateway/` (Helidon MP edge) |
 | `discovery/` (Eureka server) | `platform/discovery/` (Consul) |

@@ -1,11 +1,11 @@
 ---
 name: flutter-storefront-rules
-description: Flutter/Riverpod rules specific to the Shelf-J storefront. Read before touching any file in frontends/shelf-app/lib/features/storefront/.
+description: Flutter/Riverpod rules specific to the StoreQL storefront. Read before touching any file in frontends/storeql-app/lib/features/storefront/.
 metadata:
   type: project
 ---
 
-# Shelf-J Storefront — Flutter/Riverpod rules
+# StoreQL Storefront — Flutter/Riverpod rules
 
 ## The showPrices invariant (most important rule)
 

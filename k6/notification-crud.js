@@ -15,7 +15,7 @@ import {
   sellableVariant,
   truthy,
   uniq,
-} from './lib/shelfj.js';
+} from './lib/storeql.js';
 
 export const options = { vus: 1, iterations: 1, thresholds: ALL_CHECKS_PASS, setupTimeout: '3m' };
 
@@ -68,7 +68,7 @@ export default function ({ tenant, rival }) {
   expect(call('GET', ALERTS), '[-] no token', 401);
 
   // ── send, with dedupe on (eventId, type) ───────────────────────────────────
-  const recipient = `notify-${uniq()}@k6.shelfj.test`;
+  const recipient = `notify-${uniq()}@k6.storeql.test`;
   const message = { recipient, subject: 'Your order is ready', body: 'Collect it from the front desk.', type: 'ORDER_READY', eventId: newId() };
   expect(call('POST', '/api/notification-svc/notifications/send', { token: t, body: { ...message, subject: '' } }), '[-] send: subject required', 400);
   expect(

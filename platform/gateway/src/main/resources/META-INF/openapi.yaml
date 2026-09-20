@@ -1,9 +1,9 @@
 openapi: 3.1.0
 info:
-  title: Shelf-J API Gateway
+  title: StoreQL API Gateway
   version: "1.0"
   description: >
-    The single public door onto Shelf-J (golden rule #2). Proxies /api/{service}/{path} (and the
+    The single public door onto StoreQL (golden rule #2). Proxies /api/{service}/{path} (and the
     canonical, versioned /api/v1/{service}/{path}) to the upstream business service resolved via
     Consul, after JWT verification, rate-limiting, and brute-force protection. Each business
     service's own contract is served at /api/v1/{service}/openapi — see the swagger-ui dropdown
@@ -17,13 +17,13 @@ components:
       type: object
       description: >-
         An error as RFC 9457 problem details (application/problem+json). type is a URN for the
-        stable code (urn:shelfj:problem:CODE), title the code in words, status the HTTP status,
+        stable code (urn:storeql:problem:CODE), title the code in words, status the HTTP status,
         detail the message for a person, instance the request path. code and details are the
         platform's extension members, requestId the correlation id, and error/meta the envelope
         members clients read before problem details.
       required: [type, title, status, code]
       properties:
-        type: { type: string, format: uri, example: "urn:shelfj:problem:VALIDATION_FAILED" }
+        type: { type: string, format: uri, example: "urn:storeql:problem:VALIDATION_FAILED" }
         title: { type: string, example: "Validation failed" }
         status: { type: integer, example: 400 }
         detail: { type: string }

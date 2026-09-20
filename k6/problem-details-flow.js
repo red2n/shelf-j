@@ -8,7 +8,7 @@
 //   k6/run.sh problem-details-flow
 import http from 'k6/http';
 import { Counter } from 'k6/metrics';
-import { ALL_CHECKS_PASS, BASE, call, data, expect, onboardTenant, sellableVariant, truthy, uniq } from './lib/shelfj.js';
+import { ALL_CHECKS_PASS, BASE, call, data, expect, onboardTenant, sellableVariant, truthy, uniq } from './lib/storeql.js';
 
 const completed = new Counter('flow_completed');
 export const options = {
@@ -39,7 +39,7 @@ function problem(res, label, status, code) {
   }
   code = code || p.code;
   truthy(`${label}: ${status} as application/problem+json`, res.status === status && contentType(res).startsWith('application/problem+json'), { status: res.status, type: contentType(res) });
-  truthy(`${label}: type, title, status, detail and instance, and the code beside them`, p.type === `urn:shelfj:problem:${code}` && typeof p.title === 'string' && p.title.length > 0 && p.status === status && typeof p.detail === 'string' && String(p.instance || '').startsWith('/') && p.code === code, p);
+  truthy(`${label}: type, title, status, detail and instance, and the code beside them`, p.type === `urn:storeql:problem:${code}` && typeof p.title === 'string' && p.title.length > 0 && p.status === status && typeof p.detail === 'string' && String(p.instance || '').startsWith('/') && p.code === code, p);
   truthy(`${label}: the envelope a client read before is still there`, (p.error || {}).code === code && typeof (p.error || {}).message === 'string', p.error);
   return p;
 }
@@ -56,7 +56,7 @@ export default function ({ tenant, productId }) {
   const shopper = data(call('POST', '/api/iam-svc/auth/register', { body: { email: `pd-${uniq()}@example.com`, password: 'a shopper phrase for tests' } }));
   problem(call('GET', '/api/product-svc/admin/products', { token: shopper.accessToken, storefront: tenant.tenantId }), '[-] the wrong role (authorization filter)', 403);
   const nowhere = call('GET', '/api/nowhere-svc/things', { token: owner });
-  truthy('[-] an unknown service is a problem too', nowhere.status >= 400 && contentType(nowhere).startsWith('application/problem+json') && String((nowhere.json() || {}).type || '').startsWith('urn:shelfj:problem:'), { status: nowhere.status, type: contentType(nowhere) });
+  truthy('[-] an unknown service is a problem too', nowhere.status >= 400 && contentType(nowhere).startsWith('application/problem+json') && String((nowhere.json() || {}).type || '').startsWith('urn:storeql:problem:'), { status: nowhere.status, type: contentType(nowhere) });
   const ok = call('GET', '/api/product-svc/admin/products?limit=1', { token: owner });
   truthy('[+] a response with data is untouched: application/json, no type', ok.status === 200 && contentType(ok).startsWith('application/json') && (ok.json() || {}).type === undefined, contentType(ok));
 

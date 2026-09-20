@@ -44,8 +44,8 @@ concurrency:
 
 env:
   REGISTRY: ghcr.io
-  # Produces e.g. ghcr.io/red2n/shelf-j-gateway
-  IMAGE_PREFIX: ghcr.io/${{ github.repository_owner }}/shelf-j
+  # Produces e.g. ghcr.io/red2n/storeql-gateway
+  IMAGE_PREFIX: ghcr.io/${{ github.repository_owner }}/storeql
   DEFAULT_BRANCH: ${{ github.event.repository.default_branch }}
 
 jobs:
@@ -212,7 +212,7 @@ jobs:
         run: cosign sign --yes "${IMAGE_REF}"
 
   # ── Build the Flutter web bundle and push its image (no artifacts) ─────────
-  # Set SHELFJ_API_BASE as a GitHub Actions repository variable (Settings →
+  # Set STOREQL_API_BASE as a GitHub Actions repository variable (Settings →
   # Variables → Actions) to the production gateway URL, e.g.
   # https://api.example.com/api. Defaults to /api (relative — works when the
   # gateway and web app share a host or nginx proxies /api upstream).
@@ -244,13 +244,13 @@ jobs:
           cache: true
 
       - name: Flutter pub get
-        working-directory: frontends/shelf-app
+        working-directory: frontends/storeql-app
         run: flutter pub get
 
       - name: Flutter build web
-        working-directory: frontends/shelf-app
+        working-directory: frontends/storeql-app
         env:
-          SHELFJ_API_BASE: ${{ vars.SHELFJ_API_BASE || '/api' }}
+          STOREQL_API_BASE: ${{ vars.STOREQL_API_BASE || '/api' }}
         # --no-web-resources-cdn serves CanvasKit from this image rather than www.gstatic.com, which
         # the Content-Security-Policy in infra/nginx-spa.conf.template does not allow. Without it the
         # bundle builds, ships, and then fails to load its renderer in the browser — and no test here
@@ -259,7 +259,7 @@ jobs:
         run: |
           flutter build web --release \
             --no-web-resources-cdn \
-            --dart-define="SHELFJ_API_BASE=${SHELFJ_API_BASE}"
+            --dart-define="STOREQL_API_BASE=${STOREQL_API_BASE}"
 
       - name: Set up Docker Buildx
         uses: docker/setup-buildx-action@v3
@@ -324,7 +324,7 @@ jobs:
       - name: SBOM of the app's Dart packages (CycloneDX)
         uses: anchore/sbom-action@v0
         with:
-          path: frontends/shelf-app
+          path: frontends/storeql-app
           format: cyclonedx-json
           output-file: ${{ runner.temp }}/sbom-app.cdx.json
           upload-artifact: false
@@ -386,21 +386,21 @@ jobs:
       fail-fast: false
       matrix:
         package:
-          - shelf-j-gateway
-          - shelf-j-config
-          - shelf-j-iam-svc
-          - shelf-j-tenant-svc
-          - shelf-j-product-svc
-          - shelf-j-inventory-svc
-          - shelf-j-purchase-svc
-          - shelf-j-pricing-svc
-          - shelf-j-cart-svc
-          - shelf-j-order-svc
-          - shelf-j-payment-svc
-          - shelf-j-customer-svc
-          - shelf-j-notification-svc
-          - shelf-j-reporting-svc
-          - shelf-j-web
+          - storeql-gateway
+          - storeql-config
+          - storeql-iam-svc
+          - storeql-tenant-svc
+          - storeql-product-svc
+          - storeql-inventory-svc
+          - storeql-purchase-svc
+          - storeql-pricing-svc
+          - storeql-cart-svc
+          - storeql-order-svc
+          - storeql-payment-svc
+          - storeql-customer-svc
+          - storeql-notification-svc
+          - storeql-reporting-svc
+          - storeql-web
 
     steps:
       - name: Keep last 2 versions of ${{ matrix.package }}

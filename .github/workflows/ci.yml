@@ -57,25 +57,25 @@ jobs:
           cache: true
 
       - name: Flutter pub get
-        working-directory: frontends/shelf-app
+        working-directory: frontends/storeql-app
         run: flutter pub get
 
       # --fatal-infos because the tree is clean today and lint drift is only
       # cheap to fix while it is one line old. Drop the flag, don't delete the
       # step, if that ever becomes the wrong trade.
       - name: Flutter analyze
-        working-directory: frontends/shelf-app
+        working-directory: frontends/storeql-app
         run: flutter analyze --fatal-infos
 
       - name: Flutter test
-        working-directory: frontends/shelf-app
+        working-directory: frontends/storeql-app
         run: flutter test
 
       # SJ-D58: analyze and test run on the VM, where a conditional import's native half is the only
       # half compiled. A function missing from the web half (saveTextFile) passed both and broke every
       # web build for a day and a half, unseen, while images shipped the last good bundle. Compile it.
       - name: Flutter web compiles
-        working-directory: frontends/shelf-app
+        working-directory: frontends/storeql-app
         run: flutter build web --release --no-wasm-dry-run --no-web-resources-cdn
 
   # The Kubernetes manifests: schema-valid (kubeconform, strict) and hardened as the platform

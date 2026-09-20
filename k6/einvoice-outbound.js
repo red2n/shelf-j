@@ -26,7 +26,7 @@ import {
   sellableVariant,
   sellingTenant,
   truthy,
-} from './lib/shelfj.js';
+} from './lib/storeql.js';
 
 // Added on the last line only, so a flow that stopped part-way fails instead of passing.
 const completed = new Counter('flow_completed');
@@ -61,7 +61,7 @@ const customer = (tenant, label, { address, vat } = {}) => {
   const token = tenant.owner.token;
   const run = Date.now().toString(36);
   const c = must(
-    call('POST', '/api/customer-svc/customers', { token, body: { email: `${label}-${run}@k6.shelfj.test`, firstName: label, lastName: 'Buyer' } }),
+    call('POST', '/api/customer-svc/customers', { token, body: { email: `${label}-${run}@k6.storeql.test`, firstName: label, lastName: 'Buyer' } }),
     201,
     `customer ${label}`
   );

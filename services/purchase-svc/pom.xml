@@ -5,14 +5,14 @@
     <modelVersion>4.0.0</modelVersion>
 
     <parent>
-        <groupId>com.shelfj</groupId>
-        <artifactId>shelf-j-parent</artifactId>
+        <groupId>com.storeql</groupId>
+        <artifactId>storeql-parent</artifactId>
         <version>0.1.0-SNAPSHOT</version>
         <relativePath>../../pom.xml</relativePath>
     </parent>
 
     <artifactId>purchase-svc</artifactId>
-    <name>Shelf-J :: services :: purchase-svc</name>
+    <name>StoreQL :: services :: purchase-svc</name>
     <description>
         Procurement service: suppliers, purchase orders, goods receipt (GRN), and
         Gap #20 — intercompany AR/AP invoicing for inter-org inventory transfers with
@@ -66,29 +66,29 @@
         </dependency>
 
         <dependency>
-            <groupId>com.shelfj</groupId>
+            <groupId>com.storeql</groupId>
             <artifactId>common-ids</artifactId>
         </dependency>
         <dependency>
-            <groupId>com.shelfj</groupId>
+            <groupId>com.storeql</groupId>
             <artifactId>common-web</artifactId>
         </dependency>
         <dependency>
-            <groupId>com.shelfj</groupId>
+            <groupId>com.storeql</groupId>
             <artifactId>events-contract</artifactId>
         </dependency>
         <dependency>
-            <groupId>com.shelfj</groupId>
+            <groupId>com.storeql</groupId>
             <artifactId>discovery</artifactId>
-            <version>${shelfj.version}</version>
+            <version>${storeql.version}</version>
         </dependency>
         <dependency>
-            <groupId>com.shelfj</groupId>
+            <groupId>com.storeql</groupId>
             <artifactId>common-service</artifactId>
         </dependency>
         <!-- 07.13: suppliers' EN 16931 e-invoices — UBL, CII and Factur-X — read and checked -->
         <dependency>
-            <groupId>com.shelfj</groupId>
+            <groupId>com.storeql</groupId>
             <artifactId>einvoice</artifactId>
         </dependency>
 
@@ -131,7 +131,7 @@
         </dependency>
 
         <dependency>
-            <groupId>com.shelfj</groupId>
+            <groupId>com.storeql</groupId>
             <artifactId>common-test</artifactId>
             <scope>test</scope>
         </dependency>

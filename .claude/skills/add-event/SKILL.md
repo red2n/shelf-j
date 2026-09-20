@@ -1,6 +1,6 @@
 ---
 name: add-event
-description: Add a Kafka domain event to Shelf-J — define the contract, publish via the transactional outbox, and consume idempotently. Use when introducing a new event or wiring a service to react to one.
+description: Add a Kafka domain event to StoreQL — define the contract, publish via the transactional outbox, and consume idempotently. Use when introducing a new event or wiring a service to react to one.
 ---
 
 # Add a Kafka event (publish via outbox / consume idempotently)
@@ -13,7 +13,7 @@ Use when a service needs to **announce** something happened, or **react** to ano
 
 1. **Is an event the right tool?** Use an **event** when you're announcing a fact others may care about ("X happened"). Use a **REST call** (`client/`) when you need an answer *now* to continue. Don't use events for request/response.
 2. **Name** — `PascalCase`, **past tense**, the thing that happened: `OrderPlaced`, `StockReceived`, `StoreCreated`. Not commands (`CreateOrder` ✗).
-3. **Topic** — `shelfj.<domain>.<event>` (e.g. `shelfj.orders.order-placed`).
+3. **Topic** — `storeql.<domain>.<event>` (e.g. `storeql.orders.order-placed`).
 4. **Owner = publisher.** Only the service that owns the data publishes the event. Confirm publisher + consumers against [docs/API-GUIDE.md](../../../docs/API-GUIDE.md) (events per service) and [ARCHITECTURE §11](../../../docs/ARCHITECTURE.md#11-how-services-talk-to-each-other) (event map).
 
 ## Producer side (the service that owns the change)
@@ -38,7 +38,7 @@ If this event is part of a workflow with compensation (e.g. checkout: reserve �
 
 ## Self-check
 
-- [ ] Past-tense name; topic `shelfj.<domain>.<event>`.
+- [ ] Past-tense name; topic `storeql.<domain>.<event>`.
 - [ ] Contract in `shared/events-contract`, versioned, additive.
 - [ ] Producer writes event to **outbox** in the same tx as the data.
 - [ ] Outbox drainer publishes + marks published.

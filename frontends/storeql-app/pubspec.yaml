@@ -1,0 +1,72 @@
+name: storeql_app
+description: StoreQL multi-tenant retail platform — unified Flutter frontend for web, iOS, and Android.
+publish_to: none
+version: 1.0.0+1
+
+environment:
+  sdk: '>=3.10.0 <4.0.0'
+  flutter: '>=3.32.0'
+
+dependencies:
+  flutter:
+    sdk: flutter
+  # localization: Material/Cupertino localized widgets + locale-aware number/date
+  # formatting. UK customers first (en_GB default), then the largest
+  # non-English-speaking communities in the UK.
+  flutter_localizations:
+    sdk: flutter
+  intl: ^0.20.2
+  # navigation
+  go_router: ^18.0.1
+  # state management
+  flutter_riverpod: ^3.4.3
+  # HTTP
+  dio: ^5.11.1
+  # secure token storage (Keychain / Keystore on mobile/desktop)
+  flutter_secure_storage: ^10.3.1
+  # plain localStorage-backed storage used on web instead of flutter_secure_storage
+  # there — see lib/core/storage/app_storage.dart for why.
+  shared_preferences: ^2.3.2
+  # file picking (web + mobile + desktop)
+  file_picker: ^11.0.2
+  # pure-Dart image codecs — used ONLY by the non-web half of
+  # lib/shared/util/image_compress.dart to downscale/re-encode owner-uploaded product
+  # photos before upload. Web uses the browser's canvas encoder instead and never
+  # loads this.
+  image: ^4.10.1
+  # camera barcode/QR scanning (Android, iOS, web via getUserMedia + BarcodeDetector/zxing)
+  mobile_scanner: ^7.4.2
+  # open external URLs in the system browser
+  url_launcher: ^6.3.0
+  # web-only browser API bindings (Blob/URL) for POS receipt printing
+  web: ^1.1.0
+  # where a native build keeps a saved receipt or export (documents directory) — the
+  # non-web half of lib/shared/util/file_download.dart. Web downloads instead.
+  path_provider: ^2.1.6
+  # MQTT-over-WebSocket for live admin push (shortage alerts etc. from notification-svc's
+  # MqttChannel) — see lib/features/admin/providers/live_alerts_provider.dart. Web-only for now
+  # (MqttBrowserClient); native mobile/desktop would need MqttServerClient behind a conditional
+  # import, not added yet.
+  mqtt_client: ^10.0.0
+  # The QR code an authenticator app scans when a second factor is set up (20.12):
+  # the encoder only — the app paints the modules itself.
+  qr: ^4.0.0
+
+dev_dependencies:
+  flutter_test:
+    sdk: flutter
+  flutter_lints: ^6.0.0
+  flutter_launcher_icons: ^0.14.4
+
+flutter:
+  uses-material-design: true
+  # Generate AppLocalizations from lib/l10n/*.arb (see l10n.yaml).
+  generate: true
+
+flutter_launcher_icons:
+  image_path: "assets/icon/icon.png"
+  android: true
+  ios: true
+  remove_alpha_ios: true
+  adaptive_icon_background: "#1A5276"
+  adaptive_icon_foreground: "assets/icon/icon_foreground.png"

@@ -1,0 +1,79 @@
+package com.storeql.pricing.api;
+
+import com.storeql.pricing.dto.Dtos.UpsertCustomerVatStatusRequest;
+import com.storeql.pricing.mapper.Mappers;
+import com.storeql.pricing.service.PricingService;
+import com.storeql.web.ApiResponse;
+import com.storeql.web.TenantContext;
+import com.storeql.web.Validations;
+import jakarta.enterprise.context.RequestScoped;
+import jakarta.inject.Inject;
+import jakarta.ws.rs.Consumes;
+import jakarta.ws.rs.GET;
+import jakarta.ws.rs.POST;
+import jakarta.ws.rs.Path;
+import jakarta.ws.rs.PathParam;
+import jakarta.ws.rs.Produces;
+import jakarta.ws.rs.core.MediaType;
+import jakarta.ws.rs.core.Response;
+import java.util.UUID;
+import org.eclipse.microprofile.openapi.annotations.Operation;
+import org.eclipse.microprofile.openapi.annotations.responses.APIResponse;
+import org.eclipse.microprofile.openapi.annotations.tags.Tag;
+
+/** B2B customer VAT registration status (VAT number, reverse-charge eligibility). */
+@RequestScoped
+@Path("/customer-vat-status")
+@Produces(MediaType.APPLICATION_JSON)
+@Consumes(MediaType.APPLICATION_JSON)
+@Tag(name = "Customer VAT Status")
+public class CustomerVatStatusResource {
+
+  @Inject PricingService svc;
+  @Inject TenantContext ctx;
+
+  /**
+   * Records a customer's VAT registration and reverse-charge eligibility.
+   *
+   * @param req the customer, VAT number, registration and reverse-charge flags, and country
+   *     (defaulting to {@code GB})
+   * @return the stored status
+   */
+  @Operation(
+      summary = "Set a customer's VAT status",
+      description =
+          "Records a B2B customer's VAT registration number, reverse-charge eligibility, and"
+              + " country code.")
+  @APIResponse(responseCode = "200", description = "VAT status set")
+  @POST
+  public Response upsert(UpsertCustomerVatStatusRequest req) {
+    Validations.validate(req);
+    return Response.status(200)
+        .entity(ApiResponse.ok(Mappers.toDto(svc.upsertCustomerVatStatus(req, ctx))))
+        .build();
+  }
+
+  /**
+   * Staff-only: B2B VAT status has no self-service caller (no storefront path resolves a tenant
+   * here for a customer JWT today), but reads aren't covered by the write-only default-deny filter
+   * ({@link com.storeql.web.AdminAuthorizationFilter}), so this needs its own gate rather than
+   * relying on that distant routing detail to stay true.
+   *
+   * @param customerId the customer to look up
+   * @return the stored status
+   * @throws com.storeql.web.ApiException {@code 404} when none is recorded
+   */
+  @Operation(
+      summary = "Get a customer's VAT status",
+      description = "Staff-only lookup of a B2B customer's VAT registration status.")
+  @APIResponse(responseCode = "200", description = "VAT status found")
+  @APIResponse(responseCode = "403", description = "Caller lacks a staff/admin role")
+  @APIResponse(responseCode = "404", description = "No VAT status recorded for this customer")
+  @GET
+  @Path("/{customerId}")
+  public Response get(@PathParam("customerId") UUID customerId) {
+    ctx.requireAnyRole("PLATFORM_ADMIN", "OWNER", "MANAGER", "STOREKEEPER", "CASHIER");
+    return Response.ok(ApiResponse.ok(Mappers.toDto(svc.getCustomerVatStatus(ctx, customerId))))
+        .build();
+  }
+}

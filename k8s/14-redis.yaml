@@ -3,7 +3,7 @@ apiVersion: v1
 kind: Service
 metadata:
   name: redis
-  namespace: shelf-j
+  namespace: storeql
 spec:
   clusterIP: None
   selector: { app: redis }
@@ -16,7 +16,7 @@ apiVersion: apps/v1
 kind: StatefulSet
 metadata:
   name: redis
-  namespace: shelf-j
+  namespace: storeql
 spec:
   serviceName: redis
   replicas: 1
@@ -47,7 +47,7 @@ spec:
             - "allkeys-lru"
           env:
             - name: REDIS_PASSWORD
-              valueFrom: { secretKeyRef: { name: shelfj-redis, key: REDIS_PASSWORD } }
+              valueFrom: { secretKeyRef: { name: storeql-redis, key: REDIS_PASSWORD } }
           ports: [{ containerPort: 6379 }]
           volumeMounts:
             - { name: redis-data, mountPath: /data }

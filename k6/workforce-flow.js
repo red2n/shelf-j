@@ -21,7 +21,7 @@
 //
 //   k6/run.sh workforce-flow
 import { Counter } from 'k6/metrics';
-import { ALL_CHECKS_PASS, call, data, expect, poll, sellingTenant, truthy, uniq } from './lib/shelfj.js';
+import { ALL_CHECKS_PASS, call, data, expect, poll, sellingTenant, truthy, uniq } from './lib/storeql.js';
 
 const completed = new Counter('flow_completed');
 export const options = {

@@ -22,9 +22,9 @@ Three endpoints live in `services/reporting-svc`, all tenant-scoped (`tenant_id`
 | `GET /admin/reports/inventory/supply-demand` | On-hand + in-transit supply, net available |
 | `GET /admin/reports/inventory/movement-stats` | Inbound/outbound qty bucketed by day/week/month |
 
-Backed by `inventory_projection`, `movement_events`, `open_supply_lines` tables (`services/reporting-svc/src/main/resources/db/migration/V1__init.sql`). Access gated by `AdminAuthorizationFilter` (`shared/common-web/src/main/java/com/shelfj/web/AdminAuthorizationFilter.java:41-43`) to roles `OWNER`/`MANAGER`/`PLATFORM_ADMIN`.
+Backed by `inventory_projection`, `movement_events`, `open_supply_lines` tables (`services/reporting-svc/src/main/resources/db/migration/V1__init.sql`). Access gated by `AdminAuthorizationFilter` (`shared/common-web/src/main/java/com/storeql/web/AdminAuthorizationFilter.java:41-43`) to roles `OWNER`/`MANAGER`/`PLATFORM_ADMIN`.
 
-Source: `services/reporting-svc/src/main/java/com/shelfj/reporting/api/AdminResource.java:17-66`.
+Source: `services/reporting-svc/src/main/java/com/storeql/reporting/api/AdminResource.java:17-66`.
 
 ## Designed but not built — mostly resolved
 

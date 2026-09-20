@@ -1,7 +1,7 @@
 #!/usr/bin/env python3
 """Keeps the release path's supply-chain promises (22.10, 22.11), so a workflow edit cannot quietly drop one.
 
-Every image Shelf-J publishes must be pushed with BuildKit's SBOM and max-mode provenance, and then
+Every image StoreQL publishes must be pushed with BuildKit's SBOM and max-mode provenance, and then
 get — bound to its digest, never to a tag — a CycloneDX SBOM attestation, a SLSA build-provenance
 attestation and a keyless Sigstore signature. The release must carry the reactor's SBOM, a checksum
 list and provenance for its jars. scripts/verify-release.sh must know every image the workflow
@@ -160,7 +160,7 @@ def problems(texts):
             out.append(f"verify-release.sh does not verify the published image {image}")
     pruned = jobs.get("cleanup", {}).get("strategy", {}).get("matrix", {}).get("package", [])
     for image in published:
-        if f"shelf-j-{image}" not in pruned:
+        if f"storeql-{image}" not in pruned:
             out.append(f"docker-publish.yml: cleanup does not know the published image {image}")
 
     release = yaml.safe_load(release_text)

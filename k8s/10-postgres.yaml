@@ -5,7 +5,7 @@ apiVersion: v1
 kind: Service
 metadata:
   name: postgres
-  namespace: shelf-j
+  namespace: storeql
 spec:
   clusterIP: None # headless: stable DNS for the StatefulSet pod, no load-balancing needed
   selector:
@@ -19,7 +19,7 @@ apiVersion: apps/v1
 kind: StatefulSet
 metadata:
   name: postgres
-  namespace: shelf-j
+  namespace: storeql
 spec:
   serviceName: postgres
   replicas: 1
@@ -45,10 +45,10 @@ spec:
           ports:
             - containerPort: 5432
           env:
-            - { name: POSTGRES_DB, value: "shelfj" }
-            - { name: POSTGRES_USER, value: "shelfj" }
+            - { name: POSTGRES_DB, value: "storeql" }
+            - { name: POSTGRES_USER, value: "storeql" }
             - name: POSTGRES_PASSWORD
-              valueFrom: { secretKeyRef: { name: shelfj-postgres, key: POSTGRES_PASSWORD } }
+              valueFrom: { secretKeyRef: { name: storeql-postgres, key: POSTGRES_PASSWORD } }
           args:
             - postgres
             - -c
@@ -98,13 +98,13 @@ spec:
               subPath: 01-roles.sql
               readOnly: true
           readinessProbe:
-            exec: { command: ["pg_isready", "-U", "shelfj"] }
+            exec: { command: ["pg_isready", "-U", "storeql"] }
             initialDelaySeconds: 5
             periodSeconds: 5
             timeoutSeconds: 3
             failureThreshold: 12
           livenessProbe:
-            exec: { command: ["pg_isready", "-U", "shelfj"] }
+            exec: { command: ["pg_isready", "-U", "storeql"] }
             initialDelaySeconds: 15
             periodSeconds: 10
             timeoutSeconds: 3
@@ -114,7 +114,7 @@ spec:
             limits: { cpu: "2", memory: 3Gi }
       volumes:
         - name: init-roles
-          secret: { secretName: shelfj-postgres-init, items: [{ key: 01-roles.sql, path: 01-roles.sql }] }
+          secret: { secretName: storeql-postgres-init, items: [{ key: 01-roles.sql, path: 01-roles.sql }] }
   volumeClaimTemplates:
     - metadata: { name: pgdata }
       spec:

@@ -14,7 +14,7 @@
 //   k6/run.sh chargeback-flow
 import { sleep } from 'k6';
 import { Counter } from 'k6/metrics';
-import { ALL_CHECKS_PASS, call, data, expect, must, poll, sellingTenant, truthy } from './lib/shelfj.js';
+import { ALL_CHECKS_PASS, call, data, expect, must, poll, sellingTenant, truthy } from './lib/storeql.js';
 
 const completed = new Counter('flow_completed');
 export const options = {

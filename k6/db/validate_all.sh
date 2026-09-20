@@ -12,9 +12,9 @@ export PGHOST="${PGHOST:-localhost}"
 export PGPORT="${PGPORT:-$(env_value POSTGRES_HOST_PORT)}"
 export PGPORT="${PGPORT:-5432}"
 export PGUSER="${PGUSER:-$(env_value POSTGRES_USER)}"
-export PGUSER="${PGUSER:-shelfj}"
+export PGUSER="${PGUSER:-storeql}"
 export PGPASSWORD="${PGPASSWORD:-$(env_value POSTGRES_PASSWORD)}"
-export PGDATABASE="${PGDATABASE:-shelfj}"
+export PGDATABASE="${PGDATABASE:-storeql}"
 
 q() { psql -X -v ON_ERROR_STOP=1 -c "$1"; }
 

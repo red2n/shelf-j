@@ -4,7 +4,7 @@ datasources:
   # ── Metrics ────────────────────────────────────────────────────────────────
   - name: Prometheus
     type: prometheus
-    uid: prometheus-shelfj
+    uid: prometheus-storeql
     url: http://prometheus:9090
     access: proxy
     isDefault: true
@@ -15,19 +15,19 @@ datasources:
       prometheusType: Prometheus
       exemplarTraceIdDestinations:
         - name: traceID
-          datasourceUid: tempo-shelfj
+          datasourceUid: tempo-storeql
 
   # ── Logs ───────────────────────────────────────────────────────────────────
   - name: Loki
     type: loki
-    uid: loki-shelfj
+    uid: loki-storeql
     url: http://loki:3100
     access: proxy
     editable: false
     jsonData:
       maxLines: 5000
       derivedFields:
-        - datasourceUid: tempo-shelfj
+        - datasourceUid: tempo-storeql
           matcherRegex: '"traceId":"(\w+)"'
           name: TraceID
           url: "$${__value.raw}"
@@ -36,20 +36,20 @@ datasources:
   # ── Traces ─────────────────────────────────────────────────────────────────
   - name: Tempo
     type: tempo
-    uid: tempo-shelfj
+    uid: tempo-storeql
     url: http://tempo:3200
     access: proxy
     editable: false
     jsonData:
       httpMethod: GET
       serviceMap:
-        datasourceUid: prometheus-shelfj
+        datasourceUid: prometheus-storeql
       nodeGraph:
         enabled: true
       search:
         hide: false
       lokiSearch:
-        datasourceUid: loki-shelfj
+        datasourceUid: loki-storeql
       traceQuery:
         timeShiftEnabled: true
         spanStartTimeShift: "1h"

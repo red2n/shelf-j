@@ -1,15 +1,15 @@
-# Production runtime image for the Shelf-J Flutter web app (admin + storefront + POS).
+# Production runtime image for the StoreQL Flutter web app (admin + storefront + POS).
 #
 # Like Dockerfile.svc, the artifact is built by the reactor/CI step and copied into
 # a minimal runtime image — here a NON-ROOT nginx (nginx-unprivileged, uid 101,
 # listens on 8080). Build the bundle first (redeploy.sh does this):
 #
-#   (cd frontends/shelf-app && flutter build web --release --no-web-resources-cdn \
-#       --dart-define=SHELFJ_API_BASE=http://localhost:8090/api)
+#   (cd frontends/storeql-app && flutter build web --release --no-web-resources-cdn \
+#       --dart-define=STOREQL_API_BASE=http://localhost:8090/api)
 #
 # --no-web-resources-cdn serves CanvasKit from this image rather than www.gstatic.com, which the
 # Content-Security-Policy in infra/nginx-spa.conf.template does not allow.
-#   docker build -f Dockerfile.web -t shelfj/web .
+#   docker build -f Dockerfile.web -t storeql/web .
 #
 # The base (22.11): nginx's stable line on the slim Alpine variant. 1.27 was a retired mainline on
 # an Alpine nobody patched any more — the first image scan found 15 critical and 68 high findings
@@ -18,12 +18,12 @@
 # the template with envsubst, and busybox's wget for the health check. Dependabot watches the tag.
 FROM nginxinc/nginx-unprivileged:1.31-alpine-slim
 
-LABEL org.opencontainers.image.title="shelf-j-web" \
-      org.opencontainers.image.description="Shelf-J Flutter web app (admin/storefront/POS)" \
+LABEL org.opencontainers.image.title="storeql-web" \
+      org.opencontainers.image.description="StoreQL Flutter web app (admin/storefront/POS)" \
       org.opencontainers.image.source="https://github.com/red2n/home"
 
 # Static, content-hashed Flutter bundle (dart2js release → refresh-safe).
-COPY --chown=nginx:nginx frontends/shelf-app/build/web /usr/share/nginx/html
+COPY --chown=nginx:nginx frontends/storeql-app/build/web /usr/share/nginx/html
 # The inventory of every script the shell serves, with a reason and a hash for each (PCI DSS
 # SAQ-A: the site cannot be altered by scripts; 6.4.3 / 11.6.1). Generated from the bundle at image
 # build, so a script without a reason fails the build; served as /script-inventory.json for the
@@ -39,7 +39,7 @@ USER 101
 # Rendered at start-up by the image's entrypoint (envsubst on /etc/nginx/templates).
 COPY infra/nginx-spa.conf.template /etc/nginx/templates/default.conf.template
 # The gateway origin for the CSP's connect-src; empty suits the relative /api build CI publishes.
-ENV SHELFJ_API_ORIGIN=""
+ENV STOREQL_API_ORIGIN=""
 
 EXPOSE 8080
 HEALTHCHECK --interval=15s --timeout=4s --start-period=5s --retries=4 \

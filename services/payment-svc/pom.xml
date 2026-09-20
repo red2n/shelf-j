@@ -5,14 +5,14 @@
     <modelVersion>4.0.0</modelVersion>
 
     <parent>
-        <groupId>com.shelfj</groupId>
-        <artifactId>shelf-j-parent</artifactId>
+        <groupId>com.storeql</groupId>
+        <artifactId>storeql-parent</artifactId>
         <version>0.1.0-SNAPSHOT</version>
         <relativePath>../../pom.xml</relativePath>
     </parent>
 
     <artifactId>payment-svc</artifactId>
-    <name>Shelf-J :: services :: payment-svc</name>
+    <name>StoreQL :: services :: payment-svc</name>
     <description>
         Payment tender service (Gap #54). Records payment and refund tenders against orders.
         Supports cash, card, and gift-card methods. Append-only tables (payments, refunds).
@@ -62,24 +62,24 @@
         </dependency>
 
         <dependency>
-            <groupId>com.shelfj</groupId>
+            <groupId>com.storeql</groupId>
             <artifactId>common-ids</artifactId>
         </dependency>
         <dependency>
-            <groupId>com.shelfj</groupId>
+            <groupId>com.storeql</groupId>
             <artifactId>common-web</artifactId>
         </dependency>
         <dependency>
-            <groupId>com.shelfj</groupId>
+            <groupId>com.storeql</groupId>
             <artifactId>events-contract</artifactId>
         </dependency>
         <dependency>
-            <groupId>com.shelfj</groupId>
+            <groupId>com.storeql</groupId>
             <artifactId>discovery</artifactId>
-            <version>${shelfj.version}</version>
+            <version>${storeql.version}</version>
         </dependency>
         <dependency>
-            <groupId>com.shelfj</groupId>
+            <groupId>com.storeql</groupId>
             <artifactId>common-service</artifactId>
         </dependency>
 
@@ -122,7 +122,7 @@
         </dependency>
 
         <dependency>
-            <groupId>com.shelfj</groupId>
+            <groupId>com.storeql</groupId>
             <artifactId>common-test</artifactId>
             <scope>test</scope>
         </dependency>

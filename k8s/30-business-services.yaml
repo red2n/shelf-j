@@ -1,5 +1,5 @@
 # The 12 business services. Each: own Postgres role/schema, registers with Consul under
-# SHELFJ_ADVERTISE_HOST (must equal this file's k8s Service name — the gateway and any
+# STOREQL_ADVERTISE_HOST (must equal this file's k8s Service name — the gateway and any
 # peer service resolve each other via Consul's stored Address, not k8s DNS directly).
 #
 # Probes use the full 3-endpoint model (ARCHITECTURE.md DoD): /health/started gates how
@@ -18,14 +18,14 @@
 ---
 apiVersion: v1
 kind: Service
-metadata: { name: iam-svc, namespace: shelf-j }
+metadata: { name: iam-svc, namespace: storeql }
 spec:
   selector: { app: iam-svc }
   ports: [{ port: 8080, targetPort: 8080 }]
 ---
 apiVersion: apps/v1
 kind: Deployment
-metadata: { name: iam-svc, namespace: shelf-j }
+metadata: { name: iam-svc, namespace: storeql }
 spec:
   replicas: 1
   selector: { matchLabels: { app: iam-svc } }
@@ -43,7 +43,7 @@ spec:
         - { name: tmp, emptyDir: {} }
       containers:
         - name: iam-svc
-          image: ghcr.io/red2n/shelf-j-iam-svc:latest
+          image: ghcr.io/red2n/storeql-iam-svc:latest
           securityContext:
             allowPrivilegeEscalation: false
             readOnlyRootFilesystem: true
@@ -52,17 +52,17 @@ spec:
             - { name: tmp, mountPath: /tmp }
           ports: [{ containerPort: 8080 }]
           envFrom:
-            - configMapRef: { name: shelfj-common-env }
-            - secretRef: { name: shelfj-config-token }
-            # key "shelfj.jwt.secret" seals the token signing keys' private halves at rest (20.15);
+            - configMapRef: { name: storeql-common-env }
+            - secretRef: { name: storeql-config-token }
+            # key "storeql.jwt.secret" seals the token signing keys' private halves at rest (20.15);
             # tokens themselves are RS256 under a rotating key. Only iam-svc is given it.
-            - secretRef: { name: shelfj-jwt }
+            - secretRef: { name: storeql-jwt }
           env:
-            - { name: SHELFJ_DB_USER, value: "iam_svc" }
-            - name: SHELFJ_DB_PASSWORD
-              valueFrom: { secretKeyRef: { name: shelfj-postgres, key: IAM_DB_PASSWORD } }
+            - { name: STOREQL_DB_USER, value: "iam_svc" }
+            - name: STOREQL_DB_PASSWORD
+              valueFrom: { secretKeyRef: { name: storeql-postgres, key: IAM_DB_PASSWORD } }
             - { name: JAVA_TOOL_OPTIONS, value: "-Xms128m -Xmx512m -XX:+UseG1GC" }
-            - { name: SHELFJ_ADVERTISE_HOST, value: "iam-svc" }
+            - { name: STOREQL_ADVERTISE_HOST, value: "iam-svc" }
           startupProbe:
             httpGet: { path: /health/started, port: 8080 }
             periodSeconds: 5
@@ -84,14 +84,14 @@ spec:
 ---
 apiVersion: v1
 kind: Service
-metadata: { name: tenant-svc, namespace: shelf-j }
+metadata: { name: tenant-svc, namespace: storeql }
 spec:
   selector: { app: tenant-svc }
   ports: [{ port: 8080, targetPort: 8080 }]
 ---
 apiVersion: apps/v1
 kind: Deployment
-metadata: { name: tenant-svc, namespace: shelf-j }
+metadata: { name: tenant-svc, namespace: storeql }
 spec:
   replicas: 1
   selector: { matchLabels: { app: tenant-svc } }
@@ -109,7 +109,7 @@ spec:
         - { name: tmp, emptyDir: {} }
       containers:
         - name: tenant-svc
-          image: ghcr.io/red2n/shelf-j-tenant-svc:latest
+          image: ghcr.io/red2n/storeql-tenant-svc:latest
           securityContext:
             allowPrivilegeEscalation: false
             readOnlyRootFilesystem: true
@@ -118,14 +118,14 @@ spec:
             - { name: tmp, mountPath: /tmp }
           ports: [{ containerPort: 8080 }]
           envFrom:
-            - configMapRef: { name: shelfj-common-env }
-            - secretRef: { name: shelfj-config-token }
+            - configMapRef: { name: storeql-common-env }
+            - secretRef: { name: storeql-config-token }
           env:
-            - { name: SHELFJ_DB_USER, value: "tenant_svc" }
-            - name: SHELFJ_DB_PASSWORD
-              valueFrom: { secretKeyRef: { name: shelfj-postgres, key: TENANT_DB_PASSWORD } }
+            - { name: STOREQL_DB_USER, value: "tenant_svc" }
+            - name: STOREQL_DB_PASSWORD
+              valueFrom: { secretKeyRef: { name: storeql-postgres, key: TENANT_DB_PASSWORD } }
             - { name: JAVA_TOOL_OPTIONS, value: "-Xms128m -Xmx512m -XX:+UseG1GC" }
-            - { name: SHELFJ_ADVERTISE_HOST, value: "tenant-svc" }
+            - { name: STOREQL_ADVERTISE_HOST, value: "tenant-svc" }
           startupProbe:
             httpGet: { path: /health/started, port: 8080 }
             periodSeconds: 5
@@ -147,14 +147,14 @@ spec:
 ---
 apiVersion: v1
 kind: Service
-metadata: { name: inventory-svc, namespace: shelf-j }
+metadata: { name: inventory-svc, namespace: storeql }
 spec:
   selector: { app: inventory-svc }
   ports: [{ port: 8080, targetPort: 8080 }]
 ---
 apiVersion: apps/v1
 kind: Deployment
-metadata: { name: inventory-svc, namespace: shelf-j }
+metadata: { name: inventory-svc, namespace: storeql }
 spec:
   replicas: 1
   selector: { matchLabels: { app: inventory-svc } }
@@ -172,7 +172,7 @@ spec:
         - { name: tmp, emptyDir: {} }
       containers:
         - name: inventory-svc
-          image: ghcr.io/red2n/shelf-j-inventory-svc:latest
+          image: ghcr.io/red2n/storeql-inventory-svc:latest
           securityContext:
             allowPrivilegeEscalation: false
             readOnlyRootFilesystem: true
@@ -181,14 +181,14 @@ spec:
             - { name: tmp, mountPath: /tmp }
           ports: [{ containerPort: 8080 }]
           envFrom:
-            - configMapRef: { name: shelfj-common-env }
-            - secretRef: { name: shelfj-config-token }
+            - configMapRef: { name: storeql-common-env }
+            - secretRef: { name: storeql-config-token }
           env:
-            - { name: SHELFJ_DB_USER, value: "inventory_svc" }
-            - name: SHELFJ_DB_PASSWORD
-              valueFrom: { secretKeyRef: { name: shelfj-postgres, key: INVENTORY_DB_PASSWORD } }
+            - { name: STOREQL_DB_USER, value: "inventory_svc" }
+            - name: STOREQL_DB_PASSWORD
+              valueFrom: { secretKeyRef: { name: storeql-postgres, key: INVENTORY_DB_PASSWORD } }
             - { name: JAVA_TOOL_OPTIONS, value: "-Xms128m -Xmx512m -XX:+UseG1GC" }
-            - { name: SHELFJ_ADVERTISE_HOST, value: "inventory-svc" }
+            - { name: STOREQL_ADVERTISE_HOST, value: "inventory-svc" }
           startupProbe:
             httpGet: { path: /health/started, port: 8080 }
             periodSeconds: 5
@@ -210,14 +210,14 @@ spec:
 ---
 apiVersion: v1
 kind: Service
-metadata: { name: order-svc, namespace: shelf-j }
+metadata: { name: order-svc, namespace: storeql }
 spec:
   selector: { app: order-svc }
   ports: [{ port: 8080, targetPort: 8080 }]
 ---
 apiVersion: apps/v1
 kind: Deployment
-metadata: { name: order-svc, namespace: shelf-j }
+metadata: { name: order-svc, namespace: storeql }
 spec:
   replicas: 1
   selector: { matchLabels: { app: order-svc } }
@@ -235,7 +235,7 @@ spec:
         - { name: tmp, emptyDir: {} }
       containers:
         - name: order-svc
-          image: ghcr.io/red2n/shelf-j-order-svc:latest
+          image: ghcr.io/red2n/storeql-order-svc:latest
           securityContext:
             allowPrivilegeEscalation: false
             readOnlyRootFilesystem: true
@@ -244,21 +244,21 @@ spec:
             - { name: tmp, mountPath: /tmp }
           ports: [{ containerPort: 8080 }]
           envFrom:
-            - configMapRef: { name: shelfj-common-env }
-            - secretRef: { name: shelfj-config-token }
+            - configMapRef: { name: storeql-common-env }
+            - secretRef: { name: storeql-config-token }
           env:
-            - { name: SHELFJ_DB_USER, value: "order_svc" }
-            - name: SHELFJ_DB_PASSWORD
-              valueFrom: { secretKeyRef: { name: shelfj-postgres, key: ORDER_DB_PASSWORD } }
+            - { name: STOREQL_DB_USER, value: "order_svc" }
+            - name: STOREQL_DB_PASSWORD
+              valueFrom: { secretKeyRef: { name: storeql-postgres, key: ORDER_DB_PASSWORD } }
             - { name: JAVA_TOOL_OPTIONS, value: "-Xms128m -Xmx512m -XX:+UseG1GC" }
-            - { name: SHELFJ_ADVERTISE_HOST, value: "order-svc" }
+            - { name: STOREQL_ADVERTISE_HOST, value: "order-svc" }
             # docs/vps-deployment.md §5: "Server-side pricing must be true in production."
-            - { name: SHELFJ_ORDER_PRICING_ENFORCE, value: "true" }
+            - { name: STOREQL_ORDER_PRICING_ENFORCE, value: "true" }
             # Stock holds for ONLINE checkout. Left false (the dev default) until you've
             # seeded real inventory for your tenants — flip to "true" once you have, or
             # every online checkout will 409 on stock. See docker-compose.yml's comment
-            # on shelfj.order.inventory.reserve-enforce.
-            - { name: SHELFJ_ORDER_RESERVE_ENFORCE, value: "false" }
+            # on storeql.order.inventory.reserve-enforce.
+            - { name: STOREQL_ORDER_RESERVE_ENFORCE, value: "false" }
           startupProbe:
             httpGet: { path: /health/started, port: 8080 }
             periodSeconds: 5
@@ -280,14 +280,14 @@ spec:
 ---
 apiVersion: v1
 kind: Service
-metadata: { name: purchase-svc, namespace: shelf-j }
+metadata: { name: purchase-svc, namespace: storeql }
 spec:
   selector: { app: purchase-svc }
   ports: [{ port: 8080, targetPort: 8080 }]
 ---
 apiVersion: apps/v1
 kind: Deployment
-metadata: { name: purchase-svc, namespace: shelf-j }
+metadata: { name: purchase-svc, namespace: storeql }
 spec:
   replicas: 1
   selector: { matchLabels: { app: purchase-svc } }
@@ -305,7 +305,7 @@ spec:
         - { name: tmp, emptyDir: {} }
       containers:
         - name: purchase-svc
-          image: ghcr.io/red2n/shelf-j-purchase-svc:latest
+          image: ghcr.io/red2n/storeql-purchase-svc:latest
           securityContext:
             allowPrivilegeEscalation: false
             readOnlyRootFilesystem: true
@@ -314,14 +314,14 @@ spec:
             - { name: tmp, mountPath: /tmp }
           ports: [{ containerPort: 8080 }]
           envFrom:
-            - configMapRef: { name: shelfj-common-env }
-            - secretRef: { name: shelfj-config-token }
+            - configMapRef: { name: storeql-common-env }
+            - secretRef: { name: storeql-config-token }
           env:
-            - { name: SHELFJ_DB_USER, value: "purchase_svc" }
-            - name: SHELFJ_DB_PASSWORD
-              valueFrom: { secretKeyRef: { name: shelfj-postgres, key: PURCHASE_DB_PASSWORD } }
+            - { name: STOREQL_DB_USER, value: "purchase_svc" }
+            - name: STOREQL_DB_PASSWORD
+              valueFrom: { secretKeyRef: { name: storeql-postgres, key: PURCHASE_DB_PASSWORD } }
             - { name: JAVA_TOOL_OPTIONS, value: "-Xms128m -Xmx384m -XX:+UseG1GC" }
-            - { name: SHELFJ_ADVERTISE_HOST, value: "purchase-svc" }
+            - { name: STOREQL_ADVERTISE_HOST, value: "purchase-svc" }
           startupProbe:
             httpGet: { path: /health/started, port: 8080 }
             periodSeconds: 5
@@ -343,14 +343,14 @@ spec:
 ---
 apiVersion: v1
 kind: Service
-metadata: { name: cart-svc, namespace: shelf-j }
+metadata: { name: cart-svc, namespace: storeql }
 spec:
   selector: { app: cart-svc }
   ports: [{ port: 8080, targetPort: 8080 }]
 ---
 apiVersion: apps/v1
 kind: Deployment
-metadata: { name: cart-svc, namespace: shelf-j }
+metadata: { name: cart-svc, namespace: storeql }
 spec:
   replicas: 1
   selector: { matchLabels: { app: cart-svc } }
@@ -368,7 +368,7 @@ spec:
         - { name: tmp, emptyDir: {} }
       containers:
         - name: cart-svc
-          image: ghcr.io/red2n/shelf-j-cart-svc:latest
+          image: ghcr.io/red2n/storeql-cart-svc:latest
           securityContext:
             allowPrivilegeEscalation: false
             readOnlyRootFilesystem: true
@@ -377,17 +377,17 @@ spec:
             - { name: tmp, mountPath: /tmp }
           ports: [{ containerPort: 8080 }]
           envFrom:
-            - configMapRef: { name: shelfj-common-env }
-            - secretRef: { name: shelfj-config-token }
+            - configMapRef: { name: storeql-common-env }
+            - secretRef: { name: storeql-config-token }
           env:
-            - { name: SHELFJ_DB_USER, value: "cart_svc" }
-            - name: SHELFJ_DB_PASSWORD
-              valueFrom: { secretKeyRef: { name: shelfj-postgres, key: CART_DB_PASSWORD } }
+            - { name: STOREQL_DB_USER, value: "cart_svc" }
+            - name: STOREQL_DB_PASSWORD
+              valueFrom: { secretKeyRef: { name: storeql-postgres, key: CART_DB_PASSWORD } }
             - { name: JAVA_TOOL_OPTIONS, value: "-Xms128m -Xmx384m -XX:+UseG1GC" }
-            - { name: SHELFJ_ADVERTISE_HOST, value: "cart-svc" }
+            - { name: STOREQL_ADVERTISE_HOST, value: "cart-svc" }
             # Backs the cart/cart-items cache-aside reads (CartRepository).
-            - name: SHELFJ_REDIS_PASSWORD
-              valueFrom: { secretKeyRef: { name: shelfj-redis, key: REDIS_PASSWORD } }
+            - name: STOREQL_REDIS_PASSWORD
+              valueFrom: { secretKeyRef: { name: storeql-redis, key: REDIS_PASSWORD } }
           startupProbe:
             httpGet: { path: /health/started, port: 8080 }
             periodSeconds: 5
@@ -409,14 +409,14 @@ spec:
 ---
 apiVersion: v1
 kind: Service
-metadata: { name: pricing-svc, namespace: shelf-j }
+metadata: { name: pricing-svc, namespace: storeql }
 spec:
   selector: { app: pricing-svc }
   ports: [{ port: 8080, targetPort: 8080 }]
 ---
 apiVersion: apps/v1
 kind: Deployment
-metadata: { name: pricing-svc, namespace: shelf-j }
+metadata: { name: pricing-svc, namespace: storeql }
 spec:
   replicas: 1
   selector: { matchLabels: { app: pricing-svc } }
@@ -434,7 +434,7 @@ spec:
         - { name: tmp, emptyDir: {} }
       containers:
         - name: pricing-svc
-          image: ghcr.io/red2n/shelf-j-pricing-svc:latest
+          image: ghcr.io/red2n/storeql-pricing-svc:latest
           securityContext:
             allowPrivilegeEscalation: false
             readOnlyRootFilesystem: true
@@ -443,14 +443,14 @@ spec:
             - { name: tmp, mountPath: /tmp }
           ports: [{ containerPort: 8080 }]
           envFrom:
-            - configMapRef: { name: shelfj-common-env }
-            - secretRef: { name: shelfj-config-token }
+            - configMapRef: { name: storeql-common-env }
+            - secretRef: { name: storeql-config-token }
           env:
-            - { name: SHELFJ_DB_USER, value: "pricing_svc" }
-            - name: SHELFJ_DB_PASSWORD
-              valueFrom: { secretKeyRef: { name: shelfj-postgres, key: PRICING_DB_PASSWORD } }
+            - { name: STOREQL_DB_USER, value: "pricing_svc" }
+            - name: STOREQL_DB_PASSWORD
+              valueFrom: { secretKeyRef: { name: storeql-postgres, key: PRICING_DB_PASSWORD } }
             - { name: JAVA_TOOL_OPTIONS, value: "-Xms128m -Xmx384m -XX:+UseG1GC" }
-            - { name: SHELFJ_ADVERTISE_HOST, value: "pricing-svc" }
+            - { name: STOREQL_ADVERTISE_HOST, value: "pricing-svc" }
           startupProbe:
             httpGet: { path: /health/started, port: 8080 }
             periodSeconds: 5
@@ -472,14 +472,14 @@ spec:
 ---
 apiVersion: v1
 kind: Service
-metadata: { name: payment-svc, namespace: shelf-j }
+metadata: { name: payment-svc, namespace: storeql }
 spec:
   selector: { app: payment-svc }
   ports: [{ port: 8080, targetPort: 8080 }]
 ---
 apiVersion: apps/v1
 kind: Deployment
-metadata: { name: payment-svc, namespace: shelf-j }
+metadata: { name: payment-svc, namespace: storeql }
 spec:
   replicas: 1
   selector: { matchLabels: { app: payment-svc } }
@@ -497,7 +497,7 @@ spec:
         - { name: tmp, emptyDir: {} }
       containers:
         - name: payment-svc
-          image: ghcr.io/red2n/shelf-j-payment-svc:latest
+          image: ghcr.io/red2n/storeql-payment-svc:latest
           securityContext:
             allowPrivilegeEscalation: false
             readOnlyRootFilesystem: true
@@ -506,14 +506,14 @@ spec:
             - { name: tmp, mountPath: /tmp }
           ports: [{ containerPort: 8080 }]
           envFrom:
-            - configMapRef: { name: shelfj-common-env }
-            - secretRef: { name: shelfj-config-token }
+            - configMapRef: { name: storeql-common-env }
+            - secretRef: { name: storeql-config-token }
           env:
-            - { name: SHELFJ_DB_USER, value: "payment_svc" }
-            - name: SHELFJ_DB_PASSWORD
-              valueFrom: { secretKeyRef: { name: shelfj-postgres, key: PAYMENT_DB_PASSWORD } }
+            - { name: STOREQL_DB_USER, value: "payment_svc" }
+            - name: STOREQL_DB_PASSWORD
+              valueFrom: { secretKeyRef: { name: storeql-postgres, key: PAYMENT_DB_PASSWORD } }
             - { name: JAVA_TOOL_OPTIONS, value: "-Xms128m -Xmx256m -XX:+UseG1GC" }
-            - { name: SHELFJ_ADVERTISE_HOST, value: "payment-svc" }
+            - { name: STOREQL_ADVERTISE_HOST, value: "payment-svc" }
           startupProbe:
             httpGet: { path: /health/started, port: 8080 }
             periodSeconds: 5
@@ -535,14 +535,14 @@ spec:
 ---
 apiVersion: v1
 kind: Service
-metadata: { name: product-svc, namespace: shelf-j }
+metadata: { name: product-svc, namespace: storeql }
 spec:
   selector: { app: product-svc }
   ports: [{ port: 8080, targetPort: 8080 }]
 ---
 apiVersion: apps/v1
 kind: Deployment
-metadata: { name: product-svc, namespace: shelf-j }
+metadata: { name: product-svc, namespace: storeql }
 spec:
   replicas: 1
   selector: { matchLabels: { app: product-svc } }
@@ -560,7 +560,7 @@ spec:
         - { name: tmp, emptyDir: {} }
       containers:
         - name: product-svc
-          image: ghcr.io/red2n/shelf-j-product-svc:latest
+          image: ghcr.io/red2n/storeql-product-svc:latest
           securityContext:
             allowPrivilegeEscalation: false
             readOnlyRootFilesystem: true
@@ -569,17 +569,17 @@ spec:
             - { name: tmp, mountPath: /tmp }
           ports: [{ containerPort: 8080 }]
           envFrom:
-            - configMapRef: { name: shelfj-common-env }
-            - secretRef: { name: shelfj-config-token }
+            - configMapRef: { name: storeql-common-env }
+            - secretRef: { name: storeql-config-token }
           env:
-            - { name: SHELFJ_DB_USER, value: "product_svc" }
-            - name: SHELFJ_DB_PASSWORD
-              valueFrom: { secretKeyRef: { name: shelfj-postgres, key: PRODUCT_DB_PASSWORD } }
+            - { name: STOREQL_DB_USER, value: "product_svc" }
+            - name: STOREQL_DB_PASSWORD
+              valueFrom: { secretKeyRef: { name: storeql-postgres, key: PRODUCT_DB_PASSWORD } }
             - { name: JAVA_TOOL_OPTIONS, value: "-Xms128m -Xmx512m -XX:+UseG1GC" }
-            - { name: SHELFJ_ADVERTISE_HOST, value: "product-svc" }
+            - { name: STOREQL_ADVERTISE_HOST, value: "product-svc" }
             # Backs the findProduct cache-aside read (ProductRepository).
-            - name: SHELFJ_REDIS_PASSWORD
-              valueFrom: { secretKeyRef: { name: shelfj-redis, key: REDIS_PASSWORD } }
+            - name: STOREQL_REDIS_PASSWORD
+              valueFrom: { secretKeyRef: { name: storeql-redis, key: REDIS_PASSWORD } }
           startupProbe:
             httpGet: { path: /health/started, port: 8080 }
             periodSeconds: 5
@@ -601,14 +601,14 @@ spec:
 ---
 apiVersion: v1
 kind: Service
-metadata: { name: customer-svc, namespace: shelf-j }
+metadata: { name: customer-svc, namespace: storeql }
 spec:
   selector: { app: customer-svc }
   ports: [{ port: 8080, targetPort: 8080 }]
 ---
 apiVersion: apps/v1
 kind: Deployment
-metadata: { name: customer-svc, namespace: shelf-j }
+metadata: { name: customer-svc, namespace: storeql }
 spec:
   replicas: 1
   selector: { matchLabels: { app: customer-svc } }
@@ -626,7 +626,7 @@ spec:
         - { name: tmp, emptyDir: {} }
       containers:
         - name: customer-svc
-          image: ghcr.io/red2n/shelf-j-customer-svc:latest
+          image: ghcr.io/red2n/storeql-customer-svc:latest
           securityContext:
             allowPrivilegeEscalation: false
             readOnlyRootFilesystem: true
@@ -635,14 +635,14 @@ spec:
             - { name: tmp, mountPath: /tmp }
           ports: [{ containerPort: 8080 }]
           envFrom:
-            - configMapRef: { name: shelfj-common-env }
-            - secretRef: { name: shelfj-config-token }
+            - configMapRef: { name: storeql-common-env }
+            - secretRef: { name: storeql-config-token }
           env:
-            - { name: SHELFJ_DB_USER, value: "customer_svc" }
-            - name: SHELFJ_DB_PASSWORD
-              valueFrom: { secretKeyRef: { name: shelfj-postgres, key: CUSTOMER_DB_PASSWORD } }
+            - { name: STOREQL_DB_USER, value: "customer_svc" }
+            - name: STOREQL_DB_PASSWORD
+              valueFrom: { secretKeyRef: { name: storeql-postgres, key: CUSTOMER_DB_PASSWORD } }
             - { name: JAVA_TOOL_OPTIONS, value: "-Xms128m -Xmx384m -XX:+UseG1GC" }
-            - { name: SHELFJ_ADVERTISE_HOST, value: "customer-svc" }
+            - { name: STOREQL_ADVERTISE_HOST, value: "customer-svc" }
           startupProbe:
             httpGet: { path: /health/started, port: 8080 }
             periodSeconds: 5
@@ -664,14 +664,14 @@ spec:
 ---
 apiVersion: v1
 kind: Service
-metadata: { name: notification-svc, namespace: shelf-j }
+metadata: { name: notification-svc, namespace: storeql }
 spec:
   selector: { app: notification-svc }
   ports: [{ port: 8080, targetPort: 8080 }]
 ---
 apiVersion: apps/v1
 kind: Deployment
-metadata: { name: notification-svc, namespace: shelf-j }
+metadata: { name: notification-svc, namespace: storeql }
 spec:
   replicas: 1
   selector: { matchLabels: { app: notification-svc } }
@@ -689,7 +689,7 @@ spec:
         - { name: tmp, emptyDir: {} }
       containers:
         - name: notification-svc
-          image: ghcr.io/red2n/shelf-j-notification-svc:latest
+          image: ghcr.io/red2n/storeql-notification-svc:latest
           securityContext:
             allowPrivilegeEscalation: false
             readOnlyRootFilesystem: true
@@ -698,14 +698,14 @@ spec:
             - { name: tmp, mountPath: /tmp }
           ports: [{ containerPort: 8080 }]
           envFrom:
-            - configMapRef: { name: shelfj-common-env }
-            - secretRef: { name: shelfj-config-token }
+            - configMapRef: { name: storeql-common-env }
+            - secretRef: { name: storeql-config-token }
           env:
-            - { name: SHELFJ_DB_USER, value: "notification_svc" }
-            - name: SHELFJ_DB_PASSWORD
-              valueFrom: { secretKeyRef: { name: shelfj-postgres, key: NOTIFICATION_DB_PASSWORD } }
+            - { name: STOREQL_DB_USER, value: "notification_svc" }
+            - name: STOREQL_DB_PASSWORD
+              valueFrom: { secretKeyRef: { name: storeql-postgres, key: NOTIFICATION_DB_PASSWORD } }
             - { name: JAVA_TOOL_OPTIONS, value: "-Xms128m -Xmx384m -XX:+UseG1GC" }
-            - { name: SHELFJ_ADVERTISE_HOST, value: "notification-svc" }
+            - { name: STOREQL_ADVERTISE_HOST, value: "notification-svc" }
           startupProbe:
             httpGet: { path: /health/started, port: 8080 }
             periodSeconds: 5
@@ -727,14 +727,14 @@ spec:
 ---
 apiVersion: v1
 kind: Service
-metadata: { name: reporting-svc, namespace: shelf-j }
+metadata: { name: reporting-svc, namespace: storeql }
 spec:
   selector: { app: reporting-svc }
   ports: [{ port: 8080, targetPort: 8080 }]
 ---
 apiVersion: apps/v1
 kind: Deployment
-metadata: { name: reporting-svc, namespace: shelf-j }
+metadata: { name: reporting-svc, namespace: storeql }
 spec:
   replicas: 1
   selector: { matchLabels: { app: reporting-svc } }
@@ -752,7 +752,7 @@ spec:
         - { name: tmp, emptyDir: {} }
       containers:
         - name: reporting-svc
-          image: ghcr.io/red2n/shelf-j-reporting-svc:latest
+          image: ghcr.io/red2n/storeql-reporting-svc:latest
           securityContext:
             allowPrivilegeEscalation: false
             readOnlyRootFilesystem: true
@@ -761,14 +761,14 @@ spec:
             - { name: tmp, mountPath: /tmp }
           ports: [{ containerPort: 8080 }]
           envFrom:
-            - configMapRef: { name: shelfj-common-env }
-            - secretRef: { name: shelfj-config-token }
+            - configMapRef: { name: storeql-common-env }
+            - secretRef: { name: storeql-config-token }
           env:
-            - { name: SHELFJ_DB_USER, value: "reporting_svc" }
-            - name: SHELFJ_DB_PASSWORD
-              valueFrom: { secretKeyRef: { name: shelfj-postgres, key: REPORTING_DB_PASSWORD } }
+            - { name: STOREQL_DB_USER, value: "reporting_svc" }
+            - name: STOREQL_DB_PASSWORD
+              valueFrom: { secretKeyRef: { name: storeql-postgres, key: REPORTING_DB_PASSWORD } }
             - { name: JAVA_TOOL_OPTIONS, value: "-Xms128m -Xmx384m -XX:+UseG1GC" }
-            - { name: SHELFJ_ADVERTISE_HOST, value: "reporting-svc" }
+            - { name: STOREQL_ADVERTISE_HOST, value: "reporting-svc" }
           startupProbe:
             httpGet: { path: /health/started, port: 8080 }
             periodSeconds: 5

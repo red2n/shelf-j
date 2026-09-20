@@ -1,6 +1,6 @@
 #!/usr/bin/env bash
 #
-# Bring up the Shelf-J Flutter web app (storefront + POS + admin console) on
+# Bring up the StoreQL Flutter web app (storefront + POS + admin console) on
 # :40015, pointed at the dockerized gateway (http://localhost:8090/api).
 #
 # Usage:
@@ -27,7 +27,7 @@ if [ -x "${HOME}/development/flutter/bin/flutter" ]; then
 fi
 
 PORT="${POS_WEB_PORT:-40015}"
-GATEWAY="${SHELFJ_GATEWAY:-http://localhost:8090}"
+GATEWAY="${STOREQL_GATEWAY:-http://localhost:8090}"
 
 # Parse an optional mode flag, then positional <tenantId> <productId>.
 MODE="store"
@@ -40,7 +40,7 @@ esac
 TENANT="${1:-dd7d222e-0cbe-4729-a470-01de6a9eef8d}"
 PRODUCT="${2:-b1f4d1ba-86a3-4441-af13-db54de40ceaa}"
 
-APP_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")/../frontends/shelf-app" && pwd)"
+APP_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")/../frontends/storeql-app" && pwd)"
 
 # The storefront is tenant-scoped via ?tenant= (guest); POS/admin are staff-authed
 # (tenant comes from the JWT), so they need no tenant in the URL.

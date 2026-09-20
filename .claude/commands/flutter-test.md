@@ -3,7 +3,7 @@
 Run the Flutter test suite for the storefront app. Pass an optional path to run a single file or directory.
 
 ```bash
-cd frontends/shelf-app && /home/navin/flutter/bin/flutter test $ARGUMENTS --reporter compact
+cd frontends/storeql-app && /home/navin/flutter/bin/flutter test $ARGUMENTS --reporter compact
 ```
 
 If `$ARGUMENTS` is empty this runs the full suite. Common usage:

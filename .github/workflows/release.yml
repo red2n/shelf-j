@@ -71,8 +71,8 @@ jobs:
       - name: SBOM of the reactor (CycloneDX)
         run: |
           scripts/sbom.sh
-          cp target/shelf-j-bom.json release-artifacts/shelf-j-${{ github.ref_name }}.cdx.json
-          cp target/shelf-j-bom.xml release-artifacts/shelf-j-${{ github.ref_name }}.cdx.xml
+          cp target/storeql-bom.json release-artifacts/storeql-${{ github.ref_name }}.cdx.json
+          cp target/storeql-bom.xml release-artifacts/storeql-${{ github.ref_name }}.cdx.xml
 
       - name: Checksums
         working-directory: release-artifacts
@@ -88,17 +88,17 @@ jobs:
         uses: actions/attest-sbom@v4
         with:
           subject-path: release-artifacts/*.jar
-          sbom-path: release-artifacts/shelf-j-${{ github.ref_name }}.cdx.json
+          sbom-path: release-artifacts/storeql-${{ github.ref_name }}.cdx.json
 
       - name: Publish GitHub release assets
         uses: softprops/action-gh-release@v3
         with:
           tag_name: ${{ github.ref_name }}
-          name: Shelf-J Release ${{ github.ref_name }}
+          name: StoreQL Release ${{ github.ref_name }}
           body: |
-            Shelf-J release built from commit ${{ github.sha }}.
+            StoreQL release built from commit ${{ github.sha }}.
 
-            **What it is made of, and where it was built.** `shelf-j-${{ github.ref_name }}.cdx.json` is the CycloneDX SBOM of every module and shipped dependency; `SHA256SUMS` lists every asset. Each jar carries a SLSA build-provenance attestation: `gh attestation verify <jar> --repo ${{ github.repository }}`. Each image of this version is signed and carries its own SBOM and provenance: `scripts/verify-release.sh ${{ github.ref_name }}` (see docs/RELEASE-PROCESS.md).
+            **What it is made of, and where it was built.** `storeql-${{ github.ref_name }}.cdx.json` is the CycloneDX SBOM of every module and shipped dependency; `SHA256SUMS` lists every asset. Each jar carries a SLSA build-provenance attestation: `gh attestation verify <jar> --repo ${{ github.repository }}`. Each image of this version is signed and carries its own SBOM and provenance: `scripts/verify-release.sh ${{ github.ref_name }}` (see docs/RELEASE-PROCESS.md).
           files: release-artifacts/*
         env:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}

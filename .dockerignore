@@ -1,5 +1,5 @@
 # Keep the Docker build context lean. NOTE: do NOT ignore `target/` (Dockerfile.svc
-# copies the built jars + libs) or `frontends/shelf-app/build/web` (Dockerfile.web
+# copies the built jars + libs) or `frontends/storeql-app/build/web` (Dockerfile.web
 # copies the compiled web bundle).
 
 .git
@@ -24,10 +24,10 @@ confy.sh
 
 # Flutter: keep build/web (needed); drop dev caches + non-web platforms + sources
 # not used by the static image.
-frontends/shelf-app/.dart_tool
-frontends/shelf-app/test
-frontends/shelf-app/android
-frontends/shelf-app/ios
-frontends/shelf-app/linux
-frontends/shelf-app/macos
-frontends/shelf-app/windows
+frontends/storeql-app/.dart_tool
+frontends/storeql-app/test
+frontends/storeql-app/android
+frontends/storeql-app/ios
+frontends/storeql-app/linux
+frontends/storeql-app/macos
+frontends/storeql-app/windows

@@ -3,7 +3,7 @@ apiVersion: v1
 kind: Service
 metadata:
   name: kafka
-  namespace: shelf-j
+  namespace: storeql
 spec:
   clusterIP: None # headless: stable pod DNS for the StatefulSet
   publishNotReadyAddresses: true # kafka-0 must resolve its own kafka-0.kafka hostname
@@ -19,7 +19,7 @@ apiVersion: apps/v1
 kind: StatefulSet
 metadata:
   name: kafka
-  namespace: shelf-j
+  namespace: storeql
 spec:
   serviceName: kafka
   replicas: 1

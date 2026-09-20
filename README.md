@@ -1,16 +1,16 @@
-# Shelf-J
+# StoreQL
 
 **The platform for running a retail business — stock, stores, and sales, online and in person, for as many independent businesses as want to use it.**
 
-> This document is a product tour: what Shelf-J does and how someone actually uses it, top to bottom. It deliberately says nothing about how it's built. For that side, see [docs/ARCHITECTURE.md](docs/ARCHITECTURE.md) (engineering reference), [docs/API-GUIDE.md](docs/API-GUIDE.md) (the full API surface by business capability), and [docs/UI-GUIDE.md](docs/UI-GUIDE.md) (the full screen-by-screen UI tour). Product requirements and roadmap live in [PRD.md](PRD.md).
+> This document is a product tour: what StoreQL does and how someone actually uses it, top to bottom. It deliberately says nothing about how it's built. For that side, see [docs/ARCHITECTURE.md](docs/ARCHITECTURE.md) (engineering reference), [docs/API-GUIDE.md](docs/API-GUIDE.md) (the full API surface by business capability), and [docs/UI-GUIDE.md](docs/UI-GUIDE.md) (the full screen-by-screen UI tour). Product requirements and roadmap live in [PRD.md](PRD.md).
 
 ---
 
 ## Table of contents
 
-1. [What Shelf-J is](#1-what-shelf-j-is)
+1. [What StoreQL is](#1-what-storeql-is)
 2. [Who uses it](#2-who-uses-it)
-3. [The shape of a business on Shelf-J: Tenant, Store, Zone](#3-the-shape-of-a-business-on-shelf-j-tenant-store-zone)
+3. [The shape of a business on StoreQL: Tenant, Store, Zone](#3-the-shape-of-a-business-on-storeql-tenant-store-zone)
 4. [One platform, four experiences](#4-one-platform-four-experiences)
 5. [Setting up a business](#5-setting-up-a-business)
 6. [The product catalog](#6-the-product-catalog)
@@ -31,11 +31,11 @@
 
 ---
 
-## 1. What Shelf-J is
+## 1. What StoreQL is
 
-A business that sells physical goods usually ends up stitching together two or three separate systems: one for inventory and purchasing, one for the till in the shop, and often a completely different one for an online store — none of which agree with each other about what's actually in stock. Shelf-J is built to be all three at once, sharing one live picture of stock, one catalog, one set of customers, and one set of orders regardless of whether a sale happened on a phone at home or at a counter in a shop.
+A business that sells physical goods usually ends up stitching together two or three separate systems: one for inventory and purchasing, one for the till in the shop, and often a completely different one for an online store — none of which agree with each other about what's actually in stock. StoreQL is built to be all three at once, sharing one live picture of stock, one catalog, one set of customers, and one set of orders regardless of whether a sale happened on a phone at home or at a counter in a shop.
 
-Concretely, a business running on Shelf-J can:
+Concretely, a business running on StoreQL can:
 
 - Track **what stock it has and exactly where** — down to the batch/lot, the serial number, and the shelf/aisle it's sitting on.
 - **Buy stock from suppliers** against purchase orders and record what actually arrives.
@@ -54,7 +54,7 @@ It's **multi-tenant**: many separate businesses share the same platform, each wi
 
 | Persona | What they're here to do | Where they work |
 |---|---|---|
-| **Platform Admin** | Runs Shelf-J itself as a service: onboards and monitors the businesses (tenants) using the platform, and can suspend one if needed. Not affiliated with any one business. | Platform Console |
+| **Platform Admin** | Runs StoreQL itself as a service: onboards and monitors the businesses (tenants) using the platform, and can suspend one if needed. Not affiliated with any one business. | Platform Console |
 | **Owner** | Owns a business on the platform. Full control over their stores, catalog, pricing, staff, and reporting. Automatically granted this role the moment they finish onboarding. | Admin Console |
 | **Manager / Store Admin** | Runs one or more of the business's stores day to day: stock, purchasing, pricing, staff scheduling, reports. | Admin Console |
 | **Storekeeper** | Receives and adjusts stock, runs cycle counts, manages batches/zones. | Admin Console |
@@ -65,7 +65,7 @@ A business owner signs up once, is walked through a short setup wizard, and land
 
 ---
 
-## 3. The shape of a business on Shelf-J: Tenant, Store, Zone
+## 3. The shape of a business on StoreQL: Tenant, Store, Zone
 
 Every business on the platform is modeled the same way, three levels deep:
 
@@ -260,7 +260,7 @@ A small set of always-available, whole-business snapshots, refreshable on demand
 
 ## 15. Running the platform itself
 
-A separate console exists purely for the people operating Shelf-J as a service to its business customers:
+A separate console exists purely for the people operating StoreQL as a service to its business customers:
 
 - A directory of **every business (tenant)** on the platform, with status, country, currency, and signup date.
 - **Activate / suspend** a tenant — suspending immediately locks that business's staff logins, POS, and storefront (see [§5](#5-setting-up-a-business) and [§10](#10-selling-online-the-storefront)).
@@ -298,7 +298,7 @@ A buyer raises a purchase order with a supplier and submits it → when the deli
 
 ## 18. Multi-tenancy: what "isolated" actually means
 
-Every business on Shelf-J operates as if it had the platform to itself:
+Every business on StoreQL operates as if it had the platform to itself:
 
 - A business never sees another business's products, stock, prices, orders, or customers — there is no setting or permission that can cross that line.
 - Staff accounts, customer accounts, and even login pages are kept separate per business (and separate again from the platform-operator login) — a password for one business's admin console does nothing anywhere else.

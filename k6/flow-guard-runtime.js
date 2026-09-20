@@ -27,7 +27,7 @@ import {
   staffUser,
   truthy,
   uniq,
-} from './lib/shelfj.js';
+} from './lib/storeql.js';
 
 export const options = {
   scenarios: { guard: { executor: 'per-vu-iterations', vus: 1, iterations: 1, maxDuration: '20m' } },

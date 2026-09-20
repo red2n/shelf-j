@@ -1,14 +1,14 @@
 #!/usr/bin/env bash
 #
 # The CycloneDX bill of materials of the whole reactor (22.10), as the release workflow makes it:
-# every module and every dependency that ships, in target/shelf-j-bom.json and .xml. The plugin's
+# every module and every dependency that ships, in target/storeql-bom.json and .xml. The plugin's
 # version and the document's shape are pinned in the parent pom.
 #
-# Usage: scripts/sbom.sh          then read target/shelf-j-bom.json
+# Usage: scripts/sbom.sh          then read target/storeql-bom.json
 set -euo pipefail
 ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
 mvn -B -q -f "$ROOT/pom.xml" org.cyclonedx:cyclonedx-maven-plugin:makeAggregateBom
-python3 - "$ROOT/target/shelf-j-bom.json" <<'PY'
+python3 - "$ROOT/target/storeql-bom.json" <<'PY'
 import json, sys
 bom = json.load(open(sys.argv[1]))
 components = bom.get("components", [])

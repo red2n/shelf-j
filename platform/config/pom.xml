@@ -5,14 +5,14 @@
     <modelVersion>4.0.0</modelVersion>
 
     <parent>
-        <groupId>com.shelfj</groupId>
-        <artifactId>shelf-j-parent</artifactId>
+        <groupId>com.storeql</groupId>
+        <artifactId>storeql-parent</artifactId>
         <version>0.1.0-SNAPSHOT</version>
         <relativePath>../../pom.xml</relativePath>
     </parent>
 
     <artifactId>config-svc</artifactId>
-    <name>Shelf-J :: platform :: config</name>
+    <name>StoreQL :: platform :: config</name>
     <description>
         Centralized configuration service. Serves per-service, per-profile config over HTTP so services bootstrap
         from one place (golden rule #5). Phase-0 backend = local files under config-repo/; production swaps to a
@@ -52,7 +52,7 @@
         </dependency>
 
         <dependency>
-            <groupId>com.shelfj</groupId>
+            <groupId>com.storeql</groupId>
             <artifactId>common-web</artifactId>
         </dependency>
 

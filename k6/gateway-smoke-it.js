@@ -3,7 +3,7 @@
 //
 //   k6/run.sh gateway-smoke-it
 import http from 'k6/http';
-import { ALL_CHECKS_PASS, BASE, call, data, expect, login, register, truthy } from './lib/shelfj.js';
+import { ALL_CHECKS_PASS, BASE, call, data, expect, login, register, truthy } from './lib/storeql.js';
 
 export const options = { vus: 1, iterations: 1, thresholds: ALL_CHECKS_PASS };
 

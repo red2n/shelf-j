@@ -4,7 +4,7 @@
 // another tenant's return, and the return is management-only.
 //
 //   k6/run.sh vat-return-flow
-import { ALL_CHECKS_PASS, call, data, expect, must, onboardTenant, poll, sellableVariant, staffUser, truthy } from './lib/shelfj.js';
+import { ALL_CHECKS_PASS, call, data, expect, must, onboardTenant, poll, sellableVariant, staffUser, truthy } from './lib/storeql.js';
 
 export const options = { vus: 1, iterations: 1, thresholds: ALL_CHECKS_PASS };
 

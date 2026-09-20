@@ -20,7 +20,7 @@ import {
   staffUser,
   truthy,
   uniq,
-} from './lib/shelfj.js';
+} from './lib/storeql.js';
 
 export const options = { vus: 1, iterations: 1, thresholds: { ...ALL_CHECKS_PASS, flow_completed: ['count==1'] }, setupTimeout: '3m' };
 const flowCompleted = new Counter('flow_completed');

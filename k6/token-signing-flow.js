@@ -12,7 +12,7 @@ import crypto from 'k6/crypto';
 import encoding from 'k6/encoding';
 import { sleep } from 'k6';
 import { Counter } from 'k6/metrics';
-import { ALL_CHECKS_PASS, call, data, expect, login, must, onboardTenant, platformAdmin, poll, staffUser, truthy, uniq } from './lib/shelfj.js';
+import { ALL_CHECKS_PASS, call, data, expect, login, must, onboardTenant, platformAdmin, poll, staffUser, truthy, uniq } from './lib/storeql.js';
 
 const completed = new Counter('flow_completed');
 export const options = {
@@ -25,7 +25,7 @@ export const options = {
 const AUTH = '/api/iam-svc/auth';
 const JWKS = `${AUTH}/.well-known/jwks.json`;
 const KEYS = `${AUTH}/admin/signing-keys`;
-// How long a rotated key is published before it signs (shelfj.jwt.publish-lead-seconds, 60).
+// How long a rotated key is published before it signs (storeql.jwt.publish-lead-seconds, 60).
 const LEAD_SECONDS = Number(__ENV.JWT_PUBLISH_LEAD_SECONDS || 60);
 
 const b64 = (s) => encoding.b64encode(s, 'rawurl');

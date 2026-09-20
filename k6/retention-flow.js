@@ -25,7 +25,7 @@ import {
   staffUser,
   truthy,
   uniq,
-} from './lib/shelfj.js';
+} from './lib/storeql.js';
 
 export const options = {
   scenarios: { flow: { executor: 'per-vu-iterations', vus: 1, iterations: 1, maxDuration: '10m' } },
@@ -53,7 +53,7 @@ export function setup() {
   const storekeeper = staffUser(gb, 'STOREKEEPER', [store.id]);
   const person = (who) =>
     must(
-      call('POST', '/api/customer-svc/customers', { token: gb.owner.token, body: { email: `retention-${who}-${uniq()}@k6.shelfj.test`, firstName: who, lastName: 'Carter' } }),
+      call('POST', '/api/customer-svc/customers', { token: gb.owner.token, body: { email: `retention-${who}-${uniq()}@k6.storeql.test`, firstName: who, lastName: 'Carter' } }),
       201,
       `customer ${who}`
     );

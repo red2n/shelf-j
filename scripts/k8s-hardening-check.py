@@ -7,7 +7,7 @@ import sys
 
 import yaml
 
-SERVICE_IMAGES = ("ghcr.io/red2n/shelf-j-",)
+SERVICE_IMAGES = ("ghcr.io/red2n/storeql-",)
 problems = []
 
 
@@ -23,14 +23,14 @@ for f in sorted(glob.glob("k8s/*.yaml")):
             docs.append((f, d))
 
 namespaces = {d["metadata"]["name"]: d for _, d in docs if d["kind"] == "Namespace"}
-need("shelf-j" in namespaces, "namespace shelf-j is declared")
-labels = namespaces.get("shelf-j", {}).get("metadata", {}).get("labels", {})
+need("storeql" in namespaces, "namespace storeql is declared")
+labels = namespaces.get("storeql", {}).get("metadata", {}).get("labels", {})
 for mode in ("enforce", "warn", "audit"):
-    need(labels.get(f"pod-security.kubernetes.io/{mode}") == "restricted", f"namespace shelf-j enforces PSS restricted ({mode})")
+    need(labels.get(f"pod-security.kubernetes.io/{mode}") == "restricted", f"namespace storeql enforces PSS restricted ({mode})")
 
-policies = [d for _, d in docs if d["kind"] == "NetworkPolicy" and d["metadata"].get("namespace") == "shelf-j"]
+policies = [d for _, d in docs if d["kind"] == "NetworkPolicy" and d["metadata"].get("namespace") == "storeql"]
 deny = [p for p in policies if p["spec"].get("podSelector") == {} and set(p["spec"].get("policyTypes", [])) == {"Ingress", "Egress"} and not p["spec"].get("ingress") and not p["spec"].get("egress")]
-need(len(deny) == 1, "one default-deny NetworkPolicy (empty podSelector, Ingress+Egress, no rules) in shelf-j")
+need(len(deny) == 1, "one default-deny NetworkPolicy (empty podSelector, Ingress+Egress, no rules) in storeql")
 postgres = [p for p in policies if p["spec"].get("podSelector") == {"matchLabels": {"app": "postgres"}}]
 need(postgres and all(f.get("podSelector", {}).get("matchLabels", {}).get("app") in ("pgbouncer", "postgres-exporter") for rule in postgres[0]["spec"].get("ingress", []) for f in rule.get("from", [])), "postgres ingress is from pgbouncer and its exporter only")
 
@@ -42,7 +42,7 @@ for f, d in workloads:
     tmpl = d["spec"]["template"]
     spec = tmpl["spec"]
     where = f"{name} ({ns})"
-    if ns == "shelf-j":
+    if ns == "storeql":
         need(not spec.get("hostNetwork") and not spec.get("hostPID") and not spec.get("hostIPC"), f"{where}: no host namespaces")
         need(not any("hostPath" in v for v in spec.get("volumes", [])), f"{where}: no hostPath volume")
     psc = spec.get("securityContext", {})
@@ -58,7 +58,7 @@ for f, d in workloads:
         if c.get("image", "").startswith(SERVICE_IMAGES):
             need(csc.get("readOnlyRootFilesystem") is True, f"{cwhere}: the platform's own image runs on a read-only root filesystem")
             need(any(m.get("mountPath") == "/tmp" for m in c.get("volumeMounts", [])), f"{cwhere}: /tmp is an emptyDir")
-        if name in ("shelf-app",):
+        if name in ("storeql-app",):
             need(any(m.get("mountPath") == "/etc/nginx/conf.d" for m in c.get("volumeMounts", [])), f"{cwhere}: nginx renders its config into an emptyDir")
     volume_names = {v["name"] for v in spec.get("volumes", [])} | {t["metadata"]["name"] for t in d["spec"].get("volumeClaimTemplates", [])}
     for m in [m for c in spec.get("containers", []) for m in c.get("volumeMounts", [])]:

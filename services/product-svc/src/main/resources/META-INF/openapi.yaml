@@ -3,7 +3,7 @@ info:
   title: Product Service API
   version: "1.0"
   description: >
-    Product/variant master data (PIM) and public storefront catalog browsing for Shelf-J. Owns
+    Product/variant master data (PIM) and public storefront catalog browsing for StoreQL. Owns
     brands, categories, products, variants, images, per-store assortment, units of measure, item
     templates/revisions/cross-references/relationships, catalog groups, container types, item
     attribute groups, and category sets. Publishes ProductCreated/ProductUpdated/ProductDelisted,
@@ -59,13 +59,13 @@ components:
       type: object
       description: >-
         An error as RFC 9457 problem details (application/problem+json). type is a URN for the
-        stable code (urn:shelfj:problem:CODE), title the code in words, status the HTTP status,
+        stable code (urn:storeql:problem:CODE), title the code in words, status the HTTP status,
         detail the message for a person, instance the request path. code and details are the
         platform's extension members, requestId the correlation id, and error/meta the envelope
         members clients read before problem details.
       required: [type, title, status, code]
       properties:
-        type: { type: string, format: uri, example: "urn:shelfj:problem:VALIDATION_FAILED" }
+        type: { type: string, format: uri, example: "urn:storeql:problem:VALIDATION_FAILED" }
         title: { type: string, example: "Validation failed" }
         status: { type: integer, example: 400 }
         detail: { type: string }

@@ -5,14 +5,14 @@
     <modelVersion>4.0.0</modelVersion>
 
     <parent>
-        <groupId>com.shelfj</groupId>
-        <artifactId>shelf-j-parent</artifactId>
+        <groupId>com.storeql</groupId>
+        <artifactId>storeql-parent</artifactId>
         <version>0.1.0-SNAPSHOT</version>
         <relativePath>../../pom.xml</relativePath>
     </parent>
 
     <artifactId>product-svc</artifactId>
-    <name>Shelf-J :: services :: product-svc</name>
+    <name>StoreQL :: services :: product-svc</name>
     <description>
         Product catalog: products, variants, categories (tree), brands, media. Public storefront browse + admin CRUD.
         Publishes ProductCreated/ProductUpdated/ProductDelisted/VariantCreated via the transactional outbox.
@@ -61,31 +61,31 @@
         </dependency>
 
         <dependency>
-            <groupId>com.shelfj</groupId>
+            <groupId>com.storeql</groupId>
             <artifactId>common-ids</artifactId>
         </dependency>
         <dependency>
-            <groupId>com.shelfj</groupId>
+            <groupId>com.storeql</groupId>
             <artifactId>common-web</artifactId>
         </dependency>
         <dependency>
-            <groupId>com.shelfj</groupId>
+            <groupId>com.storeql</groupId>
             <artifactId>events-contract</artifactId>
         </dependency>
         <dependency>
-            <groupId>com.shelfj</groupId>
+            <groupId>com.storeql</groupId>
             <artifactId>discovery</artifactId>
-            <version>${shelfj.version}</version>
+            <version>${storeql.version}</version>
         </dependency>
         <!-- GS1 identification: reading a scanned DataMatrix or Digital Link (07.15). -->
         <dependency>
-            <groupId>com.shelfj</groupId>
+            <groupId>com.storeql</groupId>
             <artifactId>gs1</artifactId>
             <version>${project.version}</version>
         </dependency>
 
         <dependency>
-            <groupId>com.shelfj</groupId>
+            <groupId>com.storeql</groupId>
             <artifactId>common-service</artifactId>
         </dependency>
 
@@ -128,7 +128,7 @@
         </dependency>
 
         <dependency>
-            <groupId>com.shelfj</groupId>
+            <groupId>com.storeql</groupId>
             <artifactId>common-test</artifactId>
             <scope>test</scope>
         </dependency>

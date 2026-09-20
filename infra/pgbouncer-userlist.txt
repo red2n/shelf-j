@@ -1,4 +1,4 @@
-"shelfj" "shelfj_dev_change_me"
+"storeql" "storeql_dev_change_me"
 "iam_svc" "iam_dev_change_me"
 "tenant_svc" "tenant_dev_change_me"
 "product_svc" "product_dev_change_me"

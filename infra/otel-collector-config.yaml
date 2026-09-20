@@ -36,7 +36,7 @@ processors:
   resource:
     attributes:
       - key: service.namespace
-        value: shelf-j
+        value: storeql
         action: upsert
 
 # Every exporter buffers batches in memory while its backend is unavailable. The default queue

@@ -1,6 +1,6 @@
 #!/usr/bin/env bash
 #
-# Verifies what a Shelf-J release is made of and where it was built (22.10): for every published
+# Verifies what a StoreQL release is made of and where it was built (22.10): for every published
 # image, the keyless Sigstore signature, the SLSA build-provenance attestation and the CycloneDX
 # SBOM attestation — each bound to the image's digest and to this repository's publish workflow.
 # Nothing here trusts a tag: the tag is resolved to a digest once, and the digest is what is checked.
@@ -22,8 +22,8 @@ fi
 TAG="${TAG#v}"
 
 OWNER="${OWNER:-red2n}"
-REPO="${REPO:-${OWNER}/shelf-j}"
-PREFIX="ghcr.io/${OWNER}/shelf-j"
+REPO="${REPO:-${OWNER}/storeql}"
+PREFIX="ghcr.io/${OWNER}/storeql"
 # The identity a signature must carry: this repository's publish workflow, at a branch or a tag.
 IDENTITY="^https://github.com/${REPO}/\.github/workflows/docker-publish\.yml@refs/(heads|tags)/.+$"
 ISSUER="https://token.actions.githubusercontent.com"

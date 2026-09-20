@@ -1,7 +1,7 @@
 #!/usr/bin/env bash
 #
 # Drives the release path's supply-chain mechanism end to end on this machine (22.10), against a
-# throwaway local registry: a real Shelf-J image is built with BuildKit's SBOM and max-mode
+# throwaway local registry: a real StoreQL image is built with BuildKit's SBOM and max-mode
 # provenance, its contents are listed as CycloneDX, the SBOM is attested and the image signed — all
 # by digest — and then everything is verified. Then what must NOT verify: a stranger's key, an
 # image nobody signed, a tag moved onto that image, and an SBOM attested to a different image.
@@ -19,8 +19,8 @@ ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
 TOOLS="$ROOT/tools"
 PORT="${SELFTEST_REGISTRY_PORT:-5005}"
 REG="localhost:${PORT}"
-IMAGE="${REG}/shelf-j-config"
-NAME="shelfj-selftest"
+IMAGE="${REG}/storeql-config"
+NAME="storeql-selftest"
 WORK="$(mktemp -d)"
 export DOCKER_CONFIG="$WORK/docker"
 export COSIGN_PASSWORD=""
@@ -87,7 +87,7 @@ build() { # build <tag> <label value> → prints the pushed digest
   docker buildx build --builder "$NAME" --push --provenance=mode=max --sbom=true \
     --metadata-file "$WORK/meta-$1.json" --file "$ROOT/Dockerfile.svc" \
     --build-arg SVC_PATH=platform/config --build-arg SVC_JAR=config-svc \
-    --label "shelfj.selftest=$2" -t "${IMAGE}:$1" "$ROOT" >"$WORK/build-$1.log" 2>&1 || { tail -20 "$WORK/build-$1.log" >&2; return 1; }
+    --label "storeql.selftest=$2" -t "${IMAGE}:$1" "$ROOT" >"$WORK/build-$1.log" 2>&1 || { tail -20 "$WORK/build-$1.log" >&2; return 1; }
   python3 -c "import json,sys; print(json.load(open(sys.argv[1]))['containerimage.digest'])" "$WORK/meta-$1.json"
 }
 

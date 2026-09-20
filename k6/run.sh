@@ -57,19 +57,19 @@ done
 # budget (60 seconds). When the stack runs here, clear those counters so later suites — and the web
 # app on this machine — are not caught by them. Against a remote stack nothing is cleared.
 clear_gateway_counters() {
-  docker ps --format '{{.Names}}' 2>/dev/null | grep -qx shelfj-redis || return 0
+  docker ps --format '{{.Names}}' 2>/dev/null | grep -qx storeql-redis || return 0
   local password
   password="${REDIS_PASSWORD:-$(env_value REDIS_PASSWORD)}"
-  docker exec -e REDISCLI_AUTH="${password:-redis_dev_change_me}" shelfj-redis sh -c \
+  docker exec -e REDISCLI_AUTH="${password:-redis_dev_change_me}" storeql-redis sh -c \
     "redis-cli --scan --pattern 'bruteforce:*' | xargs -r redis-cli del >/dev/null;
      redis-cli --scan --pattern 'ratelimit:*' | xargs -r redis-cli del >/dev/null"
 }
 
 gateway_setting() {
-  docker inspect shelfj-gateway --format '{{range .Config.Env}}{{println .}}{{end}}' 2>/dev/null \
+  docker inspect storeql-gateway --format '{{range .Config.Env}}{{println .}}{{end}}' 2>/dev/null \
     | grep -m1 "^$1=" | cut -d= -f2-
 }
-export RATE_LIMIT_REQUESTS_PER_MINUTE="${RATE_LIMIT_REQUESTS_PER_MINUTE:-$(gateway_setting shelfj.gateway.rate-limit.requests-per-minute)}"
+export RATE_LIMIT_REQUESTS_PER_MINUTE="${RATE_LIMIT_REQUESTS_PER_MINUTE:-$(gateway_setting storeql.gateway.rate-limit.requests-per-minute)}"
 [[ -z "$RATE_LIMIT_REQUESTS_PER_MINUTE" ]] && unset RATE_LIMIT_REQUESTS_PER_MINUTE
 
 logs="${K6_LOG_DIR:-$(mktemp -d)}"

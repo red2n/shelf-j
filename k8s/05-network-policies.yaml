@@ -1,4 +1,4 @@
-# Network policies for the shelf-j namespace: default deny in both directions, then only the
+# Network policies for the storeql namespace: default deny in both directions, then only the
 # conversations the architecture has (ARCHITECTURE §11). The gateway is the only door from outside;
 # services talk to each other, to PgBouncer, Kafka, Redis, Consul and the config service, and a
 # few to the internet (payment providers, e-invoicing networks, the breached-password screen,
@@ -11,7 +11,7 @@ apiVersion: networking.k8s.io/v1
 kind: NetworkPolicy
 metadata:
   name: default-deny
-  namespace: shelf-j
+  namespace: storeql
 spec:
   podSelector: {}
   policyTypes: [Ingress, Egress]
@@ -20,7 +20,7 @@ apiVersion: networking.k8s.io/v1
 kind: NetworkPolicy
 metadata:
   name: allow-dns
-  namespace: shelf-j
+  namespace: storeql
 spec:
   podSelector: {}
   policyTypes: [Egress]
@@ -37,11 +37,11 @@ apiVersion: networking.k8s.io/v1
 kind: NetworkPolicy
 metadata:
   name: ingress-to-edge
-  namespace: shelf-j
+  namespace: storeql
 spec:
   podSelector:
     matchExpressions:
-      - { key: app, operator: In, values: [gateway, shelf-app] }
+      - { key: app, operator: In, values: [gateway, storeql-app] }
   policyTypes: [Ingress]
   ingress:
     - from:
@@ -53,14 +53,14 @@ apiVersion: networking.k8s.io/v1
 kind: NetworkPolicy
 metadata:
   name: gateway
-  namespace: shelf-j
+  namespace: storeql
 spec:
   podSelector: { matchLabels: { app: gateway } }
   policyTypes: [Ingress, Egress]
   ingress:
     - from:
         - podSelector: { matchLabels: { app: prometheus } }
-        - podSelector: { matchLabels: { app: shelfj-bootstrap } }
+        - podSelector: { matchLabels: { app: storeql-bootstrap } }
       ports:
         - { protocol: TCP, port: 8080 }
   egress:
@@ -68,7 +68,7 @@ spec:
     - to:
         - podSelector:
             matchExpressions:
-              - { key: app, operator: In, values: [iam-svc, tenant-svc, inventory-svc, order-svc, purchase-svc, cart-svc, pricing-svc, payment-svc, product-svc, customer-svc, notification-svc, reporting-svc, config, shelf-app] }
+              - { key: app, operator: In, values: [iam-svc, tenant-svc, inventory-svc, order-svc, purchase-svc, cart-svc, pricing-svc, payment-svc, product-svc, customer-svc, notification-svc, reporting-svc, config, storeql-app] }
       ports:
         - { protocol: TCP, port: 8080 }
     - to:
@@ -84,7 +84,7 @@ apiVersion: networking.k8s.io/v1
 kind: NetworkPolicy
 metadata:
   name: business-services
-  namespace: shelf-j
+  namespace: storeql
 spec:
   podSelector:
     matchExpressions:
@@ -130,7 +130,7 @@ apiVersion: networking.k8s.io/v1
 kind: NetworkPolicy
 metadata:
   name: internet-egress
-  namespace: shelf-j
+  namespace: storeql
 spec:
   podSelector:
     matchExpressions:
@@ -150,7 +150,7 @@ apiVersion: networking.k8s.io/v1
 kind: NetworkPolicy
 metadata:
   name: config
-  namespace: shelf-j
+  namespace: storeql
 spec:
   podSelector: { matchLabels: { app: config } }
   policyTypes: [Ingress]
@@ -168,7 +168,7 @@ apiVersion: networking.k8s.io/v1
 kind: NetworkPolicy
 metadata:
   name: pgbouncer
-  namespace: shelf-j
+  namespace: storeql
 spec:
   podSelector: { matchLabels: { app: pgbouncer } }
   policyTypes: [Ingress, Egress]
@@ -190,7 +190,7 @@ apiVersion: networking.k8s.io/v1
 kind: NetworkPolicy
 metadata:
   name: postgres
-  namespace: shelf-j
+  namespace: storeql
 spec:
   podSelector: { matchLabels: { app: postgres } }
   policyTypes: [Ingress]
@@ -205,7 +205,7 @@ apiVersion: networking.k8s.io/v1
 kind: NetworkPolicy
 metadata:
   name: kafka
-  namespace: shelf-j
+  namespace: storeql
 spec:
   podSelector: { matchLabels: { app: kafka } }
   policyTypes: [Ingress]
@@ -222,7 +222,7 @@ apiVersion: networking.k8s.io/v1
 kind: NetworkPolicy
 metadata:
   name: redis
-  namespace: shelf-j
+  namespace: storeql
 spec:
   podSelector: { matchLabels: { app: redis } }
   policyTypes: [Ingress]
@@ -240,7 +240,7 @@ apiVersion: networking.k8s.io/v1
 kind: NetworkPolicy
 metadata:
   name: consul
-  namespace: shelf-j
+  namespace: storeql
 spec:
   podSelector: { matchLabels: { app: consul } }
   policyTypes: [Ingress]
@@ -258,7 +258,7 @@ apiVersion: networking.k8s.io/v1
 kind: NetworkPolicy
 metadata:
   name: exporters
-  namespace: shelf-j
+  namespace: storeql
 spec:
   podSelector:
     matchExpressions:
@@ -284,7 +284,7 @@ apiVersion: networking.k8s.io/v1
 kind: NetworkPolicy
 metadata:
   name: prometheus
-  namespace: shelf-j
+  namespace: storeql
 spec:
   podSelector: { matchLabels: { app: prometheus } }
   policyTypes: [Ingress, Egress]
@@ -302,7 +302,7 @@ spec:
         - { protocol: TCP, port: 9121 }
         - { protocol: TCP, port: 9187 }
     - to:
-        - namespaceSelector: { matchLabels: { kubernetes.io/metadata.name: shelf-j-nodes } }
+        - namespaceSelector: { matchLabels: { kubernetes.io/metadata.name: storeql-nodes } }
       ports:
         - { protocol: TCP, port: 9100 }
 ---
@@ -310,7 +310,7 @@ apiVersion: networking.k8s.io/v1
 kind: NetworkPolicy
 metadata:
   name: grafana
-  namespace: shelf-j
+  namespace: storeql
 spec:
   podSelector: { matchLabels: { app: grafana } }
   policyTypes: [Ingress, Egress]
@@ -329,9 +329,9 @@ apiVersion: networking.k8s.io/v1
 kind: NetworkPolicy
 metadata:
   name: bootstrap
-  namespace: shelf-j
+  namespace: storeql
 spec:
-  podSelector: { matchLabels: { app: shelfj-bootstrap } }
+  podSelector: { matchLabels: { app: storeql-bootstrap } }
   policyTypes: [Egress]
   egress:
     - to:
