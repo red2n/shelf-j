@@ -198,4 +198,35 @@ final class Events {
             + "\"intent\":\"%s\"}",
         eventId, tenantId, tenantId, java.time.Instant.now(), switchId, intent);
   }
+
+  /**
+   * A task that fell due and was never done (store operations & workforce).
+   *
+   * <p>Carries the store, the day, what the task was and when it was due — and no person, because
+   * nobody did it; that is the point. A missed closing check is what a manager has to hear about.
+   */
+  static String storeTaskMissed(
+      UUID tenantId,
+      UUID storeId,
+      UUID instanceId,
+      String title,
+      String kind,
+      java.time.LocalDate businessDate,
+      Instant dueAt,
+      boolean required) {
+    return """
+                {"eventId":"%s","eventType":"StoreTaskMissed","tenantId":"%s","aggregateId":"%s","occurredAt":"%s",\
+                "storeId":"%s","title":"%s","kind":"%s","businessDate":"%s","dueAt":"%s","required":%s}"""
+        .formatted(
+            Ids.newId(),
+            tenantId,
+            instanceId,
+            Instant.now(),
+            storeId,
+            esc(title),
+            esc(kind),
+            businessDate,
+            dueAt,
+            required);
+  }
 }
