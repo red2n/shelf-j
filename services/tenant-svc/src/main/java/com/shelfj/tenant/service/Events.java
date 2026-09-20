@@ -229,4 +229,33 @@ final class Events {
             dueAt,
             required);
   }
+
+  /**
+   * A notice published to a store (store operations & workforce): one per store it reaches, so the
+   * store's devices can be told without notification-svc knowing which stores a business has.
+   *
+   * @param wake whether the devices should be woken now — only an urgent notice is
+   */
+  static String storeBroadcastPublished(
+      UUID tenantId,
+      UUID storeId,
+      UUID broadcastId,
+      String title,
+      String priority,
+      boolean requiresAck,
+      boolean wake) {
+    return """
+                {"eventId":"%s","eventType":"StoreBroadcastPublished","tenantId":"%s","aggregateId":"%s","occurredAt":"%s",\
+                "storeId":"%s","title":"%s","priority":"%s","requiresAck":%s,"wake":%s}"""
+        .formatted(
+            Ids.newId(),
+            tenantId,
+            broadcastId,
+            Instant.now(),
+            storeId,
+            esc(title),
+            esc(priority),
+            requiresAck,
+            wake);
+  }
 }
