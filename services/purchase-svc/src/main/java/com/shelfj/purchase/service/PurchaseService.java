@@ -984,11 +984,22 @@ public class PurchaseService {
     // Dr Stock / Cr GR/IR, in the receipt's own transaction. The period is checked first so a
     // closed month refuses the receipt before anything is written.
     requireOpenPeriod(ctx.requireTenantId(), gr.storeId(), today());
+    java.util.Map<UUID, BigDecimal> unitPrice = unitPriceByVariant(ctx.requireTenantId(), po);
     return repo.createGoodsReceipt(
         gr,
         lines,
-        Events.goodsReceived(ctx.requireTenantId(), gr.id(), gr.storeId(), gr.poId(), lines),
-        receiptPosting(ctx.requireTenantId(), po, gr, lines));
+        Events.goodsReceived(
+            ctx.requireTenantId(), gr.id(), gr.storeId(), gr.poId(), lines, unitPrice),
+        receiptPosting(po, gr, lines, unitPrice));
+  }
+
+  /** The order's price per variant — the first line's, where a variant appears twice. */
+  private java.util.Map<UUID, BigDecimal> unitPriceByVariant(UUID tenantId, PurchaseOrder po) {
+    var priceByVariant = new java.util.HashMap<UUID, BigDecimal>();
+    for (PurchaseOrderLine l : repo.findPurchaseOrderLines(tenantId, po.id())) {
+      priceByVariant.putIfAbsent(l.variantId(), l.unitPrice());
+    }
+    return priceByVariant;
   }
 
   /**
@@ -1679,7 +1690,7 @@ public class PurchaseService {
   }
 
   /** The nominal code a store's stock posts to: its GL mapping, or the default (17.3). */
-  private String stockCodeFor(UUID tenantId, UUID storeId) {
+  String stockCodeFor(UUID tenantId, UUID storeId) {
     return inventory.storeNominalCode(tenantId, storeId).orElse(Domain.CODE_STOCK);
   }
 
@@ -1688,11 +1699,10 @@ public class PurchaseService {
    * values to nothing — an order priced at zero is recorded, not posted.
    */
   private List<NominalLedgerEntry> receiptPosting(
-      UUID tenantId, PurchaseOrder po, GoodsReceipt gr, List<GoodsReceiptLine> lines) {
-    var priceByVariant = new java.util.HashMap<UUID, BigDecimal>();
-    for (PurchaseOrderLine l : repo.findPurchaseOrderLines(tenantId, po.id())) {
-      priceByVariant.putIfAbsent(l.variantId(), l.unitPrice());
-    }
+      PurchaseOrder po,
+      GoodsReceipt gr,
+      List<GoodsReceiptLine> lines,
+      java.util.Map<UUID, BigDecimal> priceByVariant) {
     BigDecimal value = BigDecimal.ZERO;
     for (GoodsReceiptLine l : lines) {
       BigDecimal price = priceByVariant.get(l.variantId());
@@ -1703,13 +1713,13 @@ public class PurchaseService {
     value = Money.round(value, po.currency());
     if (value.signum() <= 0) return List.of();
     return LedgerPosting.of(
-            tenantId,
+            po.tenantId(),
             today(),
             "Goods received against PO " + po.id(),
             Domain.SOURCE_GOODS_RECEIPT,
             gr.id(),
             gr.storeId())
-        .debit(stockCodeFor(tenantId, gr.storeId()), Domain.NAME_STOCK, value)
+        .debit(stockCodeFor(po.tenantId(), gr.storeId()), Domain.NAME_STOCK, value)
         .credit(Domain.CODE_GRIR, Domain.NAME_GRIR, value)
         .build();
   }

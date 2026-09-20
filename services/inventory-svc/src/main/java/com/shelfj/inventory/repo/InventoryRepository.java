@@ -1419,6 +1419,145 @@ public class InventoryRepository extends BaseOutboxRepository {
     }
   }
 
+  /**
+   * Lifts (or, on a reversal, lowers) the unit cost of the batches one receipt created, by the
+   * per-unit share of a landed charge (07.x), once per event line, and records each change.
+   *
+   * <p>The batches are found through the RECEIVE movements that cite the receipt, so a receipt
+   * inventory has not booked yet is answered with a 503 before anything is marked processed: the
+   * event is redelivered, and the charge lands when the goods do. A batch's cost never goes below
+   * zero. An AVERAGE costing row for the variant at the store takes the charge into its pool over
+   * what is on hand there.
+   *
+   * @return true when applied now; false when this event line was applied before
+   * @throws ApiException 503 {@code INVENTORY_RECEIPT_NOT_YET_BOOKED}
+   */
+  public boolean revalueReceiptOnce(
+      UUID dedupeId,
+      String consumerName,
+      UUID tenantId,
+      UUID storeId,
+      UUID variantId,
+      UUID grId,
+      BigDecimal perUnit,
+      BigDecimal amount,
+      String sourceType,
+      UUID sourceId) {
+    return inTx(
+        c -> {
+          List<UUID> batches = batchesOfReceiptTx(c, tenantId, storeId, variantId, grId);
+          if (batches.isEmpty()) {
+            throw new ApiException(
+                503,
+                "INVENTORY_RECEIPT_NOT_YET_BOOKED",
+                "no batch at store "
+                    + storeId
+                    + " cites receipt "
+                    + grId
+                    + " for variant "
+                    + variantId
+                    + " yet — the receipt is still on its way",
+                List.of());
+          }
+          if (!markProcessedIfNewTx(c, dedupeId, consumerName)) {
+            return false;
+          }
+          OffsetDateTime now = OffsetDateTime.now(ZoneOffset.UTC);
+          for (UUID batchId : batches) {
+            BigDecimal before = lockBatchCostTx(c, tenantId, batchId);
+            BigDecimal after = (before == null ? BigDecimal.ZERO : before).add(perUnit);
+            if (after.signum() < 0) after = BigDecimal.ZERO;
+            try (PreparedStatement ps =
+                c.prepareStatement(
+                    "UPDATE inventory_batches SET cost_price = ? WHERE tenant_id = ? AND id = ?")) {
+              ps.setBigDecimal(1, after);
+              ps.setObject(2, tenantId);
+              ps.setObject(3, batchId);
+              ps.executeUpdate();
+            }
+            try (PreparedStatement ps =
+                c.prepareStatement(
+                    "INSERT INTO batch_cost_adjustments (id, tenant_id, store_id, variant_id,"
+                        + " batch_id, source_type, source_id, event_id, per_unit, cost_before,"
+                        + " cost_after, applied_at) VALUES (?,?,?,?,?,?,?,?,?,?,?,?)")) {
+              ps.setObject(1, Ids.newId());
+              ps.setObject(2, tenantId);
+              ps.setObject(3, storeId);
+              ps.setObject(4, variantId);
+              ps.setObject(5, batchId);
+              ps.setString(6, sourceType);
+              ps.setObject(7, sourceId);
+              ps.setObject(8, dedupeId);
+              ps.setBigDecimal(9, perUnit);
+              ps.setBigDecimal(10, before);
+              ps.setBigDecimal(11, after);
+              ps.setObject(12, now);
+              ps.executeUpdate();
+            }
+          }
+          // The pool: an AVERAGE row spreads the charge over what is on hand at the store now.
+          try (PreparedStatement ps =
+              c.prepareStatement(
+                  "UPDATE costing_methods cm SET average_cost = GREATEST(0, cm.average_cost + ? / oh.qty),"
+                      + " updated_at = ? FROM (SELECT COALESCE(SUM(remaining_qty), 0) AS qty"
+                      + " FROM inventory_batches WHERE tenant_id = ? AND store_id = ? AND variant_id = ?"
+                      + " AND remaining_qty > 0) oh"
+                      + " WHERE cm.tenant_id = ? AND cm.store_id = ? AND cm.variant_id = ?"
+                      + " AND cm.method = 'AVERAGE' AND cm.average_cost > 0 AND oh.qty > 0")) {
+            ps.setBigDecimal(1, amount);
+            ps.setObject(2, now);
+            ps.setObject(3, tenantId);
+            ps.setObject(4, storeId);
+            ps.setObject(5, variantId);
+            ps.setObject(6, tenantId);
+            ps.setObject(7, storeId);
+            ps.setObject(8, variantId);
+            ps.executeUpdate();
+          }
+          return true;
+        },
+        "revalue receipt (deduped)");
+  }
+
+  /** The batches a receipt created for one variant at one store, through its RECEIVE movements. */
+  private static List<UUID> batchesOfReceiptTx(
+      Connection c, UUID tenantId, UUID storeId, UUID variantId, UUID grId) throws SQLException {
+    List<UUID> out = new ArrayList<>();
+    try (PreparedStatement ps =
+        c.prepareStatement(
+            "SELECT DISTINCT batch_id FROM stock_movements WHERE tenant_id = ? AND store_id = ?"
+                + " AND variant_id = ? AND ref_type = 'GRN' AND ref_id = ? AND type = 'RECEIVE'"
+                + " AND batch_id IS NOT NULL")) {
+      ps.setObject(1, tenantId);
+      ps.setObject(2, storeId);
+      ps.setObject(3, variantId);
+      ps.setObject(4, grId);
+      try (ResultSet rs = ps.executeQuery()) {
+        while (rs.next()) {
+          out.add(rs.getObject("batch_id", UUID.class));
+        }
+      }
+    }
+    return out;
+  }
+
+  /** {@code SELECT ... FOR UPDATE}: two charges landing together on one batch add, not race. */
+  private static BigDecimal lockBatchCostTx(Connection c, UUID tenantId, UUID batchId)
+      throws SQLException {
+    try (PreparedStatement ps =
+        c.prepareStatement(
+            "SELECT cost_price FROM inventory_batches WHERE tenant_id = ? AND id = ? FOR UPDATE")) {
+      ps.setObject(1, tenantId);
+      ps.setObject(2, batchId);
+      try (ResultSet rs = ps.executeQuery()) {
+        if (!rs.next()) {
+          throw ApiException.notFound("BATCH_NOT_FOUND", "batch " + batchId + " is gone");
+        }
+        return rs.getBigDecimal("cost_price");
+      }
+    }
+  }
+
   private static Batch mapBatch(ResultSet rs) throws SQLException {
     return new Batch(
         rs.getObject("id", UUID.class),
