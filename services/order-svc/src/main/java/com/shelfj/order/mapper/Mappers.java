@@ -221,7 +221,8 @@ public final class Mappers {
             : deposits.stream()
                 .map(com.shelfj.order.domain.Domain.OrderDeposit::amount)
                 .reduce(java.math.BigDecimal.ZERO, java.math.BigDecimal::add),
-        deposits == null ? null : deposits.stream().map(Mappers::toDto).toList());
+        deposits == null ? null : deposits.stream().map(Mappers::toDto).toList(),
+        str(o.sellerUserId()));
   }
 
   /** Converts one deposit line (09.16). */

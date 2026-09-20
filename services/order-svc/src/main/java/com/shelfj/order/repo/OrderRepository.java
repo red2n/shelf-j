@@ -91,8 +91,8 @@ public class OrderRepository extends BaseOutboxRepository {
                       + "  subtotal,tax_amount,discount_amount,total,currency,notes,idempotency_key,"
                       + "  tax_exempt,exempt_reason,delivery_line1,delivery_line2,delivery_city,"
                       + "  delivery_postal_code,delivery_recipient_name,delivery_recipient_phone,contact_phone,"
-                      + "  payment_method,promotion_discount)"
-                      + " VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)")) {
+                      + "  payment_method,promotion_discount,seller_user_id)"
+                      + " VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)")) {
             ps.setObject(1, order.id());
             ps.setObject(2, order.tenantId());
             ps.setObject(3, order.storeId());
@@ -123,6 +123,7 @@ public class OrderRepository extends BaseOutboxRepository {
                 order.promotionDiscount() == null
                     ? java.math.BigDecimal.ZERO
                     : order.promotionDiscount());
+            ps.setObject(27, order.sellerUserId());
             ps.executeUpdate();
           } catch (java.sql.SQLException sqle) {
             if (UNIQUE_VIOLATION.equals(sqle.getSQLState()))
@@ -176,7 +177,8 @@ public class OrderRepository extends BaseOutboxRepository {
                 + " subtotal, tax_amount, discount_amount, promotion_discount, total, currency, notes,"
                 + " idempotency_key, created_at, updated_at, tax_exempt, exempt_reason,"
                 + " delivery_line1, delivery_line2, delivery_city, delivery_postal_code,"
-                + " delivery_recipient_name, delivery_recipient_phone, contact_phone, payment_method"
+                + " delivery_recipient_name, delivery_recipient_phone, contact_phone, payment_method,"
+                + " seller_user_id"
                 + " FROM orders WHERE tenant_id=? AND idempotency_key=?",
             ps -> {
               ps.setObject(1, tenantId);
@@ -224,7 +226,8 @@ public class OrderRepository extends BaseOutboxRepository {
                 + " subtotal, tax_amount, discount_amount, promotion_discount, total, currency, notes,"
                 + " idempotency_key, created_at, updated_at, tax_exempt, exempt_reason,"
                 + " delivery_line1, delivery_line2, delivery_city, delivery_postal_code,"
-                + " delivery_recipient_name, delivery_recipient_phone, contact_phone, payment_method"
+                + " delivery_recipient_name, delivery_recipient_phone, contact_phone, payment_method,"
+                + " seller_user_id"
                 + " FROM orders WHERE tenant_id=?");
     if (storeId != null) sql.append(" AND store_id=?");
     if (customerId != null) sql.append(" AND customer_id=?");
@@ -272,7 +275,8 @@ public class OrderRepository extends BaseOutboxRepository {
                 + " subtotal, tax_amount, discount_amount, promotion_discount, total, currency, notes,"
                 + " idempotency_key, created_at, updated_at, tax_exempt, exempt_reason,"
                 + " delivery_line1, delivery_line2, delivery_city, delivery_postal_code,"
-                + " delivery_recipient_name, delivery_recipient_phone, contact_phone, payment_method"
+                + " delivery_recipient_name, delivery_recipient_phone, contact_phone, payment_method,"
+                + " seller_user_id"
                 + " FROM orders WHERE tenant_id=? AND id=?",
             ps -> {
               ps.setObject(1, tenantId);
@@ -1164,7 +1168,8 @@ public class OrderRepository extends BaseOutboxRepository {
             + " subtotal, tax_amount, discount_amount, promotion_discount, total, currency, notes,"
             + " idempotency_key, created_at, updated_at, tax_exempt, exempt_reason,"
             + " delivery_line1, delivery_line2, delivery_city, delivery_postal_code,"
-            + " delivery_recipient_name, delivery_recipient_phone, contact_phone, payment_method"
+            + " delivery_recipient_name, delivery_recipient_phone, contact_phone, payment_method,"
+            + " seller_user_id"
             + " FROM orders WHERE tenant_id=? AND (customer_id=? OR login_id=?)"
             + " ORDER BY created_at DESC, id DESC LIMIT ?",
         ps -> {
@@ -1964,7 +1969,8 @@ public class OrderRepository extends BaseOutboxRepository {
                 + " subtotal, tax_amount, discount_amount, promotion_discount, total, currency, notes,"
                 + " idempotency_key, created_at, updated_at, tax_exempt, exempt_reason,"
                 + " delivery_line1, delivery_line2, delivery_city, delivery_postal_code,"
-                + " delivery_recipient_name, delivery_recipient_phone, contact_phone, payment_method"
+                + " delivery_recipient_name, delivery_recipient_phone, contact_phone, payment_method,"
+                + " seller_user_id"
                 + " FROM orders WHERE tenant_id=? AND id=?")) {
       ps.setObject(1, tenantId);
       ps.setObject(2, orderId);
@@ -2124,7 +2130,8 @@ public class OrderRepository extends BaseOutboxRepository {
         rs.getString("delivery_recipient_phone"),
         rs.getString("contact_phone"),
         rs.getString("payment_method"),
-        rs.getBigDecimal("promotion_discount"));
+        rs.getBigDecimal("promotion_discount"),
+        rs.getObject("seller_user_id", UUID.class));
   }
 
   /**

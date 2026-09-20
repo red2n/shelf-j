@@ -53,6 +53,19 @@ public class TenantClient {
             .build();
   }
 
+  /**
+   * tenant-svc's address: {@code shelfj.clients.tenant-svc.url} when that is set — for a deployment
+   * without discovery and for integration tests — else what discovery resolves.
+   *
+   * <p>Every other client in this service already honours that override; this one did not, so
+   * nothing here could be driven against a stub and the commission rating could not be tested at
+   * all.
+   */
+  private Optional<String> locate() {
+    return com.shelfj.service.ServiceReader.configuredUrl(TENANT_SERVICE)
+        .or(() -> registry.resolve(TENANT_SERVICE).map(ServiceInstance::baseUri));
+  }
+
   public record ResolvedStore(UUID storeId, String storeName, String storeCode) {}
 
   /**
@@ -194,6 +207,175 @@ public class TenantClient {
                 d.getString("pincode", null)));
       }
     }
+  }
+
+  // ── what a period of sales earns (store operations & workforce) ─────────────
+
+  /** What one person sold on one day, as this service reads it out of its own orders. */
+  public record SellerDay(
+      java.time.LocalDate day, java.math.BigDecimal net, java.math.BigDecimal units) {}
+
+  /** One rate band of a segment, as tenant-svc rated it. */
+  public record RatedBand(
+      java.math.BigDecimal thresholdFrom,
+      java.math.BigDecimal rate,
+      java.math.BigDecimal amountInBand,
+      java.math.BigDecimal commission) {}
+
+  /** A stretch of days under one arrangement, and what it earned. */
+  public record RatedSegment(
+      UUID schemeId,
+      String schemeName,
+      java.time.LocalDate from,
+      java.time.LocalDate to,
+      java.math.BigDecimal amount,
+      List<RatedBand> bands,
+      java.math.BigDecimal commission) {
+
+    public RatedSegment {
+      bands = bands == null ? List.of() : List.copyOf(bands);
+    }
+  }
+
+  /** What one person's days earned. */
+  public record RatedSeller(
+      UUID userId, List<RatedSegment> segments, java.math.BigDecimal commission, String currency) {
+
+    public RatedSeller {
+      segments = segments == null ? List.of() : List.copyOf(segments);
+    }
+  }
+
+  /**
+   * Asks tenant-svc what these sales earn, under the arrangements it holds.
+   *
+   * <p>Figures go out and money comes back: no order and no return ever leaves this service, and
+   * the commission rule lives once, beside the arrangement it belongs to. A second implementation
+   * here would eventually disagree with the one the business agreed to, and somebody would be paid
+   * on the wrong one.
+   *
+   * <p>Empty when tenant-svc could not be reached or refused — and the caller must then <b>refuse
+   * to produce a statement</b> rather than produce one of zeros. A zero somebody signs off is worse
+   * than an error somebody retries.
+   */
+  @Retry(maxRetries = 2, delay = 300)
+  @CircuitBreaker(requestVolumeThreshold = 4, failureRatio = 0.6, delay = 5000)
+  @Fallback(fallbackMethod = "ratesUnavailable")
+  public Optional<List<RatedSeller>> rateCommission(
+      UUID tenantId,
+      TenantContext ctx,
+      java.time.LocalDate from,
+      java.time.LocalDate to,
+      java.util.Map<UUID, List<SellerDay>> sellers) {
+    String base = locate().orElse(null);
+    if (base == null) {
+      LOG.log(Level.WARNING, "tenant-svc could not be located — commission cannot be rated");
+      return Optional.empty();
+    }
+    jakarta.json.JsonArrayBuilder people = Json.createArrayBuilder();
+    for (java.util.Map.Entry<UUID, List<SellerDay>> seller : sellers.entrySet()) {
+      jakarta.json.JsonArrayBuilder days = Json.createArrayBuilder();
+      for (SellerDay d : seller.getValue()) {
+        days.add(
+            Json.createObjectBuilder()
+                .add("day", d.day().toString())
+                .add("net", d.net())
+                .add("units", d.units()));
+      }
+      people.add(
+          Json.createObjectBuilder().add("userId", seller.getKey().toString()).add("days", days));
+    }
+    String body =
+        Json.createObjectBuilder()
+            .add("from", from.toString())
+            .add("to", to.toString())
+            .add("sellers", people)
+            .build()
+            .toString();
+    try (HttpClientResponse res =
+        forward(webClient.post(base + "/admin/workforce/commission/rate"), tenantId, ctx)
+            .header(HeaderNames.CONTENT_TYPE, "application/json")
+            .submit(body)) {
+      int status = res.status().code();
+      String answer = res.as(String.class);
+      if (status != 200) {
+        LOG.log(Level.WARNING, "commission rating HTTP {0}: {1}", status, answer);
+        return Optional.empty();
+      }
+      return Optional.of(rated(answer));
+    } catch (CircuitBreakerOpenException e) {
+      LOG.log(Level.WARNING, "tenant-svc circuit open — commission cannot be rated");
+      return Optional.empty();
+    } catch (RuntimeException e) {
+      LOG.log(Level.WARNING, "commission rating failed: {0}", e.getMessage());
+      return Optional.empty();
+    }
+  }
+
+  private static List<RatedSeller> rated(String body) {
+    try (JsonReader reader = Json.createReader(new StringReader(body))) {
+      jakarta.json.JsonArray data = reader.readObject().getJsonArray("data");
+      List<RatedSeller> out = new java.util.ArrayList<>();
+      for (jakarta.json.JsonValue v : data) {
+        JsonObject o = v.asJsonObject();
+        List<RatedSegment> segments = new java.util.ArrayList<>();
+        for (jakarta.json.JsonValue sv : o.getJsonArray("segments")) {
+          JsonObject s = sv.asJsonObject();
+          List<RatedBand> bands = new java.util.ArrayList<>();
+          for (jakarta.json.JsonValue bv : s.getJsonArray("bands")) {
+            JsonObject b = bv.asJsonObject();
+            bands.add(
+                new RatedBand(
+                    decimal(b, "thresholdFrom"),
+                    decimal(b, "rate"),
+                    decimal(b, "amountInBand"),
+                    decimal(b, "commission")));
+          }
+          segments.add(
+              new RatedSegment(
+                  uuid(s, "schemeId"),
+                  text(s, "schemeName"),
+                  java.time.LocalDate.parse(s.getString("from")),
+                  java.time.LocalDate.parse(s.getString("to")),
+                  decimal(s, "amount"),
+                  bands,
+                  decimal(s, "commission")));
+        }
+        out.add(
+            new RatedSeller(
+                UUID.fromString(o.getString("userId")),
+                segments,
+                decimal(o, "commission"),
+                text(o, "currency")));
+      }
+      return List.copyOf(out);
+    }
+  }
+
+  private static java.math.BigDecimal decimal(JsonObject o, String key) {
+    String v = text(o, key);
+    return v == null ? null : new java.math.BigDecimal(v);
+  }
+
+  private static String text(JsonObject o, String key) {
+    return !o.containsKey(key) || o.isNull(key) ? null : o.getString(key);
+  }
+
+  private static UUID uuid(JsonObject o, String key) {
+    String v = text(o, key);
+    return v == null ? null : UUID.fromString(v);
+  }
+
+  // Only called reflectively by MicroProfile Fault Tolerance via @Fallback above.
+  @SuppressWarnings("unused")
+  Optional<List<RatedSeller>> ratesUnavailable(
+      UUID tenantId,
+      TenantContext ctx,
+      java.time.LocalDate from,
+      java.time.LocalDate to,
+      java.util.Map<UUID, List<SellerDay>> sellers) {
+    LOG.log(Level.WARNING, "tenant-svc unavailable; commission not rated");
+    return Optional.empty();
   }
 
   private static io.helidon.webclient.api.HttpClientRequest forward(

@@ -100,7 +100,14 @@ public final class Dtos {
                   "A catalog-mode till order (SJ-D41): the goods are known, the prices are not."
                       + " Placed as AWAITING_PRICE for a manager to price; never swept as"
                       + " stranded. POS channel only.")
-          Boolean awaitingPrice) {}
+          Boolean awaitingPrice,
+      @Schema(
+              description =
+                  "Who is credited with the sale, when it is not the person at the till: on a counter"
+                      + " one assistant sells and another takes the money, and a shop paying"
+                      + " commission pays the seller. POS only, and the operator when omitted; an"
+                      + " online sale is credited to nobody.")
+          String sellerUserId) {}
 
   @Schema(
       name = "PriceOrderRequest",
@@ -201,7 +208,12 @@ public final class Dtos {
                   "The return-scheme deposits on the sale's drinks containers, added to total"
                       + " (09.16). Absent on shapes that do not carry them.")
           BigDecimal depositAmount,
-      List<OrderDepositResponse> deposits) {}
+      List<OrderDepositResponse> deposits,
+      @Schema(
+              description =
+                  "Who is credited with the sale, which is not who rang it up. Absent for a sale"
+                      + " credited to nobody, which is the ordinary case online.")
+          String sellerUserId) {}
 
   @Schema(name = "OrderStatusHistoryResponse", description = "Append-only order status transition.")
   public record OrderStatusHistoryResponse(
