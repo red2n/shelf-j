@@ -68,8 +68,12 @@ public class ScriptIntegrityMonitor {
     }
   }
 
+  // Optional, not defaultValue = "": MicroProfile Config reads an empty string as "no value", so
+  // an empty default fails the deployment wherever the key is unset instead of leaving this off.
   @Inject
-  @ConfigProperty(name = "storeql.gateway.script-integrity.web-url", defaultValue = "")
+  @ConfigProperty(name = "storeql.gateway.script-integrity.web-url")
+  Optional<String> configuredWebUrl;
+
   String webUrl;
 
   @Inject
@@ -83,7 +87,8 @@ public class ScriptIntegrityMonitor {
 
   @PostConstruct
   void start() {
-    if (webUrl == null || webUrl.isBlank()) {
+    webUrl = configuredWebUrl.orElse("");
+    if (webUrl.isBlank()) {
       LOG.log(System.Logger.Level.INFO, "script integrity monitor off: no web url configured");
       return;
     }

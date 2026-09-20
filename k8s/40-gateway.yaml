@@ -55,6 +55,9 @@ spec:
             # Trust X-Forwarded-For from the Ingress so the rate-limiter/brute-force
             # throttle key on the real client IP, not the Ingress pod IP.
             - { name: STOREQL_GATEWAY_TRUST_FORWARDED_HEADERS, value: "true" }
+            # Where the gateway fetches the web bundle to check its script hashes (same value
+            # as docker-compose.yml). Unset = the script integrity monitor stays off.
+            - { name: STOREQL_GATEWAY_SCRIPT_INTEGRITY_WEB_URL, value: "http://storeql-app:8080" }
             - name: STOREQL_REDIS_PASSWORD
               valueFrom: { secretKeyRef: { name: storeql-redis, key: REDIS_PASSWORD } }
           # The 3-endpoint model, as the business services use it. /health is the aggregate of
