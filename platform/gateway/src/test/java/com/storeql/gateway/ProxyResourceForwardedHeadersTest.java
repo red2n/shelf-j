@@ -24,7 +24,8 @@ class ProxyResourceForwardedHeadersTest {
           HttpHeaders.ROLES,
           HttpHeaders.STORE_IDS,
           HttpHeaders.PERMISSIONS,
-          HttpHeaders.AUTH_SCOPE
+          HttpHeaders.AUTH_SCOPE,
+          HttpHeaders.AUTH_METHODS
         }) {
       assertTrue(
           ProxyResource.FORWARDED_HEADERS.contains(header),

@@ -6,9 +6,16 @@ import '../network/api_client.dart';
 import '../storage/app_storage.dart';
 import 'auth_state.dart';
 import 'passkeys.dart';
+import 'sso.dart';
 
-final authNotifierProvider =
-    AsyncNotifierProvider<AuthNotifier, AuthState>(AuthNotifier.new);
+final authNotifierProvider = AsyncNotifierProvider<AuthNotifier, AuthState>(
+  AuthNotifier.new,
+  // Never retried. Riverpod retries a failed build by default, and a sign-in is
+  // not a thing to do twice: a single sign-on return that was refused would be
+  // run again with nothing left to finish, and the reason it was refused replaced
+  // by a blank sign-in screen a moment after it appeared.
+  retry: (_, _) => null,
+);
 
 class AuthNotifier extends AsyncNotifier<AuthState> {
   final AppStorage _storage = const AppStorage();
@@ -17,6 +24,10 @@ class AuthNotifier extends AsyncNotifier<AuthState> {
   Future<AuthState> build() => _restoreFromStorage();
 
   Future<AuthState> _restoreFromStorage() async {
+    // Back from a business's identity provider (20.x): finish that sign-in first.
+    final back = ssoReturnAtLaunch;
+    ssoReturnAtLaunch = null;
+    if (back != null) return _finishSso(back);
     final access = await _storage.read(key: StorageKeys.accessToken);
     final refresh = await _storage.read(key: StorageKeys.refreshToken);
     if (access == null || refresh == null) return const AuthUnauthenticated();
@@ -46,6 +57,48 @@ class AuthNotifier extends AsyncNotifier<AuthState> {
       );
       return _afterPassword(resp.data['data'] as Map<String, dynamic>, platform: true);
     });
+  }
+
+  /// Starts a sign-in through a business's identity provider (20.x), found by the
+  /// sign-in name the business chose. The browser leaves the app for the provider
+  /// and comes back to it; the verifier kept here is what lets this browser, and
+  /// only this one, finish the sign-in.
+  Future<void> startSso(String slug) async {
+    state = const AsyncValue.loading();
+    try {
+      final verifier = newSsoVerifier();
+      final resp = await ref.read(apiClientProvider).dio.post(
+        '/${ApiConstants.iam}/auth/sso/start',
+        data: {
+          'slug': slug.trim().toLowerCase(),
+          'codeChallenge': ssoChallenge(verifier),
+          'returnTo': '${ssoBrowser.origin}/',
+        },
+      );
+      ssoBrowser.keepVerifier(verifier);
+      // Loading until the page is left: nothing more happens on this one.
+      await ssoBrowser.go((resp.data['data'] as Map<String, dynamic>)['authorizationUrl'] as String);
+    } catch (e, st) {
+      state = AsyncValue.error(e, st);
+    }
+  }
+
+  /// The provider sent the browser back: the ticket and the kept verifier are
+  /// traded for what a password sign-in answers.
+  Future<AuthState> _finishSso(SsoReturn back) async {
+    final verifier = ssoBrowser.takeVerifier();
+    switch (back) {
+      case SsoFailed(:final code):
+        throw SsoError(code);
+      case SsoTicket(:final ticket):
+        // No verifier: this browser did not start the sign-in the ticket names.
+        if (verifier == null) throw const SsoError('SSO_TICKET_INVALID');
+        final resp = await ref.read(apiClientProvider).dio.post(
+          '/${ApiConstants.iam}/auth/sso/token',
+          data: {'ticket': ticket, 'codeVerifier': verifier},
+        );
+        return _afterPassword(resp.data['data'] as Map<String, dynamic>, platform: false);
+    }
   }
 
   /// What a right password leads to (20.12): the session, a second factor owed,

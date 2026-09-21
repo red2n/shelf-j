@@ -28,12 +28,25 @@ class ApiError {
   final String code;
   final String message;
 
-  const ApiError({required this.code, required this.message});
+  /// What else the server said, as `name=value` strings — e.g. `slug=acme` on an
+  /// SSO_REQUIRED refusal, naming the business's sign-in.
+  final List<String> details;
+
+  const ApiError({required this.code, required this.message, this.details = const []});
 
   factory ApiError.fromJson(Map<String, dynamic> json) => ApiError(
         code: json['code'] as String? ?? 'UNKNOWN',
         message: json['message'] as String? ?? 'An unexpected error occurred.',
+        details: [for (final d in json['details'] as List<dynamic>? ?? const []) d.toString()],
       );
+
+  /// The value of a `name=value` detail, or null.
+  String? detail(String name) {
+    for (final d in details) {
+      if (d.startsWith('$name=')) return d.substring(name.length + 1);
+    }
+    return null;
+  }
 
   @override
   String toString() => '[$code] $message';

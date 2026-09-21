@@ -57,6 +57,15 @@ public final class HttpHeaders {
   /** The scope of a token that may only set up a second factor. */
   public static final String SCOPE_MFA_ENROL = "mfa-enrol";
 
+  /**
+   * How the caller's session was authenticated, comma-separated, as the token's {@code amr} claim
+   * says (20.12, and 20.x SSO): {@code pwd} for a password, {@code sso} for a business's identity
+   * provider, then {@code otp}, {@code hwk} or {@code mfa} for a second factor. Stamped by the
+   * gateway from the verified token, never trusted from a client. iam-svc reads it when a sign-in
+   * that owed a second factor sets one up, so the session it ends in records how it began.
+   */
+  public static final String AUTH_METHODS = "X-Auth-Methods";
+
   /** Idempotency key for retryable writes (checkout, payment capture, stock receipt). */
   public static final String IDEMPOTENCY_KEY = "Idempotency-Key";
 

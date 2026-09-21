@@ -48,8 +48,12 @@ public class JwtService {
    * A token for a login that must have a second factor and has none (20.12): it says who, and
    * nothing else — no role, no tenant — and its {@code scope} lets the gateway pass it to the
    * second-factor routes alone. Ten minutes: long enough to scan a QR code.
+   *
+   * @param first what the sign-in proved: {@code pwd}, or {@code sso} for one the business's
+   *     identity provider vouched for. Carried in {@code amr}, which the gateway stamps as {@code
+   *     X-Auth-Methods}, so the session the set-up ends in records how it began.
    */
-  public String issueEnrolmentToken(UUID userId, String userType, String email) {
+  public String issueEnrolmentToken(UUID userId, String userType, String email, String first) {
     SigningKeys.Signer signer = keys.signer();
     Instant now = Instant.now();
     return JWT.create()
@@ -60,7 +64,7 @@ public class JwtService {
         .withClaim("roles", List.of())
         .withClaim("email", email)
         .withClaim("scope", com.storeql.web.HttpHeaders.SCOPE_MFA_ENROL)
-        .withClaim("amr", List.of("pwd"))
+        .withClaim("amr", List.of(first))
         .withIssuedAt(now)
         .withExpiresAt(now.plusSeconds(ENROLMENT_TTL_SECONDS))
         .sign(Algorithm.RSA256(null, signer.privateKey()));
