@@ -26,6 +26,11 @@ public final class OnceRepo extends NotificationRepository {
     return notified || recorded.contains(eventId + "/" + type);
   }
 
+  /** What the last message was written in, and from which words. */
+  public String language;
+
+  public String template;
+
   @Override
   public void recordNotification(
       UUID tenantId,
@@ -37,6 +42,25 @@ public final class OnceRepo extends NotificationRepository {
       String subject,
       String body,
       String status) {
+    recordNotification(
+        tenantId, subjectId, eventId, type, channel, recipient, subject, body, status, null, null);
+  }
+
+  @Override
+  public void recordNotification(
+      UUID tenantId,
+      UUID subjectId,
+      UUID eventId,
+      String type,
+      String channel,
+      String recipient,
+      String subject,
+      String body,
+      String status,
+      String language,
+      String template) {
+    this.language = language;
+    this.template = template;
     records++;
     this.subjectId = subjectId;
     recorded.add(eventId + "/" + type);

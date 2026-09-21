@@ -68,9 +68,15 @@ class StoreBroadcastPublishedHandlerTest {
         0,
         channel.sends(),
         "a device that buzzes for every price change gets muted before the recall");
+  }
+
+  @Test
+  void anUrgentNoticeThatNeedsNoAcknowledgementSaysSo() {
+    handler.handle(payload("URGENT", true, false));
     assertEquals(
-        "Management has published \"Bananas\". Read it on the notices screen.",
-        StoreBroadcastPublishedHandler.describe("Bananas", false));
+        "Management has published \"Recall: batch 42 off the shelf\". Read it on the notices"
+            + " screen.",
+        channel.body());
   }
 
   @Test

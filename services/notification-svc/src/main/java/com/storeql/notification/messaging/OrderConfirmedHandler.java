@@ -1,7 +1,10 @@
 package com.storeql.notification.messaging;
 
 import com.storeql.notification.client.CustomerClient;
+import com.storeql.notification.service.Messages;
 import com.storeql.notification.service.Notifier;
+import com.storeql.notification.template.Catalogue;
+import com.storeql.notification.template.Values;
 import jakarta.enterprise.context.ApplicationScoped;
 import jakarta.inject.Inject;
 import jakarta.json.Json;
@@ -55,22 +58,15 @@ class OrderConfirmedHandler {
       LOG.log(Level.DEBUG, "No email for customer {0} — order confirmation skipped", customerId);
       return;
     }
-    String body =
-        "Thanks for your order!\n\nOrder "
-            + orderId
-            + "\nTotal: "
-            + currency
-            + " "
-            + total.toPlainString()
-            + "\n\n— StoreQL";
+    // In the shopper's own language when they have said which (13.x), the shop's when not.
+    String language = customers.languageOf(tenantId, customerId).orElse(null);
     notifier.notifyOnce(
         eventId,
         "ORDER_CONFIRMATION",
         tenantId,
         customerId,
         email,
-        "Your order is confirmed",
-        body);
+        message(Catalogue.Form.EMAIL, language, orderId, total, currency));
 
     // And to the phone in their pocket, when the shopper registered one here (13.7). A login with
     // no device, or a customer with no login, gets the email alone; a push that fails is logged,
@@ -86,12 +82,20 @@ class OrderConfirmedHandler {
                     tenantId,
                     customerId,
                     login.toString(),
-                    "Your order is confirmed",
-                    "Order " + orderId + " — " + currency + " " + total.toPlainString(),
+                    message(Catalogue.Form.PUSH, language, orderId, total, currency),
                     "PUSH");
               } catch (RuntimeException e) {
                 LOG.log(Level.DEBUG, "No push for order {0}: {1}", orderId, e.getMessage());
               }
             });
+  }
+
+  private static Messages.Message message(
+      Catalogue.Form form, String language, UUID orderId, BigDecimal total, String currency) {
+    return new Messages.Message(
+        "ORDER_CONFIRMED",
+        form,
+        language,
+        Values.of().text("order", orderId.toString()).money("total", total, currency));
   }
 }

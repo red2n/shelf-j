@@ -23,10 +23,20 @@ public final class NotifierTestSupport {
    */
   public static Notifier notifierOf(
       NotificationChannel channel, NotificationRepository repo, Channels channels) {
+    return notifierOf(channel, repo, channels, MessagesTestSupport.platformWords());
+  }
+
+  /** The same, writing messages with these templates: a business's own words. */
+  public static Notifier notifierOf(
+      NotificationChannel channel,
+      NotificationRepository repo,
+      Channels channels,
+      Messages messages) {
     Notifier notifier = new Notifier();
     notifier.channel = channel;
     notifier.repo = repo;
     notifier.channels = channels;
+    notifier.messages = messages;
     return notifier;
   }
 }

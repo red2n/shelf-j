@@ -55,23 +55,39 @@ class StoreTaskMissedHandlerTest {
     assertEquals(STORE.toString(), channel.recipient());
     assertEquals("Not done: Lock up", channel.subject());
     assertEquals(
-        "The closing list \"Lock up\" for 2026-09-19 fell due and was not done, and it is required."
+        "The closing list \"Lock up\" for 19 September 2026 fell due and was not done, and it is"
+            + " required."
             + " Do it now if it still can be, or record why it was skipped.",
         channel.body());
     // A store's devices, not a person: nothing here for an erasure to find.
     assertNull(repo.subjectId);
   }
 
+  private void miss(String title, String kind, boolean required) {
+    handler.handle(
+        Json.createObjectBuilder()
+            .add("eventId", Ids.newId().toString())
+            .add("tenantId", TENANT.toString())
+            .add("storeId", STORE.toString())
+            .add("title", title)
+            .add("kind", kind)
+            .add("businessDate", "2026-09-19")
+            .add("required", required)
+            .build()
+            .toString());
+  }
+
   @Test
   void anOptionalTaskAndAnUnknownKindReadNaturally() {
+    miss("Water the plants", "WEEKLY", false);
+    miss("Open up", "opening", true);
     assertEquals(
-        "The task \"Water the plants\" for 2026-09-19 fell due and was not done. Do it now if it"
-            + " still can be, or record why it was skipped.",
-        StoreTaskMissedHandler.describe("Water the plants", "WEEKLY", "2026-09-19", false));
-    assertEquals(
-        "The opening list \"Open up\" for 2026-09-19 fell due and was not done, and it is required."
-            + " Do it now if it still can be, or record why it was skipped.",
-        StoreTaskMissedHandler.describe("Open up", "opening", "2026-09-19", true));
+        java.util.List.of(
+            "The task \"Water the plants\" for 19 September 2026 fell due and was not done. Do it"
+                + " now if it still can be, or record why it was skipped.",
+            "The opening list \"Open up\" for 19 September 2026 fell due and was not done, and it"
+                + " is required. Do it now if it still can be, or record why it was skipped."),
+        channel.bodies);
   }
 
   @Test

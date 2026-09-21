@@ -34,6 +34,12 @@ class RecallNoticeIssuedHandlerTest {
   private static final class FakeCustomers extends CustomerClient {
     String email;
     String phone;
+    String language;
+
+    @Override
+    public Optional<String> languageOf(UUID tenantId, UUID customerId) {
+      return Optional.ofNullable(language);
+    }
 
     @Override
     public Optional<String> emailOf(UUID tenantId, UUID customerId) {
@@ -95,9 +101,9 @@ class RecallNoticeIssuedHandlerTest {
     assertTrue(body.startsWith("PRODUCT SAFETY RECALL\nReference FSA-PRIN-42\n"), body);
     assertTrue(
         body.contains(
-            "What: Crunchy peanut butter (PB-340), lot L1, best before 2026-10-01, 2 bought"),
+            "What: Crunchy peanut butter (PB-340), lot L1, best before 1 October 2026, 2 bought"),
         body);
-    assertTrue(body.contains("Bought on 12 Sep 2026, order " + ORDER), body);
+    assertTrue(body.contains("Bought on 12 September 2026, order " + ORDER), body);
     assertTrue(body.contains("Hazard: undeclared allergen. Peanut not on the label"), body);
     assertTrue(
         body.contains("What to do: Stop using this product immediately. Do not eat it."), body);
@@ -153,7 +159,8 @@ class RecallNoticeIssuedHandlerTest {
             .replace("\"contactUrl\":\"https://recall.example.com\"", "\"contactUrl\":null");
     handler.handle(payload);
     String body = channel.bodies.get(0);
-    assertTrue(body.contains("What: the product, lot L1, best before 2026-10-01, 2 bought"), body);
+    assertTrue(
+        body.contains("What: the product, lot L1, best before 1 October 2026, 2 bought"), body);
     assertTrue(body.contains("you choose: a refund. Food cannot be repaired"), body);
     assertTrue(body.contains("Contact: 0800 100 200\n"), body);
   }

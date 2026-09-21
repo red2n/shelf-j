@@ -1,6 +1,9 @@
 package com.storeql.notification.messaging;
 
+import com.storeql.notification.service.Messages;
 import com.storeql.notification.service.Notifier;
+import com.storeql.notification.template.Catalogue;
+import com.storeql.notification.template.Values;
 import jakarta.enterprise.context.ApplicationScoped;
 import jakarta.inject.Inject;
 import jakarta.json.Json;
@@ -8,7 +11,7 @@ import jakarta.json.JsonObject;
 import java.io.StringReader;
 import java.lang.System.Logger;
 import java.lang.System.Logger.Level;
-import java.util.Locale;
+import java.time.LocalDate;
 import java.util.UUID;
 
 /**
@@ -57,25 +60,15 @@ class StoreTaskMissedHandler {
         tenantId,
         null,
         storeId.toString(),
-        "Not done: " + title,
-        describe(title, kind, businessDate, required));
-  }
-
-  /** What was missed, in words whoever is on shift can act on. */
-  static String describe(String title, String kind, String businessDate, boolean required) {
-    String when =
-        switch (kind == null ? "" : kind.toUpperCase(Locale.ROOT)) {
-          case "OPENING" -> "The opening list";
-          case "CLOSING" -> "The closing list";
-          default -> "The task";
-        };
-    return when
-        + " \""
-        + title
-        + "\" for "
-        + businessDate
-        + " fell due and was not done"
-        + (required ? ", and it is required" : "")
-        + ". Do it now if it still can be, or record why it was skipped.";
+        new Messages.Message(
+            "STORE_TASK_MISSED",
+            Catalogue.Form.ALERT,
+            null,
+            Values.of()
+                .text("title", title)
+                .flag("opening", "OPENING".equalsIgnoreCase(kind))
+                .flag("closing", "CLOSING".equalsIgnoreCase(kind))
+                .day("date", LocalDate.parse(businessDate))
+                .flag("required", required)));
   }
 }

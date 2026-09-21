@@ -33,6 +33,57 @@ class TenantProfilesTest {
   }
 
   @Test
+  @DisplayName("The business name signs its messages; read once, cached, and a failed read retried")
+  void theBusinessNameIsReadAndCached() {
+    var reads = new java.util.concurrent.atomic.AtomicInteger();
+    var answer =
+        new java.util.concurrent.atomic.AtomicReference<Optional<String>>(Optional.empty());
+    var clock =
+        new java.util.concurrent.atomic.AtomicReference<>(
+            java.time.Instant.parse("2026-09-21T08:00:00Z"));
+    TenantProfiles p =
+        TenantProfiles.forTest(
+            t -> {
+              reads.incrementAndGet();
+              return answer.get();
+            },
+            new java.time.Clock() {
+              @Override
+              public java.time.ZoneId getZone() {
+                return java.time.ZoneOffset.UTC;
+              }
+
+              @Override
+              public java.time.Clock withZone(java.time.ZoneId zone) {
+                return this;
+              }
+
+              @Override
+              public java.time.Instant instant() {
+                return clock.get();
+              }
+            });
+    assertTrue(p.businessName(TENANT).isEmpty(), "tenant-svc not answering: no name");
+    answer.set(
+        Optional.of(
+            "{\"data\":{\"name\":\" Hollins Grocers \",\"legalName\":\"Hollins Grocers Ltd\","
+                + "\"currency\":\"GBP\"}}"));
+    assertEquals("Hollins Grocers", p.businessName(TENANT).orElseThrow());
+    assertEquals("Hollins Grocers", p.businessName(TENANT).orElseThrow());
+    assertEquals(2, reads.get(), "the failed read was not cached; the good one was");
+    clock.set(clock.get().plus(TenantProfiles.TTL).plusSeconds(1));
+    answer.set(Optional.of("{\"data\":{\"name\":\"Hollins & Daughters\"}}"));
+    assertEquals(
+        "Hollins & Daughters", p.businessName(TENANT).orElseThrow(), "renamed, and read again");
+    assertTrue(TenantProfiles.parseName("{\"data\":{\"name\":\"  \"}}").isEmpty());
+    assertTrue(
+        TenantProfiles.parseName("{\"data\":{\"legalName\":\"Hollins Grocers Ltd\"}}").isEmpty(),
+        "the legal name is not the name a message is signed with");
+    assertTrue(TenantProfiles.parseName("not json").isEmpty());
+    assertTrue(p.businessName(null).isEmpty());
+  }
+
+  @Test
   @DisplayName("The e-invoicing identity is read as given, and a blank or non-text field is none")
   void readsTheEInvoicingIdentity() {
     var id =

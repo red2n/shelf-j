@@ -199,6 +199,13 @@ final routerProvider = Provider<GoRouter>((ref) {
             ),
           ),
           GoRoute(
+            path: '/admin/messages',
+            builder: (_, _) => DeferredWidget(
+              libraryLoader: admin_lib.loadLibrary,
+              builder: (_) => admin_lib.MessagesScreen(),
+            ),
+          ),
+          GoRoute(
             path: '/admin/statutory-returns',
             builder: (_, _) => DeferredWidget(
               libraryLoader: admin_lib.loadLibrary,

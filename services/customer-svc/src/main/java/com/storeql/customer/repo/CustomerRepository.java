@@ -63,7 +63,7 @@ public class CustomerRepository extends BaseOutboxRepository {
   public Optional<Customer> findById(UUID tenantId, UUID customerId) {
     return query(
             "SELECT id, tenant_id, login_id, email, phone, first_name, last_name, dob, gender,"
-                + " status, gdpr_consent_at, anonymized_at, created_at, updated_at"
+                + " status, gdpr_consent_at, anonymized_at, created_at, updated_at, preferred_language"
                 + " FROM customers WHERE tenant_id = ? AND id = ?",
             ps -> {
               ps.setObject(1, tenantId);
@@ -81,7 +81,7 @@ public class CustomerRepository extends BaseOutboxRepository {
     try (PreparedStatement ps =
         conn.prepareStatement(
             "SELECT id, tenant_id, login_id, email, phone, first_name, last_name, dob, gender,"
-                + " status, gdpr_consent_at, anonymized_at, created_at, updated_at"
+                + " status, gdpr_consent_at, anonymized_at, created_at, updated_at, preferred_language"
                 + " FROM customers WHERE tenant_id = ? AND id = ?")) {
       ps.setObject(1, tenantId);
       ps.setObject(2, customerId);
@@ -101,7 +101,7 @@ public class CustomerRepository extends BaseOutboxRepository {
   public Optional<Customer> findByEmail(UUID tenantId, String email) {
     return query(
             "SELECT id, tenant_id, login_id, email, phone, first_name, last_name, dob, gender,"
-                + " status, gdpr_consent_at, anonymized_at, created_at, updated_at"
+                + " status, gdpr_consent_at, anonymized_at, created_at, updated_at, preferred_language"
                 + " FROM customers WHERE tenant_id = ? AND email = ?",
             ps -> {
               ps.setObject(1, tenantId);
@@ -123,7 +123,7 @@ public class CustomerRepository extends BaseOutboxRepository {
   public Optional<Customer> findByLogin(UUID tenantId, UUID loginId) {
     return query(
             "SELECT id, tenant_id, login_id, email, phone, first_name, last_name, dob, gender,"
-                + " status, gdpr_consent_at, anonymized_at, created_at, updated_at"
+                + " status, gdpr_consent_at, anonymized_at, created_at, updated_at, preferred_language"
                 + " FROM customers WHERE tenant_id = ? AND login_id = ?",
             ps -> {
               ps.setObject(1, tenantId);
@@ -205,7 +205,8 @@ public class CustomerRepository extends BaseOutboxRepository {
                   null,
                   null,
                   now,
-                  now);
+                  now,
+                  null);
           insertCustomer(conn, created);
           insertOutbox(conn, event);
           return created;
@@ -219,7 +220,7 @@ public class CustomerRepository extends BaseOutboxRepository {
     try (PreparedStatement ps =
         conn.prepareStatement(
             "SELECT id, tenant_id, login_id, email, phone, first_name, last_name, dob, gender,"
-                + " status, gdpr_consent_at, anonymized_at, created_at, updated_at"
+                + " status, gdpr_consent_at, anonymized_at, created_at, updated_at, preferred_language"
                 + " FROM customers WHERE tenant_id = ? AND login_id = ?")) {
       ps.setObject(1, tenantId);
       ps.setObject(2, loginId);
@@ -545,7 +546,7 @@ public class CustomerRepository extends BaseOutboxRepository {
   public Optional<Customer> findByPhone(UUID tenantId, String phone) {
     return query(
             "SELECT id, tenant_id, login_id, email, phone, first_name, last_name, dob, gender,"
-                + " status, gdpr_consent_at, anonymized_at, created_at, updated_at"
+                + " status, gdpr_consent_at, anonymized_at, created_at, updated_at, preferred_language"
                 + " FROM customers WHERE tenant_id = ? AND phone = ?",
             ps -> {
               ps.setObject(1, tenantId);
@@ -572,7 +573,7 @@ public class CustomerRepository extends BaseOutboxRepository {
     if (afterId == null) {
       return query(
           "SELECT id, tenant_id, login_id, email, phone, first_name, last_name, dob, gender,"
-              + " status, gdpr_consent_at, anonymized_at, created_at, updated_at"
+              + " status, gdpr_consent_at, anonymized_at, created_at, updated_at, preferred_language"
               + " FROM customers WHERE tenant_id = ? AND status != 'ANONYMIZED'"
               + " ORDER BY created_at DESC, id LIMIT ?",
           ps -> {
@@ -584,7 +585,7 @@ public class CustomerRepository extends BaseOutboxRepository {
     }
     return query(
         "SELECT id, tenant_id, login_id, email, phone, first_name, last_name, dob, gender,"
-            + " status, gdpr_consent_at, anonymized_at, created_at, updated_at"
+            + " status, gdpr_consent_at, anonymized_at, created_at, updated_at, preferred_language"
             + " FROM customers WHERE tenant_id = ? AND status != 'ANONYMIZED'"
             + " AND id < ? ORDER BY created_at DESC, id LIMIT ?",
         ps -> {
@@ -612,8 +613,8 @@ public class CustomerRepository extends BaseOutboxRepository {
           try (PreparedStatement ps =
               conn.prepareStatement(
                   "UPDATE customers SET phone=?, first_name=?, last_name=?, dob=?, gender=?,"
-                      + " gdpr_consent_at=?, updated_at=? WHERE tenant_id=? AND id=?"
-                      + " AND status != 'ANONYMIZED'")) {
+                      + " gdpr_consent_at=?, updated_at=?, preferred_language=?"
+                      + " WHERE tenant_id=? AND id=? AND status != 'ANONYMIZED'")) {
             ps.setString(1, c.phone());
             ps.setString(2, c.firstName());
             ps.setString(3, c.lastName());
@@ -622,8 +623,9 @@ public class CustomerRepository extends BaseOutboxRepository {
             ps.setObject(
                 6, c.gdprConsentAt() == null ? null : c.gdprConsentAt().atOffset(ZoneOffset.UTC));
             ps.setObject(7, c.updatedAt().atOffset(ZoneOffset.UTC));
-            ps.setObject(8, c.tenantId());
-            ps.setObject(9, c.id());
+            ps.setString(8, c.preferredLanguage());
+            ps.setObject(9, c.tenantId());
+            ps.setObject(10, c.id());
             rows = ps.executeUpdate();
           }
           if (rows == 0) {
@@ -1319,8 +1321,8 @@ public class CustomerRepository extends BaseOutboxRepository {
     try (PreparedStatement ps =
         c.prepareStatement(
             "INSERT INTO customers (id, tenant_id, login_id, email, phone, first_name, last_name,"
-                + " dob, gender, status, gdpr_consent_at, created_at, updated_at)"
-                + " VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?)")) {
+                + " dob, gender, status, gdpr_consent_at, created_at, updated_at, preferred_language)"
+                + " VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?)")) {
       ps.setObject(1, customer.id());
       ps.setObject(2, customer.tenantId());
       ps.setObject(3, customer.loginId());
@@ -1338,6 +1340,7 @@ public class CustomerRepository extends BaseOutboxRepository {
               : customer.gdprConsentAt().atOffset(ZoneOffset.UTC));
       ps.setObject(12, customer.createdAt().atOffset(ZoneOffset.UTC));
       ps.setObject(13, customer.createdAt().atOffset(ZoneOffset.UTC));
+      ps.setString(14, customer.preferredLanguage());
       ps.executeUpdate();
     }
   }
@@ -1603,7 +1606,8 @@ public class CustomerRepository extends BaseOutboxRepository {
         gdpr == null ? null : gdpr.toInstant(),
         anon == null ? null : anon.toInstant(),
         rs.getObject("created_at", OffsetDateTime.class).toInstant(),
-        rs.getObject("updated_at", OffsetDateTime.class).toInstant());
+        rs.getObject("updated_at", OffsetDateTime.class).toInstant(),
+        rs.getString("preferred_language"));
   }
 
   private static CustomerAddress mapAddress(ResultSet rs) throws SQLException {

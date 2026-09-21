@@ -84,7 +84,8 @@ class CustomerServiceEventsTest {
                     null,
                     null,
                     Instant.now(),
-                    Instant.now())));
+                    Instant.now(),
+                    null)));
   }
 
   @Test

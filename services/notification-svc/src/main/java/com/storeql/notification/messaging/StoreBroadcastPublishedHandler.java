@@ -1,6 +1,9 @@
 package com.storeql.notification.messaging;
 
+import com.storeql.notification.service.Messages;
 import com.storeql.notification.service.Notifier;
+import com.storeql.notification.template.Catalogue;
+import com.storeql.notification.template.Values;
 import jakarta.enterprise.context.ApplicationScoped;
 import jakarta.inject.Inject;
 import jakarta.json.Json;
@@ -63,15 +66,10 @@ class StoreBroadcastPublishedHandler {
         tenantId,
         null,
         storeId.toString(),
-        "Urgent notice: " + title,
-        describe(title, requiresAck));
-  }
-
-  /** What to do, in a line whoever is on shift can act on. */
-  static String describe(String title, boolean requiresAck) {
-    return "Management has published \""
-        + title
-        + "\". Read it on the notices screen"
-        + (requiresAck ? " and acknowledge it." : ".");
+        new Messages.Message(
+            "STORE_NOTICE_URGENT",
+            Catalogue.Form.ALERT,
+            null,
+            Values.of().text("title", title).flag("acknowledge", requiresAck)));
   }
 }

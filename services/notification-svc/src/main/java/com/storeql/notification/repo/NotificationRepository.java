@@ -129,11 +129,33 @@ public class NotificationRepository extends BaseJdbcRepository {
       String subject,
       String body,
       String status) {
+    recordNotification(
+        tenantId, subjectId, eventId, type, channel, recipient, subject, body, status, null, null);
+  }
+
+  /**
+   * Records a send, with what it was written in (13.x).
+   *
+   * @param language the language the message was written in; null when not known
+   * @param template {@code default}, or the business's version, e.g. {@code v3}
+   */
+  public void recordNotification(
+      UUID tenantId,
+      UUID subjectId,
+      UUID eventId,
+      String type,
+      String channel,
+      String recipient,
+      String subject,
+      String body,
+      String status,
+      String language,
+      String template) {
     exec(
         "INSERT INTO notification_log"
             + " (id, tenant_id, subject_id, event_id, type, channel, recipient, subject, body,"
-            + " status)"
-            + " VALUES (?,?,?,?,?,?,?,?,?,?)"
+            + " status, language, template)"
+            + " VALUES (?,?,?,?,?,?,?,?,?,?,?,?)"
             + " ON CONFLICT (event_id, type) DO NOTHING",
         ps -> {
           ps.setObject(1, Ids.newId());
@@ -146,6 +168,8 @@ public class NotificationRepository extends BaseJdbcRepository {
           ps.setString(8, subject);
           ps.setString(9, body);
           ps.setString(10, status);
+          ps.setString(11, language);
+          ps.setString(12, template);
         },
         "record notification");
   }
@@ -200,7 +224,7 @@ public class NotificationRepository extends BaseJdbcRepository {
     StringBuilder sb =
         new StringBuilder(
             "SELECT id, tenant_id, event_id, type, channel, recipient, subject, body, status,"
-                + " created_at FROM notification_log WHERE tenant_id = ?");
+                + " created_at, language, template FROM notification_log WHERE tenant_id = ?");
     if (recipient != null) sb.append(" AND recipient = ?");
     if (channel != null) sb.append(" AND channel = ?");
     sb.append(" ORDER BY created_at DESC LIMIT ?");
@@ -323,7 +347,9 @@ public class NotificationRepository extends BaseJdbcRepository {
         rs.getString("subject"),
         rs.getString("body"),
         rs.getString("status"),
-        rs.getObject("created_at", OffsetDateTime.class).toInstant());
+        rs.getObject("created_at", OffsetDateTime.class).toInstant(),
+        rs.getString("language"),
+        rs.getString("template"));
   }
 
   private static ShortageAlert mapAlert(ResultSet rs) throws SQLException {

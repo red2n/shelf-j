@@ -60,10 +60,11 @@ class PaymentDisputeOpenedHandlerTest {
     assertEquals(1, channel.sends(), "a redelivered event must not alert the store twice");
     assertEquals(STORE.toString(), channel.recipient());
     assertEquals(TENANT, channel.lastTenantId);
-    assertEquals("Chargeback: 45.99 GBP disputed", channel.subject());
+    assertEquals("Chargeback: £45.99 disputed", channel.subject());
     assertTrue(channel.body().contains("(product not received)"), channel.body());
     assertTrue(
-        channel.body().contains("by 2026-09-27 23:59 UTC: after that it is lost."), channel.body());
+        channel.body().contains("by 27 September 2026, 23:59 UTC: after that it is lost."),
+        channel.body());
     // A store's devices, not a person: nothing here for an erasure to find.
     assertNull(repo.subjectId);
   }

@@ -1,6 +1,9 @@
 package com.storeql.notification.messaging;
 
+import com.storeql.notification.service.Messages;
 import com.storeql.notification.service.Notifier;
+import com.storeql.notification.template.Catalogue;
+import com.storeql.notification.template.Values;
 import jakarta.enterprise.context.ApplicationScoped;
 import jakarta.inject.Inject;
 import jakarta.json.Json;
@@ -8,6 +11,9 @@ import jakarta.json.JsonObject;
 import java.io.StringReader;
 import java.lang.System.Logger;
 import java.lang.System.Logger.Level;
+import java.time.LocalDate;
+import java.util.ArrayList;
+import java.util.List;
 import java.util.UUID;
 
 /**
@@ -52,46 +58,39 @@ public class SupplierRemittanceHandler {
     }
     String reference = obj.getString("runReference", "");
     String currency = obj.getString("currency", "");
-    StringBuilder body =
-        new StringBuilder("Remittance advice\n\n")
-            .append("Payment ")
-            .append(reference)
-            .append(" on ")
-            .append(obj.getString("paymentDate", ""))
-            .append("\nTo ")
-            .append(obj.getString("supplierName", ""))
-            .append("\n\n");
+    List<Values> items = new ArrayList<>();
     if (obj.containsKey("items") && !obj.isNull("items")) {
       for (JsonObject item : obj.getJsonArray("items").getValuesAs(JsonObject.class)) {
-        boolean credit = "CREDIT_NOTE".equals(item.getString("type", ""));
-        body.append(credit ? "Less credit note " : "Invoice ")
-            .append(item.getString("reference", ""))
-            .append(
-                item.containsKey("documentDate") && !item.isNull("documentDate")
-                    ? " of " + item.getString("documentDate")
-                    : "")
-            .append(": ")
-            .append(credit ? "-" : "")
-            .append(currency)
-            .append(' ')
-            .append(item.getJsonNumber("amount").bigDecimalValue().toPlainString())
-            .append('\n');
+        items.add(
+            Values.of()
+                .text("reference", item.getString("reference", ""))
+                .day("document_date", day(item, "documentDate"))
+                .money("amount", item.getJsonNumber("amount").bigDecimalValue().abs(), currency)
+                .flag("credit", "CREDIT_NOTE".equals(item.getString("type", ""))));
       }
     }
-    body.append("\nTotal paid: ")
-        .append(currency)
-        .append(' ')
-        .append(obj.getJsonNumber("total").bigDecimalValue().toPlainString())
-        .append("\n\nPlease quote ")
-        .append(reference)
-        .append(" in any query about this payment.\n");
+    // In the business's own language: nothing says which one a supplier reads.
     notifier.notifyOnce(
         eventId,
         TYPE,
         tenantId,
         supplierId,
         email.trim(),
-        "Remittance advice " + reference,
-        body.toString());
+        new Messages.Message(
+            "SUPPLIER_REMITTANCE",
+            Catalogue.Form.EMAIL,
+            null,
+            Values.of()
+                .text("reference", reference)
+                .day("payment_date", day(obj, "paymentDate"))
+                .text("supplier", obj.getString("supplierName", ""))
+                .items("items", items)
+                .money("total", obj.getJsonNumber("total").bigDecimalValue(), currency)));
+  }
+
+  private static LocalDate day(JsonObject obj, String field) {
+    return obj.containsKey(field) && !obj.isNull(field)
+        ? LocalDate.parse(obj.getString(field))
+        : null;
   }
 }

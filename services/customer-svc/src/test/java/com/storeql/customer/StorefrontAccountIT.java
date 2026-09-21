@@ -146,6 +146,37 @@ class StorefrontAccountIT {
     assertThat("the email is the login's and untouched", body, containsString(me.email()));
     assertThat(as("/customers/me", T, me).get(String.class), containsString("Carter"));
 
+    // The language their messages are written in (13.x): set, kept by a profile save that does
+    // not mention it, refused when it is not a language, cleared by an empty one.
+    String profile = "{\"firstName\":\"Chris\",\"lastName\":\"Carter\"";
+    Response polish =
+        as("/customers/me", T, me)
+            .put(
+                Entity.entity(
+                    profile + ",\"preferredLanguage\":\"PL\"}", MediaType.APPLICATION_JSON));
+    assertThat(polish.readEntity(String.class), containsString("\"preferredLanguage\":\"pl\""));
+    Response unsaid =
+        as("/customers/me", T, me).put(Entity.entity(profile + "}", MediaType.APPLICATION_JSON));
+    assertThat(
+        "a client that knows nothing of languages keeps the one chosen",
+        unsaid.readEntity(String.class),
+        containsString("\"preferredLanguage\":\"pl\""));
+    for (String bad : new String[] {"polish", "p1", "../"}) {
+      Response refused =
+          as("/customers/me", T, me)
+              .put(
+                  Entity.entity(
+                      profile + ",\"preferredLanguage\":\"" + bad + "\"}",
+                      MediaType.APPLICATION_JSON));
+      assertThat(bad, refused.getStatus(), is(400));
+    }
+    Response cleared =
+        as("/customers/me", T, me)
+            .put(
+                Entity.entity(
+                    profile + ",\"preferredLanguage\":\"\"}", MediaType.APPLICATION_JSON));
+    assertThat(cleared.readEntity(String.class).contains("preferredLanguage\":\"pl"), is(false));
+
     String home = idOf(add(me, addr("12 High Street", false)));
     String work = idOf(add(me, addr("1 Office Park", true)));
     JsonArray two = book(me);
