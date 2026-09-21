@@ -1,6 +1,6 @@
-# Shelf-J on k3s — storeql.com
+# StoreQL on k3s — storeql.com
 
-Kubernetes manifests to run the whole Shelf-J stack on a single-node k3s cluster, for
+Kubernetes manifests to run the whole StoreQL stack on a single-node k3s cluster, for
 the storeql.com production deployment (5-10 tenants, moderate load). This is the k3s
 counterpart to `docker-compose.yml` / `docker-compose.prod.yml` + `docs/vps-deployment.md`
 — read those first if anything here is unclear about *why* a piece of config exists;
@@ -56,7 +56,7 @@ tracing or centralized log search — nothing here depends on them.
    same "internal ops tools via tunnel" posture as `docs/vps-deployment.md` §11 (use
    `kubectl port-forward` instead of an SSH tunnel to reach them from your workstation).
 
-5. **`GHCR` images are public** — `ghcr.io/red2n/shelf-j-*` needs no `imagePullSecret`
+5. **`GHCR` images are public** — `ghcr.io/red2n/storeql-*` needs no `imagePullSecret`
    (confirmed: `docker-publish.yml` pushes every service + the web bundle there on
    every merge to `main`).
 
@@ -83,13 +83,13 @@ kubectl apply -f 60-ingress.yaml   # after cert-manager is installed (prereq #2)
 # 3. Optional: load the existing Grafana dashboard (not templated as a static
 #    ConfigMap since it's 587 lines — generated straight from the repo file so it
 #    can never drift out of sync)
-kubectl -n shelf-j create configmap shelfj-grafana-dashboards \
+kubectl -n storeql create configmap storeql-grafana-dashboards \
   --from-file=../infra/grafana/dashboards/
-kubectl -n shelf-j rollout restart deployment/grafana
+kubectl -n storeql rollout restart deployment/grafana
 
 # 4. Once gateway + Postgres are healthy, seed the platform admin
 kubectl apply -f 50-bootstrap-job.yaml
-kubectl -n shelf-j logs job/shelfj-bootstrap
+kubectl -n storeql logs job/storeql-bootstrap
 ```
 
 There is deliberately no strict linear ordering enforced between steps 2's manifests —
@@ -100,14 +100,14 @@ bootstrap Job and ingress until their prerequisites are met) works fine too.
 
 Retrieve the generated platform admin password:
 ```bash
-kubectl -n shelf-j get secret shelfj-platform-admin -o jsonpath='{.data.PLATFORM_ADMIN_PASSWORD}' | base64 -d; echo
+kubectl -n storeql get secret storeql-platform-admin -o jsonpath='{.data.PLATFORM_ADMIN_PASSWORD}' | base64 -d; echo
 ```
 
 ## Verify
 
 ```bash
-kubectl -n shelf-j get pods                       # everything Running/Ready
-kubectl -n shelf-j get certificate                 # 3 certs, READY=True (can take ~1 min)
+kubectl -n storeql get pods                       # everything Running/Ready
+kubectl -n storeql get certificate                 # 3 certs, READY=True (can take ~1 min)
 curl https://api.storeql.com/api/iam-svc/health/ready
 curl -I https://app.storeql.com/healthz
 curl -I https://storeql.com                        # 301 -> https://app.storeql.com
@@ -137,9 +137,9 @@ Platform admin login: `https://app.storeql.com/#/platform/login`.
   known gap vs. the aspirational model in `ARCHITECTURE.md` §17). Safe at
   `replicas: 1` everywhere (no concurrent-migration race) — re-verify before ever
   scaling a business service beyond 1 replica.
-- **`SHELFJ_ADVERTISE_HOST` must equal each Deployment's k8s Service name.** Confirmed
+- **`STOREQL_ADVERTISE_HOST` must equal each Deployment's k8s Service name.** Confirmed
   by reading `ConsulRegistrar`/`ConsulClient`: every service registers in Consul with
-  `Address = SHELFJ_ADVERTISE_HOST`, and every peer (gateway included) resolves others
+  `Address = STOREQL_ADVERTISE_HOST`, and every peer (gateway included) resolves others
   by looking them up in Consul and connecting to that stored address directly — not
   via a fresh k8s DNS lookup. Get this wrong for any one service and nothing else can
   reach it, even though k8s DNS itself would resolve the name fine.
@@ -153,25 +153,25 @@ Platform admin login: `https://app.storeql.com/#/platform/login`.
   `server DNS lookup failed (bad-af)` on `postgres`, add a `hostAliases` entry in
   `11-pgbouncer.yaml` pointing `postgres` at the `postgres` Service's ClusterIP as the
   fallback.
-- **`shelf-j-web`'s API base is baked in at CI build time**, not runtime-configurable.
-  Two things both work correctly regardless of what's baked in: if `SHELFJ_API_BASE`
+- **`storeql-web`'s API base is baked in at CI build time**, not runtime-configurable.
+  Two things both work correctly regardless of what's baked in: if `STOREQL_API_BASE`
   was never set as a GitHub Actions repo variable, the published image bakes the
-  relative default `/api` — the bundle's nginx (`infra/nginx-spa.conf.template`, rendered with `SHELFJ_API_ORIGIN`) then proxies
+  relative default `/api` — the bundle's nginx (`infra/nginx-spa.conf.template`, rendered with `STOREQL_API_ORIGIN`) then proxies
   same-origin `/api/` calls straight to the `gateway` k8s Service, which works fine
   inside the cluster network exactly like it does in docker-compose. If you do set
-  `SHELFJ_API_BASE=https://api.storeql.com/api` as a GitHub Actions variable (per
+  `STOREQL_API_BASE=https://api.storeql.com/api` as a GitHub Actions variable (per
   `docs/vps-deployment.md` §4) and rebuild, the browser instead calls `api.storeql.com`
   directly. Either is fine; you don't strictly need to touch the GitHub setting for
   this to work in k3s.
-- **`order-svc`'s `SHELFJ_ORDER_PRICING_ENFORCE` is set to `"true"`** (documented hard
-  requirement for production in `docs/vps-deployment.md` §5). `SHELFJ_ORDER_RESERVE_ENFORCE`
+- **`order-svc`'s `STOREQL_ORDER_PRICING_ENFORCE` is set to `"true"`** (documented hard
+  requirement for production in `docs/vps-deployment.md` §5). `STOREQL_ORDER_RESERVE_ENFORCE`
   is left at `"false"` — flip it to `"true"` once you've actually seeded inventory for
   your tenants, or every online checkout will 409 on stock.
 
 ## Hardening
 
-- **Pod Security Standards, restricted:** the `shelf-j` namespace enforces (and warns and audits at) the restricted profile. Every workload sets a pod `securityContext` — `runAsNonRoot`, a numeric `runAsUser`/`runAsGroup` (the platform's own images run as 10001; the web shell as nginx's 101; each infrastructure image as its own user, with `fsGroup` where it owns a volume) and the `RuntimeDefault` seccomp profile — and every container drops all capabilities and refuses privilege escalation. The platform's own images and the exporters run on a read-only root filesystem with `/tmp` (and, for the web shell, nginx's rendered config and cache) as emptyDirs.
-- **The node exporter** reads the host's `/proc` and `/sys`, which restricted forbids, so it lives alone in the `shelf-j-nodes` namespace under the privileged profile; Prometheus scrapes it across the namespace.
-- **NetworkPolicy, default deny:** `05-network-policies.yaml` denies all ingress and egress in `shelf-j` and then allows only the architecture's conversations: the ingress controller (kube-system) to the gateway and the web shell; the gateway to the services, Consul and Redis; services to each other, PgBouncer, Kafka, Redis, Consul and the config service; five services (iam, payment, order, purchase, notification) to the internet on 443/465/587 for the breached-password screen, payment providers, e-invoicing networks, mail and push; PgBouncer alone to Postgres (with its exporter); Prometheus to the metrics ports; DNS for all. No pod reaches the database directly.
-- **Checked, not promised:** `scripts/k8s-check.sh` validates every manifest with kubeconform (strict) and runs `scripts/k8s-hardening-check.py`, which fails on a workload without the contexts above, a hostPath or host namespace in `shelf-j`, a missing default-deny policy, or Postgres reachable from anything but the pooler. CI runs it on every push.
-- **Run what verifies:** the images these manifests name are signed (Sigstore, keyless) and carry SBOM and provenance attestations (22.10). `scripts/verify-release.sh <tag>` checks a version before it is rolled out; to enforce it in the cluster, a Kyverno `verifyImages` rule or Sigstore's policy-controller with issuer `https://token.actions.githubusercontent.com` and subject `https://github.com/red2n/shelf-j/.github/workflows/docker-publish.yml@refs/...` admits only what the publish workflow built. See [docs/RELEASE-PROCESS.md](../docs/RELEASE-PROCESS.md).
+- **Pod Security Standards, restricted:** the `storeql` namespace enforces (and warns and audits at) the restricted profile. Every workload sets a pod `securityContext` — `runAsNonRoot`, a numeric `runAsUser`/`runAsGroup` (the platform's own images run as 10001; the web shell as nginx's 101; each infrastructure image as its own user, with `fsGroup` where it owns a volume) and the `RuntimeDefault` seccomp profile — and every container drops all capabilities and refuses privilege escalation. The platform's own images and the exporters run on a read-only root filesystem with `/tmp` (and, for the web shell, nginx's rendered config and cache) as emptyDirs.
+- **The node exporter** reads the host's `/proc` and `/sys`, which restricted forbids, so it lives alone in the `storeql-nodes` namespace under the privileged profile; Prometheus scrapes it across the namespace.
+- **NetworkPolicy, default deny:** `05-network-policies.yaml` denies all ingress and egress in `storeql` and then allows only the architecture's conversations: the ingress controller (kube-system) to the gateway and the web shell; the gateway to the services, Consul and Redis; services to each other, PgBouncer, Kafka, Redis, Consul and the config service; five services (iam, payment, order, purchase, notification) to the internet on 443/465/587 for the breached-password screen, payment providers, e-invoicing networks, mail and push; PgBouncer alone to Postgres (with its exporter); Prometheus to the metrics ports; DNS for all. No pod reaches the database directly.
+- **Checked, not promised:** `scripts/k8s-check.sh` validates every manifest with kubeconform (strict) and runs `scripts/k8s-hardening-check.py`, which fails on a workload without the contexts above, a hostPath or host namespace in `storeql`, a missing default-deny policy, or Postgres reachable from anything but the pooler. CI runs it on every push.
+- **Run what verifies:** the images these manifests name are signed (Sigstore, keyless) and carry SBOM and provenance attestations (22.10). `scripts/verify-release.sh <tag>` checks a version before it is rolled out; to enforce it in the cluster, a Kyverno `verifyImages` rule or Sigstore's policy-controller with issuer `https://token.actions.githubusercontent.com` and subject `https://github.com/red2n/storeql/.github/workflows/docker-publish.yml@refs/...` admits only what the publish workflow built. See [docs/RELEASE-PROCESS.md](../docs/RELEASE-PROCESS.md).

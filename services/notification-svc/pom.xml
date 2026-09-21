@@ -5,14 +5,14 @@
     <modelVersion>4.0.0</modelVersion>
 
     <parent>
-        <groupId>com.shelfj</groupId>
-        <artifactId>shelf-j-parent</artifactId>
+        <groupId>com.storeql</groupId>
+        <artifactId>storeql-parent</artifactId>
         <version>0.1.0-SNAPSHOT</version>
         <relativePath>../../pom.xml</relativePath>
     </parent>
 
     <artifactId>notification-svc</artifactId>
-    <name>Shelf-J :: services :: notification-svc</name>
+    <name>StoreQL :: services :: notification-svc</name>
     <description>
         Notification service (Gap #55). Consumes StockBelowThreshold events from inventory-svc,
         stores shortage alerts, and exposes GET /admin/shortage-alerts. Idempotent via
@@ -58,24 +58,24 @@
         </dependency>
 
         <dependency>
-            <groupId>com.shelfj</groupId>
+            <groupId>com.storeql</groupId>
             <artifactId>common-ids</artifactId>
         </dependency>
         <dependency>
-            <groupId>com.shelfj</groupId>
+            <groupId>com.storeql</groupId>
             <artifactId>common-web</artifactId>
         </dependency>
         <dependency>
-            <groupId>com.shelfj</groupId>
+            <groupId>com.storeql</groupId>
             <artifactId>events-contract</artifactId>
         </dependency>
         <dependency>
-            <groupId>com.shelfj</groupId>
+            <groupId>com.storeql</groupId>
             <artifactId>discovery</artifactId>
-            <version>${shelfj.version}</version>
+            <version>${storeql.version}</version>
         </dependency>
         <dependency>
-            <groupId>com.shelfj</groupId>
+            <groupId>com.storeql</groupId>
             <artifactId>common-service</artifactId>
         </dependency>
 
@@ -132,7 +132,7 @@
         </dependency>
 
         <dependency>
-            <groupId>com.shelfj</groupId>
+            <groupId>com.storeql</groupId>
             <artifactId>common-test</artifactId>
             <scope>test</scope>
         </dependency>

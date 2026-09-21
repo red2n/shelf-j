@@ -3,7 +3,7 @@ info:
   title: Tenant Service API
   version: "1.0"
   description: >
-    Owns the Tenant → Store → Zone hierarchy and tenant onboarding for Shelf-J. Handles self-serve
+    Owns the Tenant → Store → Zone hierarchy and tenant onboarding for StoreQL. Handles self-serve
     business signup (tenant + first store + default zone in one call), ongoing tenant/store/zone/staff
     administration, per-tenant inventory-control parameters, platform-wide tenant oversight, and the
     public storefront config every guest shop reads. Every other service references store/zone data via
@@ -26,13 +26,13 @@ components:
       type: object
       description: >-
         An error as RFC 9457 problem details (application/problem+json). type is a URN for the
-        stable code (urn:shelfj:problem:CODE), title the code in words, status the HTTP status,
+        stable code (urn:storeql:problem:CODE), title the code in words, status the HTTP status,
         detail the message for a person, instance the request path. code and details are the
         platform's extension members, requestId the correlation id, and error/meta the envelope
         members clients read before problem details.
       required: [type, title, status, code]
       properties:
-        type: { type: string, format: uri, example: "urn:shelfj:problem:VALIDATION_FAILED" }
+        type: { type: string, format: uri, example: "urn:storeql:problem:VALIDATION_FAILED" }
         title: { type: string, example: "Validation failed" }
         status: { type: integer, example: 400 }
         detail: { type: string }

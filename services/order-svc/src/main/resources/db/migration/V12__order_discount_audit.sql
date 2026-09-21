@@ -4,7 +4,7 @@
 --   1. The till applies a discount and computes what to tender as subtotal - discount, refusing to
 --      complete until that reduced amount is fully tendered (tender_screen.dart).
 --   2. It places the order with discountAmount set.
---   3. order-svc, with shelfj.order.pricing.enforce=true (the default), sets disc = ZERO and
+--   3. order-svc, with storeql.order.pricing.enforce=true (the default), sets disc = ZERO and
 --      stores total = subtotal + tax -- the full, undiscounted price.
 --   4. Tenders are recorded summing to the discounted amount, which is less than that stored
 --      total, so paid_amount never covers it and the order is never confirmed.

@@ -14,7 +14,7 @@
 //
 //   k6/run.sh dunning-flow
 import { Counter } from 'k6/metrics';
-import { ALL_CHECKS_PASS, call, data, expect, must, onboardTenant, platformAdmin, poll, truthy, uniq } from './lib/shelfj.js';
+import { ALL_CHECKS_PASS, call, data, expect, must, onboardTenant, platformAdmin, poll, truthy, uniq } from './lib/storeql.js';
 
 const completed = new Counter('flow_completed');
 export const options = {
@@ -41,7 +41,7 @@ export default function ({ admin }) {
   const dun = (method, path, body) => call(method, `${DUNNING}${path}`, { token: root, body });
 
   must(asRoot('PUT', '/profile', {
-    legalName: `Shelf-J Dunning ${tag} Ltd`, addressLine1: '1 Quay Street', city: 'Dublin',
+    legalName: `StoreQL Dunning ${tag} Ltd`, addressLine1: '1 Quay Street', city: 'Dublin',
     country: 'IE', vatNumber: `IE${tag}D`, invoicePrefix: 'INV', paymentTermsDays: 0, taxRate: '0.2300',
   }), 200, 'the platform bills as somebody');
 

@@ -19,7 +19,7 @@ import {
   sellingTenant,
   truthy,
   uniq,
-} from './lib/shelfj.js';
+} from './lib/storeql.js';
 
 const completed = new Counter('flow_completed');
 export const options = {
@@ -69,7 +69,7 @@ export default function ({ tenant, rival, store, variantId, storekeeper, cashier
   truthy('[+] a new tenant has no estimates and nothing waiting', fresh && !fresh.settings && fresh.eventsAwaitingEstimates === 0, fresh);
 
   // ── 2. points earned before any estimates wait ─────────────────────────────
-  const customer = must(call('POST', '/api/customer-svc/customers', { token: owner, body: { email: `deferred-${uniq()}@k6.shelfj.test`, firstName: 'Dee', lastName: 'Ferral' } }), 201, 'customer');
+  const customer = must(call('POST', '/api/customer-svc/customers', { token: owner, body: { email: `deferred-${uniq()}@k6.storeql.test`, firstName: 'Dee', lastName: 'Ferral' } }), 201, 'customer');
   const sale = placeSale(10, customer.id);
   const total = num(sale.total);
   must(pay(sale.id, total.toFixed(2), 'CASH'), [200, 201], 'cash for the sale');

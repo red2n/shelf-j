@@ -4,8 +4,8 @@
 -- the default search_path (golden rule #1 — database-per-service).
 --
 -- Idempotent: safe to re-run against either a fresh or an already-populated database.
--- Run as the bootstrap superuser (POSTGRES_USER, default "shelfj"):
---   docker compose exec -T postgres psql -U shelfj -d shelfj -f - < infra/postgres-init-roles.sql
+-- Run as the bootstrap superuser (POSTGRES_USER, default "storeql"):
+--   docker compose exec -T postgres psql -U storeql -d storeql -f - < infra/postgres-init-roles.sql
 -- (Also mounted into docker-entrypoint-initdb.d for fresh volumes — see docker-compose.yml.)
 --
 -- Dev-only passwords below. Production sets each via <SERVICE>_DB_PASSWORD (.env.example)
@@ -13,7 +13,7 @@
 
 \set ON_ERROR_STOP on
 
-CREATE OR REPLACE FUNCTION pg_temp.shelfj_provision_service_role(
+CREATE OR REPLACE FUNCTION pg_temp.storeql_provision_service_role(
   role_name text, schema_name text, role_password text
 ) RETURNS void AS $fn$
 BEGIN
@@ -26,7 +26,7 @@ BEGIN
   -- role-level default, applied by Postgres itself at session start, survives pooling).
   EXECUTE format('ALTER ROLE %I SET search_path = %I', role_name, schema_name);
   EXECUTE format('CREATE SCHEMA IF NOT EXISTS %I', schema_name);
-  EXECUTE format('GRANT CONNECT ON DATABASE shelfj TO %I', role_name);
+  EXECUTE format('GRANT CONNECT ON DATABASE storeql TO %I', role_name);
   EXECUTE format('GRANT USAGE, CREATE ON SCHEMA %I TO %I', schema_name, role_name);
   -- Covers tables/sequences that already exist in the schema (e.g. created by the
   -- bootstrap role before this script ran); going forward the role owns what it creates.
@@ -40,20 +40,20 @@ BEGIN
 END;
 $fn$ LANGUAGE plpgsql;
 
-SELECT pg_temp.shelfj_provision_service_role('iam_svc', 'iam', 'iam_dev_change_me');
-SELECT pg_temp.shelfj_provision_service_role('tenant_svc', 'tenant', 'tenant_dev_change_me');
-SELECT pg_temp.shelfj_provision_service_role('product_svc', 'product', 'product_dev_change_me');
-SELECT pg_temp.shelfj_provision_service_role(
+SELECT pg_temp.storeql_provision_service_role('iam_svc', 'iam', 'iam_dev_change_me');
+SELECT pg_temp.storeql_provision_service_role('tenant_svc', 'tenant', 'tenant_dev_change_me');
+SELECT pg_temp.storeql_provision_service_role('product_svc', 'product', 'product_dev_change_me');
+SELECT pg_temp.storeql_provision_service_role(
   'inventory_svc', 'inventory', 'inventory_dev_change_me');
-SELECT pg_temp.shelfj_provision_service_role('purchase_svc', 'purchase', 'purchase_dev_change_me');
-SELECT pg_temp.shelfj_provision_service_role('pricing_svc', 'pricing', 'pricing_dev_change_me');
-SELECT pg_temp.shelfj_provision_service_role('cart_svc', 'cart', 'cart_dev_change_me');
-SELECT pg_temp.shelfj_provision_service_role('order_svc', 'order', 'order_dev_change_me');
-SELECT pg_temp.shelfj_provision_service_role('payment_svc', 'payment', 'payment_dev_change_me');
-SELECT pg_temp.shelfj_provision_service_role('customer_svc', 'customer', 'customer_dev_change_me');
-SELECT pg_temp.shelfj_provision_service_role(
+SELECT pg_temp.storeql_provision_service_role('purchase_svc', 'purchase', 'purchase_dev_change_me');
+SELECT pg_temp.storeql_provision_service_role('pricing_svc', 'pricing', 'pricing_dev_change_me');
+SELECT pg_temp.storeql_provision_service_role('cart_svc', 'cart', 'cart_dev_change_me');
+SELECT pg_temp.storeql_provision_service_role('order_svc', 'order', 'order_dev_change_me');
+SELECT pg_temp.storeql_provision_service_role('payment_svc', 'payment', 'payment_dev_change_me');
+SELECT pg_temp.storeql_provision_service_role('customer_svc', 'customer', 'customer_dev_change_me');
+SELECT pg_temp.storeql_provision_service_role(
   'notification_svc', 'notification', 'notification_dev_change_me');
-SELECT pg_temp.shelfj_provision_service_role(
+SELECT pg_temp.storeql_provision_service_role(
   'reporting_svc', 'reporting', 'reporting_dev_change_me');
 
-DROP FUNCTION pg_temp.shelfj_provision_service_role(text, text, text);
+DROP FUNCTION pg_temp.storeql_provision_service_role(text, text, text);

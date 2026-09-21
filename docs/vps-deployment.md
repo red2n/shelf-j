@@ -1,6 +1,6 @@
-# Shelf-J VPS Deployment Guide — storeql.com
+# StoreQL VPS Deployment Guide — storeql.com
 
-This guide covers everything needed to run Shelf-J on a production VPS under the domain **storeql.com**, from a bare server to a live multi-tenant platform. Read this alongside [docs/ARCHITECTURE.md](ARCHITECTURE.md) (architecture) and [docs/onboarding-and-locations.md](onboarding-and-locations.md) (tenant onboarding flow).
+This guide covers everything needed to run StoreQL on a production VPS under the domain **storeql.com**, from a bare server to a live multi-tenant platform. Read this alongside [docs/ARCHITECTURE.md](ARCHITECTURE.md) (architecture) and [docs/onboarding-and-locations.md](onboarding-and-locations.md) (tenant onboarding flow).
 
 ---
 
@@ -23,7 +23,7 @@ This guide covers everything needed to run Shelf-J on a production VPS under the
 
 ## 1. Multi-tenant platform overview
 
-Shelf-J is a **multi-tenant SaaS** platform. A **tenant** is one business (a retailer, a small chain) that has signed up to use the platform. Tenants are completely isolated — they cannot see each other's data.
+StoreQL is a **multi-tenant SaaS** platform. A **tenant** is one business (a retailer, a small chain) that has signed up to use the platform. Tenants are completely isolated — they cannot see each other's data.
 
 ```
 Platform Admin (storeql.com staff)
@@ -60,7 +60,7 @@ The interface the user lands on is determined by their role after login (or, for
 | OS | Ubuntu 22.04 LTS | Ubuntu 24.04 LTS |
 | Open ports | 22 (SSH), 80 (HTTP), 443 (HTTPS) | same |
 
-> **Port binding security:** every service in `docker-compose.yml` binds its host port to `127.0.0.1` (localhost only), not `0.0.0.0` (all interfaces). This means none of them — gateway, shelf-app, Grafana, pgAdmin, Consul, Postgres, Redis, etc. — are reachable on the public IP at all, regardless of firewall rules. Caddy is the only process that listens on `0.0.0.0:80` and `0.0.0.0:443`, and it only forwards to `app.storeql.com` and `api.storeql.com`. Everything else is reachable via SSH tunnel only (see §11). Firewall rules blocking 8088/8090/etc. are good defence-in-depth but are not load-bearing.
+> **Port binding security:** every service in `docker-compose.yml` binds its host port to `127.0.0.1` (localhost only), not `0.0.0.0` (all interfaces). This means none of them — gateway, storeql-app, Grafana, pgAdmin, Consul, Postgres, Redis, etc. — are reachable on the public IP at all, regardless of firewall rules. Caddy is the only process that listens on `0.0.0.0:80` and `0.0.0.0:443`, and it only forwards to `app.storeql.com` and `api.storeql.com`. Everything else is reachable via SSH tunnel only (see §11). Firewall rules blocking 8088/8090/etc. are good defence-in-depth but are not load-bearing.
 
 ### Software to install on the server
 
@@ -106,9 +106,9 @@ The Flutter web app bakes the API gateway URL in at build time. Before pushing t
 
 | Variable name | Value |
 |---|---|
-| `SHELFJ_API_BASE` | `https://api.storeql.com/api` |
+| `STOREQL_API_BASE` | `https://api.storeql.com/api` |
 
-After this is set, every push to `main` will build `ghcr.io/red2n/shelf-j-web:latest` with the production gateway URL baked in. Pull the new image on the server to apply changes.
+After this is set, every push to `main` will build `ghcr.io/red2n/storeql-web:latest` with the production gateway URL baked in. Pull the new image on the server to apply changes.
 
 ---
 
@@ -116,8 +116,8 @@ After this is set, every push to `main` will build `ghcr.io/red2n/shelf-j-web:la
 
 ```bash
 # 1. Clone the repository
-git clone https://github.com/red2n/shelf-j.git
-cd shelf-j
+git clone https://github.com/red2n/storeql.git
+cd storeql
 
 # 2. Create your .env from the example
 cp .env.example .env
@@ -127,9 +127,9 @@ Now edit `.env` and fill in every required value. At minimum:
 
 ```bash
 # Secrets — generate these, never reuse dev defaults in production
-SHELFJ_JWT_SECRET=$(openssl rand -base64 48)          # >= 32 chars; seals iam-svc's token signing keys at rest
+STOREQL_JWT_SECRET=$(openssl rand -base64 48)          # >= 32 chars; seals iam-svc's token signing keys at rest
 MQTT_PUBLISHER_PASSWORD=$(openssl rand -hex 24)       # notification-svc's broker login (letters and digits only)
-SHELFJ_CONFIG_TOKEN=$(openssl rand -base64 48)        # >= 32 chars
+STOREQL_CONFIG_TOKEN=$(openssl rand -base64 48)        # >= 32 chars
 PLATFORM_ADMIN_PASSWORD=$(openssl rand -base64 24)    # save this — you'll need it to log in
 
 # Postgres passwords (change all of them from the *_dev_change_me defaults)
@@ -145,7 +145,7 @@ REDIS_PASSWORD=...
 CADDY_ACME_EMAIL=ops@storeql.com     # receives certificate expiry warnings
 
 # Server-side pricing must be true in production
-SHELFJ_ORDER_PRICING_ENFORCE=true
+STOREQL_ORDER_PRICING_ENFORCE=true
 ```
 
 > **Never commit `.env`** — it is in `.gitignore`.
@@ -188,12 +188,12 @@ The `bootstrap` container in `docker-compose.yml` seeds the first **PLATFORM_ADM
 
 ```bash
 docker compose logs bootstrap
-# Expected output: [bootstrap] Platform admin created (admin@shelf-j.dev)
+# Expected output: [bootstrap] Platform admin created (admin@storeql.dev)
 # or:              [bootstrap] Platform admin already exists — skipped
 ```
 
 The bootstrap account credentials:
-- **Email:** value of `PLATFORM_ADMIN_EMAIL` in `.env` (default `admin@shelf-j.dev`)
+- **Email:** value of `PLATFORM_ADMIN_EMAIL` in `.env` (default `admin@storeql.dev`)
 - **Password:** value of `PLATFORM_ADMIN_PASSWORD` in `.env`
 
 > **Change the admin email** in `.env` from the default before first deploy. The default is intentionally obvious so the system rejects a deploy with an unchanged placeholder.
@@ -228,7 +228,7 @@ These are the URLs you use when running `docker compose up` on your laptop (base
 | **Consul UI** | `http://localhost:8500` | Service discovery — see which services are registered and healthy |
 | **Prometheus** | `http://localhost:9090` | Raw metrics scraping UI |
 | **Zipkin** | `http://localhost:9411` | Distributed request traces |
-| **Postgres** | `localhost:5432` | Direct SQL access (`psql -h localhost -U shelfj -d shelfj`) |
+| **Postgres** | `localhost:5432` | Direct SQL access (`psql -h localhost -U storeql -d storeql`) |
 | **Redis** | `localhost:6379` | Cache/rate-limit store (`redis-cli -h localhost`) |
 
 ---
@@ -334,7 +334,7 @@ Then access them at the same local-dev URLs from your workstation:
 ```bash
 # Postgres
 ssh -N -L 5432:localhost:5432 user@<your-server-ip>
-psql -h localhost -U shelfj -d shelfj
+psql -h localhost -U storeql -d storeql
 
 # Redis
 ssh -N -L 6379:localhost:6379 user@<your-server-ip>
@@ -380,12 +380,12 @@ docker compose exec caddy caddy reload --config /etc/caddy/Caddyfile
 
 ```bash
 # Dump every schema from one snapshot (custom format: restores in parallel)
-docker compose exec postgres pg_dump -U shelfj -d shelfj -Fc -f /tmp/shelfj.dump
-docker compose cp postgres:/tmp/shelfj.dump backup-$(date +%Y%m%d).dump
+docker compose exec postgres pg_dump -U storeql -d storeql -Fc -f /tmp/storeql.dump
+docker compose cp postgres:/tmp/storeql.dump backup-$(date +%Y%m%d).dump
 
 # Restore into a fresh server, then re-apply the per-service roles
-pg_restore -U shelfj -d shelfj --no-owner --no-privileges -j 4 backup-YYYYMMDD.dump
-psql -U shelfj -d shelfj -v ON_ERROR_STOP=1 -f infra/postgres-init-roles.sql
+pg_restore -U storeql -d storeql --no-owner --no-privileges -j 4 backup-YYYYMMDD.dump
+psql -U storeql -d storeql -v ON_ERROR_STOP=1 -f infra/postgres-init-roles.sql
 ```
 
 A backup is only as good as its last restore. `scripts/restore-rehearsal.sh` does both against the running stack: it dumps from one exported snapshot, restores into a scratch `postgres:16-alpine` container, re-applies the roles, compares every table row for row with counts taken in the same snapshot, and appends the timings to [RESTORE-REHEARSAL.md](RESTORE-REHEARSAL.md). Run it after any schema change and at least once a quarter.

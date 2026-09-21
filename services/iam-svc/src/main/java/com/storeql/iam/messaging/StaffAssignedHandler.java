@@ -1,0 +1,80 @@
+package com.storeql.iam.messaging;
+
+import com.storeql.iam.repo.UserRepository;
+import jakarta.enterprise.context.ApplicationScoped;
+import jakarta.inject.Inject;
+import jakarta.json.Json;
+import jakarta.json.JsonObject;
+import java.io.StringReader;
+import java.lang.System.Logger;
+import java.lang.System.Logger.Level;
+import java.util.UUID;
+
+/**
+ * Business handler for {@code storeql.tenant.staff-assigned} events. Stamps {@code tenant_id} + the
+ * assigned store-scoped role on the staff user, idempotently. Without this, staff assigned via
+ * tenant-svc never get a tenant on their iam-svc row and their JWTs carry {@code tenant=null}.
+ * Separated from {@link StaffAssignedConsumer} so Kafka lifecycle and domain logic each have a
+ * single reason to change (SRP).
+ *
+ * <p>The dedupe mark and the bind commit in one transaction (see {@code bindStaffOnce}); a
+ * malformed payload is logged and skipped, while a failed write propagates so the consumer loop
+ * redelivers the record instead of losing it.
+ */
+@ApplicationScoped
+public class StaffAssignedHandler {
+
+  private static final Logger LOG = System.getLogger(StaffAssignedHandler.class.getName());
+  static final String CONSUMER_NAME = "iam-svc/staff-assigned";
+
+  @Inject UserRepository users;
+
+  public void handle(String json) {
+    UUID eventId;
+    UUID tenantId;
+    UUID userId;
+    UUID storeId;
+    String role;
+    String roleCode;
+    java.util.Set<String> permissions;
+    java.time.Instant roleUpdatedAt;
+    try (var reader = Json.createReader(new StringReader(json))) {
+      JsonObject obj = reader.readObject();
+      eventId = UUID.fromString(obj.getString("eventId"));
+      tenantId = UUID.fromString(obj.getString("tenantId"));
+      userId = UUID.fromString(obj.getString("userId"));
+      storeId = UUID.fromString(obj.getString("storeId"));
+      role = obj.getString("role");
+      // A custom role (20.10): the tier is in "role" as ever; the code and the permissions it
+      // held at assignment ride beside it. Absent for a plain tier assignment.
+      roleCode = obj.getString("roleCode", null);
+      permissions = roleCode == null ? null : Permissions.parse(obj);
+      roleUpdatedAt = roleCode == null ? null : Permissions.instant(obj, "roleUpdatedAt");
+    } catch (RuntimeException e) {
+      LOG.log(Level.WARNING, "Malformed StaffAssigned payload skipped: " + e.getMessage());
+      return;
+    }
+
+    boolean processed =
+        users.bindStaffOnce(
+            eventId,
+            CONSUMER_NAME,
+            userId,
+            tenantId,
+            role,
+            storeId,
+            roleCode,
+            permissions,
+            roleUpdatedAt);
+    if (processed) {
+      LOG.log(
+          Level.INFO,
+          "Bound user {0} as {1}{2} of tenant {3} store {4}",
+          userId,
+          role,
+          roleCode == null ? "" : " (" + roleCode + ")",
+          tenantId,
+          storeId);
+    }
+  }
+}

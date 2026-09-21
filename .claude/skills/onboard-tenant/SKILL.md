@@ -1,6 +1,6 @@
 ---
 name: onboard-tenant
-description: Implement or walk through Shelf-J client (tenant) onboarding and the Tenant→Stores→Zones location-mapping flow. Use when building tenant-svc/iam-svc onboarding, the setup checklist, store/zone creation, staff assignment, or delivery-area mapping.
+description: Implement or walk through StoreQL client (tenant) onboarding and the Tenant→Stores→Zones location-mapping flow. Use when building tenant-svc/iam-svc onboarding, the setup checklist, store/zone creation, staff assignment, or delivery-area mapping.
 ---
 
 # Client onboarding & location mapping (Tenant → Stores → Zones)

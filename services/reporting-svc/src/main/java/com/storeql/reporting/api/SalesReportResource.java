@@ -1,0 +1,132 @@
+package com.storeql.reporting.api;
+
+import com.storeql.reporting.mapper.Mappers;
+import com.storeql.reporting.service.ReportingService;
+import com.storeql.web.ApiResponse;
+import com.storeql.web.Parsing;
+import com.storeql.web.TenantContext;
+import jakarta.enterprise.context.RequestScoped;
+import jakarta.inject.Inject;
+import jakarta.ws.rs.GET;
+import jakarta.ws.rs.Path;
+import jakarta.ws.rs.Produces;
+import jakarta.ws.rs.QueryParam;
+import jakarta.ws.rs.core.MediaType;
+import java.time.Instant;
+import java.time.ZoneOffset;
+import java.util.UUID;
+import org.eclipse.microprofile.openapi.annotations.Operation;
+import org.eclipse.microprofile.openapi.annotations.responses.APIResponse;
+import org.eclipse.microprofile.openapi.annotations.tags.Tag;
+
+/**
+ * N4: sales revenue reporting, built from the OrderConfirmed / PaymentRefunded projection. {@code
+ * from}/{@code to} are inclusive calendar dates (ISO {@code yyyy-MM-dd}); {@code to} covers the
+ * whole day. tenant comes from the JWT.
+ */
+@Path("/admin/reports/sales")
+@RequestScoped
+@Produces(MediaType.APPLICATION_JSON)
+@Tag(name = "Sales Reports")
+public class SalesReportResource {
+
+  @Inject ReportingService service;
+  @Inject TenantContext ctx;
+
+  /** Gross / refunded / net revenue and order count, grouped by currency. */
+  @Operation(
+      summary = "Sales revenue summary",
+      description =
+          "Gross/refunded/net revenue and order count, grouped by currency, over the given"
+              + " inclusive date range. Optionally filtered by store and/or channel"
+              + " (ONLINE/POS).")
+  @APIResponse(responseCode = "200", description = "Sales summary rows, one per currency")
+  @APIResponse(
+      responseCode = "400",
+      description = "from/to is not a valid yyyy-MM-dd date, or storeId is not a valid UUID")
+  @GET
+  @Path("/summary")
+  public ApiResponse<Object> summary(
+      @QueryParam("from") String from,
+      @QueryParam("to") String to,
+      @QueryParam("storeId") String storeId,
+      @QueryParam("channel") String channel) {
+    var rows =
+        service.salesSummary(
+            ctx.tenantId(), fromDay(from), toDay(to), optUuid(storeId), blankToNull(channel));
+    return ApiResponse.ok(Mappers.toSalesSummaryReport(rows));
+  }
+
+  /** Daily revenue buckets (per currency), newest day first. */
+  @Operation(
+      summary = "Daily sales revenue buckets",
+      description =
+          "Daily revenue buckets (per currency), newest day first, over the given inclusive date"
+              + " range. Optionally filtered by store and/or channel (ONLINE/POS).")
+  @APIResponse(responseCode = "200", description = "Daily sales rows")
+  @APIResponse(
+      responseCode = "400",
+      description = "from/to is not a valid yyyy-MM-dd date, or storeId is not a valid UUID")
+  @GET
+  @Path("/by-day")
+  public ApiResponse<Object> byDay(
+      @QueryParam("from") String from,
+      @QueryParam("to") String to,
+      @QueryParam("storeId") String storeId,
+      @QueryParam("channel") String channel) {
+    var rows =
+        service.salesByDay(
+            ctx.tenantId(), fromDay(from), toDay(to), optUuid(storeId), blankToNull(channel));
+    return ApiResponse.ok(Mappers.toSalesByDayReport(rows));
+  }
+
+  private static Instant fromDay(String s) {
+    return s == null || s.isBlank()
+        ? null
+        : Parsing.date(s, "from").atStartOfDay(ZoneOffset.UTC).toInstant();
+  }
+
+  /**
+   * {@code to} is inclusive of the whole day, so the exclusive upper bound is the next midnight.
+   */
+  private static Instant toDay(String s) {
+    return s == null || s.isBlank()
+        ? null
+        : Parsing.date(s, "to").plusDays(1).atStartOfDay(ZoneOffset.UTC).toInstant();
+  }
+
+  private static UUID optUuid(String s) {
+    return s == null || s.isBlank() ? null : UUID.fromString(s);
+  }
+
+  private static String blankToNull(String s) {
+    return s == null || s.isBlank() ? null : s;
+  }
+
+  /** Labour against sales, day by day. */
+  @Operation(
+      summary = "What each day took, and what its hours cost",
+      description =
+          "The two numbers a manager puts side by side, and neither means much alone: takings without"
+              + " the cost of the hours that earned them is half a story, and a labour cost without"
+              + " takings is a number to worry about for no reason. Labour comes from tenant-svc's"
+              + " clock, projected here — the event carries a store, a day and money and **no person**,"
+              + " so pay stays in the service that keeps it. A day with takings and no hours recorded"
+              + " is as real as a day with hours and no sales, and both appear. Where some of a day's"
+              + " hours had no pay rate in force the cost is **null rather than zero**, and"
+              + " `uncostedHours` says how much could not be costed: a Saturday shown as free labour"
+              + " would be worse than one that says it does not know.")
+  @APIResponse(responseCode = "200", description = "One row per day, newest first")
+  @APIResponse(
+      responseCode = "400",
+      description = "from/to is not a yyyy-MM-dd date, or storeId is not a UUID")
+  @GET
+  @Path("/labour")
+  public ApiResponse<Object> labour(
+      @QueryParam("from") String from,
+      @QueryParam("to") String to,
+      @QueryParam("storeId") String storeId) {
+    var rows = service.labourByDay(ctx.tenantId(), fromDay(from), toDay(to), optUuid(storeId));
+    return ApiResponse.ok(Mappers.toLabourReport(rows));
+  }
+}

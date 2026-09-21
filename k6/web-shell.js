@@ -8,7 +8,7 @@
 //   k6/run.sh web-shell            (WEB_URL defaults to http://localhost:8088)
 import http from 'k6/http';
 import { check } from 'k6';
-import { ALL_CHECKS_PASS, truthy } from './lib/shelfj.js';
+import { ALL_CHECKS_PASS, truthy } from './lib/storeql.js';
 
 export const options = {
   scenarios: { flow: { executor: 'per-vu-iterations', vus: 1, iterations: 1, maxDuration: '2m' } },

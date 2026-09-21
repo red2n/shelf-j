@@ -20,7 +20,7 @@
 
 # ── Web UI (Flutter SPA — admin console, storefront, POS) ────────────────────
 app.storeql.com {
-    reverse_proxy shelf-app:8080
+    reverse_proxy storeql-app:8080
 
     # Caddy adds Zstd on top of the gzip already handled by nginx-spa.conf
     encode zstd gzip

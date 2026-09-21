@@ -1,4 +1,4 @@
-# Shelf-J full code-quality gate
+# StoreQL full code-quality gate
 
 Audit every file changed on this branch against **all** mandatory rules. This command is non-negotiable — nothing merges until every BLOCKER is resolved.
 
@@ -16,7 +16,7 @@ Count changed Java files (`.java`) and Dart files (`.dart`). Store the count —
 
 ---
 
-## Step 2 — Shelf-J golden rules (CLAUDE.md)
+## Step 2 — StoreQL golden rules (CLAUDE.md)
 
 Check each rule against every changed file. Mark each: ✓ pass · ✗ BLOCKER · N/A not applicable.
 

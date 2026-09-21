@@ -1,9 +1,9 @@
 ---
 name: add-endpoint
-description: Add a REST endpoint to an existing Shelf-J service following the layered architecture, response envelope, validation, tenant-isolation, pagination, and idempotency rules. Use when adding or changing an API endpoint.
+description: Add a REST endpoint to an existing StoreQL service following the layered architecture, response envelope, validation, tenant-isolation, pagination, and idempotency rules. Use when adding or changing an API endpoint.
 ---
 
-# Add a REST endpoint to a Shelf-J service
+# Add a REST endpoint to a StoreQL service
 
 Use when adding/modifying a REST endpoint so it stays consistent with every other endpoint in the platform.
 

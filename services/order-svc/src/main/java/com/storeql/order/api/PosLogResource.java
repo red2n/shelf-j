@@ -1,0 +1,84 @@
+package com.storeql.order.api;
+
+import com.storeql.order.mapper.Mappers;
+import com.storeql.order.service.OrderService;
+import com.storeql.web.ApiResponse;
+import com.storeql.web.Cursor;
+import com.storeql.web.TenantContext;
+import jakarta.enterprise.context.RequestScoped;
+import jakarta.inject.Inject;
+import jakarta.ws.rs.Consumes;
+import jakarta.ws.rs.GET;
+import jakarta.ws.rs.Path;
+import jakarta.ws.rs.PathParam;
+import jakarta.ws.rs.Produces;
+import jakarta.ws.rs.QueryParam;
+import jakarta.ws.rs.core.MediaType;
+import jakarta.ws.rs.core.Response;
+import java.util.UUID;
+import org.eclipse.microprofile.openapi.annotations.Operation;
+import org.eclipse.microprofile.openapi.annotations.responses.APIResponse;
+import org.eclipse.microprofile.openapi.annotations.tags.Tag;
+
+/**
+ * Gap #43 — POSLog / transaction journal. Append-only log of completed POS transactions.
+ *
+ * <p>Read side only. The <b>write</b> lives on {@link PosLogWriteResource} at {@code /pos/log},
+ * because everything under {@code /admin/} is gated to management roles — so the cashier who
+ * completed the sale could not journal it, and no client ever called this. A journal its own author
+ * is locked out of records nothing.
+ */
+@RequestScoped
+@Path("/admin/pos-log")
+@Produces(MediaType.APPLICATION_JSON)
+@Consumes(MediaType.APPLICATION_JSON)
+@Tag(name = "POS Transaction Log")
+public class PosLogResource {
+
+  @Inject OrderService svc;
+  @Inject TenantContext ctx;
+
+  /**
+   * Cursor-paginated POSLog entries for the tenant.
+   *
+   * @param storeId restrict to one store, or {@code null}
+   * @param after cursor from the previous page's {@code meta.nextCursor}, or {@code null} to start
+   * @param limit page size, 1..100; clamped when absent or out of range
+   * @return the page of entries, with the next cursor in {@code meta}
+   */
+  @Operation(
+      summary = "List POSLog entries",
+      description =
+          "Append-only POS transaction journal, optionally filtered by store. Cursor-paginated.")
+  @APIResponse(responseCode = "200", description = "Page of POSLog entries")
+  @GET
+  public Response list(
+      @QueryParam("storeId") String storeId,
+      @QueryParam("after") String after,
+      @QueryParam("limit") Integer limit) {
+    int clamped = Cursor.clampLimit(limit);
+    var page = svc.listPosLog(ctx.requireTenantId(), storeId, after, clamped);
+    var entries = page.entries().stream().map(Mappers::toDto).toList();
+    return Response.ok(
+            ApiResponse.ok(entries, new ApiResponse.Meta(ctx.requestId(), page.nextCursor())))
+        .build();
+  }
+
+  /**
+   * The POSLog entries recorded against one sale.
+   *
+   * @param orderId the sale whose entries to read
+   * @return the entries, empty when the sale was not rung on a till
+   */
+  @Operation(
+      summary = "List POSLog entries for an order",
+      description = "All POSLog entries recorded against the given order.")
+  @APIResponse(responseCode = "200", description = "List of POSLog entries")
+  @GET
+  @Path("/orders/{orderId}")
+  public Response byOrder(@PathParam("orderId") UUID orderId) {
+    var entries =
+        svc.getPosLogByOrder(ctx.requireTenantId(), orderId).stream().map(Mappers::toDto).toList();
+    return Response.ok(ApiResponse.ok(entries)).build();
+  }
+}

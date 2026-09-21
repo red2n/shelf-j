@@ -1,12 +1,12 @@
-# Shelf-J — Prometheus scrape configuration.
+# StoreQL — Prometheus scrape configuration.
 # All Helidon MP services expose /metrics in Prometheus text format.
-# Prometheus itself is on shelfj_network and resolves services by compose service name.
+# Prometheus itself is on storeql_network and resolves services by compose service name.
 
 global:
   scrape_interval: 15s
   evaluation_interval: 15s
   external_labels:
-    project: 'shelf-j'
+    project: 'storeql'
     env: 'local'
 
 scrape_configs:

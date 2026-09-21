@@ -1,6 +1,6 @@
 <?xml version="1.0" encoding="UTF-8"?>
 <!--
-  SpotBugs exclusion filter for Shelf-J.
+  SpotBugs exclusion filter for StoreQL.
 
   Suppresses false positives that arise from CDI/Jakarta EE patterns that SpotBugs
   cannot reason about statically (injection, proxy subclassing, lifecycle callbacks).
@@ -42,7 +42,7 @@
     -->
     <Match>
         <Bug pattern="EI_EXPOSE_REP,EI_EXPOSE_REP2"/>
-        <Class name="com.shelfj.gs1.Gs1Scan"/>
+        <Class name="com.storeql.gs1.Gs1Scan"/>
     </Match>
 
     <!--
@@ -53,7 +53,7 @@
     -->
     <Match>
         <Bug pattern="EI_EXPOSE_REP,EI_EXPOSE_REP2"/>
-        <Class name="~com\.shelfj\.inventory\.repo\.InventoryRepository\$(ReserveOutcome|ReserveBatchItem)"/>
+        <Class name="~com\.storeql\.inventory\.repo\.InventoryRepository\$(ReserveOutcome|ReserveBatchItem)"/>
     </Match>
 
     <!--
@@ -64,7 +64,7 @@
     -->
     <Match>
         <Bug pattern="EI_EXPOSE_REP,EI_EXPOSE_REP2"/>
-        <Class name="~com\.shelfj\.einvoice\.Invoice(\$.*)?"/>
+        <Class name="~com\.storeql\.einvoice\.Invoice(\$.*)?"/>
     </Match>
 
     <!--
@@ -75,7 +75,7 @@
     -->
     <Match>
         <Bug pattern="SQL_PREPARED_STATEMENT_GENERATED_FROM_NONCONSTANT_STRING"/>
-        <Class name="com.shelfj.inventory.repo.DemandHistoryRepository"/>
+        <Class name="com.storeql.inventory.repo.DemandHistoryRepository"/>
     </Match>
     <Match>
         <!--
@@ -87,7 +87,7 @@
           names are looked up in the catalog, and row values are bound as one jsonb parameter.
         -->
         <Bug pattern="SQL_PREPARED_STATEMENT_GENERATED_FROM_NONCONSTANT_STRING,SQL_NONCONSTANT_STRING_PASSED_TO_EXECUTE"/>
-        <Class name="com.shelfj.service.TenantDataRepository"/>
+        <Class name="com.storeql.service.TenantDataRepository"/>
         <Method name="aggregateDemand"/>
     </Match>
 
@@ -127,7 +127,7 @@
     -->
     <Match>
         <Bug pattern="EI_EXPOSE_REP"/>
-        <Class name="com.shelfj.gateway.GatewayConfig"/>
+        <Class name="com.storeql.gateway.GatewayConfig"/>
         <Or>
             <Method name="routableServices"/>
             <Method name="corsAllowedOrigins"/>

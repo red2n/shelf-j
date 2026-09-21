@@ -4,7 +4,7 @@
 //   k6/run.sh inventory-crud
 import http from 'k6/http';
 import { check as k6check, sleep } from 'k6';
-import { ALL_CHECKS_PASS, BASE as baseUrl, onboardTenant, register, sellableVariant } from './lib/shelfj.js';
+import { ALL_CHECKS_PASS, BASE as baseUrl, onboardTenant, register, sellableVariant } from './lib/storeql.js';
 
 export const options = { vus: 1, iterations: 1, thresholds: ALL_CHECKS_PASS, setupTimeout: '3m' };
 

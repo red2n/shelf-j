@@ -17,7 +17,7 @@ import {
   must,
   sellingTenant,
   truthy,
-} from './lib/shelfj.js';
+} from './lib/storeql.js';
 
 const completed = new Counter('flow_completed');
 export const options = {

@@ -14,7 +14,7 @@ updates:
         update-types: [minor, patch]
 
   - package-ecosystem: pub
-    directory: /frontends/shelf-app
+    directory: /frontends/storeql-app
     schedule: { interval: weekly, day: monday }
     open-pull-requests-limit: 5
     groups:

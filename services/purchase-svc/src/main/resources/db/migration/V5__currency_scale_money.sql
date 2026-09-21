@@ -1,7 +1,7 @@
 -- SJ-D25: every money column in this service hard-coded two decimal places.
 --
 -- NUMERIC(14,2) is not a statement about money, it is a statement about sterling and the dollar.
--- Shelf-J is multi-currency, and ISO 4217 does not agree with that column type:
+-- StoreQL is multi-currency, and ISO 4217 does not agree with that column type:
 --
 --   JPY, KRW, VND          0 minor units   ¥3,702 came back as 3702.00 — a precision the yen does
 --                                          not have, on a figure that must be invoiced in whole yen

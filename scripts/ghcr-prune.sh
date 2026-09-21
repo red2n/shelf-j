@@ -3,7 +3,7 @@
 # .github/workflows/docker-publish.yml.
 #
 # Two modes:
-#   prune (default) — keeps the N newest TAGGED versions of each Shelf-J GHCR
+#   prune (default) — keeps the N newest TAGGED versions of each StoreQL GHCR
 #     package and deletes everything older, plus ALL untagged versions. This
 #     mirrors what dataaxiom/ghcr-cleanup-action does in CI (keep-n-tagged +
 #     delete-untagged) — run it from your machine if that job ever fails
@@ -20,7 +20,7 @@
 #   ./scripts/ghcr-prune.sh                 # DRY RUN (default): show what would go
 #   ./scripts/ghcr-prune.sh --apply         # actually delete
 #   KEEP=3 ./scripts/ghcr-prune.sh --apply  # keep 3 instead of 2
-#   ./scripts/ghcr-prune.sh --apply gateway web   # only these (suffix after shelf-j-)
+#   ./scripts/ghcr-prune.sh --apply gateway web   # only these (suffix after storeql-)
 #   OWNER=red2n ./scripts/ghcr-prune.sh     # override owner (default: red2n)
 #
 #   ./scripts/ghcr-prune.sh --nuke                # DRY RUN nuke: whole packages that would go
@@ -40,11 +40,11 @@ NUKE=false
 
 # Must stay in sync with the matrix in docker-publish.yml.
 PACKAGES=(
-  shelf-j-gateway shelf-j-config
-  shelf-j-iam-svc shelf-j-tenant-svc shelf-j-product-svc shelf-j-inventory-svc shelf-j-purchase-svc
-  shelf-j-pricing-svc shelf-j-cart-svc shelf-j-order-svc shelf-j-payment-svc
-  shelf-j-customer-svc shelf-j-notification-svc shelf-j-reporting-svc
-  shelf-j-web
+  storeql-gateway storeql-config
+  storeql-iam-svc storeql-tenant-svc storeql-product-svc storeql-inventory-svc storeql-purchase-svc
+  storeql-pricing-svc storeql-cart-svc storeql-order-svc storeql-payment-svc
+  storeql-customer-svc storeql-notification-svc storeql-reporting-svc
+  storeql-web
 )
 
 # ── args ──────────────────────────────────────────────────────────────────
@@ -56,7 +56,7 @@ for a in "$@"; do
     --nuke)    NUKE=true ;;
     -h|--help) grep '^#' "$0" | sed 's/^#\!.*//; s/^# \?//'; exit 0 ;;
     -*)        echo "unknown flag: $a" >&2; exit 2 ;;
-    *)         filter+=("shelf-j-${a#shelf-j-}") ;;  # accept 'gateway' or 'shelf-j-gateway'
+    *)         filter+=("storeql-${a#storeql-}") ;;  # accept 'gateway' or 'storeql-gateway'
   esac
 done
 [[ ${#filter[@]} -gt 0 ]] && PACKAGES=("${filter[@]}")

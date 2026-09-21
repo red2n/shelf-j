@@ -1,9 +1,9 @@
 ---
 name: scaffold-service
-description: Scaffold a new Shelf-J business microservice (Helidon MP, Java 21) with the standard module layout, layered packages, Flyway migration, health/metrics, config, and Consul registration. Use when creating a brand-new service under services/.
+description: Scaffold a new StoreQL business microservice (Helidon MP, Java 21) with the standard module layout, layered packages, Flyway migration, health/metrics, config, and Consul registration. Use when creating a brand-new service under services/.
 ---
 
-# Scaffold a new Shelf-J microservice
+# Scaffold a new StoreQL microservice
 
 Use this when adding a **new business microservice** to `services/`. It produces a service that already satisfies the [golden rules](../../../CLAUDE.md) and the [Definition of Done](../../../docs/ARCHITECTURE.md#19-definition-of-done).
 
@@ -12,9 +12,9 @@ Use this when adding a **new business microservice** to `services/`. It produces
 ## Reuse `shared/common-service` — do NOT re-write infra (saves ~100 lines/service; keeps Duplo low)
 
 The DataSource producer, Flyway runner, Consul registrar, health checks, and Kafka outbox publisher live in `shared/common-service`. A new service:
-1. Depends on `com.shelfj:common-service`.
-2. `ServiceConfig implements com.shelfj.service.ServiceSettings` (serviceName/port, db url/user/pwd/schema, consul host/port/enabled, kafka enabled/bootstrap, outboxPollSeconds). Add any service-specific config as extra fields.
-3. If it has an outbox: its repo `implements com.shelfj.service.OutboxStore` (`pendingOutbox` + `markPublished`, using `OutboxStore.PendingOutbox`). If it has no outbox, skip this — the shared publisher no-ops.
+1. Depends on `com.storeql:common-service`.
+2. `ServiceConfig implements com.storeql.service.ServiceSettings` (serviceName/port, db url/user/pwd/schema, consul host/port/enabled, kafka enabled/bootstrap, outboxPollSeconds). Add any service-specific config as extra fields.
+3. If it has an outbox: its repo `implements com.storeql.service.OutboxStore` (`pendingOutbox` + `markPublished`, using `OutboxStore.PendingOutbox`). If it has no outbox, skip this — the shared publisher no-ops.
 4. **Do NOT create** `DataSourceProducer`, `FlywayMigration`, `ConsulRegistration`, `HealthChecks`, or `OutboxPublisher` — they are shared. Keep only service-specific messaging (consumers, sweepers).
 
 Validate after adding a service: `scripts/duplo.sh` (duplication should stay ~10%).
@@ -24,12 +24,12 @@ Validate after adding a service: `scripts/duplo.sh` (duplication should stay ~10
 1. **`mainClass` = `io.helidon.Main`** (NOT a custom `Server.create()` main) — else `/health` & `/metrics` 404.
 2. **No catch-all `ExceptionMapper<Throwable>`/`<Exception>`** — it shadows the framework's `/health` & `/metrics` routes. Keep only the specific `ApiExceptionMapper` (in common-web).
 3. **Slim `helidon-microprofile-core` ships JSON-P, not JSON-B** — add `org.glassfish.jersey.media:jersey-media-json-binding:3.1.11` + `org.eclipse:yasson:3.0.4`, or JAX-RS can't serialize DTO records.
-4. **Bean Validation: `@Valid` is ignored / Helidon's mapper leaks internals.** Add `io.helidon.microprofile.bean-validation:helidon-microprofile-bean-validation` (pulls Hibernate Validator) and validate explicitly in the resource with `com.shelfj.web.Validations.validate(dto)` (returns the clean `VALIDATION_FAILED` 400 envelope). Do NOT rely on `@Valid` on resource params.
+4. **Bean Validation: `@Valid` is ignored / Helidon's mapper leaks internals.** Add `io.helidon.microprofile.bean-validation:helidon-microprofile-bean-validation` (pulls Hibernate Validator) and validate explicitly in the resource with `com.storeql.web.Validations.validate(dto)` (returns the clean `VALIDATION_FAILED` 400 envelope). Do NOT rely on `@Valid` on resource params.
 5. **Runnable jar needs `target/libs/`** — add `maven-dependency-plugin:copy-dependencies` (phase `package`, outputDir `target/libs`). The Helidon parent sets the jar manifest `Class-Path: libs/*`.
 6. **Native image support is optional.** If you want GraalVM native builds, add a `native` Maven profile using `org.graalvm.buildtools:native-maven-plugin` and build with `mvn -Pnative clean package` under GraalVM `JAVA_HOME`.
 7. **Build AND run with JDK 21** (`JAVA_HOME=/usr/lib/jvm/temurin-21-jdk-amd64`); machine default `java` is 25.
 8. **JDBC null UUID**: never bind a null UUID via `setObject(i, null)` in `col = ?` — Postgres can't infer the type. Use a separate `col IS NULL` query branch.
-8. **Database-per-service = a schema per service.** All services share one Postgres `shelfj` db in compose, so isolate by schema or their Flyway histories collide. Add `shelfj.db.schema` (default = short name, e.g. `iam`); set `ds.setCurrentSchema(schema)` and Flyway `.schemas(s).defaultSchema(s).createSchemas(true)`.
+8. **Database-per-service = a schema per service.** All services share one Postgres `storeql` db in compose, so isolate by schema or their Flyway histories collide. Add `storeql.db.schema` (default = short name, e.g. `iam`); set `ds.setCurrentSchema(schema)` and Flyway `.schemas(s).defaultSchema(s).createSchemas(true)`.
 9. **Background beans (Kafka publisher/consumer) must be EAGER.** A `@PostConstruct`-only `@ApplicationScoped` bean is never instantiated (CDI is lazy) → it silently never runs. Add `void onStart(@Observes @Initialized(ApplicationScoped.class) Object e) {}` to force eager init.
 
 ## Inputs to confirm before generating
@@ -46,7 +46,7 @@ If any are unknown, stop and check docs/API-GUIDE.md / docs/ARCHITECTURE.md — 
 
 1. **Create the Maven module** `services/<x>-svc/` and add it to the parent `pom.xml` `<modules>`. Inherit the parent (Java 21, Helidon BOM). Add dependencies: Helidon MP (server, config, health, metrics, JWT-auth, fault-tolerance), Helidon Messaging + Kafka connector (only if it publishes/consumes events), JPA + PostgreSQL driver, Flyway, Bean Validation, and the `shared/common-ids` + `shared/common-web` + `shared/events-contract` modules.
 
-2. **Create the package layout** under `src/main/java/com/shelfj/<x>/`:
+2. **Create the package layout** under `src/main/java/com/storeql/<x>/`:
    ```
    api/        # JAX-RS resources — THIN: validate DTO, call service, return DTO. No DB, no logic.
    dto/        # request/response records (the API contract). Bean Validation annotations here.
@@ -74,7 +74,7 @@ If any are unknown, stop and check docs/API-GUIDE.md / docs/ARCHITECTURE.md — 
 7. **Eventing (if applicable)**:
    - Add an `outbox` table; publish events by writing to `outbox` in the **same transaction** as the state change, drained to Kafka by `messaging/`.
    - Consumers are **idempotent** (dedupe on event id / business key) and live in `messaging/` but delegate logic to `service/`.
-   - Topics: `shelfj.<domain>.<event>`. Contracts go in `shared/events-contract`, not here.
+   - Topics: `storeql.<domain>.<event>`. Contracts go in `shared/events-contract`, not here.
 
 8. **Tests**: a unit test for a core `service/` rule + a **Testcontainers** integration test (real Postgres, and Kafka if eventing) covering the service's primary flow. The service is not done without this.
 

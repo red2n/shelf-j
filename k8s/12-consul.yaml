@@ -6,7 +6,7 @@ apiVersion: v1
 kind: Service
 metadata:
   name: consul
-  namespace: shelf-j
+  namespace: storeql
 spec:
   selector: { app: consul }
   ports:
@@ -18,7 +18,7 @@ apiVersion: apps/v1
 kind: Deployment
 metadata:
   name: consul
-  namespace: shelf-j
+  namespace: storeql
 spec:
   replicas: 1
   selector: { matchLabels: { app: consul } }

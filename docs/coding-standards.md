@@ -1,4 +1,4 @@
-# Shelf-J Coding Standards
+# StoreQL Coding Standards
 
 These rules apply to **every file in every service**, including future development. They are not suggestions — violating one is a bug even if the code compiles and tests pass. A Claude agent must enforce them automatically without being asked.
 
@@ -79,11 +79,11 @@ Classes are open for extension, closed for modification. Concretely:
 
   ```java
   // WRONG
-  private static final String TOPIC = "shelfj.tenant.tenant-created";
+  private static final String TOPIC = "storeql.tenant.tenant-created";
 
   // RIGHT
-  @Inject @ConfigProperty(name = "shelfj.kafka.topics.tenant-created",
-                          defaultValue = "shelfj.tenant.tenant-created")
+  @Inject @ConfigProperty(name = "storeql.kafka.topics.tenant-created",
+                          defaultValue = "storeql.tenant.tenant-created")
   String topic;
   ```
 

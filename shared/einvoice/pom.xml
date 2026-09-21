@@ -5,14 +5,14 @@
     <modelVersion>4.0.0</modelVersion>
 
     <parent>
-        <groupId>com.shelfj</groupId>
-        <artifactId>shelf-j-parent</artifactId>
+        <groupId>com.storeql</groupId>
+        <artifactId>storeql-parent</artifactId>
         <version>0.1.0-SNAPSHOT</version>
         <relativePath>../../pom.xml</relativePath>
     </parent>
 
     <artifactId>einvoice</artifactId>
-    <name>Shelf-J :: shared :: einvoice</name>
+    <name>StoreQL :: shared :: einvoice</name>
     <description>EN 16931 e-invoices as a format: one model read from and written to UBL 2.1 and UN/CEFACT CII,
         Factur-X (PDF/A-3 with the CII embedded), and the CEN and Peppol BIS Billing 3.0 rules. No service state,
         no network, no business decisions — purchase-svc and order-svc decide what an invoice means.</description>

@@ -1,0 +1,50 @@
+package com.storeql.iam.messaging;
+
+import com.storeql.iam.repo.UserRepository;
+import jakarta.enterprise.context.ApplicationScoped;
+import jakarta.inject.Inject;
+import jakarta.json.Json;
+import jakarta.json.JsonObject;
+import java.io.StringReader;
+import java.lang.System.Logger;
+import java.lang.System.Logger.Level;
+import java.util.UUID;
+
+/**
+ * Business handler for {@code storeql.tenant.tenant-created} events. Stamps {@code tenant_id} +
+ * OWNER role on the registering user, idempotently. Separated from {@link TenantCreatedConsumer} so
+ * Kafka lifecycle and domain logic each have a single reason to change (SRP).
+ *
+ * <p>The dedupe mark and the bind commit in one transaction (see {@code bindOwnerOnce}); a
+ * malformed payload is logged and skipped, while a failed write propagates so the consumer loop
+ * redelivers the record instead of losing it.
+ */
+@ApplicationScoped
+class TenantCreatedHandler {
+
+  private static final Logger LOG = System.getLogger(TenantCreatedHandler.class.getName());
+  static final String CONSUMER_NAME = "iam-svc/tenant-created";
+
+  @Inject UserRepository users;
+
+  void handle(String json) {
+    UUID eventId;
+    UUID tenantId;
+    UUID ownerUserId;
+    try (var reader = Json.createReader(new StringReader(json))) {
+      JsonObject obj = reader.readObject();
+      eventId = UUID.fromString(obj.getString("eventId"));
+      tenantId = UUID.fromString(obj.getString("tenantId"));
+      ownerUserId = UUID.fromString(obj.getString("ownerUserId"));
+    } catch (RuntimeException e) {
+      // Malformed payload will never parse on redelivery either — log and skip.
+      LOG.log(Level.WARNING, "Malformed TenantCreated payload skipped: " + e.getMessage());
+      return;
+    }
+
+    boolean processed = users.bindOwnerOnce(eventId, CONSUMER_NAME, ownerUserId, tenantId, "OWNER");
+    if (processed) {
+      LOG.log(Level.INFO, "Bound user {0} as OWNER of tenant {1}", ownerUserId, tenantId);
+    }
+  }
+}

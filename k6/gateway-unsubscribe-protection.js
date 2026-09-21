@@ -4,9 +4,9 @@
 // POST /marketing/unsubscribe is necessarily unauthenticated (PECR reg.23 asks for a simple means
 // of refusing; the token in the link is the whole capability). The token is 256 random bits, so it
 // cannot be guessed — but an endpoint that would let someone try forever is still an endpoint that
-// lets someone try forever. After shelfj.gateway.brute-force.max-failures wrong tokens (404s) from
+// lets someone try forever. After storeql.gateway.brute-force.max-failures wrong tokens (404s) from
 // one address, the gateway answers 429 TOKEN_LOCKED without asking customer-svc, for
-// shelfj.gateway.brute-force.block-minutes. A malformed request (400) is not a guess and is not
+// storeql.gateway.brute-force.block-minutes. A malformed request (400) is not a guess and is not
 // counted; a right token is not affected until the lockout, and clears the counter.
 //
 // This locks out the machine running k6. k6/run.sh clears the lockout in the local Redis
@@ -14,7 +14,7 @@
 // minutes.
 //
 //   k6/run.sh gateway-unsubscribe-protection
-import { ALL_CHECKS_PASS, call, data, expect, must, onboardTenant, register, truthy } from './lib/shelfj.js';
+import { ALL_CHECKS_PASS, call, data, expect, must, onboardTenant, register, truthy } from './lib/storeql.js';
 
 export const options = { vus: 1, iterations: 1, thresholds: ALL_CHECKS_PASS };
 
@@ -61,7 +61,7 @@ export default function ({ tenant, customerId, token }) {
   );
   expect(call('GET', '/api/tenant-svc/storefront/stores', { storefront: tenant.tenantId }), 'the rest of the storefront is unaffected', 200);
   expect(
-    call('POST', '/api/iam-svc/auth/register', { body: { email: `after-token-lockout-${Date.now()}@k6.shelfj.test`, password: 'K6-Passw0rd! for shelf-j' } }),
+    call('POST', '/api/iam-svc/auth/register', { body: { email: `after-token-lockout-${Date.now()}@k6.storeql.test`, password: 'K6-Passw0rd! for storeql' } }),
     'registration is unaffected: the lockout is per path',
     201
   );

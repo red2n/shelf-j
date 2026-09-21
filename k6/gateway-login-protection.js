@@ -1,7 +1,7 @@
 // Gateway brute-force protection: failed logins lock out both the account and the client IP.
 //
 // Five failed logins (401, or 403 such as a suspended tenant) block the account and the IP for
-// shelfj.gateway.brute-force.block-minutes (15). While blocked, the gateway answers 429
+// storeql.gateway.brute-force.block-minutes (15). While blocked, the gateway answers 429
 // LOGIN_LOCKED without asking iam-svc — even for the right password, and for any account from
 // that IP. A success clears both counters.
 //
@@ -9,7 +9,7 @@
 // afterwards; against any other stack, logins from this host stay blocked for 15 minutes.
 //
 //   k6/run.sh gateway-login-protection
-import { ALL_CHECKS_PASS, PASSWORD, call, expect, login, register, truthy } from './lib/shelfj.js';
+import { ALL_CHECKS_PASS, PASSWORD, call, expect, login, register, truthy } from './lib/storeql.js';
 
 export const options = { vus: 1, iterations: 1, thresholds: ALL_CHECKS_PASS };
 
@@ -35,5 +35,5 @@ export default function ({ victim, bystander }) {
   expect(login(victim), 'the right password is refused while locked', 429, 'LOGIN_LOCKED');
   expect(login(bystander), 'another account from the same IP is refused too', 429, 'LOGIN_LOCKED');
   expect(call('POST', '/api/iam-svc/auth/refresh', { body: { refreshToken: bystander.refreshToken } }), 'token refresh is not a login and still works', 200);
-  expect(call('POST', '/api/iam-svc/auth/register', { body: { email: `after-lockout-${Date.now()}@k6.shelfj.test`, password: PASSWORD } }), 'registration still works', 201);
+  expect(call('POST', '/api/iam-svc/auth/register', { body: { email: `after-lockout-${Date.now()}@k6.storeql.test`, password: PASSWORD } }), 'registration still works', 201);
 }

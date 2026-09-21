@@ -17,7 +17,7 @@
 #     elsewhere in the base file resolve to the real value too.
 #
 # Firewall: allow ports 80 and 443 inbound only.
-# All other host ports (8090 gateway, 8088 shelf-app, 8081 Kafka UI, etc.) are
+# All other host ports (8090 gateway, 8088 storeql-app, 8081 Kafka UI, etc.) are
 # bound to 127.0.0.1 in docker-compose.yml so they are unreachable on the public
 # IP by design — no separate firewall rule is needed for them. SSH-tunnel access
 # still works because the tunnel connects via the loopback interface (see §11 of
@@ -39,7 +39,7 @@
 #                       role via `ALTER ROLE <svc> PASSWORD ...` (see postgres-init-roles.sql).
 #
 # Required GitHub Actions variable (Settings → Variables → Actions):
-#   SHELFJ_API_BASE = https://api.storeql.com/api
+#   STOREQL_API_BASE = https://api.storeql.com/api
 #   (baked into the Flutter web bundle at CI build time)
 
 services:
@@ -47,7 +47,7 @@ services:
   # ── Edge proxy: TLS termination + subdomain routing ──────────────────────────
   caddy:
     image: caddy:2-alpine
-    container_name: shelfj-caddy
+    container_name: storeql-caddy
     restart: unless-stopped
     ports:
       - "80:80"        # HTTP → HTTPS redirect + ACME HTTP-01 challenge
@@ -59,22 +59,22 @@ services:
       - ./infra/Caddyfile:/etc/caddy/Caddyfile:ro
       - caddy_data:/data      # Let's Encrypt certs — persisted across restarts/upgrades
       - caddy_config:/config  # Caddy internal state
-    networks: [shelfj_network]
+    networks: [storeql_network]
     depends_on:
       gateway:   { condition: service_healthy }
-      shelf-app: { condition: service_healthy }
+      storeql-app: { condition: service_healthy }
 
   # ── Gateway: production environment overrides ─────────────────────────────────
   gateway:
     environment:
       # CORS: only the real web app domain may call the API (dev file uses "*")
-      shelfj.gateway.cors.allowed-origins: "https://app.storeql.com"
+      storeql.gateway.cors.allowed-origins: "https://app.storeql.com"
       # Trust X-Forwarded-For injected by Caddy so the gateway's rate-limiter and
       # brute-force protection (login throttle) key on the real client IP
-      shelfj.gateway.trust-forwarded-headers: "true"
+      storeql.gateway.trust-forwarded-headers: "true"
       # Restore the production rate-limit budget (dev file bumps to 30,000 to
       # avoid 429s while the k6 multi-tenant load test drives ~50 VUs from one IP)
-      shelfj.gateway.rate-limit.requests-per-minute: "100"
+      storeql.gateway.rate-limit.requests-per-minute: "100"
 
   # ── Datastore secrets: required in production (fail-fast) ─────────────────────
   # Each override re-references the secret with ${VAR:?...}. If the var is unset,
@@ -115,43 +115,43 @@ services:
   # connect (loud, fail-closed) instead of running on a known credential.
   iam-svc:
     environment:
-      shelfj.db.password: ${IAM_DB_PASSWORD:?Set IAM_DB_PASSWORD in .env and ALTER ROLE iam to match}
+      storeql.db.password: ${IAM_DB_PASSWORD:?Set IAM_DB_PASSWORD in .env and ALTER ROLE iam to match}
   tenant-svc:
     environment:
-      shelfj.db.password: ${TENANT_DB_PASSWORD:?Set TENANT_DB_PASSWORD in .env and ALTER ROLE tenant to match}
+      storeql.db.password: ${TENANT_DB_PASSWORD:?Set TENANT_DB_PASSWORD in .env and ALTER ROLE tenant to match}
   inventory-svc:
     environment:
-      shelfj.db.password: ${INVENTORY_DB_PASSWORD:?Set INVENTORY_DB_PASSWORD in .env and ALTER ROLE inventory to match}
+      storeql.db.password: ${INVENTORY_DB_PASSWORD:?Set INVENTORY_DB_PASSWORD in .env and ALTER ROLE inventory to match}
   order-svc:
     environment:
-      shelfj.db.password: ${ORDER_DB_PASSWORD:?Set ORDER_DB_PASSWORD in .env and ALTER ROLE order to match}
+      storeql.db.password: ${ORDER_DB_PASSWORD:?Set ORDER_DB_PASSWORD in .env and ALTER ROLE order to match}
   purchase-svc:
     environment:
-      shelfj.db.password: ${PURCHASE_DB_PASSWORD:?Set PURCHASE_DB_PASSWORD in .env and ALTER ROLE purchase to match}
+      storeql.db.password: ${PURCHASE_DB_PASSWORD:?Set PURCHASE_DB_PASSWORD in .env and ALTER ROLE purchase to match}
   cart-svc:
     environment:
-      shelfj.db.password: ${CART_DB_PASSWORD:?Set CART_DB_PASSWORD in .env and ALTER ROLE cart to match}
+      storeql.db.password: ${CART_DB_PASSWORD:?Set CART_DB_PASSWORD in .env and ALTER ROLE cart to match}
   pricing-svc:
     environment:
-      shelfj.db.password: ${PRICING_DB_PASSWORD:?Set PRICING_DB_PASSWORD in .env and ALTER ROLE pricing to match}
+      storeql.db.password: ${PRICING_DB_PASSWORD:?Set PRICING_DB_PASSWORD in .env and ALTER ROLE pricing to match}
   payment-svc:
     environment:
-      shelfj.db.password: ${PAYMENT_DB_PASSWORD:?Set PAYMENT_DB_PASSWORD in .env and ALTER ROLE payment to match}
+      storeql.db.password: ${PAYMENT_DB_PASSWORD:?Set PAYMENT_DB_PASSWORD in .env and ALTER ROLE payment to match}
   product-svc:
     environment:
-      shelfj.db.password: ${PRODUCT_DB_PASSWORD:?Set PRODUCT_DB_PASSWORD in .env and ALTER ROLE product to match}
+      storeql.db.password: ${PRODUCT_DB_PASSWORD:?Set PRODUCT_DB_PASSWORD in .env and ALTER ROLE product to match}
   customer-svc:
     environment:
-      shelfj.db.password: ${CUSTOMER_DB_PASSWORD:?Set CUSTOMER_DB_PASSWORD in .env and ALTER ROLE customer to match}
+      storeql.db.password: ${CUSTOMER_DB_PASSWORD:?Set CUSTOMER_DB_PASSWORD in .env and ALTER ROLE customer to match}
   notification-svc:
     environment:
-      shelfj.db.password: ${NOTIFICATION_DB_PASSWORD:?Set NOTIFICATION_DB_PASSWORD in .env and ALTER ROLE notification to match}
+      storeql.db.password: ${NOTIFICATION_DB_PASSWORD:?Set NOTIFICATION_DB_PASSWORD in .env and ALTER ROLE notification to match}
   reporting-svc:
     environment:
-      shelfj.db.password: ${REPORTING_DB_PASSWORD:?Set REPORTING_DB_PASSWORD in .env and ALTER ROLE reporting to match}
+      storeql.db.password: ${REPORTING_DB_PASSWORD:?Set REPORTING_DB_PASSWORD in .env and ALTER ROLE reporting to match}
 
 volumes:
   caddy_data:
-    name: shelfj_caddy_data
+    name: storeql_caddy_data
   caddy_config:
-    name: shelfj_caddy_config
+    name: storeql_caddy_config

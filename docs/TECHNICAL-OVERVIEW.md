@@ -1,14 +1,14 @@
-# Shelf-J — Technical Overview
+# StoreQL — Technical Overview
 
-> **Who this is for:** business stakeholders evaluating Shelf-J, and technical reviewers (partners, auditors, new engineers) who want the standards and architecture summarized in one place before diving into the deep docs. Each section pairs a plain-language explanation with the technical detail behind it.
+> **Who this is for:** business stakeholders evaluating StoreQL, and technical reviewers (partners, auditors, new engineers) who want the standards and architecture summarized in one place before diving into the deep docs. Each section pairs a plain-language explanation with the technical detail behind it.
 >
 > Deeper references: [README.md](../README.md) (full product tour) · [PRD.md](../PRD.md) (requirements & roadmap) · [ARCHITECTURE.md](ARCHITECTURE.md) (engineering reference) · [coding-standards.md](coding-standards.md) (enforced rules).
 
 ---
 
-## 1. What Shelf-J is, in one paragraph
+## 1. What StoreQL is, in one paragraph
 
-Shelf-J is a multi-tenant SaaS platform for running a retail business: stock, stores, and sales — online and in person — for as many independent businesses as want to use it. Each business (a "tenant") gets its own catalog, stock, staff, and customers, fully isolated from every other business on the platform, while sharing the same underlying application. A sale rung up at a till and a sale placed on the public storefront go through the exact same order, payment, and inventory logic, so a business never has to reconcile two systems that disagree about what's in stock.
+StoreQL is a multi-tenant SaaS platform for running a retail business: stock, stores, and sales — online and in person — for as many independent businesses as want to use it. Each business (a "tenant") gets its own catalog, stock, staff, and customers, fully isolated from every other business on the platform, while sharing the same underlying application. A sale rung up at a till and a sale placed on the public storefront go through the exact same order, payment, and inventory logic, so a business never has to reconcile two systems that disagree about what's in stock.
 
 ## 2. Current status
 
@@ -25,7 +25,7 @@ Not a prototype or a design-phase project — a working platform:
 
 ## 3. The standards that govern every change
 
-These aren't aspirational guidelines — they're enforced on every service and checked on every code change. This is what "built to a standard" means concretely in Shelf-J.
+These aren't aspirational guidelines — they're enforced on every service and checked on every code change. This is what "built to a standard" means concretely in StoreQL.
 
 ### 3.1 Data isolation between customers (multi-tenancy)
 
@@ -49,7 +49,7 @@ These aren't aspirational guidelines — they're enforced on every service and c
 
 **In plain terms:** when something happens in one part of the system (e.g. "an order was placed"), other parts that care are told reliably — never silently dropped, and never accidentally processed twice (which would otherwise mean double-charging a customer or double-deducting stock).
 
-**Technically:** state changes are published via a transactional **outbox** — the database write and the event write happen in the same transaction, so a crash between the two is impossible. All Kafka topics follow `shelfj.<domain>.<event>` naming with `PascalCase` past-tense event names (e.g. `OrderPlaced`). Every consumer is required to be **idempotent** — processing the same event twice must produce the same effect as once.
+**Technically:** state changes are published via a transactional **outbox** — the database write and the event write happen in the same transaction, so a crash between the two is impossible. All Kafka topics follow `storeql.<domain>.<event>` naming with `PascalCase` past-tense event names (e.g. `OrderPlaced`). Every consumer is required to be **idempotent** — processing the same event twice must produce the same effect as once.
 
 ### 3.5 Financial and data correctness
 

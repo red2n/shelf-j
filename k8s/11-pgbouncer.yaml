@@ -1,6 +1,6 @@
 # PgBouncer — connection pooler (transaction mode). Business services route their
 # runtime pool through pgbouncer:6432; Flyway migrates straight to postgres:5432 (see
-# shelfj-common-env ConfigMap). Mirrors docker-compose.yml's pgbouncer service.
+# storeql-common-env ConfigMap). Mirrors docker-compose.yml's pgbouncer service.
 #
 # NOTE: docker-compose.yml works around a pgbouncer c-ares DNS bug specific to Docker's
 # generated /etc/resolv.conf ("search ." + edns0/ndots — see that file's comment) by
@@ -12,7 +12,7 @@ apiVersion: v1
 kind: Service
 metadata:
   name: pgbouncer
-  namespace: shelf-j
+  namespace: storeql
 spec:
   selector: { app: pgbouncer }
   ports:
@@ -24,7 +24,7 @@ apiVersion: apps/v1
 kind: Deployment
 metadata:
   name: pgbouncer
-  namespace: shelf-j
+  namespace: storeql
 spec:
   replicas: 1
   selector: { matchLabels: { app: pgbouncer } }
@@ -45,7 +45,7 @@ spec:
             capabilities: { drop: [ALL] }
           ports: [{ containerPort: 6432 }]
           env:
-            - { name: DATABASES, value: "* = host=postgres port=5432 dbname=shelfj" }
+            - { name: DATABASES, value: "* = host=postgres port=5432 dbname=storeql" }
             - { name: PGBOUNCER_POOL_MODE, value: "transaction" }
             - { name: PGBOUNCER_MAX_CLIENT_CONN, value: "2000" }
             - { name: PGBOUNCER_DEFAULT_POOL_SIZE, value: "50" }
@@ -80,4 +80,4 @@ spec:
             limits: { cpu: 300m, memory: 128Mi }
       volumes:
         - name: userlist
-          secret: { secretName: shelfj-postgres-init, items: [{ key: userlist.txt, path: userlist.txt }] }
+          secret: { secretName: storeql-postgres-init, items: [{ key: userlist.txt, path: userlist.txt }] }

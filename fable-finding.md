@@ -1,7 +1,7 @@
 # Fable Findings — Deep-Dive Audit (API + UI)
 
 **Date:** 2026-07-02
-**Scope:** All backend services (`platform/`, `services/`, `shared/`) and the Flutter app (`frontends/shelf-app/`).
+**Scope:** All backend services (`platform/`, `services/`, `shared/`) and the Flutter app (`frontends/storeql-app/`).
 **Method:** First-principles code read of the security boundary (gateway + iam), shared infra (Kafka loop, outbox, datasource, Redis pools), money/idempotency paths (order, payment, inventory), SQL construction, the Flutter client (leaks, token handling, network), and deployment config. This audit ignores the existing `.md` docs by design and reports only what the code actually does.
 
 ## Executive summary
@@ -33,12 +33,12 @@ The findings below are therefore mostly **Medium/Low**. None is a critical, expl
 
 The base compose defaults every datastore credential to a public constant:
 ```
-POSTGRES_PASSWORD:-shelfj_dev_change_me
+POSTGRES_PASSWORD:-storeql_dev_change_me
 REDIS_PASSWORD:-redis_dev_change_me
 GRAFANA_PASSWORD:-admin_dev_change_me
 PGADMIN_PASSWORD:-admin_dev_change_me
 ```
-The JWT secret is correctly forced (`${SHELFJ_JWT_SECRET:?...}` — deploy fails if unset). The datastore passwords are **not**: they use `:-default`, so if an operator brings up the prod overlay without those vars in `.env`, Postgres/Redis/Grafana/pgAdmin all run with credentials that are published in this repo. The prod overlay overrides CORS and rate-limit but never re-declares these as required.
+The JWT secret is correctly forced (`${STOREQL_JWT_SECRET:?...}` — deploy fails if unset). The datastore passwords are **not**: they use `:-default`, so if an operator brings up the prod overlay without those vars in `.env`, Postgres/Redis/Grafana/pgAdmin all run with credentials that are published in this repo. The prod overlay overrides CORS and rate-limit but never re-declares these as required.
 
 **Impact:** Partially mitigated because all datastore host ports are bound to `127.0.0.1` (loopback) in the base compose, so they aren't reachable from the public IP. But it's weak defense-in-depth: any SSRF, a compromised sidecar, or a shared-host foothold gets DB/cache access with a password anyone can read here.
 
@@ -59,12 +59,12 @@ grafana:
 
 ### F2 — [Medium · Implementation/Uptime] Flutter token-refresh interceptor drops concurrent 401s — ✅ FIXED (2026-07-02)
 
-> **Status: fixed.** Replaced the `_isRefreshing` boolean with a single-flight `Future<String?> _refreshing` in [api_client.dart](frontends/shelf-app/lib/core/network/api_client.dart): concurrent 401s now await the same refresh and replay with the new token; the refresh call itself is excluded (path check) to prevent recursion; `_doRefresh` reads the refresh token from storage at call time so no already-rotated token is ever re-presented (which would trip iam-svc's reuse-detection and revoke the session). Regression test [auth_interceptor_test.dart](frontends/shelf-app/test/core/auth_interceptor_test.dart) proves 6 concurrent 401s → exactly 1 refresh, all recover; and that a failed refresh clears tokens and surfaces the 401. `flutter analyze` clean; both tests green.
+> **Status: fixed.** Replaced the `_isRefreshing` boolean with a single-flight `Future<String?> _refreshing` in [api_client.dart](frontends/storeql-app/lib/core/network/api_client.dart): concurrent 401s now await the same refresh and replay with the new token; the refresh call itself is excluded (path check) to prevent recursion; `_doRefresh` reads the refresh token from storage at call time so no already-rotated token is ever re-presented (which would trip iam-svc's reuse-detection and revoke the session). Regression test [auth_interceptor_test.dart](frontends/storeql-app/test/core/auth_interceptor_test.dart) proves 6 concurrent 401s → exactly 1 refresh, all recover; and that a failed refresh clears tokens and surfaces the 401. `flutter analyze` clean; both tests green.
 >
 > **Scope correction after verification:** the bug was confined to `api_client.dart`. On closer read the other two files do **not** share it — `storefront_providers.dart`'s `storefrontDioProvider` has *no* refresh interceptor at all (it just stamps the token; an expired storefront-customer token simply fails rather than dropping a concurrent refresh), and `auth_notifier.dart`'s `refresh()` is a manual one-shot called after onboarding that delegates to the shared interceptor. Adding auto-refresh to the storefront Dio would be a feature change, not a bug fix, so it's out of scope here.
 
 
-**Where:** [lib/core/network/api_client.dart:47-77](frontends/shelf-app/lib/core/network/api_client.dart#L47-L77)
+**Where:** [lib/core/network/api_client.dart:47-77](frontends/storeql-app/lib/core/network/api_client.dart#L47-L77)
 
 ```dart
 if (err.response?.statusCode == 401 && !_isRefreshing) {
@@ -77,7 +77,7 @@ if (err.response?.statusCode == 401 && !_isRefreshing) {
 
 The interceptor refreshes and retries only the **first** request that sees a 401. Any other request that 401s while `_isRefreshing == true` falls into the `else` and is returned to the caller as a hard error — it is never queued or retried after the new token lands.
 
-**Impact:** Most screens fire several requests in parallel (e.g. catalog + cart + promotions on load). When the access token has just expired, exactly one of them recovers and the rest fail with spurious errors — blank sections, false "failed to load," and in flows that treat a 401 as sign-out, a premature logout. This is an intermittent, hard-to-reproduce reliability bug that gets worse under real latency. The same single-flag pattern appears in the storefront and auth notifiers ([storefront_providers.dart](frontends/shelf-app/lib/features/storefront/storefront_providers.dart), [core/auth/auth_notifier.dart](frontends/shelf-app/lib/core/auth/auth_notifier.dart)) and should be fixed the same way.
+**Impact:** Most screens fire several requests in parallel (e.g. catalog + cart + promotions on load). When the access token has just expired, exactly one of them recovers and the rest fail with spurious errors — blank sections, false "failed to load," and in flows that treat a 401 as sign-out, a premature logout. This is an intermittent, hard-to-reproduce reliability bug that gets worse under real latency. The same single-flag pattern appears in the storefront and auth notifiers ([storefront_providers.dart](frontends/storeql-app/lib/features/storefront/storefront_providers.dart), [core/auth/auth_notifier.dart](frontends/storeql-app/lib/core/auth/auth_notifier.dart)) and should be fixed the same way.
 
 **Fix:** Serialize refresh with a queue. Hold a single in-flight `Future<String?> _refreshing` (a `Completer`); requests that 401 during a refresh `await` it and then replay with the new token instead of failing:
 ```dart
@@ -97,12 +97,12 @@ Also guard against the refresh call itself 401-looping (the refresh POST goes th
 
 ### F3 — [Low · Robustness] Financial write paths read tenant from the nullable `ctx.tenantId()` and skip a non-negative check — ✅ FIXED (2026-07-02)
 
-> **Status: fixed (partial scope — the rest was already covered).** `createLayaway` and `issueGiftCard` in [OrderService.java](services/order-svc/src/main/java/com/shelfj/order/service/OrderService.java) now use `ctx.requireTenantId()` (fail 401) instead of the nullable `ctx.tenantId()`. `createSpecialOrder` already received `requireTenantId()` from its resource, so no change there. Regression test [OrderServiceTenantGuardTest.java](services/order-svc/src/test/java/com/shelfj/order/service/OrderServiceTenantGuardTest.java) proves both reject a tenant-less call before any repo write (BUILD SUCCESS, 2/2).
+> **Status: fixed (partial scope — the rest was already covered).** `createLayaway` and `issueGiftCard` in [OrderService.java](services/order-svc/src/main/java/com/storeql/order/service/OrderService.java) now use `ctx.requireTenantId()` (fail 401) instead of the nullable `ctx.tenantId()`. `createSpecialOrder` already received `requireTenantId()` from its resource, so no change there. Regression test [OrderServiceTenantGuardTest.java](services/order-svc/src/test/java/com/storeql/order/service/OrderServiceTenantGuardTest.java) proves both reject a tenant-less call before any repo write (BUILD SUCCESS, 2/2).
 >
 > **The negative-deposit half needed no code change:** on inspection the DTOs already enforce it — `CreateLayawayRequest.initialDeposit`, `AddDepositRequest.amount`, and `IssueGiftCardRequest.amount` are all `@NotNull @Positive`, and every resource calls `Validations.validate(req)` before delegating, so a negative/zero deposit is already rejected at the boundary. Original finding overstated this; corrected here.
 
 
-**Where:** [OrderService.createLayaway](services/order-svc/src/main/java/com/shelfj/order/service/OrderService.java#L413-L473) (`ctx.tenantId()` at L417), [issueGiftCard](services/order-svc/src/main/java/com/shelfj/order/service/OrderService.java#L513) (L514), plus `initialDeposit` handling at L440.
+**Where:** [OrderService.createLayaway](services/order-svc/src/main/java/com/storeql/order/service/OrderService.java#L413-L473) (`ctx.tenantId()` at L417), [issueGiftCard](services/order-svc/src/main/java/com/storeql/order/service/OrderService.java#L513) (L514), plus `initialDeposit` handling at L440.
 
 `placeOrder` correctly calls `ctx.requireTenantId()`, but `createLayaway`, `issueGiftCard`, and `createSpecialOrder` read the **nullable** `ctx.tenantId()`. These endpoints are role-gated so a tenant is normally present; but if one is ever reached without a tenant claim (misconfig, a new call path, a direct hit bypassing the gateway in a test/staging rig), they persist rows with `tenant_id = null` or NPE mid-transaction instead of returning a clean `401 NO_TENANT`.
 
@@ -114,10 +114,10 @@ Separately, `createLayaway` computes `balance = total.subtract(req.initialDeposi
 
 ### F4 — [Low · Security] Guest cart ownership rests on a client-chosen session token — ✅ FIXED (2026-07-02)
 
-> **Status: fixed.** [CartService.createOrGetCart](services/cart-svc/src/main/java/com/shelfj/cart/service/CartService.java) now mints the guest session token server-side (256-bit `SecureRandom`, URL-safe base64) whenever a new guest cart is created; a client-supplied `sessionId` is only ever honoured to resolve an *existing* cart, never to create one under a caller-chosen (guessable) id. `CartResponse.sessionId` already carried the token back to the client, so no DTO/response-shape change was needed, and **no frontend calls this API today** (the storefront cart is client-side), so zero client blast radius. Regression tests in [CartServiceTest.java](services/cart-svc/src/test/java/com/shelfj/cart/CartServiceTest.java) assert a guest create yields a high-entropy token and that a client-chosen weak id is ignored for new-cart creation (9/9 pass). `requireOwnership` is unchanged — it just now compares against an unguessable stored token.
+> **Status: fixed.** [CartService.createOrGetCart](services/cart-svc/src/main/java/com/storeql/cart/service/CartService.java) now mints the guest session token server-side (256-bit `SecureRandom`, URL-safe base64) whenever a new guest cart is created; a client-supplied `sessionId` is only ever honoured to resolve an *existing* cart, never to create one under a caller-chosen (guessable) id. `CartResponse.sessionId` already carried the token back to the client, so no DTO/response-shape change was needed, and **no frontend calls this API today** (the storefront cart is client-side), so zero client blast radius. Regression tests in [CartServiceTest.java](services/cart-svc/src/test/java/com/storeql/cart/CartServiceTest.java) assert a guest create yields a high-entropy token and that a client-chosen weak id is ignored for new-cart creation (9/9 pass). `requireOwnership` is unchanged — it just now compares against an unguessable stored token.
 
 
-**Where:** [CartService.resolveCart / requireOwnership](services/cart-svc/src/main/java/com/shelfj/cart/service/CartService.java#L216-L250), session value from `req.sessionId()` at [L46](services/cart-svc/src/main/java/com/shelfj/cart/service/CartService.java#L46).
+**Where:** [CartService.resolveCart / requireOwnership](services/cart-svc/src/main/java/com/storeql/cart/service/CartService.java#L216-L250), session value from `req.sessionId()` at [L46](services/cart-svc/src/main/java/com/storeql/cart/service/CartService.java#L46).
 
 A guest cart is keyed by a `sessionId` supplied by the client. Ownership of that cart is proven solely by presenting the same `sessionId` (`requireOwnership` compares `cart.sessionId().equals(suppliedSessionId)`). Because the value is client-chosen rather than a server-generated high-entropy token, a guest who picks a weak/guessable/sequential session (or an app that derives it predictably) exposes their cart to another party who supplies the same string.
 
@@ -138,7 +138,7 @@ A guest cart is keyed by a `sessionId` supplied by the client. Ownership of that
 **Original finding, for reference:**
 
 
-**Where:** [ProxyResource.relay](platform/gateway/src/main/java/com/shelfj/gateway/ProxyResource.java#L289-L291) — `rb.entity(upstream.as(String.class))`.
+**Where:** [ProxyResource.relay](platform/gateway/src/main/java/com/storeql/gateway/ProxyResource.java#L289-L291) — `rb.entity(upstream.as(String.class))`.
 
 The proxy reads the entire upstream response into a `String`, then JAX-RS re-serializes it out. For normal JSON this is fine, but reporting exports, large catalog pages, or any big list response are held **twice** in memory per request. Under concurrency (N big responses in flight), that's N × full-body heap, which can drive GC pressure / OOM on the gateway — the one process every request funnels through.
 

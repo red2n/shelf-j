@@ -29,7 +29,7 @@ import {
   signInUntil,
   truthy,
   uniq,
-} from './lib/shelfj.js';
+} from './lib/storeql.js';
 
 export const options = {
   scenarios: { flow: { executor: 'per-vu-iterations', vus: 1, iterations: 1, maxDuration: '10m' } },
@@ -43,7 +43,7 @@ export default function () {
   const ctx = {};
 
   group('1 auth', () => {
-    const email = `flow-owner-${run}@k6.shelfj.test`;
+    const email = `flow-owner-${run}@k6.storeql.test`;
     expect(call('POST', '/api/iam-svc/auth/register', { body: { email, password: 'short' } }), 'register: weak password rejected', 400);
     expect(call('POST', '/api/iam-svc/auth/register', { body: { email: 'not-an-email', password: PASSWORD } }), 'register: bad email rejected', 400);
     const reg = call('POST', '/api/iam-svc/auth/register', { body: { email, password: PASSWORD } });

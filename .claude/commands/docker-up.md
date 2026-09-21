@@ -1,4 +1,4 @@
-# Start the Shelf-J Docker Compose stack
+# Start the StoreQL Docker Compose stack
 
 Bring up all infrastructure services (Postgres, PgBouncer, Kafka, Consul, Redis, Zipkin, Prometheus, Grafana, Loki, Tempo) and any already-built business services.
 

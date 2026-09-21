@@ -5,20 +5,20 @@
     <modelVersion>4.0.0</modelVersion>
 
     <parent>
-        <groupId>com.shelfj</groupId>
-        <artifactId>shelf-j-parent</artifactId>
+        <groupId>com.storeql</groupId>
+        <artifactId>storeql-parent</artifactId>
         <version>0.1.0-SNAPSHOT</version>
         <relativePath>../../pom.xml</relativePath>
     </parent>
 
     <artifactId>common-web</artifactId>
-    <name>Shelf-J :: shared :: common-web</name>
+    <name>StoreQL :: shared :: common-web</name>
     <description>Shared JAX-RS building blocks: response envelope, error mapper, tenant-context filter, request-id. No business logic.</description>
 
     <dependencies>
         <!-- Ids.newId(): time-ordered (UUIDv7) ids. -->
         <dependency>
-            <groupId>com.shelfj</groupId>
+            <groupId>com.storeql</groupId>
             <artifactId>common-ids</artifactId>
         </dependency>
         <!-- JAX-RS + CDI + JSON-B APIs. Provided by the Helidon MP runtime in each service. -->

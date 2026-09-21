@@ -15,7 +15,7 @@ import {
   register,
   truthy,
   uniq,
-} from './lib/shelfj.js';
+} from './lib/storeql.js';
 
 export const options = { vus: 1, iterations: 1, thresholds: ALL_CHECKS_PASS };
 
@@ -27,7 +27,7 @@ export function setup() {
 
 export default function ({ admin, tenant, rival }) {
   // ── sign-up and sign-in ─────────────────────────────────────────────────────
-  const email = `iam-${uniq()}@k6.shelfj.test`;
+  const email = `iam-${uniq()}@k6.storeql.test`;
   expect(call('POST', '/api/iam-svc/auth/register', { body: { email, password: 'short' } }), '[-] register: password too short', 400, 'VALIDATION_FAILED');
   expect(call('POST', '/api/iam-svc/auth/register', { body: { email: 'nope', password: PASSWORD } }), '[-] register: not an email', 400, 'VALIDATION_FAILED');
   const reg = call('POST', '/api/iam-svc/auth/register', { body: { email, password: PASSWORD } });
@@ -38,11 +38,11 @@ export default function ({ admin, tenant, rival }) {
 
   expect(login(user), '[+] login', 200);
   expect(call('POST', '/api/iam-svc/auth/login', { body: { email, password: 'Wrong-Passw0rd!' } }), '[-] login: wrong password', 401, 'INVALID_CREDENTIALS');
-  expect(call('POST', '/api/iam-svc/auth/login', { body: { email: `nobody-${uniq()}@k6.shelfj.test`, password: PASSWORD } }), '[-] login: unknown user', 401, 'INVALID_CREDENTIALS');
+  expect(call('POST', '/api/iam-svc/auth/login', { body: { email: `nobody-${uniq()}@k6.storeql.test`, password: PASSWORD } }), '[-] login: unknown user', 401, 'INVALID_CREDENTIALS');
   expect(call('POST', '/api/iam-svc/auth/platform-login', { body: { email, password: PASSWORD } }), '[-] platform-login: a customer is not a platform admin', [401, 403]);
   expect(call('POST', '/api/iam-svc/auth/login', { body: { email: admin.email, password: admin.password } }), '[-] login: platform admin must use platform-login', 401);
   expect(
-    call('POST', '/api/iam-svc/bootstrap/admin', { body: { email: `second-admin-${uniq()}@k6.shelfj.test`, password: PASSWORD } }),
+    call('POST', '/api/iam-svc/bootstrap/admin', { body: { email: `second-admin-${uniq()}@k6.storeql.test`, password: PASSWORD } }),
     '[-] bootstrap: only once per deployment',
     409
   );
@@ -103,7 +103,7 @@ export default function ({ admin, tenant, rival }) {
   );
 
   // ── staff provisioning ──────────────────────────────────────────────────────
-  const staffEmail = `iam-staff-${uniq()}@k6.shelfj.test`;
+  const staffEmail = `iam-staff-${uniq()}@k6.storeql.test`;
   expect(
     call('POST', '/api/iam-svc/auth/admin/staff-users', { token: user.token, body: { email: staffEmail, password: PASSWORD } }),
     '[-] provision staff: a customer cannot',

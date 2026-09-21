@@ -1,0 +1,13 @@
+package com.storeql.discovery;
+
+import java.util.Optional;
+
+/**
+ * Abstraction for upstream service discovery. Callers depend on this interface, not on the concrete
+ * {@link ConsulClient}, so the lookup mechanism can change without touching the gateway proxy
+ * (DIP).
+ */
+@FunctionalInterface
+public interface ServiceRegistry {
+  Optional<ServiceInstance> resolve(String serviceName);
+}

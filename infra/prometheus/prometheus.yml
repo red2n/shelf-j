@@ -1,4 +1,4 @@
-# Shelf-J — Prometheus configuration.
+# StoreQL — Prometheus configuration.
 # All Helidon MP services expose /metrics in Prometheus format.
 # Infrastructure exporters (node, postgres, redis) expose standard exporter endpoints.
 
@@ -6,7 +6,7 @@ global:
   scrape_interval: 15s
   evaluation_interval: 15s
   external_labels:
-    project: 'shelf-j'
+    project: 'storeql'
     env: 'local'
 
 rule_files:

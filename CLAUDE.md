@@ -1,6 +1,6 @@
 # CLAUDE.md
 
-This file is auto-loaded into every Claude Code session for this repository. It gives an AI agent the context and rules needed to work on Shelf-J correctly. **Read it fully before making changes.**
+This file is auto-loaded into every Claude Code session for this repository. It gives an AI agent the context and rules needed to work on StoreQL correctly. **Read it fully before making changes.**
 
 > **Deep docs:** [PRD.md](PRD.md) = what & why · [README.md](README.md) = the product deep dive (features, personas, workflows) · [docs/API-GUIDE.md](docs/API-GUIDE.md) = full API surface by business capability · [docs/UI-GUIDE.md](docs/UI-GUIDE.md) = full UI surface by persona/screen · [docs/ARCHITECTURE.md](docs/ARCHITECTURE.md) = how (concepts, per-service catalog, conventions) · [docs/onboarding-and-locations.md](docs/onboarding-and-locations.md) = tenant onboarding + location model · [docs/coding-standards.md](docs/coding-standards.md) = SQL rules + SOLID rules (enforced on every change) · [docs/RELEASE-PROCESS.md](docs/RELEASE-PROCESS.md) = version tags, what fires on a tag push, GHCR retention. When detail is needed, open those. This file is the fast briefing + the hard rules.
 
@@ -8,7 +8,7 @@ This file is auto-loaded into every Claude Code session for this repository. It 
 
 ## What this project is
 
-**Shelf-J** — a **multi-tenant SaaS** stock & store management platform that also lets **customers buy products** (public online storefront **and** in-store POS). Built as **strict microservices** on **Helidon MP (Java 21)**, behind an **API gateway**, with **service discovery (Consul)**, **centralized config**, and **Kafka** events. Architecture patterns borrowed from [red2n/home](https://github.com/red2n/home) (which is Spring Cloud) but **re-implemented in Helidon MP**.
+**StoreQL** — a **multi-tenant SaaS** stock & store management platform that also lets **customers buy products** (public online storefront **and** in-store POS). Built as **strict microservices** on **Helidon MP (Java 21)**, behind an **API gateway**, with **service discovery (Consul)**, **centralized config**, and **Kafka** events. Architecture patterns borrowed from [red2n/home](https://github.com/red2n/home) (which is Spring Cloud) but **re-implemented in Helidon MP**.
 
 **Status:** not a design-phase repo — a working platform (12 business services + gateway/discovery/config, ~290 REST endpoints, a 4-shell Flutter frontend). See [docs/ARCHITECTURE.md](docs/ARCHITECTURE.md) Status section for specifics. Follow the templates and rules below exactly when changing or extending it.
 
@@ -80,13 +80,13 @@ Storefront / Admin / POS  ──►  API GATEWAY (Helidon MP)  ──►  busine
 ## Repository layout
 
 ```
-shelf-j/
+storeql/
 ├── pom.xml                  # parent: Java 21, Helidon BOM
 ├── docker-compose.yml       # postgres, kafka, consul, redis, zipkin, prometheus, grafana (with healthchecks)
 ├── platform/                # gateway, discovery, config
 ├── services/                # the 12 business microservices (one Maven module each)
 ├── shared/                  # contracts + shared infra, NO business logic: common-ids (`Ids.newId()`), events-contract, common-web, common-service (DataSource/Flyway/Consul/outbox/health base — reuse it, never re-implement), common-test, einvoice (EN 16931 UBL/CII/Factur-X read, write and rules)
-├── frontends/               # shelf-app: ONE Flutter app with four shells (storefront, admin, POS, platform console)
+├── frontends/               # storeql-app: ONE Flutter app with four shells (storefront, admin, POS, platform console)
 ├── docs/                    # ARCHITECTURE.md, API-GUIDE.md, UI-GUIDE.md, onboarding-and-locations.md, coding-standards.md, …
 ├── PRD.md  README.md  CLAUDE.md
 └── .claude/skills/          # invokable skills (scaffold-service, add-endpoint, add-event, onboard-tenant)
@@ -99,14 +99,14 @@ Per-service internal shape (copy for each): `api/ dto/ service/ domain/ repo/ me
 ## Conventions cheat-sheet (full list: [ARCHITECTURE §14](docs/ARCHITECTURE.md#14-cross-cutting-conventions))
 
 - **Response envelope:** `{ "data": ..., "error": ..., "meta": { "requestId", "nextCursor" } }` for data.
-- **Errors:** correct HTTP codes; stable machine `code` (e.g. `INVENTORY_INSUFFICIENT_STOCK`); never leak stack/SQL. On the wire every error is **RFC 9457 problem details** (`application/problem+json`: `type` = `urn:shelfj:problem:CODE`, `title`, `status`, `detail`, `instance`, plus `code`, `details`, `requestId` and the legacy `error`/`meta` members) — produced once by `ProblemResponseFilter` in common-web from any `ApiResponse.error(...)`, so services keep throwing `ApiException` and never build problems by hand. API descriptions are OpenAPI 3.1 (`mp.openapi.extensions.smallrye.openapi=3.1.0`, static files `openapi: 3.1.0`, a shared `Problem` schema).
+- **Errors:** correct HTTP codes; stable machine `code` (e.g. `INVENTORY_INSUFFICIENT_STOCK`); never leak stack/SQL. On the wire every error is **RFC 9457 problem details** (`application/problem+json`: `type` = `urn:storeql:problem:CODE`, `title`, `status`, `detail`, `instance`, plus `code`, `details`, `requestId` and the legacy `error`/`meta` members) — produced once by `ProblemResponseFilter` in common-web from any `ApiResponse.error(...)`, so services keep throwing `ApiException` and never build problems by hand. API descriptions are OpenAPI 3.1 (`mp.openapi.extensions.smallrye.openapi=3.1.0`, static files `openapi: 3.1.0`, a shared `Problem` schema).
 - **Second factors (20.12):** sign-in may answer `mfaRequired` (no tokens; answer at `POST /auth/mfa/login`) or `mfaEnrolmentRequired` (a `scope: mfa-enrol` token the gateway confines to `/auth/mfa/**`). Anything that signs in — a client, a test, a k6 helper — must handle both; the platform administrator always has a factor (`PLATFORM_ADMIN_TOTP_SECRET`; k6: `platformAdmin()`/`totp()` in the lib). A wrong second-factor answer counts as a failed sign-in at the gateway's brute-force filter.
-- **Tokens:** access tokens are RS256 under a rotating key that only iam-svc holds (`signing_keys`, private halves sealed under `shelfj.jwt.secret`, which no other service is given); each names its key (`kid`) and the public halves are at `GET /auth/.well-known/jwks.json`. The gateway (`SigningKeySet`) and the MQTT broker verify against that set — never hand a service a signing secret, and never verify without pinning RS256 and looking the key up by `kid`.
+- **Tokens:** access tokens are RS256 under a rotating key that only iam-svc holds (`signing_keys`, private halves sealed under `storeql.jwt.secret`, which no other service is given); each names its key (`kid`) and the public halves are at `GET /auth/.well-known/jwks.json`. The gateway (`SigningKeySet`) and the MQTT broker verify against that set — never hand a service a signing secret, and never verify without pinning RS256 and looking the key up by `kid`.
 - **Release supply chain (22.10):** every published image is built with SBOM + max-mode provenance and gets, by digest, a CycloneDX SBOM attestation, a SLSA provenance attestation and a keyless cosign signature; a release carries the reactor SBOM (`scripts/sbom.sh`), checksums and jar provenance. `scripts/supply-chain-check.py` (CI job `supply-chain`) fails the build if a workflow edit drops any of it — when adding a published image, add it to the publish matrix, the cleanup matrix **and** `scripts/verify-release.sh`. Details: [docs/RELEASE-PROCESS.md](docs/RELEASE-PROCESS.md).
 - **Dependencies (22.11):** never pin a library version in a module when the parent (ours or Helidon's) manages it — raise it once in the parent pom, through Helidon's `version.lib.*` property where there is one, with the advisory named beside it. `scripts/vuln-scan.sh deps` must pass before a push (it fails at High); an exception is a dated, reasoned entry in `security/vulnerability-exceptions.yaml`, never a loosened threshold.
 - **Plan limits (21.8):** a plan's allowance is enforced by the service that **owns the thing counted**, never by tenant-svc on its behalf — stores and staff in tenant-svc from its own tables, products in product-svc through `Entitlements` (a cached read of `/admin/tenant/plan/limits`). Adding an entitlement key means adding the refusal that enforces it: `Plans.CATALOGUE` is the list, and a key outside it is refused rather than promised. Limits fail **open** (no plan, or allowances unreadable → unrestricted), unlike spend authority, which fails closed.
 - **Pagination:** cursor only (`?after=&limit=`), default 20 / max 100. No page numbers.
-- **Naming:** REST paths = plural kebab nouns (`/purchase-orders`); JSON = `camelCase`; DB columns = `snake_case`; events = `PascalCase` past tense (`OrderPlaced`); Kafka topics = `shelfj.<domain>.<event>`.
+- **Naming:** REST paths = plural kebab nouns (`/purchase-orders`); JSON = `camelCase`; DB columns = `snake_case`; events = `PascalCase` past tense (`OrderPlaced`); Kafka topics = `storeql.<domain>.<event>`.
 - **IDs:** UUIDv7 only. Mint in the service with `Ids.newId()` (`shared/common-ids`); deterministic keys with `Ids.derived(eventId, name)`. Never `UUID.randomUUID()`/`nameUUIDFromBytes()`, never `gen_random_uuid()` in SQL, never a column `DEFAULT` that fills in a uuid — every `INSERT` binds its `id`. PMD rules and the integration-test audit (`PostgresSupport.stop()`: column defaults + stored ids) fail the build on violations; a Flyway `afterMigrate` check backs them up ([ARCHITECTURE §14](docs/ARCHITECTURE.md#14-cross-cutting-conventions)).
 - **Migrations:** Flyway only (`V<n>__desc.sql`); never manual DDL in prod.
 - **Tests:** unit for `service/` logic + Testcontainers integration for the core flow (Postgres + Kafka). Not done without it. End-to-end: `k6/run.sh` against the dockerized stack — the two **flow-guard** suites (`flow-guard-comprehensive`, `flow-guard-runtime`) must stay green after any change to onboarding, tenant/store status, authorization, carts, orders or POS sessions ([k6/README.md](k6/README.md)).

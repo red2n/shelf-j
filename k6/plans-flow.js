@@ -12,7 +12,7 @@
 //
 //   k6/run.sh plans-flow
 import { Counter } from 'k6/metrics';
-import { ALL_CHECKS_PASS, call, data, expect, must, newId, onboardTenant, platformAdmin, staffUser, truthy, uniq } from './lib/shelfj.js';
+import { ALL_CHECKS_PASS, call, data, expect, must, newId, onboardTenant, platformAdmin, staffUser, truthy, uniq } from './lib/storeql.js';
 
 const completed = new Counter('flow_completed');
 export const options = {

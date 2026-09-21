@@ -9,12 +9,12 @@
 apiVersion: batch/v1
 kind: Job
 metadata:
-  name: shelfj-bootstrap
-  namespace: shelf-j
+  name: storeql-bootstrap
+  namespace: storeql
 spec:
   backoffLimit: 3
   template:
-    metadata: { labels: { app: shelfj-bootstrap } } # named by the bootstrap NetworkPolicy
+    metadata: { labels: { app: storeql-bootstrap } } # named by the bootstrap NetworkPolicy
     spec:
       restartPolicy: OnFailure
       securityContext:
@@ -35,13 +35,13 @@ spec:
             - { name: tmp, mountPath: /tmp }
           env:
             - name: ADMIN_EMAIL
-              valueFrom: { secretKeyRef: { name: shelfj-platform-admin, key: PLATFORM_ADMIN_EMAIL } }
+              valueFrom: { secretKeyRef: { name: storeql-platform-admin, key: PLATFORM_ADMIN_EMAIL } }
             - name: ADMIN_PASSWORD
-              valueFrom: { secretKeyRef: { name: shelfj-platform-admin, key: PLATFORM_ADMIN_PASSWORD } }
+              valueFrom: { secretKeyRef: { name: storeql-platform-admin, key: PLATFORM_ADMIN_PASSWORD } }
             # The administrator's authenticator secret (20.12): the account is born with its second
             # factor. generate-secrets.sh makes it and says how to read it back for the app.
             - name: ADMIN_TOTP_SECRET
-              valueFrom: { secretKeyRef: { name: shelfj-platform-admin, key: PLATFORM_ADMIN_TOTP_SECRET } }
+              valueFrom: { secretKeyRef: { name: storeql-platform-admin, key: PLATFORM_ADMIN_TOTP_SECRET } }
           command:
             - sh
             - -c

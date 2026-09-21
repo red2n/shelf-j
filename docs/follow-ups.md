@@ -16,18 +16,18 @@ infrastructure config were not run at all.
 
 | What | Why it is outstanding | Command |
 |---|---|---|
-| Flutter analyze + test | No Flutter SDK. **4 commits of Dart have never been compiled.** | `cd frontends/shelf-app && flutter pub get && flutter analyze && flutter test` |
+| Flutter analyze + test | No Flutter SDK. **4 commits of Dart have never been compiled.** | `cd frontends/storeql-app && flutter pub get && flutter analyze && flutter test` |
 | Redis Testcontainers tests | No Docker. These cover **exactly** the code changed in `2244d13`. | `mvn -o -pl platform/gateway test` |
 | `CatalogIT` (product-svc) | No Docker. | `mvn -o -pl services/product-svc test` |
 | Stack boot | No Docker. A bad collector processor name or Loki delete-store fails **at boot**. | `docker compose config && docker compose up -d` |
 
 Highest-risk spots if something fails:
 
-- **`package:web` interop** in [image_compress_web.dart](../frontends/shelf-app/lib/shared/util/image_compress_web.dart)
+- **`package:web` interop** in [image_compress_web.dart](../frontends/storeql-app/lib/shared/util/image_compress_web.dart)
   — the `drawImage` 5-arg overload and the `Blob`/`toDataURL` signatures were written against the
   API from memory, never compiled.
 - **`FutureOr` return-type inference** on the rewired `productImageProvider` in
-  [storefront_providers.dart](../frontends/shelf-app/lib/features/storefront/storefront_providers.dart#L442)
+  [storefront_providers.dart](../frontends/storeql-app/lib/features/storefront/storefront_providers.dart#L442)
   — relies on the closure's context type being applied downward.
 - **`image: ^4.9.1`** promoted from a transitive dev dependency to a direct one. Should not shift
   resolution (it was already in `pubspec.lock`) but is unverified.
@@ -45,7 +45,7 @@ Two deliberate calls that a second opinion should ratify. Both are cheap to reve
 
 ### 2a. Brute-force protection fails open
 
-[BruteForceProtectionService.isBlocked](../platform/gateway/src/main/java/com/shelfj/gateway/filters/BruteForceProtectionService.java)
+[BruteForceProtectionService.isBlocked](../platform/gateway/src/main/java/com/storeql/gateway/filters/BruteForceProtectionService.java)
 returns `false` when Redis cannot answer.
 
 The reasoning: failing closed denies every login for all tenants for as long as Redis is away — a
@@ -84,14 +84,14 @@ Ranked by value. None are urgent.
 
 ### 3a. Four more unbounded keyed caches (Flutter)
 
-[storefront_providers.dart](../frontends/shelf-app/lib/features/storefront/storefront_providers.dart)
+[storefront_providers.dart](../frontends/storeql-app/lib/features/storefront/storefront_providers.dart)
 lines ~457, ~477, ~485, ~512 — variants, prices, offers. Same never-disposed `family` pattern that
 `productImageProvider` had, but these hold small parsed DTOs, so it is tens of KB rather than tens
 of MB. `ImageByteCache` is a generic-enough shape to reuse if standardising.
 
 ### 3b. Hikari has no leak detection
 
-[DataSourceProducer.java](../shared/common-service/src/main/java/com/shelfj/service/DataSourceProducer.java)
+[DataSourceProducer.java](../shared/common-service/src/main/java/com/storeql/service/DataSourceProducer.java)
 sets `connectionTimeout` and `maxLifetime` but not `leakDetectionThreshold`. Standard for catching
 connections that are never returned. Cheap; most valuable in staging.
 
@@ -154,7 +154,7 @@ one move. This is the real fix for the whole class of problem; the client compre
 | `3d95c66` | Product image byte cache bounded by an LRU (16 MB / 200 entries) |
 | `2244d13` | Redis fails open; Lettuce command timeout 60s → 250ms |
 | `ac4f365` | otel-collector: `memory_limiter`, bounded exporter queues, `mem_limit`, `GOMEMLIMIT` |
-| `785abc0` | Logs default to INFO, level settable via `SHELFJ_LOG_LEVEL` without a rebuild |
+| `785abc0` | Logs default to INFO, level settable via `STOREQL_LOG_LEVEL` without a rebuild |
 | `6a22025` | Loki retention (7 days) via compactor, plus explicit ingest/query limits |
 
 The last four compose deliberately: a throttled Loki returns 429 to the collector, whose bounded

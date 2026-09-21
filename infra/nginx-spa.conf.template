@@ -1,7 +1,7 @@
-# Serves the Shelf-J Flutter web build as a single-page app (production-grade).
+# Serves the StoreQL Flutter web build as a single-page app (production-grade).
 # Runs under the non-root nginx-unprivileged image, which listens on 8080.
 #
-# A template: the image's entrypoint substitutes ${SHELFJ_API_ORIGIN} — the gateway origin the
+# A template: the image's entrypoint substitutes ${STOREQL_API_ORIGIN} — the gateway origin the
 # bundle was built to call (http://localhost:8090 for a local build; empty when the bundle calls a
 # relative /api) — and writes /etc/nginx/conf.d/default.conf. Only variables set in the environment
 # are substituted, so nginx's own $variables are left alone.
@@ -15,7 +15,7 @@
 # so nothing here is cached as immutable: everything is revalidated against its ETag and a deploy
 # reaches a returning browser on its next load. Marked immutable for a week, a returning browser
 # kept running the release before (SJ-D61).
-map $uri $shelfj_cache_control {
+map $uri $storeql_cache_control {
     default                       "no-cache";
     /index.html                   "no-cache, no-store, must-revalidate";
     /flutter_service_worker.js    "no-cache, no-store, must-revalidate";
@@ -37,7 +37,7 @@ server {
     #   connect-src this origin, the gateway the bundle calls, and Google's font files, which Flutter
     #               fetches only for glyphs its bundled fonts lack (emoji, Arabic, Urdu).
     #   CanvasKit itself is served from here: the bundle is built with --no-web-resources-cdn.
-    add_header Content-Security-Policy "default-src 'self'; script-src 'self' 'wasm-unsafe-eval'; style-src 'self' 'unsafe-inline'; img-src 'self' data: blob:; font-src 'self' data: https://fonts.gstatic.com; connect-src 'self' ${SHELFJ_API_ORIGIN} https://fonts.gstatic.com; worker-src 'self' blob:; manifest-src 'self'; object-src 'none'; base-uri 'self'; form-action 'self'; frame-ancestors 'self'" always;
+    add_header Content-Security-Policy "default-src 'self'; script-src 'self' 'wasm-unsafe-eval'; style-src 'self' 'unsafe-inline'; img-src 'self' data: blob:; font-src 'self' data: https://fonts.gstatic.com; connect-src 'self' ${STOREQL_API_ORIGIN} https://fonts.gstatic.com; worker-src 'self' blob:; manifest-src 'self'; object-src 'none'; base-uri 'self'; form-action 'self'; frame-ancestors 'self'" always;
     add_header X-Content-Type-Options "nosniff" always;
     add_header X-Frame-Options "SAMEORIGIN" always;
     add_header Referrer-Policy "strict-origin-when-cross-origin" always;
@@ -46,7 +46,7 @@ server {
     add_header X-XSS-Protection "0" always;
     # The till scans barcodes with the camera; nothing else asks for a device.
     add_header Permissions-Policy "camera=(self), microphone=(), geolocation=()" always;
-    add_header Cache-Control $shelfj_cache_control always;
+    add_header Cache-Control $storeql_cache_control always;
 
     # ── Compression ───────────────────────────────────────────────────────────
     gzip on;
@@ -61,8 +61,8 @@ server {
         try_files $uri =404;
     }
 
-    # Same-origin API proxy. The Flutter bundle's baked SHELFJ_API_BASE can be either
-    # a relative "/api" (what CI bakes into the published ghcr.io/red2n/shelf-j-web
+    # Same-origin API proxy. The Flutter bundle's baked STOREQL_API_BASE can be either
+    # a relative "/api" (what CI bakes into the published ghcr.io/red2n/storeql-web
     # image, meant for prod behind one reverse-proxy origin) or an absolute
     # "http://host:port/api" (what a local `flutter build web` bakes for dev, see
     # scripts/redeploy.sh). Absolute URLs bypass this container entirely — the
@@ -83,7 +83,7 @@ server {
     }
 
     # RFC 9116: the vulnerability disclosure contact. The gateway publishes it from configuration
-    # (shelfj.gateway.security-txt.*) and answers 404 when a deployment has not configured one, so
+    # (storeql.gateway.security-txt.*) and answers 404 when a deployment has not configured one, so
     # a stale or invented contact is never served from here.
     location = /.well-known/security.txt {
         proxy_pass http://gateway:8080/.well-known/security.txt;

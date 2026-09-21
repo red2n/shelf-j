@@ -1,6 +1,6 @@
 #!/usr/bin/env bash
 #
-# Scans what Shelf-J ships for known vulnerabilities (22.11) and fails on any High or Critical one
+# Scans what StoreQL ships for known vulnerabilities (22.11) and fails on any High or Critical one
 # that is not a current, reasoned exception in security/vulnerability-exceptions.yaml. The same
 # script runs on a desk, in the Vulnerability scan workflow (pull requests, main, and every night —
 # new advisories arrive after the build) and in the publish workflow before an image is signed.
@@ -98,10 +98,10 @@ exceptions_config || exit 1
 case "$mode" in
   exceptions) exit 0 ;;
   deps)
-    [ -f "$ROOT/target/shelf-j-bom.json" ] || "$ROOT/scripts/sbom.sh" || exit 2
+    [ -f "$ROOT/target/storeql-bom.json" ] || "$ROOT/scripts/sbom.sh" || exit 2
     failed=0
-    scan reactor "sbom:$ROOT/target/shelf-j-bom.json" || failed=1
-    scan app "dir:$ROOT/frontends/shelf-app" || failed=1
+    scan reactor "sbom:$ROOT/target/storeql-bom.json" || failed=1
+    scan app "dir:$ROOT/frontends/storeql-app" || failed=1
     ;;
   sbom) failed=0; scan sbom "sbom:${2:?an SBOM file}" || failed=1 ;;
   image) failed=0; scan image "${2:?an image reference}" || failed=1 ;;

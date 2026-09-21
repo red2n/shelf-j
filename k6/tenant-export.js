@@ -27,7 +27,7 @@ import {
   sellableVariant,
   staffUser,
   truthy,
-} from './lib/shelfj.js';
+} from './lib/storeql.js';
 
 // Added on the last line only, so a flow that stopped part-way fails instead of passing.
 const completed = new Counter('flow_completed');

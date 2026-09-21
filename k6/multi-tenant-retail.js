@@ -1,5 +1,5 @@
 /**
- * Multi-Tenant Retail Load Test — Shelf-J
+ * Multi-Tenant Retail Load Test — StoreQL
  *
  * Two isolated tenants, two stores each, geographically distinct:
  *
@@ -39,7 +39,7 @@ import { check, sleep } from 'k6';
 import { Counter, Rate, Trend } from 'k6/metrics';
 import encoding from 'k6/encoding';
 import exec from 'k6/execution';
-import { newId, newKey } from './lib/shelfj.js';
+import { newId, newKey } from './lib/storeql.js';
 
 // ── Custom metrics ─────────────────────────────────────────────────────────────
 const errors              = new Counter('errors');
@@ -288,7 +288,7 @@ function jwtPayload(token) {
 // Random 6-char uppercase slug.
 function slug() { return Math.random().toString(36).slice(2, 8).toUpperCase(); }
 
-// Shelf-J stores only UUIDv7 ids, so ids a script makes up are v7 too.
+// StoreQL stores only UUIDv7 ids, so ids a script makes up are v7 too.
 const genUuid = newId;
 
 // Receive stock at a store and return the response.
@@ -355,8 +355,8 @@ function seedTenant(owner, tenantPayload, store1Payload, store2Payload, products
 
   // 2. Register cashiers (one per store)
   const run = Date.now();
-  const cashier1 = registerUser(`${tag.toLowerCase()}-cashier1-${run}@shelfj.test`);
-  const cashier2 = registerUser(`${tag.toLowerCase()}-cashier2-${run}@shelfj.test`);
+  const cashier1 = registerUser(`${tag.toLowerCase()}-cashier1-${run}@storeql.test`);
+  const cashier2 = registerUser(`${tag.toLowerCase()}-cashier2-${run}@storeql.test`);
 
   // 3. Store 1 — via onboarding (auto-creates DEFAULT zone)
   const s1Res = post('/api/tenant-svc/onboarding/stores', store1Payload, ownerToken);
@@ -530,7 +530,7 @@ export function setup() {
   const run = Date.now();
 
   // ── India tenant ───────────────────────────────────────────────────────────
-  const inOwner = registerUser(`in-owner-${run}@shelfj.test`);
+  const inOwner = registerUser(`in-owner-${run}@storeql.test`);
   if (!inOwner) { console.error('India owner registration failed'); return null; }
 
   const india = seedTenant(
@@ -583,7 +583,7 @@ export function setup() {
   if (!india) { console.error('India seed failed'); return null; }
 
   // ── UK tenant ──────────────────────────────────────────────────────────────
-  const ukOwner = registerUser(`uk-owner-${run}@shelfj.test`);
+  const ukOwner = registerUser(`uk-owner-${run}@storeql.test`);
   if (!ukOwner) { console.error('UK owner registration failed'); return null; }
 
   const uk = seedTenant(
@@ -3390,7 +3390,7 @@ export function intercompanyFlow(d) {
       r = get(`/api/purchase-svc/purchase-orders/${poId}/lines`, ownerToken);
       check(r, { 'list PO lines 200': res => res.status === 200 });
 
-      // Submit. Over the caller's spend authority (shelfj.purchase.approval.limits) it waits for
+      // Submit. Over the caller's spend authority (storeql.purchase.approval.limits) it waits for
       // approval — and a currency with no configured limits always does — so approve it first.
       const submitRes = post(`/api/purchase-svc/purchase-orders/${poId}/submit`, {}, ownerToken);
       check(submitRes, { 'submit PO 200': res => res.status === 200 });
@@ -3828,7 +3828,7 @@ export function customerFlow(d) {
   const tenant = tenantCtx(d);
   const tag    = `customer[${tenant.name}]`;
   const run    = `${__VU}-${exec.scenario.iterationInTest}`;
-  const email  = `cust-${run}@shelfj.test`;
+  const email  = `cust-${run}@storeql.test`;
 
   // 1. Register a customer
   const regRes = post('/api/customer-svc/customers', {

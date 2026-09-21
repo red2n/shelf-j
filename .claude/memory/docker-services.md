@@ -1,11 +1,11 @@
 ---
 name: docker-services
-description: Docker Compose service names, local ports, and health check paths for the Shelf-J stack. Use when running docker commands or diagnosing startup issues.
+description: Docker Compose service names, local ports, and health check paths for the StoreQL stack. Use when running docker commands or diagnosing startup issues.
 metadata:
   type: reference
 ---
 
-# Shelf-J Docker Compose — service reference
+# StoreQL Docker Compose — service reference
 
 ## Infrastructure
 
@@ -50,8 +50,8 @@ metadata:
 ## Common DB connection
 
 ```
-jdbc:postgresql://localhost:5432/shelfj
-User: shelfj  Password: shelfj_dev_change_me
+jdbc:postgresql://localhost:5432/storeql
+User: storeql  Password: storeql_dev_change_me
 ```
 
 Each service uses its own schema (e.g. `iam`, `tenant`, `inventory`).

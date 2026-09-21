@@ -5,14 +5,14 @@
     <modelVersion>4.0.0</modelVersion>
 
     <parent>
-        <groupId>com.shelfj</groupId>
-        <artifactId>shelf-j-parent</artifactId>
+        <groupId>com.storeql</groupId>
+        <artifactId>storeql-parent</artifactId>
         <version>0.1.0-SNAPSHOT</version>
         <relativePath>../../pom.xml</relativePath>
     </parent>
 
     <artifactId>discovery</artifactId>
-    <name>Shelf-J :: platform :: discovery</name>
+    <name>StoreQL :: platform :: discovery</name>
     <description>
         Service-discovery support LIBRARY (not a runnable service — Consul itself runs as a container).
         Provides a reusable ConsulClient: self-register / deregister / look up healthy instances via the

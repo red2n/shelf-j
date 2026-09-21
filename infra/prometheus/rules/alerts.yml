@@ -134,7 +134,7 @@ groups:
   - name: script-integrity
     rules:
       - alert: ScriptIntegrityDrift
-        expr: shelfj_script_integrity_drift > 0
+        expr: storeql_script_integrity_drift > 0
         for: 0m
         labels:
           severity: critical
@@ -143,7 +143,7 @@ groups:
           description: "The gateway's script integrity monitor found {{ $value }} difference(s) between the scripts the web shell serves and its inventory. See GET /admin/security/script-integrity on the gateway."
 
       - alert: ScriptIntegrityUnchecked
-        expr: shelfj_script_integrity_drift < 0
+        expr: storeql_script_integrity_drift < 0
         for: 30m
         labels:
           severity: warning

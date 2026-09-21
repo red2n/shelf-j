@@ -31,7 +31,7 @@ CREATE TABLE einvoice_inbox_settings (
     provider        TEXT        NOT NULL,
     -- The business at the network: its NIP for KSeF.
     provider_account TEXT,
-    -- The business's own credential, sealed under shelfj.einvoice.secrets-key. Never read back out
+    -- The business's own credential, sealed under storeql.einvoice.secrets-key. Never read back out
     -- over HTTP: the settings say only whether one is held.
     provider_secret TEXT,
     -- How far the last fetch got, so the next one asks for what it has not seen. A window and not a

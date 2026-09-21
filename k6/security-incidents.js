@@ -17,7 +17,7 @@ import {
   platformAdmin,
   staffUser,
   truthy,
-} from './lib/shelfj.js';
+} from './lib/storeql.js';
 
 export const options = {
   scenarios: { flow: { executor: 'per-vu-iterations', vus: 1, iterations: 1, maxDuration: '5m' } },

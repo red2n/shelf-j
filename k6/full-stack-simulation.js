@@ -23,7 +23,7 @@ import {
   sellableVariant,
   truthy,
   uniq,
-} from './lib/shelfj.js';
+} from './lib/storeql.js';
 
 const reserveSuccess = new Rate('reserve_success_rate');
 const levelLatency = new Trend('level_latency_ms', true);

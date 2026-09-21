@@ -1,6 +1,6 @@
-# Production runtime image for a Shelf-J Helidon service.
+# Production runtime image for a StoreQL Helidon service.
 # Build the whole reactor first (mvn clean install), then build this image per-service:
-#   docker build -f Dockerfile.svc --build-arg SVC_PATH=services/sample-svc --build-arg SVC_JAR=sample-svc -t shelfj/sample-svc .
+#   docker build -f Dockerfile.svc --build-arg SVC_PATH=services/sample-svc --build-arg SVC_JAR=sample-svc -t storeql/sample-svc .
 # Pinned to 21-jre, and NOT for the reason a bot will assume. The jars target release 21
 # (maven.compiler.release), CI builds and tests on 21, and 25 is not a security fix — but the
 # blocking reason is that eclipse-temurin:21-jre ships curl and 25-jre does NOT. Every healthcheck in
@@ -20,7 +20,7 @@ ARG SVC_PATH
 ARG SVC_JAR
 
 LABEL org.opencontainers.image.title="${SVC_JAR}" \
-      org.opencontainers.image.description="Shelf-J Helidon MP microservice" \
+      org.opencontainers.image.description="StoreQL Helidon MP microservice" \
       org.opencontainers.image.source="https://github.com/red2n/home"
 
 # Run as a non-root user (production hardening). The app writes nothing to disk —
@@ -34,7 +34,7 @@ COPY ${SVC_PATH}/target/${SVC_JAR}.jar /app/app.jar
 COPY ${SVC_PATH}/target/libs /app/libs
 
 # In containers, advertise the container hostname to Consul so its health check is reachable on the compose network.
-ENV SHELFJ_ADVERTISE_HOST=""
+ENV STOREQL_ADVERTISE_HOST=""
 
 USER 10001:10001
 EXPOSE 8080

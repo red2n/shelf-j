@@ -3,7 +3,7 @@ info:
   title: IAM Service API
   version: "1.0"
   description: >
-    Identity, authentication, and session management for Shelf-J. Issues and verifies JWTs,
+    Identity, authentication, and session management for StoreQL. Issues and verifies JWTs,
     registers customers and staff, and manages POS cashier sessions (start/touch/end/idle sweep).
     Reached through the API gateway at /api/iam-svc.
 tags:
@@ -21,13 +21,13 @@ components:
       type: object
       description: >-
         An error as RFC 9457 problem details (application/problem+json). type is a URN for the
-        stable code (urn:shelfj:problem:CODE), title the code in words, status the HTTP status,
+        stable code (urn:storeql:problem:CODE), title the code in words, status the HTTP status,
         detail the message for a person, instance the request path. code and details are the
         platform's extension members, requestId the correlation id, and error/meta the envelope
         members clients read before problem details.
       required: [type, title, status, code]
       properties:
-        type: { type: string, format: uri, example: "urn:shelfj:problem:VALIDATION_FAILED" }
+        type: { type: string, format: uri, example: "urn:storeql:problem:VALIDATION_FAILED" }
         title: { type: string, example: "Validation failed" }
         status: { type: integer, example: 400 }
         detail: { type: string }

@@ -1,0 +1,183 @@
+package com.storeql.notification.channel;
+
+import static org.hamcrest.MatcherAssert.assertThat;
+import static org.hamcrest.Matchers.startsWith;
+import static org.junit.jupiter.api.Assertions.assertThrows;
+import static org.junit.jupiter.api.Assertions.assertTrue;
+
+import com.hivemq.client.mqtt.MqttGlobalPublishFilter;
+import com.hivemq.client.mqtt.datatypes.MqttQos;
+import com.hivemq.client.mqtt.mqtt5.Mqtt5BlockingClient;
+import com.hivemq.client.mqtt.mqtt5.Mqtt5Client;
+import com.hivemq.client.mqtt.mqtt5.exceptions.Mqtt5ConnAckException;
+import com.hivemq.client.mqtt.mqtt5.exceptions.Mqtt5SubAckException;
+import com.hivemq.client.mqtt.mqtt5.message.publish.Mqtt5Publish;
+import com.hivemq.client.mqtt.mqtt5.message.subscribe.suback.Mqtt5SubAck;
+import com.storeql.ids.Ids;
+import com.storeql.test.EmqxSupport;
+import com.storeql.test.SigningKeysFixture;
+import java.nio.charset.StandardCharsets;
+import java.util.Map;
+import java.util.Optional;
+import java.util.UUID;
+import java.util.concurrent.TimeUnit;
+import org.junit.jupiter.api.AfterAll;
+import org.junit.jupiter.api.BeforeAll;
+import org.junit.jupiter.api.Test;
+
+/**
+ * Runs the real EMQX broker + the actual infra/emqx.conf / infra/emqx-acl.conf (see {@link
+ * EmqxSupport}) to prove three things end to end that unit tests can't: (1) a message published
+ * through {@link MqttChannel} is actually received on the wire by a tenant's own subscriber; (2) a
+ * different tenant cannot subscribe to that tenant's topic even with a validly-signed JWT of its
+ * own; (3) a client cannot spoof a username that doesn't match its JWT's {@code tenant} claim.
+ *
+ * <p>This is the only place that can catch a broker misconfiguration — the EMQX config was written
+ * without a broker available to test against, so this is the actual verification of it, not just of
+ * the Java code.
+ */
+class MqttAclIT {
+
+  private static final String JWT_ISSUER = "storeql";
+  private static final String PUBLISHER_PASSWORD = "it-publisher-password-not-a-token";
+
+  /** What iam-svc is to the stack: the key the platform's tokens are signed with (20.15). */
+  private static final SigningKeysFixture KEYS = SigningKeysFixture.generate("it-key-1");
+
+  /** A key the broker has never been told about: whatever it signs must be refused. */
+  private static final SigningKeysFixture STRANGER = SigningKeysFixture.generate("it-key-1");
+
+  private static EmqxSupport broker;
+
+  @BeforeAll
+  static void startBroker() {
+    broker = EmqxSupport.start(KEYS.jwksJson(), PUBLISHER_PASSWORD);
+  }
+
+  @AfterAll
+  static void stopBroker() {
+    broker.stop();
+  }
+
+  private static String signToken(String tenantClaim) {
+    return KEYS.sign(JWT_ISSUER, tenantClaim, Map.of("tenant", tenantClaim), 300);
+  }
+
+  private static Mqtt5BlockingClient newClient() {
+    return Mqtt5Client.builder()
+        .serverHost(broker.host())
+        .serverPort(broker.port())
+        .buildBlocking();
+  }
+
+  private static void connect(Mqtt5BlockingClient client, String username, String password) {
+    client
+        .connectWith()
+        .simpleAuth()
+        .username(username)
+        .password(password.getBytes(StandardCharsets.UTF_8))
+        .applySimpleAuth()
+        .send();
+  }
+
+  @Test
+  void publishedAlertReachesItsOwnTenantsSubscriber() throws InterruptedException {
+    UUID tenantA = Ids.newId();
+    MqttChannel publisher =
+        new MqttChannel(
+            broker.host(),
+            broker.port(),
+            "it-publisher",
+            EmqxSupport.PUBLISHER,
+            PUBLISHER_PASSWORD,
+            false);
+
+    Mqtt5BlockingClient subscriber = newClient();
+    connect(subscriber, tenantA.toString(), signToken(tenantA.toString()));
+    try (Mqtt5BlockingClient.Mqtt5Publishes publishes =
+        subscriber.publishes(MqttGlobalPublishFilter.ALL)) {
+      Mqtt5SubAck subAck =
+          subscriber
+              .subscribeWith()
+              .topicFilter(MqttChannel.topic(tenantA, "store-1"))
+              .qos(MqttQos.AT_LEAST_ONCE)
+              .send();
+      assertTrue(
+          subAck.getReasonCodes().stream().noneMatch(c -> c.isError()),
+          "own-tenant subscribe must be granted");
+
+      publisher.send(tenantA, "store-1", "Stock below threshold", "available 2 (threshold 5)");
+
+      Optional<Mqtt5Publish> received = publishes.receive(10, TimeUnit.SECONDS);
+      assertTrue(
+          received.isPresent(), "subscriber must receive the alert published for its own tenant");
+      String payload = new String(received.get().getPayloadAsBytes(), StandardCharsets.UTF_8);
+      assertThat(payload, startsWith("{"));
+    } finally {
+      subscriber.disconnect();
+      publisher.close();
+    }
+  }
+
+  @Test
+  void anotherTenantCannotSubscribeToATenantItDoesNotOwn() {
+    UUID tenantA = Ids.newId();
+    UUID tenantB = Ids.newId();
+
+    Mqtt5BlockingClient intruder = newClient();
+    connect(intruder, tenantB.toString(), signToken(tenantB.toString()));
+    try {
+      // A single-topic subscribe whose SUBACK is all Error Codes makes the blocking client throw
+      // rather than return normally — it doesn't hand back a SubAck to inspect.
+      Mqtt5SubAckException denied =
+          assertThrows(
+              Mqtt5SubAckException.class,
+              () ->
+                  intruder
+                      .subscribeWith()
+                      .topicFilter(MqttChannel.topic(tenantA, "store-1"))
+                      .qos(MqttQos.AT_LEAST_ONCE)
+                      .send(),
+              "a validly-authenticated tenant must still be denied another tenant's topic");
+      assertTrue(denied.getMqttMessage().getReasonCodes().stream().allMatch(c -> c.isError()));
+    } finally {
+      intruder.disconnect();
+    }
+  }
+
+  @Test
+  void aClientCannotConnectWithAUsernameThatDoesNotMatchItsOwnJwtTenantClaim() {
+    UUID tenantA = Ids.newId();
+    UUID tenantB = Ids.newId();
+    Mqtt5BlockingClient spoofer = newClient();
+
+    // Valid JWT for tenant A, but CONNECT claims to be tenant B — infra/emqx.conf's
+    // verify_claims{tenant="${username}"} must reject this outright.
+    assertThrows(
+        RuntimeException.class,
+        () -> connect(spoofer, tenantB.toString(), signToken(tenantA.toString())));
+  }
+
+  @Test
+  void aTokenSignedWithAKeyTheBrokerDoesNotKnowIsRefused() {
+    UUID tenant = Ids.newId();
+    Mqtt5BlockingClient forger = newClient();
+    String forged =
+        STRANGER.sign(JWT_ISSUER, tenant.toString(), Map.of("tenant", tenant.toString()), 300);
+    assertThrows(Mqtt5ConnAckException.class, () -> connect(forger, tenant.toString(), forged));
+  }
+
+  @Test
+  void thePublishersNameWithoutItsPasswordIsRefusedEvenWithAValidToken() {
+    // The publisher is a row in the broker's own database: a wrong password stops there, and a
+    // platform token naming "__publisher__" as its tenant does not get a second chance.
+    Mqtt5BlockingClient impostor = newClient();
+    assertThrows(
+        Mqtt5ConnAckException.class,
+        () -> connect(impostor, EmqxSupport.PUBLISHER, signToken(EmqxSupport.PUBLISHER)));
+    Mqtt5BlockingClient guesser = newClient();
+    assertThrows(
+        Mqtt5ConnAckException.class,
+        () -> connect(guesser, EmqxSupport.PUBLISHER, "not-the-password"));
+  }
+}

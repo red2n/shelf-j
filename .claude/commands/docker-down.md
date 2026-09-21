@@ -1,4 +1,4 @@
-# Stop the Shelf-J Docker Compose stack
+# Stop the StoreQL Docker Compose stack
 
 ```bash
 docker compose down $ARGUMENTS
