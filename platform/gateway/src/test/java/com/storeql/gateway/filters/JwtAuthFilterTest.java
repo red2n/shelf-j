@@ -728,6 +728,84 @@ class JwtAuthFilterTest {
     verify(requestContext, never()).abortWith(any());
   }
 
+  // ── single sign-on (20.x) ─────────────────────────────────────────────────
+
+  @Test
+  void aSignInThroughAProviderStartsReturnsAndRedeemsWithoutAToken() throws IOException {
+    for (String path :
+        new String[] {
+          "api/iam-svc/auth/sso/start",
+          "api/iam-svc/auth/sso/callback",
+          "api/iam-svc/auth/sso/token"
+        }) {
+      org.mockito.Mockito.reset(requestContext);
+      lenient().when(requestContext.getUriInfo()).thenReturn(uriInfo);
+      lenient().when(requestContext.getHeaders()).thenReturn(headers);
+      when(uriInfo.getPath()).thenReturn(path);
+
+      filter.filter(requestContext);
+
+      verify(requestContext, never()).abortWith(any());
+    }
+  }
+
+  @Test
+  void theBusinesssProviderSettingsAndAnythingBesideTheSignInPathsNeedAToken() throws IOException {
+    for (String path :
+        new String[] {
+          "api/iam-svc/auth/admin/sso",
+          "api/iam-svc/auth/admin/sso/readiness",
+          "api/iam-svc/auth/sso",
+          "api/iam-svc/auth/sso/start/x",
+          "api/iam-svc/auth/sso/callbacks"
+        }) {
+      org.mockito.Mockito.reset(requestContext);
+      lenient().when(requestContext.getUriInfo()).thenReturn(uriInfo);
+      lenient().when(requestContext.getHeaders()).thenReturn(headers);
+      when(uriInfo.getPath()).thenReturn(path);
+      lenient().when(requestContext.getMethod()).thenReturn("GET");
+
+      filter.filter(requestContext);
+
+      org.junit.jupiter.api.Assertions.assertEquals(401, abortedStatus(), path);
+    }
+  }
+
+  @Test
+  void howTheSessionWasAuthenticatedIsStampedFromTheTokenAndNeverFromTheClient()
+      throws IOException {
+    headers.putSingle("X-Auth-Methods", "sso,mfa");
+    String token =
+        com.auth0
+            .jwt
+            .JWT
+            .create()
+            .withKeyId(KID)
+            .withIssuer("storeql")
+            .withSubject("01a090ae-611e-700f-b645-a14095230b77")
+            .withClaim("tenant", "tenant-xyz")
+            .withArrayClaim("roles", new String[] {"CASHIER"})
+            .withArrayClaim("amr", new String[] {"pwd", "otp"})
+            .sign(SIGNER);
+    protectedRead(token);
+
+    filter.filter(requestContext);
+
+    verify(requestContext, never()).abortWith(any());
+    org.junit.jupiter.api.Assertions.assertEquals("pwd,otp", headers.getFirst("X-Auth-Methods"));
+  }
+
+  @Test
+  void aTokenThatSaysNothingOfHowStampsNothingAndAForgedHeaderGoes() throws IOException {
+    headers.putSingle("X-Auth-Methods", "sso,mfa");
+    protectedRead(staffToken(new String[] {"OWNER"}, null));
+
+    filter.filter(requestContext);
+
+    verify(requestContext, never()).abortWith(any());
+    org.junit.jupiter.api.Assertions.assertFalse(headers.containsKey("X-Auth-Methods"));
+  }
+
   // ── Token signing (20.15; RFC 8725) ────────────────────────────────────────
 
   /** An owner's token for tenant-xyz under this key id (null for none), signed by this signer. */

@@ -322,6 +322,9 @@ public class AdminAuthorizationFilter implements ContainerRequestFilter {
         // Where the caller's own login stands with second factors (20.12): a shopper's as much as
         // a member of staff's, and the login comes from the token.
         || "/auth/mfa".equals(path)
+        // A business's identity provider sending the browser back (20.x, SSO). Nobody holds a
+        // token yet — the random state in the query is the capability, and it is spent on use.
+        || "/auth/sso/callback".equals(path)
         // Own cart, mirroring the /cart mutation carve-out. Object-level authorization (owning
         // session or customer) lives in CartService, not here.
         || pathEqualsOrUnder(path, "/cart")
@@ -400,6 +403,12 @@ public class AdminAuthorizationFilter implements ContainerRequestFilter {
         // The login comes from the token; a business's rule and the lost-phone reset are under
         // /auth/admin/ and stay with management.
         || path.startsWith("/auth/mfa/")
+        // Single sign-on (20.x): starting a sign-in through a business's identity provider, and
+        // the app trading the ticket it came back with — a person signing in has no token, and the
+        // ticket with the app's PKCE verifier is the capability. Exactly these two: the business's
+        // own provider settings are under /auth/admin/ and stay with management.
+        || "/auth/sso/start".equals(path)
+        || "/auth/sso/token".equals(path)
         // One-shot platform bootstrap: creates the very first PLATFORM_ADMIN before any JWT exists.
         || "/bootstrap/admin".equals(path)
         // Bootstrap carve-out: tenant creation AND first-store creation are performed by a freshly

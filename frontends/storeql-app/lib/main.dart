@@ -3,6 +3,7 @@ import 'package:flutter/material.dart';
 import 'package:flutter/semantics.dart';
 import 'package:flutter_localizations/flutter_localizations.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
+import 'core/auth/sso.dart';
 import 'core/l10n/app_locales.dart';
 import 'core/router.dart';
 import 'core/theme.dart';
@@ -19,6 +20,9 @@ void main() {
     WidgetsFlutterBinding.ensureInitialized();
     webSemanticsHandle = SemanticsBinding.instance.ensureSemantics();
   }
+  // Back from a business's identity provider (20.x): read the answer out of the
+  // address bar before the router takes the fragment for a route.
+  ssoReturnAtLaunch = ssoBrowser.takeReturn();
   runApp(const ProviderScope(child: ShelfApp()));
 }
 

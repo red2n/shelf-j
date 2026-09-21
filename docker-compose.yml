@@ -20,6 +20,7 @@
 #   5432  postgres (direct SQL access)    6379  redis (redis-cli)
 #   4317  otel-collector (OTLP/gRPC — lets a service run outside docker, against the
 #         dockerized stack, still ship traces+logs)
+#   8095  mock-idp (a stand-in OpenID Connect provider for single sign-on; see its service)
 #
 # Every service exports telemetry via OTLP only (traces + logs); there is no separate
 # log-scraping pipeline. Ports intentionally NOT exposed (internal only — use Grafana):
@@ -370,6 +371,28 @@ services:
       timeout: 3s
       retries: 12
 
+  # A stand-in identity provider for single sign-on (20.x): a real OpenID Connect server
+  # (navikt/mock-oauth2-server), not one of ours, so what is driven against it is the protocol and
+  # not our own reading of it. Connect a business to issuer http://mock-idp:8080/storeql with any
+  # client id and secret; its sign-in page takes any name, and a JSON box of claims to put in the
+  # ID token (email, email_verified, amr).
+  #
+  # iam-svc reaches it as mock-idp; a browser on this machine reaches it on 8095. The discovery
+  # document names mock-idp, so for a browser walkthrough add "127.0.0.1 mock-idp" to the hosts
+  # file; k6/sso-flow.js rewrites the address instead. Never deployed: k8s has no such thing, and
+  # storeql.sso.insecure-hosts, which lets iam-svc call it over plain HTTP, is empty there.
+  mock-idp:
+    image: ghcr.io/navikt/mock-oauth2-server:2.2.1
+    container_name: storeql-mock-idp
+    restart: unless-stopped
+    ports: ["127.0.0.1:${MOCK_IDP_PORT:-8095}:8080"]
+    environment:
+      SERVER_PORT: "8080"
+      JSON_CONFIG: '{"interactiveLogin": true}'
+      JAVA_TOOL_OPTIONS: "${MOCK_IDP_JAVA_OPTS:--Xms32m -Xmx128m}"
+    mem_limit: ${MOCK_IDP_MEM_LIMIT:-256m}
+    networks: [storeql_network]
+
   # MQTT broker for notification-svc's device-facing push channel (POS terminals, kiosk/back-store
   # displays, platform console). Only exercised when storeql.notification.channel=mqtt — the default
   # (app) never talks to it, so it's deliberately not in x-svc-depends.
@@ -654,6 +677,14 @@ services:
       storeql.mqtt.admin-api-url: http://mqtt:18083
       storeql.mqtt.admin-api-key: ${EMQX_API_KEY:-iam-svc}
       storeql.mqtt.admin-api-secret: ${EMQX_API_SECRET:-iam_mqtt_admin_dev_change_me}
+      # Single sign-on (20.x). The callback is iam-svc's as a browser reaches it, through the
+      # gateway: what a business registers with its identity provider. A sign-in returns only to
+      # the app's own origins — the same ones the gateway's CORS lets in. mock-idp is the one host
+      # iam-svc may call over plain HTTP and at a private address; a real provider is HTTPS on the
+      # internet, and the list is empty anywhere but here.
+      storeql.sso.callback-url: ${SSO_CALLBACK_URL:-http://localhost:8090/api/iam-svc/auth/sso/callback}
+      storeql.sso.return-origins: ${SSO_RETURN_ORIGINS:-http://localhost:8088,http://127.0.0.1:8088,http://localhost:40015,http://127.0.0.1:40015}
+      storeql.sso.insecure-hosts: ${SSO_INSECURE_HOSTS:-mock-idp}
     mem_limit: ${IAM_MEM_LIMIT:-700m}
     networks: [storeql_network]
     depends_on: *svc-depends

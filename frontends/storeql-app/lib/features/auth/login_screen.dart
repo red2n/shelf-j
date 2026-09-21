@@ -1,6 +1,8 @@
 import 'package:flutter/material.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 import '../../core/auth/auth_notifier.dart';
+import '../../core/auth/sso.dart';
+import '../../core/network/api_error.dart';
 import '../../l10n/gen/app_localizations.dart';
 
 class LoginScreen extends ConsumerStatefulWidget {
@@ -42,13 +44,24 @@ class _LoginScreenState extends ConsumerState<LoginScreen> {
     // routing handled by go_router redirect on auth state change
   }
 
+  /// Signing in through the business's own identity provider (20.x): asks for
+  /// the business's sign-in name, unless the server has just named it.
+  Future<void> _signInWithBusiness({String? slug}) async {
+    final name = slug ?? await showDialog<String>(context: context, builder: (_) => const _BusinessNameDialog());
+    if (name == null || name.trim().isEmpty) return;
+    await ref.read(authNotifierProvider.notifier).startSso(name);
+  }
+
   @override
   Widget build(BuildContext context) {
     final l = AppLocalizations.of(context);
     final authAsync = ref.watch(authNotifierProvider);
     final isLoading = authAsync.isLoading;
-    final error = authAsync.hasError
-        ? _friendlyError(context, authAsync.error.toString())
+    final error = authAsync.hasError ? _friendlyError(context, authAsync.error!) : null;
+    // A password refused because the business signs its staff in through its
+    // provider: the server names the business, so one press continues there.
+    final requiredSlug = authAsync.hasError && apiErrorCode(authAsync.error!) == 'SSO_REQUIRED'
+        ? apiErrorOf(authAsync.error!)?.detail('slug')
         : null;
     final cs = Theme.of(context).colorScheme;
 
@@ -96,6 +109,15 @@ class _LoginScreenState extends ConsumerState<LoginScreen> {
                           ),
                           child: Text(error, style: TextStyle(color: cs.onErrorContainer)),
                         ),
+                        if (requiredSlug != null) ...[
+                          const SizedBox(height: 8),
+                          FilledButton.tonalIcon(
+                            key: const Key('sso-continue'),
+                            onPressed: isLoading ? null : () => _signInWithBusiness(slug: requiredSlug),
+                            icon: const Icon(Icons.business_outlined),
+                            label: Text('Continue with $requiredSlug'),
+                          ),
+                        ],
                         const SizedBox(height: 16),
                       ],
                       TextFormField(
@@ -150,6 +172,15 @@ class _LoginScreenState extends ConsumerState<LoginScreen> {
                               )
                             : Text(_isRegister ? l.actionCreateAccount : l.actionSignIn),
                       ),
+                      if (!_isRegister && ssoBrowser.supported) ...[
+                        const SizedBox(height: 12),
+                        OutlinedButton.icon(
+                          key: const Key('sso-start'),
+                          onPressed: isLoading ? null : _signInWithBusiness,
+                          icon: const Icon(Icons.business_outlined),
+                          label: const Text('Sign in with your business'),
+                        ),
+                      ],
                       const SizedBox(height: 8),
                       TextButton(
                         onPressed: isLoading
@@ -169,8 +200,14 @@ class _LoginScreenState extends ConsumerState<LoginScreen> {
     );
   }
 
-  String _friendlyError(BuildContext context, String raw) {
+  String _friendlyError(BuildContext context, Object e) {
     final l = AppLocalizations.of(context);
+    if (e is SsoError) return ssoMessage(e.code);
+    final code = apiErrorCode(e);
+    if (code != null && (code.startsWith('SSO_') || code == 'TENANT_INACTIVE')) {
+      return ssoMessage(code);
+    }
+    final raw = e.toString();
     if (raw.contains('401') || raw.contains('INVALID_CREDENTIALS')) {
       return l.errInvalidCredentials;
     }
@@ -182,4 +219,58 @@ class _LoginScreenState extends ConsumerState<LoginScreen> {
     }
     return l.errGeneric;
   }
+}
+
+/// The business's sign-in name: what its owner chose when connecting its
+/// identity provider, and told its staff.
+class _BusinessNameDialog extends StatefulWidget {
+  const _BusinessNameDialog();
+
+  @override
+  State<_BusinessNameDialog> createState() => _BusinessNameDialogState();
+}
+
+class _BusinessNameDialogState extends State<_BusinessNameDialog> {
+  final _ctrl = TextEditingController();
+
+  @override
+  void dispose() {
+    _ctrl.dispose();
+    super.dispose();
+  }
+
+  void _go() => Navigator.of(context).pop(_ctrl.text.trim());
+
+  @override
+  Widget build(BuildContext context) => AlertDialog(
+        title: const Text('Sign in with your business'),
+        content: SizedBox(
+          width: 380,
+          child: Column(
+            mainAxisSize: MainAxisSize.min,
+            crossAxisAlignment: CrossAxisAlignment.start,
+            children: [
+              const Text("Your business's sign-in name. Your manager has it."),
+              const SizedBox(height: 12),
+              TextField(
+                key: const Key('sso-slug'),
+                controller: _ctrl,
+                autofocus: true,
+                autocorrect: false,
+                textInputAction: TextInputAction.go,
+                onSubmitted: (_) => _go(),
+                decoration: const InputDecoration(
+                  labelText: 'Sign-in name',
+                  hintText: 'e.g. acme-foods',
+                  prefixIcon: Icon(Icons.business_outlined),
+                ),
+              ),
+            ],
+          ),
+        ),
+        actions: [
+          TextButton(onPressed: () => Navigator.of(context).pop(), child: const Text('Cancel')),
+          FilledButton(key: const Key('sso-go'), onPressed: _go, child: const Text('Continue')),
+        ],
+      );
 }

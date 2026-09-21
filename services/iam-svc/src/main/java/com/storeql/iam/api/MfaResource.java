@@ -102,11 +102,14 @@ public class MfaResource {
   @POST
   @Path("/mfa/totp/confirm")
   public ApiResponse<MfaDtos.FactorEnrolled> confirmTotp(
-      MfaDtos.CodeRequest req, @HeaderParam(HttpHeaders.AUTH_SCOPE) String scope) {
+      MfaDtos.CodeRequest req,
+      @HeaderParam(HttpHeaders.AUTH_SCOPE) String scope,
+      @HeaderParam(HttpHeaders.AUTH_METHODS) String methods) {
     Validations.validate(req);
     UUID me = ctx.requireUserId();
     List<String> codes = mfa.confirmTotp(me, req.code());
-    return ApiResponse.ok(new MfaDtos.FactorEnrolled(codes, tokensIfEnrolling(scope, me, "otp")));
+    return ApiResponse.ok(
+        new MfaDtos.FactorEnrolled(codes, tokensIfEnrolling(scope, methods, me, "otp")));
   }
 
   @Operation(summary = "Remove the authenticator app", description = "Asks for the password.")
@@ -145,11 +148,14 @@ public class MfaResource {
   @POST
   @Path("/mfa/passkeys")
   public ApiResponse<MfaDtos.FactorEnrolled> finishPasskey(
-      MfaDtos.PasskeyRegistration req, @HeaderParam(HttpHeaders.AUTH_SCOPE) String scope) {
+      MfaDtos.PasskeyRegistration req,
+      @HeaderParam(HttpHeaders.AUTH_SCOPE) String scope,
+      @HeaderParam(HttpHeaders.AUTH_METHODS) String methods) {
     Validations.validate(req);
     UUID me = ctx.requireUserId();
     List<String> codes = mfa.finishPasskey(me, req);
-    return ApiResponse.ok(new MfaDtos.FactorEnrolled(codes, tokensIfEnrolling(scope, me, "hwk")));
+    return ApiResponse.ok(
+        new MfaDtos.FactorEnrolled(codes, tokensIfEnrolling(scope, methods, me, "hwk")));
   }
 
   @Operation(summary = "Remove a passkey", description = "Asks for the password.")
@@ -167,11 +173,15 @@ public class MfaResource {
     return ApiResponse.ok("removed");
   }
 
-  /** A login that owed a factor and has just set one up is now signed in for real. */
-  private TokenResponse tokensIfEnrolling(String scope, UUID userId, String amr) {
-    return HttpHeaders.SCOPE_MFA_ENROL.equals(scope)
-        ? auth.issueAfterSecondFactor(userId, amr)
-        : null;
+  /**
+   * A login that owed a factor and has just set one up is now signed in for real, as what its
+   * enrolment token says it proved first: a password, or the business's identity provider.
+   */
+  private TokenResponse tokensIfEnrolling(String scope, String methods, UUID userId, String amr) {
+    if (!HttpHeaders.SCOPE_MFA_ENROL.equals(scope)) return null;
+    String first =
+        methods == null || methods.isBlank() ? AuthService.AMR_PASSWORD : methods.split(",")[0];
+    return auth.issueAfterSecondFactor(userId, first.trim(), amr);
   }
 
   // ── the business's rule, and the lost phone ─────────────────────────────────

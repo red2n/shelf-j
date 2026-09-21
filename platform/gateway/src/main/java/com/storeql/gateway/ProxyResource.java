@@ -324,6 +324,8 @@ public class ProxyResource {
           // What a limited token is good for (20.12): stamped by JwtAuthFilter from the token's
           // scope, never taken from the client.
           HttpHeaders.AUTH_SCOPE,
+          // How the session was authenticated (20.12, SSO): stamped from the token's amr claim.
+          HttpHeaders.AUTH_METHODS,
           // Client-controlled, not identity — forwarded so downstream writes can dedupe retries
           // (golden rule #11). Not stripped/overwritten: the client owns this value.
           HttpHeaders.IDEMPOTENCY_KEY,
@@ -351,6 +353,22 @@ public class ProxyResource {
       upstream.first(io.helidon.http.HeaderNames.create(name)).ifPresent(v -> out.put(name, v));
     }
     return out;
+  }
+
+  /**
+   * Where a service's redirect sends the browser — relayed for a 3xx and for nothing else. A
+   * redirect with its {@code Location} stripped is a dead end (iam-svc's single sign-on callback
+   * sends the browser back to the app with one). But a {@code Location} on any other answer, such
+   * as a JAX-RS {@code 201 Created}, is built from the service's own base address and would tell
+   * the internet what the cluster's hosts are called.
+   *
+   * @param status the service's status code
+   * @param upstream the service's response headers
+   * @return the redirect target, when the answer is a redirect that has one
+   */
+  static java.util.Optional<String> redirectTarget(int status, io.helidon.http.Headers upstream) {
+    if (status < 300 || status >= 400) return java.util.Optional.empty();
+    return upstream.first(io.helidon.http.HeaderNames.LOCATION);
   }
 
   private void forward(
@@ -411,6 +429,7 @@ public class ProxyResource {
       Response.ResponseBuilder rb =
           Response.status(status).header(HttpHeaders.REQUEST_ID, requestId);
       relayedResponseHeaders(upstream.headers()).forEach(rb::header);
+      redirectTarget(status, upstream.headers()).ifPresent(to -> rb.header("Location", to));
       // Some upstream responses carry no body at all (e.g. a 405 from a path/method mismatch, or
       // any handler that returns a bare status) even when the status isn't 204/205/304.
       // HttpClientResponse.as(String.class) throws IllegalStateException — not an empty string —

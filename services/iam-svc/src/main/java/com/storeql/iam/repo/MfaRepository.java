@@ -285,11 +285,18 @@ public class MfaRepository extends BaseJdbcRepository {
 
   // ── challenges ──────────────────────────────────────────────────────────────
 
+  /**
+   * Opens a challenge.
+   *
+   * @param firstFactor what a waiting sign-in proved before its second factor ({@code pwd} or
+   *     {@code sso}); null for a passkey registration
+   */
   public void createChallenge(
       UUID userId,
       String kind,
       String tokenHash,
       String webauthnChallenge,
+      String firstFactor,
       Instant now,
       Instant expiresAt) {
     inTx(
@@ -303,14 +310,16 @@ public class MfaRepository extends BaseJdbcRepository {
           try (PreparedStatement ps =
               c.prepareStatement(
                   "INSERT INTO mfa_challenges (id, user_id, kind, token_hash, webauthn_challenge,"
-                      + " attempts, expires_at, created_at) VALUES (?, ?, ?, ?, ?, 0, ?, ?)")) {
+                      + " first_factor, attempts, expires_at, created_at)"
+                      + " VALUES (?, ?, ?, ?, ?, ?, 0, ?, ?)")) {
             ps.setObject(1, Ids.newId());
             ps.setObject(2, userId);
             ps.setString(3, kind);
             ps.setString(4, tokenHash);
             ps.setString(5, webauthnChallenge);
-            ps.setTimestamp(6, Timestamp.from(expiresAt));
-            ps.setTimestamp(7, Timestamp.from(now));
+            ps.setString(6, firstFactor);
+            ps.setTimestamp(7, Timestamp.from(expiresAt));
+            ps.setTimestamp(8, Timestamp.from(now));
             ps.executeUpdate();
           }
           return null;
@@ -321,7 +330,8 @@ public class MfaRepository extends BaseJdbcRepository {
   /** A challenge still open: not expired, not consumed. */
   public Optional<Mfa.Challenge> openChallenge(String tokenHash, String kind, Instant now) {
     return query(
-            "SELECT id, user_id, kind, webauthn_challenge, attempts, expires_at FROM mfa_challenges"
+            "SELECT id, user_id, kind, webauthn_challenge, attempts, expires_at, first_factor"
+                + " FROM mfa_challenges"
                 + " WHERE token_hash = ? AND kind = ? AND consumed_at IS NULL AND expires_at > ?",
             ps -> {
               ps.setString(1, tokenHash);
@@ -335,7 +345,8 @@ public class MfaRepository extends BaseJdbcRepository {
                     rs.getString(3),
                     rs.getString(4),
                     rs.getInt(5),
-                    rs.getObject(6, java.time.OffsetDateTime.class).toInstant()),
+                    rs.getObject(6, java.time.OffsetDateTime.class).toInstant(),
+                    rs.getString(7)),
             "load challenge")
         .stream()
         .findFirst();

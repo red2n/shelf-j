@@ -63,6 +63,12 @@ spec:
               valueFrom: { secretKeyRef: { name: storeql-postgres, key: IAM_DB_PASSWORD } }
             - { name: JAVA_TOOL_OPTIONS, value: "-Xms128m -Xmx512m -XX:+UseG1GC" }
             - { name: STOREQL_ADVERTISE_HOST, value: "iam-svc" }
+            # Single sign-on (20.x): set both to this deployment's own hosts to offer it. The
+            # callback is iam-svc's as a browser reaches it through the gateway, and is what a
+            # business registers with its identity provider; unset, single sign-on is unavailable.
+            # storeql.sso.insecure-hosts stays unset here: a provider is HTTPS on the internet.
+            # - { name: STOREQL_SSO_CALLBACK_URL, value: "https://api.<your-domain>/api/iam-svc/auth/sso/callback" }
+            # - { name: STOREQL_SSO_RETURN_ORIGINS, value: "https://app.<your-domain>" }
           startupProbe:
             httpGet: { path: /health/started, port: 8080 }
             periodSeconds: 5

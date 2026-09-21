@@ -46,6 +46,7 @@ public final class Mfa {
    * A sign-in that owes its second factor, or a passkey registration in progress.
    *
    * @param webauthnChallenge base64url, when a passkey ceremony has been opened on it
+   * @param firstFactor what a waiting sign-in proved before: {@code pwd} or {@code sso}
    */
   public record Challenge(
       UUID id,
@@ -53,5 +54,6 @@ public final class Mfa {
       String kind,
       String webauthnChallenge,
       int attempts,
-      Instant expiresAt) {}
+      Instant expiresAt,
+      String firstFactor) {}
 }

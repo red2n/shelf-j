@@ -27,9 +27,15 @@ class GatewayBeans {
   @ApplicationScoped
   WebClient proxyWebClient() {
     // Bounded waits: without timeouts one hung upstream pins gateway requests indefinitely.
+    //
+    // Redirects are the browser's to follow, not the gateway's. A service answers one when it
+    // sends the browser somewhere — iam-svc's single sign-on callback sending it back to the app —
+    // and a gateway that followed it would fetch the app itself from inside the cluster and hand
+    // the browser the page with a 200, in place of the redirect it was meant to take.
     return WebClient.builder()
         .connectTimeout(java.time.Duration.ofSeconds(config.upstreamConnectTimeoutSeconds()))
         .readTimeout(java.time.Duration.ofSeconds(config.upstreamReadTimeoutSeconds()))
+        .followRedirects(false)
         .build();
   }
 }
