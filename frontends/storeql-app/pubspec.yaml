@@ -23,7 +23,7 @@ dependencies:
   # HTTP
   dio: ^5.11.1
   # secure token storage (Keychain / Keystore on mobile/desktop)
-  flutter_secure_storage: ^10.3.1
+  flutter_secure_storage: ^10.3.4
   # plain localStorage-backed storage used on web instead of flutter_secure_storage
   # there — see lib/core/storage/app_storage.dart for why.
   shared_preferences: ^2.3.2
