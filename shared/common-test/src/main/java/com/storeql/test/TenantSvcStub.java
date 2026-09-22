@@ -49,6 +49,30 @@ public final class TenantSvcStub implements AutoCloseable {
   public static TenantSvcStub start() {
     HttpServer server = JsonStub.serve("tenant-svc-stub");
     TenantSvcStub stub = new TenantSvcStub(server);
+    // What a plan allows the business (21.8, 21.11), as Entitlements reads it: the grants of the
+    // limits given with withLimit, and an empty list — unrestricted — for a business given none.
+    // The JDK server routes by the longest matching context, so this wins over /admin/tenant.
+    server.createContext(
+        "/admin/tenant/plan/limits",
+        exchange -> {
+          stub.requests.incrementAndGet();
+          String tenant = exchange.getRequestHeaders().getFirst("X-Tenant-Id");
+          java.util.Map<String, Long> limits =
+              tenant == null
+                  ? java.util.Map.of()
+                  : stub.limits.getOrDefault(tenant, java.util.Map.of());
+          StringBuilder grants = new StringBuilder();
+          for (var e : limits.entrySet()) {
+            if (grants.length() > 0) grants.append(',');
+            grants
+                .append("{\"key\":\"")
+                .append(e.getKey())
+                .append("\",\"limitValue\":")
+                .append(e.getValue())
+                .append('}');
+          }
+          JsonStub.reply(exchange, 200, "{\"data\":{\"grants\":[" + grants + "]}}");
+        });
     server.createContext(
         "/admin/tenant",
         exchange -> {
@@ -186,6 +210,20 @@ public final class TenantSvcStub implements AutoCloseable {
   }
 
   /** Registers a tenant's declared currency and country. */
+  private final java.util.Map<String, java.util.Map<String, Long>> limits =
+      new java.util.concurrent.ConcurrentHashMap<>();
+
+  /**
+   * A limit the business's plan carries (21.8, 21.11): {@code stores.max}, {@code images.mb.max}… A
+   * business given none is unrestricted, as a business on no plan is.
+   */
+  public TenantSvcStub withLimit(String tenantId, String key, long value) {
+    limits
+        .computeIfAbsent(tenantId, k -> new java.util.concurrent.ConcurrentHashMap<>())
+        .put(key, value);
+    return this;
+  }
+
   public TenantSvcStub with(String tenantId, String currency, String country) {
     profiles.put(
         tenantId,

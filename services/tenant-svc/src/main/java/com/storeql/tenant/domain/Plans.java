@@ -50,6 +50,15 @@ public final class Plans {
   public static final String PRODUCTS_MAX = "products.max";
   public static final String FEATURE_STOREFRONT = "feature.storefront";
 
+  /** API requests a minute, across every login and the online shop (21.11). */
+  public static final String REQUESTS_PER_MINUTE = "requests.per-minute";
+
+  /** Megabytes of product images the business may keep (21.11). */
+  public static final String IMAGES_MB_MAX = "images.mb.max";
+
+  /** Megabytes of supplier e-invoice documents the business may keep (21.11). */
+  public static final String DOCUMENTS_MB_MAX = "documents.mb.max";
+
   /** Every key a plan may carry. Adding one here means adding the refusal that enforces it. */
   public static final List<Entitlement> CATALOGUE =
       List.of(
@@ -57,7 +66,15 @@ public final class Plans {
           new Entitlement(STAFF_MAX, "Staff logins", true, "iam-svc"),
           new Entitlement(PRODUCTS_MAX, "Products", true, "product-svc"),
           new Entitlement(
-              FEATURE_STOREFRONT, "The online shop", false, "tenant-svc (storefront gate)"));
+              FEATURE_STOREFRONT, "The online shop", false, "tenant-svc (storefront gate)"),
+          new Entitlement(
+              REQUESTS_PER_MINUTE,
+              "API requests a minute",
+              true,
+              "gateway (TenantRateLimitFilter)"),
+          new Entitlement(IMAGES_MB_MAX, "Product images (MB)", true, "product-svc"),
+          new Entitlement(
+              DOCUMENTS_MB_MAX, "Supplier e-invoice documents (MB)", true, "purchase-svc"));
 
   private static final Map<String, Entitlement> BY_KEY =
       CATALOGUE.stream()
