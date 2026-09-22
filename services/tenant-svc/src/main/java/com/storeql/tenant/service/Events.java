@@ -3,7 +3,9 @@ package com.storeql.tenant.service;
 import static com.storeql.events.EventPayload.esc;
 
 import com.storeql.ids.Ids;
+import com.storeql.tenant.domain.Subscriptions.Invoice;
 import java.time.Instant;
+import java.time.LocalDate;
 import java.util.UUID;
 
 /**
@@ -257,5 +259,46 @@ final class Events {
             esc(priority),
             requiresAck,
             wake);
+  }
+
+  /**
+   * A dunning notice to be written and sent (21.12): the invoice, what is left on it, the day it
+   * was due, the step this notice is, the day the service is interrupted if it stays unpaid, and
+   * the link that pays it without a sign-in.
+   *
+   * <p>The address and the link travel in this event and are held nowhere else in the clear: this
+   * service keeps the link only as a hash, and notification-svc is the one reader of the address.
+   *
+   * @param suspendOn the day the service is interrupted unless paid, or null once it has been
+   */
+  static String dunningNoticeIssued(
+      UUID tenantId,
+      Invoice invoice,
+      String step,
+      int daysOverdue,
+      String recipient,
+      String payUrl,
+      String platformName,
+      LocalDate suspendOn) {
+    return """
+                {"eventId":"%s","eventType":"DunningNoticeIssued","tenantId":"%s","aggregateId":"%s","occurredAt":"%s",\
+                "invoiceId":"%s","invoiceNumber":"%s","step":"%s","daysOverdue":%d,"dueDate":"%s",\
+                "currency":"%s","amountDue":%s,"recipient":"%s","payUrl":"%s","platform":"%s","suspendOn":%s}"""
+        .formatted(
+            Ids.newId(),
+            tenantId,
+            invoice.id(),
+            Instant.now(),
+            invoice.id(),
+            esc(invoice.number()),
+            esc(step),
+            daysOverdue,
+            invoice.dueDate(),
+            esc(invoice.currency()),
+            invoice.totalAmount().subtract(invoice.amountPaid()).toPlainString(),
+            esc(recipient),
+            esc(payUrl),
+            esc(platformName),
+            suspendOn == null ? "null" : "\"" + suspendOn + "\"");
   }
 }

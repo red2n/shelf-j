@@ -390,10 +390,41 @@ class BillingIT {
     assertThat(platform("POST", PLANS + "/" + plan + "/default", null).status(), is(200));
     String shop = onboard("German buyer");
 
+    // Notices go to the owner's sign-up address until the business names another (SJ-D72).
+    assertThat(
+        owner("GET", MINE, null, shop)
+            .data()
+            .getJsonObject("subscription")
+            .getString("billingEmail"),
+        is(TenantOnboarding.ownerEmail("German buyer")));
+
     // It moves its billing address to Germany. Its VAT number, if it has one, is unchecked.
     Answer moved =
         owner("PUT", MINE + "/details", "{\"country\":\"DE\",\"name\":\"Weinhaus\"}", shop);
     assertThat(moved.text(), moved.status(), is(200));
+    assertThat(
+        "an update that says nothing about the address leaves it standing",
+        moved.data().getJsonObject("subscription").getString("billingEmail"),
+        is(TenantOnboarding.ownerEmail("German buyer")));
+    Answer renamed =
+        owner(
+            "PUT",
+            MINE + "/details",
+            "{\"country\":\"DE\",\"billingEmail\":\"accounts@weinhaus.example\"}",
+            shop);
+    assertThat(renamed.text(), renamed.status(), is(200));
+    assertThat(
+        "the address the business names is the one kept — it used to be dropped (SJ-D72)",
+        renamed.data().getJsonObject("subscription").getString("billingEmail"),
+        is("accounts@weinhaus.example"));
+    assertThat(
+        owner(
+                "PUT",
+                MINE + "/details",
+                "{\"country\":\"DE\",\"billingEmail\":\"not an address\"}",
+                shop)
+            .status(),
+        is(400));
     assertThat(
         "an unchecked number is treated as no number",
         moved.data().getJsonObject("subscription").getJsonObject("buyer").getBoolean("vatChecked"),

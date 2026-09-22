@@ -513,6 +513,84 @@ public final class Catalogue {
                   .text("reason_code", "FRAUDULENT")
                   .moment("due_by", Instant.parse("2026-10-05T23:59:00Z")));
 
+  // ── the business, from the platform (21.12)
+  // ─────────────────────────────────────────────────────────────────────────────────────
+
+  /** What every billing notice must keep: which invoice, how much, and the way to pay it. */
+  private static final List<Set<String>> BILLING_PARTS =
+      List.of(Set.of("invoice"), Set.of("amount_due"), Set.of("pay_link"));
+
+  private static final Variable PLATFORM =
+      v("shop", "TEXT", "The platform's name, as it invoices — this notice is from it");
+
+  private static final List<Variable> BILLING_VARIABLES =
+      List.of(
+          v("invoice", "TEXT", "The invoice's number"),
+          v("amount_due", "MONEY", "What is left to pay on it"),
+          v("due_date", "DAY", "The day it was due"),
+          v("days_overdue", "NUMBER", "How many days past that day the notice went"),
+          v(
+              "pay_link",
+              "TEXT",
+              "A link that pays the invoice with no sign-in; the newest one is the one that works"),
+          v(
+              "suspend_on",
+              "DAY",
+              "The day the service is interrupted if it stays unpaid; absent once it has been"),
+          PLATFORM);
+
+  private static Values billingSample() {
+    return Values.of()
+        .text("invoice", "INV-2026-000041")
+        .money("amount_due", new BigDecimal("29.00"), "EUR")
+        .day("due_date", LocalDate.of(2026, 9, 15))
+        .number("days_overdue", new BigDecimal("3"))
+        .text("pay_link", "https://app.example/#/pay/9m2xKq1vT8sHc4bYw7Lp3Q")
+        .day("suspend_on", LocalDate.of(2026, 9, 29))
+        .text("shop", "StoreQL Platform Ltd");
+  }
+
+  static final MessageType INVOICE_OVERDUE =
+      new MessageType(
+          "INVOICE_OVERDUE",
+          "Invoice overdue",
+          Audience.STAFF,
+          "From the platform to the business's billing address when an invoice for the platform"
+              + " itself is past its date: a reminder at each day the dunning policy names.",
+          BILLING_VARIABLES,
+          List.of(
+              new FormSpec(
+                  Form.EMAIL,
+                  "Invoice {{invoice}} is overdue: {{amount_due}}",
+                  "Invoice {{invoice}} for {{amount_due}} was due on {{due_date}} and has not been"
+                      + " paid.\n\nPay it here, no sign-in needed:\n{{pay_link}}\n\n{{#suspend_on}}If"
+                      + " it is still unpaid on {{suspend_on}}, your service will be interrupted"
+                      + " until it is paid.{{/suspend_on}}{{^suspend_on}}Paying it brings your service"
+                      + " back at once.{{/suspend_on}}\n\nIf you have already paid, or need more"
+                      + " time, reply to this message.\n\n— {{shop}}",
+                  BILLING_PARTS)),
+          Catalogue::billingSample);
+
+  static final MessageType SERVICE_SUSPENDED =
+      new MessageType(
+          "SERVICE_SUSPENDED",
+          "Service interrupted",
+          Audience.STAFF,
+          "From the platform to the business's billing address the day its service is interrupted"
+              + " for non-payment: what is owed, and the link that brings the service back.",
+          BILLING_VARIABLES,
+          List.of(
+              new FormSpec(
+                  Form.EMAIL,
+                  "Your service is interrupted: invoice {{invoice}} is unpaid",
+                  "Invoice {{invoice}} for {{amount_due}}, due on {{due_date}}, is still unpaid, so"
+                      + " your service is interrupted: your staff cannot sign in and your storefront"
+                      + " is closed.\n\nPaying it brings everything back at once, no sign-in"
+                      + " needed:\n{{pay_link}}\n\nIf you believe this is a mistake, reply to this"
+                      + " message.\n\n— {{shop}}",
+                  BILLING_PARTS)),
+          Catalogue::billingSample);
+
   private static final Map<String, MessageType> ALL = new LinkedHashMap<>();
 
   static {
@@ -527,7 +605,9 @@ public final class Catalogue {
             STORE_TASK_MISSED,
             STORE_NOTICE_URGENT,
             RECALL_OPENED,
-            PAYMENT_DISPUTE_OPENED)) {
+            PAYMENT_DISPUTE_OPENED,
+            INVOICE_OVERDUE,
+            SERVICE_SUSPENDED)) {
       ALL.put(t.key(), t);
     }
   }

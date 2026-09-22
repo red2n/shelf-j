@@ -128,6 +128,19 @@ void main() {
     expect(find.byKey(const Key('note-ending')), findsNothing);
   });
 
+  testWidgets('where the platform\'s notices go is said, and its absence is a warning', (tester) async {
+    await _pump(tester, subscription: _subscription(), invoices: _invoices());
+    expect(find.text('Invoices and payment notices go to owner@example.com.'), findsOneWidget);
+
+    final none = _subscription();
+    (none['subscription'] as Map<String, dynamic>)['billingEmail'] = null;
+    await _pump(tester, subscription: none, invoices: _invoices());
+    expect(
+      find.text('No billing email: the platform cannot tell you when an invoice is late.'),
+      findsOneWidget,
+    );
+  });
+
   testWidgets('an unchecked VAT number says that VAT is being charged because of it', (tester) async {
     // The consequence is money, so it is said and not implied.
     await _pump(

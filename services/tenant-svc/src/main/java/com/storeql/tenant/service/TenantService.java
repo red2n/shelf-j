@@ -71,8 +71,11 @@ public class TenantService {
    * ownerUserId). Also publishes UserRoleGranted to ensure the creator has OWNER role (flow guard:
    * user has no tenant claim in JWT yet, so they need role update before they can access admin
    * endpoints).
+   *
+   * @param ownerEmail the address the owner signed up with, or null when the gateway stamped none:
+   *     where the business's billing notices go until it names another (21.12)
    */
-  public Tenant createTenant(UUID ownerUserId, CreateTenantRequest req) {
+  public Tenant createTenant(UUID ownerUserId, String ownerEmail, CreateTenantRequest req) {
     UUID tenantId = Ids.newId();
     Instant nowTenant = Instant.now();
     var tenant =
@@ -110,7 +113,7 @@ public class TenantService {
     // is a commercial problem somebody can fix afterwards, where a sign-up that fails because the
     // platform has not filled in its own VAT details is a customer lost at the door.
     try {
-      subscriptions.start(tenantId, java.time.LocalDate.now(), ownerUserId);
+      subscriptions.start(tenantId, java.time.LocalDate.now(), ownerUserId, ownerEmail);
     } catch (RuntimeException e) {
       LOG.log(
           System.Logger.Level.WARNING,
@@ -137,13 +140,13 @@ public class TenantService {
    * Combined onboarding: create tenant + first store in one shot. The tenantId is generated here so
    * the store call never needs it from the JWT — avoids the Kafka async race entirely.
    */
-  public TenantWithStore onboard(UUID ownerUserId, OnboardRequest req) {
+  public TenantWithStore onboard(UUID ownerUserId, String ownerEmail, OnboardRequest req) {
     // Checked before the tenant exists: a refused zone must not leave a business with no store.
     requireTimezone(req.storeTimezone());
     // 1. create tenant (generates tenantId internally)
     CreateTenantRequest tenantReq =
         new CreateTenantRequest(req.businessName(), req.legalName(), req.country(), req.currency());
-    Tenant tenant = createTenant(ownerUserId, tenantReq);
+    Tenant tenant = createTenant(ownerUserId, ownerEmail, tenantReq);
 
     // 2. create the first store using the freshly generated tenantId — no JWT needed
     CreateStoreRequest storeReq =

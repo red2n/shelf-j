@@ -709,6 +709,9 @@ services:
       # in k8s, where a platform administrator being able to bill next March is not a feature but a
       # way to issue an invoice nobody owes yet.
       storeql.billing.test-clock.enabled: "true"
+      # The pay link in a dunning notice opens the web app from outside (21.12): the address a
+      # business's owner can reach, not the container's.
+      storeql.platform.web-url: ${UI_PUBLIC_URL:-http://localhost:${UI_HOST_PORT:-8088}}
     mem_limit: ${TENANT_MEM_LIMIT:-700m}
     networks: [storeql_network]
     depends_on: *svc-depends

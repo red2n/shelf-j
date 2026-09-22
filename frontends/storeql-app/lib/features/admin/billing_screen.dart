@@ -61,6 +61,8 @@ class Subscription {
   final bool cancelAtPeriodEnd;
   final bool changePending;
   final BillingBuyer? buyer;
+  /// Where the platform's invoices and notices go: the owner's sign-up address until changed.
+  final String? billingEmail;
 
   const Subscription({
     required this.status,
@@ -75,6 +77,7 @@ class Subscription {
     required this.cancelAtPeriodEnd,
     required this.changePending,
     required this.buyer,
+    this.billingEmail,
   });
 
   factory Subscription.fromJson(Map<String, dynamic> j) => Subscription(
@@ -90,6 +93,7 @@ class Subscription {
         cancelAtPeriodEnd: j['cancelAtPeriodEnd'] == true,
         changePending: j['pendingPlanId'] != null,
         buyer: j['buyer'] == null ? null : BillingBuyer.fromJson(Map<String, dynamic>.from(j['buyer'] as Map)),
+        billingEmail: j['billingEmail'] as String?,
       );
 
   bool get trialing => status == 'TRIALING';
@@ -289,6 +293,19 @@ class _SubscriptionCard extends StatelessWidget {
                 ),
               ),
             ],
+            // Where a late-payment notice goes (21.12). Said here because a business that never
+            // sees one is suspended without warning, and the address is the owner's from sign-up
+            // unless somebody changed it.
+            const SizedBox(height: 8),
+            Text(
+              s.billingEmail == null || s.billingEmail!.isEmpty
+                  ? 'No billing email: the platform cannot tell you when an invoice is late.'
+                  : 'Invoices and payment notices go to ${s.billingEmail}.',
+              key: const Key('billing-email'),
+              style: text.bodySmall?.copyWith(
+                color: s.billingEmail == null || s.billingEmail!.isEmpty ? cs.error : cs.outline,
+              ),
+            ),
           ],
         ),
       ),
