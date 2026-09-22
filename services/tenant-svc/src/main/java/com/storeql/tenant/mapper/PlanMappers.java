@@ -1,5 +1,6 @@
 package com.storeql.tenant.mapper;
 
+import com.storeql.tenant.domain.Meters;
 import com.storeql.tenant.domain.Plans;
 import com.storeql.tenant.domain.Plans.Grant;
 import com.storeql.tenant.domain.Plans.PlanFile;
@@ -37,7 +38,24 @@ public final class PlanMappers {
                     new PlanDtos.PriceResponse(
                         price.currency(), price.amount(), price.effectiveFrom().toString()))
             .toList(),
-        f.grants().stream().map(PlanMappers::toDto).toList());
+        f.grants().stream().map(PlanMappers::toDto).toList(),
+        f.meters().stream().map(PlanMappers::toDto).toList(),
+        f.meterPrices().stream()
+            .map(
+                mp ->
+                    new PlanDtos.MeterPriceResponse(
+                        mp.meter(), mp.currency(), mp.unitAmount(), mp.effectiveFrom().toString()))
+            .toList());
+  }
+
+  private static PlanDtos.PlanMeterResponse toDto(Meters.PlanMeter m) {
+    Meters.Meter meter = Meters.meter(m.meter()).orElse(null);
+    return new PlanDtos.PlanMeterResponse(
+        m.meter(),
+        meter == null ? m.meter() : meter.label(),
+        meter == null ? null : meter.unit(),
+        m.included(),
+        m.hard());
   }
 
   private static PlanDtos.GrantResponse toDto(Grant g) {

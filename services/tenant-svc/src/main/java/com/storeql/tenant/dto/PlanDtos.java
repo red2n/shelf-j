@@ -85,12 +85,32 @@ public final class PlanDtos {
       boolean isPublic,
       int sortOrder,
       List<PriceResponse> prices,
-      List<GrantResponse> includes) {
+      List<GrantResponse> includes,
+      @Schema(description = "What it includes of each meter each billing period (21.10)")
+          List<PlanMeterResponse> meters,
+      @Schema(description = "What each unit beyond the included costs, per currency, from a date")
+          List<MeterPriceResponse> meterPrices) {
     public PlanResponse {
       prices = List.copyOf(prices);
       includes = List.copyOf(includes);
+      meters = List.copyOf(meters);
+      meterPrices = List.copyOf(meterPrices);
     }
   }
+
+  /**
+   * What a plan includes of one meter.
+   *
+   * @param included how many each billing period; null means unlimited
+   * @param hard whether use beyond it is refused rather than charged
+   */
+  @Schema(name = "PlanMeter")
+  public record PlanMeterResponse(
+      String meter, String label, String unit, Long included, boolean hard) {}
+
+  @Schema(name = "PlanMeterPrice")
+  public record MeterPriceResponse(
+      String meter, String currency, BigDecimal unitAmount, String effectiveFrom) {}
 
   /**
    * One limit against what the business is using.
@@ -132,4 +152,51 @@ public final class PlanDtos {
 
   @Schema(name = "PlanEntitlementKey")
   public record CatalogueEntry(String key, String label, boolean limit, String enforcedBy) {}
+
+  // ── metered usage (21.10) ───────────────────────────────────────────────────
+
+  /**
+   * What a plan includes of one meter.
+   *
+   * @param included how many each billing period; absent means unlimited
+   * @param hard whether use beyond it is refused rather than charged; only a refusable meter may be
+   */
+  @Schema(name = "PlanMeterRequest")
+  public record PlanMeterRequest(
+      @NotBlank @Size(max = 20) String meter, @Min(0) Long included, Boolean hard) {}
+
+  /**
+   * What a plan includes of each meter, replaced whole: a meter left out is one it does not name.
+   */
+  @Schema(name = "PlanMetersRequest")
+  public record PlanMetersRequest(@NotNull @Size(max = 20) List<PlanMeterRequest> meters) {
+    public PlanMetersRequest {
+      meters = meters == null ? List.of() : List.copyOf(meters);
+    }
+  }
+
+  /** What one unit beyond the included costs, in a currency, from a date. */
+  @Schema(name = "PlanMeterPriceRequest")
+  public record MeterPriceRequest(
+      @NotBlank @Size(max = 20) String meter,
+      @Schema(description = "ISO 4217.") @NotBlank @Size(min = 3, max = 3) String currency,
+      @Schema(description = "Per unit beyond the included, before tax; up to four places.")
+          @NotNull
+          @DecimalMin("0")
+          @Digits(integer = 14, fraction = 4)
+          BigDecimal unitAmount,
+      @Schema(description = "ISO date; today when absent. An earlier price is never edited.")
+          @Size(max = 10)
+          String effectiveFrom) {}
+
+  @Schema(name = "PlanMeterKeys")
+  public record MeterCatalogueResponse(List<MeterCatalogueEntry> meters) {
+    public MeterCatalogueResponse {
+      meters = List.copyOf(meters);
+    }
+  }
+
+  @Schema(name = "PlanMeterKey")
+  public record MeterCatalogueEntry(
+      String key, String label, String unit, boolean refusable, String countedBy) {}
 }

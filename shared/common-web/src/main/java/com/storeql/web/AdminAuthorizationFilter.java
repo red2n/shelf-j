@@ -35,7 +35,8 @@ import java.util.Set;
  *             {@code GET /admin/products/variants/resolve}
  *         <li>Reads one service makes of another under a staff identity: {@code GET
  *             /admin/tenant/obligations}, {@code GET /admin/tenant/retention}, {@code GET
- *             /admin/tenant/plan/limits} — each the leaf only, never the subtree it sits in
+ *             /admin/tenant/plan/limits}, {@code GET /admin/tenant/usage/allowance} — each the leaf
+ *             only, never the subtree it sits in
  *       </ul>
  *       Without this tier, STOREKEEPER could not receive stock and CASHIER could not open a till,
  *       even though the resource classes intentionally allow those roles.
@@ -613,6 +614,11 @@ public class AdminAuthorizationFilter implements ContainerRequestFilter {
       // enforced outside tenant-svc silently enforced nothing — the SJ-D10 shape again, an
       // authorisation claim that reads as correct and is never executed.
       if ("/admin/tenant/plan/limits".equals(path)) return true;
+      // Whether one more of a metered thing may be done (21.10): notification-svc asks before a
+      // marketing text, under a staff identity, as product-svc asks for its limit above. Only the
+      // answer; what the business used, what it costs and every write stay management work — and
+      // left off this list, the quota would fail open and never refuse anything (SJ-D65's shape).
+      if ("/admin/tenant/usage/allowance".equals(path)) return true;
       if (pathEqualsOrUnder(path, "/admin/stores")) return true;
       if ("/admin/products/variants/resolve".equals(path)) return true;
     }

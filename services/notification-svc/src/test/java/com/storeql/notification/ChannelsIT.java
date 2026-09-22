@@ -135,6 +135,41 @@ class ChannelsIT {
     assertThat(log("SMTP").toString(), not(containsString("+447700900123")));
   }
 
+  /** The parts of every text announced for this business so far, oldest first (21.10). */
+  private static java.util.List<Integer> announcedParts() {
+    try (var c = java.sql.DriverManager.getConnection(PG.jdbcUrl(), PG.username(), PG.password());
+        var ps =
+            c.prepareStatement(
+                "SELECT payload FROM notification.outbox WHERE event_type = 'SmsSent'"
+                    + " AND tenant_id = ?::uuid ORDER BY created_at, id")) {
+      ps.setString(1, T);
+      java.util.List<Integer> parts = new java.util.ArrayList<>();
+      try (var rs = ps.executeQuery()) {
+        while (rs.next()) parts.add(json(rs.getString(1)).getInt("parts"));
+      }
+      return parts;
+    } catch (java.sql.SQLException e) {
+      throw new IllegalStateException(e);
+    }
+  }
+
+  @Test
+  @DisplayName("Every text sent is announced for the meter, in the parts the carrier bills")
+  void everyTextIsMetered() {
+    int before = announcedParts().size();
+    String longGsm = "A".repeat(200);
+    assertThat(send(text("+447700900124", longGsm, "")).getStatus(), is(202));
+    // One letter outside the GSM alphabet sends the whole text as UCS-2: 70 to a part.
+    assertThat(
+        send(text("+447700900124", "Zamówienie gotowe. Dziękujemy!", "")).getStatus(), is(202));
+    // Refused before it was sent: nothing to meter.
+    assertThat(send(text("07700 900124", "no", "")).getStatus(), is(400));
+    java.util.List<Integer> parts = announcedParts();
+    assertThat(parts.size(), is(before + 2));
+    assertThat("200 GSM characters are two parts of 153", parts.get(before), is(2));
+    assertThat(parts.get(before + 1), is(1));
+  }
+
   @Test
   @DisplayName(
       "A number that is not E.164, a body over 1600 characters, an unknown channel: refused")

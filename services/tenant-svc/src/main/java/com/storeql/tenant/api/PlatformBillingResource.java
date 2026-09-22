@@ -1,7 +1,9 @@
 package com.storeql.tenant.api;
 
 import com.storeql.tenant.dto.BillingDtos;
+import com.storeql.tenant.dto.UsageDtos;
 import com.storeql.tenant.mapper.BillingMappers;
+import com.storeql.tenant.mapper.UsageMappers;
 import com.storeql.tenant.service.BillingService;
 import com.storeql.web.ApiException;
 import com.storeql.web.ApiResponse;
@@ -40,6 +42,7 @@ public class PlatformBillingResource {
 
   @Inject BillingService svc;
   @Inject com.storeql.tenant.service.SubscriptionService subscriptions;
+  @Inject com.storeql.tenant.service.UsageService usage;
   @Inject TenantContext ctx;
 
   /**
@@ -136,6 +139,32 @@ public class PlatformBillingResource {
   }
 
   // ── what is owed, and what has come in ──────────────────────────────────────
+
+  // ── metered usage (21.10) ───────────────────────────────────────────────────
+
+  @Operation(
+      summary = "What one business has used this period, and before",
+      description = "The same reading the business has, for the platform answering its questions.")
+  @GET
+  @Path("/tenants/{tenantId}/usage")
+  public ApiResponse<UsageDtos.UsageResponse> usageOf(@PathParam("tenantId") UUID tenantId) {
+    ctx.requireAnyRole("PLATFORM_ADMIN");
+    return ApiResponse.ok(UsageMappers.toDto(usage.summary(tenantId)));
+  }
+
+  @Operation(
+      summary = "The businesses nearing or past what their plan includes, newest first",
+      description =
+          "Every threshold reached — 80%, then 100% of a meter's allowance, once per period — across"
+              + " businesses: who is about to outgrow a plan, before the invoice says so.")
+  @GET
+  @Path("/usage-alerts")
+  public ApiResponse<List<UsageDtos.TenantAlertView>> usageAlerts(
+      @QueryParam("limit") Integer limit) {
+    ctx.requireAnyRole("PLATFORM_ADMIN");
+    return ApiResponse.ok(
+        usage.recentAlerts(limit).stream().map(UsageMappers::acrossBusinesses).toList());
+  }
 
   @Operation(
       summary = "The invoices that are still owed, oldest first",

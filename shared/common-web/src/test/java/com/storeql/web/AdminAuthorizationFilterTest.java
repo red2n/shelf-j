@@ -691,6 +691,30 @@ class AdminAuthorizationFilterTest {
     assertNotAborted(invoke("POST", "/billing/pay/AbC123-token_value"));
   }
 
+  // ── 21.10: whether one more metered thing may be done, read service-to-service ──
+
+  @Test
+  void aUsageAllowanceIsStaffReadableAndWhatWasUsedIsManagement() throws Exception {
+    // notification-svc asks this before a marketing text, as STOREKEEPER. Left off the staff
+    // tier, the call would be refused, Quotas would fail open, and a hard quota would never refuse
+    // anything — SJ-D65 exactly, so it is pinned here the day it is added.
+    ctx.set(null, null, Set.of("STOREKEEPER"), null, null);
+    assertNotAborted(invoke("GET", "/admin/tenant/usage/allowance"));
+    // The leaf only. What the business used, and what it costs, are management's.
+    assertAborted(invoke("GET", "/admin/tenant/usage"), 403);
+    assertAborted(invoke("GET", "/admin/tenant/usage/allowance/SMS"), 403);
+    assertAborted(invoke("GET", "/admin/tenant/usage/allowances"), 403);
+    // A read, never a write.
+    assertAborted(invoke("PUT", "/admin/tenant/usage/allowance"), 403);
+    assertAborted(invoke("POST", "/admin/tenant/usage/allowance"), 403);
+    // A shopper is not staff.
+    ctx.set(null, null, Set.of("CUSTOMER"), null, null);
+    assertAborted(invoke("GET", "/admin/tenant/usage/allowance"), 403);
+    // Management reads the whole of it.
+    ctx.set(null, null, Set.of("MANAGER"), null, null);
+    assertNotAborted(invoke("GET", "/admin/tenant/usage"));
+  }
+
   // ── 21.8: what the plan allows, read service-to-service ──────────────────────
 
   @Test
