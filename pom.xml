@@ -14,7 +14,7 @@
     <parent>
         <groupId>io.helidon.applications</groupId>
         <artifactId>helidon-mp</artifactId>
-        <version>4.5.4</version>
+        <version>4.5.5</version>
         <relativePath/>
     </parent>
 
@@ -216,7 +216,7 @@
             <dependency>
                 <groupId>io.helidon.microprofile</groupId>
                 <artifactId>helidon-microprofile-fault-tolerance</artifactId>
-                <version>4.5.4</version>
+                <version>4.5.5</version>
             </dependency>
 
             <!-- Quality: ArchUnit — architecture rule tests (used in common-test + each service) -->
