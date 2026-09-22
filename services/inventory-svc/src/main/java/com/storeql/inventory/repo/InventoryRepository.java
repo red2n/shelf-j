@@ -14,6 +14,8 @@ import com.storeql.inventory.domain.Domain.PickingRuleZonePriority;
 import com.storeql.inventory.domain.Domain.Reservation;
 import com.storeql.inventory.domain.Domain.TransferOrder;
 import com.storeql.inventory.domain.Domain.TransferOrderLine;
+import com.storeql.inventory.domain.Provenance;
+import com.storeql.inventory.domain.Provenance.Drawn;
 import com.storeql.service.BaseOutboxRepository;
 import com.storeql.service.OutboxRow;
 import com.storeql.web.ApiException;
@@ -26,12 +28,16 @@ import java.sql.ResultSet;
 import java.sql.SQLException;
 import java.sql.Savepoint;
 import java.time.Instant;
+import java.time.LocalDate;
 import java.time.OffsetDateTime;
 import java.time.ZoneOffset;
 import java.util.ArrayList;
+import java.util.HashMap;
 import java.util.List;
+import java.util.Map;
 import java.util.Optional;
 import java.util.UUID;
+import java.util.function.Function;
 
 /**
  * Stock persistence (JDBC). All mutations are transactional and append a {@code stock_movements}
@@ -110,15 +116,6 @@ public class InventoryRepository extends BaseOutboxRepository {
       UUID refId,
       OutboxRow event) {
     return receiveOnce(dedupeId, consumerName, batch, refType, refId, event, false);
-  }
-
-  /**
-   * A customer return received back, taking back the revenue and cost its sale recorded (19.7), in
-   * the receipt's own transaction.
-   */
-  public boolean receiveReturnOnce(
-      UUID dedupeId, String consumerName, Batch batch, UUID orderId, OutboxRow event) {
-    return receiveOnce(dedupeId, consumerName, batch, "RETURN", orderId, event, true);
   }
 
   private boolean receiveOnce(
@@ -1182,7 +1179,7 @@ public class InventoryRepository extends BaseOutboxRepository {
    * Batch deduction: walk batches in strategy-defined order WITH FOR UPDATE, decrement remaining,
    * log movement per batch. Strategy defaults to FEFO when null.
    */
-  private void deductFifo(
+  private List<Drawn> deductFifo(
       Connection c,
       UUID tenantId,
       UUID storeId,
@@ -1193,7 +1190,7 @@ public class InventoryRepository extends BaseOutboxRepository {
       UUID refId,
       MovementAttribution attribution)
       throws SQLException {
-    deductBatches(
+    return deductBatches(
         c,
         tenantId,
         storeId,
@@ -1208,7 +1205,11 @@ public class InventoryRepository extends BaseOutboxRepository {
         attribution);
   }
 
-  void deductBatches(
+  /**
+   * @return what was drawn from which batch, in draw order — what a transfer or a move must carry
+   *     to where the stock goes (SJ-D71)
+   */
+  List<Drawn> deductBatches(
       Connection c,
       UUID tenantId,
       UUID storeId,
@@ -1224,10 +1225,12 @@ public class InventoryRepository extends BaseOutboxRepository {
       throws SQLException {
     String orderBy = pickOrderClause(strategy, gradePreference, zonePriorityOrder);
     BigDecimal toDeduct = qty;
-    List<Object[]> batches = new ArrayList<>();
+    List<Drawn> batches = new ArrayList<>();
+    List<Drawn> drawn = new ArrayList<>();
     try (PreparedStatement ps =
         c.prepareStatement(
-            "SELECT id, remaining_qty FROM inventory_batches"
+            "SELECT id, remaining_qty, batch_no, expiry_date, cost_price, grade"
+                + " FROM inventory_batches"
                 + " WHERE tenant_id=? AND store_id=? AND variant_id=? AND remaining_qty > 0"
                 + " AND material_status='AVAILABLE'"
                 + " ORDER BY "
@@ -1237,16 +1240,23 @@ public class InventoryRepository extends BaseOutboxRepository {
       ps.setObject(2, storeId);
       ps.setObject(3, variantId);
       try (ResultSet rs = ps.executeQuery()) {
-        while (rs.next())
+        while (rs.next()) {
           batches.add(
-              new Object[] {rs.getObject("id", UUID.class), rs.getBigDecimal("remaining_qty")});
+              new Drawn(
+                  rs.getObject("id", UUID.class),
+                  rs.getBigDecimal("remaining_qty"),
+                  rs.getString("batch_no"),
+                  rs.getObject("expiry_date", LocalDate.class),
+                  rs.getBigDecimal("cost_price"),
+                  rs.getString("grade")));
+        }
       }
     }
-    for (Object[] row : batches) {
+    for (Drawn row : batches) {
       if (toDeduct.signum() <= 0) break;
-      UUID batchId = (UUID) row[0];
-      BigDecimal remaining = (BigDecimal) row[1];
-      BigDecimal take = remaining.min(toDeduct);
+      UUID batchId = row.batchId();
+      BigDecimal take = row.qty().min(toDeduct);
+      drawn.add(row.of(take));
       try (PreparedStatement ps =
           c.prepareStatement(
               "UPDATE inventory_batches SET remaining_qty = remaining_qty - ? WHERE id = ?")) {
@@ -1271,6 +1281,240 @@ public class InventoryRepository extends BaseOutboxRepository {
       throw ApiException.unprocessable(
           "INSUFFICIENT_STOCK", "Short by " + toDeduct.toPlainString() + " during deduction");
     }
+    return drawn;
+  }
+
+  // ---------------------------------------------------------------- provenance (SJ-D71)
+
+  /**
+   * What a document drew from which batches, read back from the ledger: the negative movements it
+   * left on the source store, each joined to the batch it came from. This is how stock in transit
+   * knows what it is when it arrives, and how a return knows which lot its goods were sold from.
+   */
+  private List<Drawn> drawnBy(
+      Connection c,
+      UUID tenantId,
+      UUID storeId,
+      UUID variantId,
+      String moveType,
+      String refType,
+      UUID refId)
+      throws SQLException {
+    List<Drawn> out = new ArrayList<>();
+    try (PreparedStatement ps =
+        c.prepareStatement(
+            "SELECT m.batch_id, -m.qty AS qty, b.batch_no, b.expiry_date, b.cost_price, b.grade"
+                + " FROM stock_movements m JOIN inventory_batches b ON b.id = m.batch_id"
+                + " WHERE m.tenant_id=? AND m.store_id=? AND m.variant_id=? AND m.type=?"
+                + " AND m.ref_type=? AND m.ref_id=? AND m.qty < 0"
+                + " ORDER BY m.created_at, m.id")) {
+      ps.setObject(1, tenantId);
+      ps.setObject(2, storeId);
+      ps.setObject(3, variantId);
+      ps.setString(4, moveType);
+      ps.setString(5, refType);
+      ps.setObject(6, refId);
+      try (ResultSet rs = ps.executeQuery()) {
+        while (rs.next()) {
+          out.add(
+              new Drawn(
+                  rs.getObject("batch_id", UUID.class),
+                  rs.getBigDecimal("qty"),
+                  rs.getString("batch_no"),
+                  rs.getObject("expiry_date", LocalDate.class),
+                  rs.getBigDecimal("cost_price"),
+                  rs.getString("grade")));
+        }
+      }
+    }
+    return out;
+  }
+
+  /**
+   * What earlier returns and voids of an order already put back, by the batch it was sold from:
+   * each came back as a child of that batch, so the genealogy says which parent it counts against.
+   */
+  private Map<UUID, BigDecimal> givenBack(Connection c, UUID tenantId, UUID variantId, UUID orderId)
+      throws SQLException {
+    Map<UUID, BigDecimal> out = new HashMap<>();
+    try (PreparedStatement ps =
+        c.prepareStatement(
+            "SELECT g.parent_batch_id, SUM(m.qty) AS qty"
+                + " FROM stock_movements m JOIN lot_genealogy g ON g.child_batch_id = m.batch_id"
+                + " WHERE m.tenant_id=? AND m.variant_id=? AND m.ref_id=? AND m.type=?"
+                + " AND m.ref_type IN ('RETURN','VOID') GROUP BY g.parent_batch_id")) {
+      ps.setObject(1, tenantId);
+      ps.setObject(2, variantId);
+      ps.setObject(3, orderId);
+      ps.setString(4, MoveType.RECEIVE);
+      try (ResultSet rs = ps.executeQuery()) {
+        while (rs.next()) {
+          out.put(rs.getObject("parent_batch_id", UUID.class), rs.getBigDecimal("qty"));
+        }
+      }
+    }
+    return out;
+  }
+
+  /** The link that says which batch this one came from, written beside the arrival. */
+  private void insertGenealogy(
+      Connection c, UUID tenantId, UUID parentId, UUID childId, BigDecimal qty, String notes)
+      throws SQLException {
+    try (PreparedStatement ps =
+        c.prepareStatement(
+            "INSERT INTO lot_genealogy"
+                + " (id, tenant_id, parent_batch_id, child_batch_id, qty, relation_type, notes)"
+                + " VALUES (?,?,?,?,?,'SPLIT',?)")) {
+      ps.setObject(1, Ids.newId());
+      ps.setObject(2, tenantId);
+      ps.setObject(3, parentId);
+      ps.setObject(4, childId);
+      ps.setBigDecimal(5, qty);
+      ps.setString(6, notes);
+      ps.executeUpdate();
+    }
+  }
+
+  /**
+   * Receives what a document drew, one batch per source batch, each carrying its source's lot,
+   * date, cost and grade and linked to it — so the expiring view, a recall and the margin report
+   * see moved stock as what it is (SJ-D71).
+   *
+   * @param fallbackNo the number for an arrival whose source had no lot to carry
+   * @param eventFor the outbox event each arrival announces, or null for documents that announce
+   *     themselves once
+   * @return the batches that arrived
+   */
+  private List<Batch> receiveDrawn(
+      Connection c,
+      UUID tenantId,
+      UUID storeId,
+      UUID variantId,
+      List<Drawn> drawn,
+      String fallbackNo,
+      String moveType,
+      String refType,
+      UUID refId,
+      Function<Batch, OutboxRow> eventFor)
+      throws SQLException {
+    List<Batch> arrived = new ArrayList<>();
+    for (Drawn from : drawn) {
+      Batch child = Provenance.arrival(tenantId, storeId, variantId, from, fallbackNo);
+      insertBatch(c, child);
+      insertMovement(
+          c,
+          tenantId,
+          storeId,
+          variantId,
+          child.id(),
+          moveType,
+          child.receivedQty(),
+          refType,
+          refId,
+          MovementAttribution.system());
+      insertGenealogy(
+          c, tenantId, from.batchId(), child.id(), child.receivedQty(), refType + " " + refId);
+      if (eventFor != null) insertOutbox(c, eventFor.apply(child));
+      arrived.add(child);
+    }
+    return arrived;
+  }
+
+  /** Receives an anonymous batch: stock arriving with no source to carry anything from. */
+  private Batch receiveAnonymous(
+      Connection c,
+      UUID tenantId,
+      UUID storeId,
+      UUID variantId,
+      BigDecimal qty,
+      String fallbackNo,
+      String moveType,
+      String refType,
+      UUID refId,
+      Function<Batch, OutboxRow> eventFor)
+      throws SQLException {
+    Batch batch = Provenance.anonymous(tenantId, storeId, variantId, qty, fallbackNo);
+    insertBatch(c, batch);
+    insertMovement(
+        c,
+        tenantId,
+        storeId,
+        variantId,
+        batch.id(),
+        moveType,
+        qty,
+        refType,
+        refId,
+        MovementAttribution.system());
+    if (eventFor != null) insertOutbox(c, eventFor.apply(batch));
+    return batch;
+  }
+
+  /**
+   * Goods coming back from an order — a customer return, or a voided till sale — received under the
+   * lot they were sold from, deduped on {@code dedupeId} when one is given.
+   *
+   * <p>The sale's draws say which batches the goods came from; each takes back its share, less what
+   * earlier returns already put back on it, as a child batch carrying its lot, date and cost. What
+   * the draws cannot account for — more than was sold, or a sale this service never saw — comes
+   * back as the anonymous return it always was, so nothing is refused and nothing is invented.
+   *
+   * @param reverseRevenue whether to take back the sale's revenue and cost (a return does; a void
+   *     has none to take back, since the fulfilment may not have arrived)
+   * @return false when {@code dedupeId} was already processed
+   */
+  public boolean receiveBackOnce(
+      UUID dedupeId,
+      String consumerName,
+      UUID tenantId,
+      UUID storeId,
+      UUID variantId,
+      BigDecimal qty,
+      UUID orderId,
+      String refType,
+      String fallbackNo,
+      Function<Batch, OutboxRow> eventFor,
+      boolean reverseRevenue) {
+    return inTx(
+        c -> {
+          if (dedupeId != null && !markProcessedIfNewTx(c, dedupeId, consumerName)) {
+            return false;
+          }
+          if (reverseRevenue) {
+            reverseRevenueTx(c, tenantId, storeId, variantId, orderId, qty);
+          }
+          List<Drawn> sold =
+              drawnBy(c, tenantId, storeId, variantId, MoveType.SALE, "ORDER", orderId);
+          List<Drawn> back =
+              Provenance.allocate(sold, givenBack(c, tenantId, variantId, orderId), qty);
+          receiveDrawn(
+              c,
+              tenantId,
+              storeId,
+              variantId,
+              back,
+              fallbackNo,
+              MoveType.RECEIVE,
+              refType,
+              orderId,
+              eventFor);
+          BigDecimal rest = Provenance.unplaced(qty, back);
+          if (rest.signum() > 0) {
+            receiveAnonymous(
+                c,
+                tenantId,
+                storeId,
+                variantId,
+                rest,
+                fallbackNo,
+                MoveType.RECEIVE,
+                refType,
+                orderId,
+                eventFor);
+          }
+          return true;
+        },
+        "receive back from order");
   }
 
   private Reservation loadReservationForUpdate(Connection c, UUID tenantId, UUID id)
@@ -1713,45 +1957,29 @@ public class InventoryRepository extends BaseOutboxRepository {
           }
           List<MoveOrderLine> lines = listMoveOrderLines(orderId);
           for (MoveOrderLine line : lines) {
-            deductFifo(
-                c,
-                tenantId,
-                order.fromStoreId(),
-                line.variantId(),
-                line.requestedQty(),
-                MoveType.TRANSFER,
-                "MOVE_ORDER",
-                orderId,
-                MovementAttribution.system());
-            Batch dest =
-                new Batch(
-                    Ids.newId(),
+            List<Drawn> drawn =
+                deductFifo(
+                    c,
                     tenantId,
-                    order.toStoreId(),
+                    order.fromStoreId(),
                     line.variantId(),
-                    "MO-" + Ids.shortRef(orderId),
                     line.requestedQty(),
-                    line.requestedQty(),
-                    null,
-                    null,
-                    Instant.now(),
-                    Batch.STATUS_ACTIVE,
-                    Batch.MATERIAL_AVAILABLE,
-                    null,
-                    null,
-                    null);
-            insertBatch(c, dest);
-            insertMovement(
+                    MoveType.TRANSFER,
+                    "MOVE_ORDER",
+                    orderId,
+                    MovementAttribution.system());
+            // What is put down is what was picked: each source batch's lot, date and cost.
+            receiveDrawn(
                 c,
                 tenantId,
                 order.toStoreId(),
                 line.variantId(),
-                dest.id(),
+                drawn,
+                "MO-" + Ids.shortRef(orderId),
                 MoveType.TRANSFER,
-                line.requestedQty(),
                 "MOVE_ORDER",
                 orderId,
-                MovementAttribution.system());
+                null);
           }
           MoveOrder completed;
           try (PreparedStatement ps =
@@ -1999,46 +2227,30 @@ public class InventoryRepository extends BaseOutboxRepository {
           boolean isDirect = TransferOrder.TYPE_DIRECT.equals(order.transferType());
 
           for (TransferOrderLine line : lines) {
-            deductFifo(
-                c,
-                tenantId,
-                order.fromStoreId(),
-                line.variantId(),
-                line.requestedQty(),
-                MoveType.TRANSFER,
-                "TRANSFER_ORDER",
-                orderId,
-                MovementAttribution.system());
+            List<Drawn> drawn =
+                deductFifo(
+                    c,
+                    tenantId,
+                    order.fromStoreId(),
+                    line.variantId(),
+                    line.requestedQty(),
+                    MoveType.TRANSFER,
+                    "TRANSFER_ORDER",
+                    orderId,
+                    MovementAttribution.system());
             if (isDirect) {
-              Batch dest =
-                  new Batch(
-                      Ids.newId(),
-                      tenantId,
-                      order.toStoreId(),
-                      line.variantId(),
-                      "TO-" + Ids.shortRef(orderId),
-                      line.requestedQty(),
-                      line.requestedQty(),
-                      null,
-                      null,
-                      Instant.now(),
-                      Batch.STATUS_ACTIVE,
-                      Batch.MATERIAL_AVAILABLE,
-                      null,
-                      null,
-                      null);
-              insertBatch(c, dest);
-              insertMovement(
+              // What arrives is what left: each source batch's lot, date and cost (SJ-D71).
+              receiveDrawn(
                   c,
                   tenantId,
                   order.toStoreId(),
                   line.variantId(),
-                  dest.id(),
+                  drawn,
+                  "TO-" + Ids.shortRef(orderId),
                   MoveType.TRANSFER,
-                  line.requestedQty(),
                   "TRANSFER_ORDER",
                   orderId,
-                  MovementAttribution.system());
+                  null);
             }
           }
 
@@ -2101,35 +2313,44 @@ public class InventoryRepository extends BaseOutboxRepository {
           List<TransferOrderLine> lines = listTransferOrderLines(orderId);
           for (TransferOrderLine line : lines) {
             BigDecimal qty = line.shippedQty() == null ? line.requestedQty() : line.shippedQty();
-            Batch dest =
-                new Batch(
-                    Ids.newId(),
+            // What arrives is what left the sending store, read back from the ledger the shipment
+            // wrote there: each source batch's lot, date and cost (SJ-D71). A shipment the ledger
+            // does not account for arrives as it always did.
+            List<Drawn> shipped =
+                drawnBy(
+                    c,
                     tenantId,
-                    order.toStoreId(),
+                    order.fromStoreId(),
                     line.variantId(),
-                    "TO-" + Ids.shortRef(orderId),
-                    qty,
-                    qty,
-                    null,
-                    null,
-                    Instant.now(),
-                    Batch.STATUS_ACTIVE,
-                    Batch.MATERIAL_AVAILABLE,
-                    null,
-                    null,
-                    null);
-            insertBatch(c, dest);
-            insertMovement(
-                c,
-                tenantId,
-                order.toStoreId(),
-                line.variantId(),
-                dest.id(),
-                MoveType.TRANSFER,
-                qty,
-                "TRANSFER_ORDER",
-                orderId,
-                MovementAttribution.system());
+                    MoveType.TRANSFER,
+                    "TRANSFER_ORDER",
+                    orderId);
+            String number = "TO-" + Ids.shortRef(orderId);
+            if (shipped.isEmpty()) {
+              receiveAnonymous(
+                  c,
+                  tenantId,
+                  order.toStoreId(),
+                  line.variantId(),
+                  qty,
+                  number,
+                  MoveType.TRANSFER,
+                  "TRANSFER_ORDER",
+                  orderId,
+                  null);
+            } else {
+              receiveDrawn(
+                  c,
+                  tenantId,
+                  order.toStoreId(),
+                  line.variantId(),
+                  shipped,
+                  number,
+                  MoveType.TRANSFER,
+                  "TRANSFER_ORDER",
+                  orderId,
+                  null);
+            }
           }
           try (PreparedStatement ps =
               c.prepareStatement(

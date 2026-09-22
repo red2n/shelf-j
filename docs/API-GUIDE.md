@@ -227,7 +227,7 @@ Nineteen resource classes covering the full stock/warehouse operations surface, 
 - `POST /admin/inventory/lots/split` — split a batch into two (spin off a partial quantity).
 - `POST /admin/inventory/lots/merge` — merge one batch's quantity into another.
 - `GET /admin/inventory/lots/{batchId}/actions` — audit history of split/merge actions on a batch.
-- `GET /admin/inventory/batches/expiring` — batches expiring within N days (default 30) for a store.
+- `GET /admin/inventory/batches/expiring` — batches expiring within N days (default 30) for a store. Since SJ-D71 this includes stock that arrived by transfer, move or return, which used to arrive with no date.
 - `PUT /admin/inventory/batches/{id}/grade` — set a batch's quality grade.
 - `POST /admin/inventory/serials/register` — register serial numbers against a received batch (explicit list or auto-generated with a prefix).
 - `GET /admin/inventory/serials` — list serial numbers (by store/variant/status).
@@ -269,12 +269,12 @@ Nineteen resource classes covering the full stock/warehouse operations surface, 
 ### Transfers & Move Orders
 - `POST /admin/inventory/transfers` — create an inter-store transfer order.
 - `GET /admin/inventory/transfers` / `.../{id}` — list/get transfer orders with lines.
-- `POST /admin/inventory/transfers/{id}/ship` — mark a transfer shipped from the source store.
-- `POST /admin/inventory/transfers/{id}/receive` — receive a transfer at the destination store.
+- `POST /admin/inventory/transfers/{id}/ship` — mark a transfer shipped from the source store. Stock is drawn FEFO from the source batches; a `DIRECT` transfer receives it at the destination in the same call, **one batch per source batch, carrying its lot, use-by date, cost and grade** (SJ-D71), each linked to its source in `lot_genealogy` (`SPLIT`, notes `TRANSFER_ORDER <id>`); a source with no supplier lot arrives under `TO-<ref>`, its date and cost still carried. So the expiring view, a recall on the lot (`IN_SCOPE`, not `LOT_UNKNOWN`) and gross margin all see moved stock as what it is.
+- `POST /admin/inventory/transfers/{id}/receive` — receive an `INTRANSIT` transfer at the destination store: what arrives is read back from the `TRANSFER` movements the shipment left at the source, so it carries the same lots, dates and costs as a direct transfer; a shipment the ledger does not account for arrives as one `TO-<ref>` batch.
 - `POST /admin/inventory/transfers/{id}/cancel` — cancel a transfer order.
 - `POST /admin/inventory/move-orders` — create an intra-store zone-to-zone move order.
 - `GET /admin/inventory/move-orders` / `.../{id}` — list/get move orders with lines.
-- `POST /admin/inventory/move-orders/{id}/pick` — pick/complete a move order.
+- `POST /admin/inventory/move-orders/{id}/pick` — pick/complete a move order: drawn FEFO and put down one batch per source batch with its lot, date, cost and grade and a genealogy link (`MOVE_ORDER <id>`); `MO-<ref>` only for stock with no lot.
 - `POST /admin/inventory/move-orders/{id}/cancel` — cancel a move order.
 
 ### Reservations (`/inventory/reservations`)
@@ -365,7 +365,7 @@ A withdrawal takes stock off sale; a recall also tells the customers who may hav
 - Public storefront endpoints expose only availability, never on-hand quantities.
 
 **Events**
-- Consumes: `GoodsReceived` (from purchase-svc), `OrderFulfilled`, `OrderReturned`, `OrderCancelled`, `OrderVoided` (from order-svc — deduct / restock / release hold / put back a voided till sale). A voided sale is received back as a `RECEIVE` movement with reference type `VOID` — distinct from a return's `RETURN` — because a sale voided after the money is taken and a customer return are different loss-prevention signals. It is received rather than reversed because the void and the fulfil arrive on different topics in either order, and a receipt and a deduction net to the same stock whichever lands first. Stock turn, gross margin, demand history and dead stock all exclude a sale whose order was voided. None of them nets it: the receipt goes into a new return batch, stock turn sums per batch, and a netted sale would leave its cost in one group and a negative sale in another. An `OrderVoided` from before this change has no lines and is skipped.
+- Consumes: `GoodsReceived` (from purchase-svc), `OrderFulfilled`, `OrderReturned`, `OrderCancelled`, `OrderVoided` (from order-svc — deduct / restock / release hold / put back a voided till sale). A voided sale is received back as a `RECEIVE` movement with reference type `VOID` — distinct from a return's `RETURN` — because a sale voided after the money is taken and a customer return are different loss-prevention signals. It is received rather than reversed because the void and the fulfil arrive on different topics in either order, and a receipt and a deduction net to the same stock whichever lands first. Stock turn, gross margin, demand history and dead stock all exclude a sale whose order was voided. None of them nets it: the receipt goes into a new return batch, stock turn sums per batch, and a netted sale would leave its cost in one group and a negative sale in another. An `OrderVoided` from before this change has no lines and is skipped. A return or a void comes back **under the lot it was sold from** (SJ-D71): the sale's `SALE` movements say which batches the order drew, each takes back its share less what earlier returns already put back on it, as a child batch carrying that lot's date and cost; what the draws cannot account for comes back as `RET-<ref>`, as before.
 - Publishes: `StockReceived`, `StockReserved`, `StockReleased`, `StockDeducted`, `StockAdjusted`, `StockBelowThreshold`, `ReplenishmentSuggested`, `ReplenishmentResolved`, `SerialsRegistered`, `SerialStatusChanged`, `MaterialStatusChanged`, `TransferOrderShipped`, `TransferOrderReceived`, `TransferOrderCancelled`, `MoveOrderCompleted`, `MoveOrderCancelled`, `CycleCountAdjusted`, `PhysicalInventoryCreated`, `PhysicalInventoryCompleted`, `CostingMethodUpdated`, `AccountingPeriodOpened`, `AccountingPeriodClosed`, `KanbanTriggered`, `KanbanReplenished`, `KanbanCreated`, `RopPlanUpdated`, `RopComputed`, `LotSplit`, `LotMerge`, `FoodSafetyCheckFailed` (in the same transaction as the failing record; ids, reading and limits only), `FoodSafetyCheckOverdue`, `RecallOpened` (reference, kind, hazard and the ids of the stores whose stock was held; never the free-text reason or notice), `RecallSaleAffected` (05.10: one per order a RECALL reached — the notice and the offer travel with it, because the buyer is told what the recall said when it opened).
 
 ---

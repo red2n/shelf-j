@@ -265,10 +265,13 @@ public class InventoryService {
   // ---- Gap #50: POS→SIM receipt (order returned) ----
 
   /**
-   * Books returned goods back into stock as a return batch.
+   * Books returned goods back into stock under the lot they were sold from (SJ-D71).
    *
-   * <p>Returns land in their own batch rather than rejoining the one they were sold from: the
-   * original batch's cost and expiry are not necessarily what came back.
+   * <p>Returns land in their own batch rather than rejoining the one they were sold from, but as
+   * its child: the sale's draws say which batches the goods came from, and each share comes back
+   * carrying that batch's lot, use-by date and cost, so the expiring view, a recall and the margin
+   * report see returned stock as what it is. Goods the sale's draws cannot account for come back as
+   * the anonymous return they always were.
    *
    * @param tenantId owning tenant
    * @param storeId the store taking the goods back
@@ -278,8 +281,18 @@ public class InventoryService {
    */
   public void receiveReturnFromOrder(
       UUID tenantId, UUID storeId, UUID variantId, BigDecimal qty, UUID orderId) {
-    Batch batch = returnBatch(tenantId, storeId, variantId, qty, orderId);
-    repo.receive(batch, "RETURN", orderId, stockReceivedEvent(batch), null);
+    repo.receiveBackOnce(
+        null,
+        null,
+        tenantId,
+        storeId,
+        variantId,
+        qty,
+        orderId,
+        "RETURN",
+        "RET-" + Ids.shortRef(orderId),
+        InventoryService::stockReceivedEvent,
+        true);
   }
 
   /** {@link #receiveReturnFromOrder} deduped on {@code dedupeId} (see deductSaleFromOrderOnce). */
@@ -291,9 +304,18 @@ public class InventoryService {
       UUID variantId,
       BigDecimal qty,
       UUID orderId) {
-    Batch batch = returnBatch(tenantId, storeId, variantId, qty, orderId);
-    return repo.receiveReturnOnce(
-        dedupeId, consumerName, batch, orderId, stockReceivedEvent(batch));
+    return repo.receiveBackOnce(
+        dedupeId,
+        consumerName,
+        tenantId,
+        storeId,
+        variantId,
+        qty,
+        orderId,
+        "RETURN",
+        "RET-" + Ids.shortRef(orderId),
+        InventoryService::stockReceivedEvent,
+        true);
   }
 
   /**
@@ -315,9 +337,18 @@ public class InventoryService {
       UUID variantId,
       BigDecimal qty,
       UUID orderId) {
-    Batch batch = returnBatch(tenantId, storeId, variantId, qty, orderId);
-    return repo.receiveOnce(
-        dedupeId, consumerName, batch, "VOID", orderId, stockReceivedEvent(batch));
+    return repo.receiveBackOnce(
+        dedupeId,
+        consumerName,
+        tenantId,
+        storeId,
+        variantId,
+        qty,
+        orderId,
+        "VOID",
+        "RET-" + Ids.shortRef(orderId),
+        InventoryService::stockReceivedEvent,
+        false);
   }
 
   /**
@@ -418,26 +449,6 @@ public class InventoryService {
         amount,
         sourceType,
         sourceId);
-  }
-
-  private static Batch returnBatch(
-      UUID tenantId, UUID storeId, UUID variantId, BigDecimal qty, UUID orderId) {
-    return new Batch(
-        Ids.newId(),
-        tenantId,
-        storeId,
-        variantId,
-        "RET-" + Ids.shortRef(orderId),
-        qty,
-        qty,
-        null,
-        null,
-        Instant.now(),
-        Batch.STATUS_ACTIVE,
-        Batch.MATERIAL_AVAILABLE,
-        null,
-        null,
-        null);
   }
 
   private static OutboxRow stockReceivedEvent(Batch batch) {
