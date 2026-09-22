@@ -61,29 +61,46 @@ class FoodSafetyAlertHandlersTest {
     assertEquals(STORE.toString(), channel.recipient());
     assertEquals("Food safety check failed: Dairy chiller 1", channel.subject());
     assertEquals(
-        "Dairy chiller 1 read 9.50 °C against a limit of at most 8.00 °C. Record what was done"
+        "Dairy chiller 1 read 9.5 °C against a limit of at most 8 °C. Record what was done"
+            + " about it on the Food safety screen.",
+        channel.body());
+    assertEquals("default", repo.template, "the platform's words: the business has written none");
+    assertEquals("en", repo.language);
+    assertEquals(
+        "Dairy chiller 1 read 9.5 °C against a limit of at most 8 °C. Record what was done"
             + " about it on the Food safety screen.",
         channel.body());
     // A store's devices, not a person: nothing here for an erasure to find.
     assertNull(repo.subjectId);
   }
 
+  private void fail(String point, BigDecimal value, BigDecimal min, BigDecimal max) {
+    var b =
+        Json.createObjectBuilder()
+            .add("eventId", Ids.newId().toString())
+            .add("tenantId", TENANT.toString())
+            .add("storeId", STORE.toString())
+            .add("pointName", point);
+    b = value == null ? b.addNull("value") : b.add("value", value);
+    b = min == null ? b.addNull("minValue") : b.add("minValue", min);
+    b = max == null ? b.addNull("maxValue") : b.add("maxValue", max);
+    failed.handle(b.build().toString());
+  }
+
   @Test
   void aFailedChecklistAndBothKindsOfLimitReadNaturally() {
+    fail("Opening checks", null, null, null);
+    fail("Hot cabinet", new BigDecimal("58.00"), new BigDecimal("63.00"), null);
+    fail("Chiller", new BigDecimal("-1.00"), new BigDecimal("0.00"), new BigDecimal("5.00"));
     assertEquals(
-        "Opening checks was recorded as failed. Record what was done about it on the Food safety"
-            + " screen.",
-        FoodSafetyCheckFailedHandler.describe("Opening checks", null, null, null));
-    assertEquals(
-        "Hot cabinet read 58.00 °C against a limit of at least 63.00 °C. Record what was done about"
-            + " it on the Food safety screen.",
-        FoodSafetyCheckFailedHandler.describe(
-            "Hot cabinet", new BigDecimal("58.00"), new BigDecimal("63.00"), null));
-    assertEquals(
-        "Chiller read -1.00 °C against limits of 0.00 °C to 5.00 °C. Record what was done about it"
-            + " on the Food safety screen.",
-        FoodSafetyCheckFailedHandler.describe(
-            "Chiller", new BigDecimal("-1.00"), new BigDecimal("0.00"), new BigDecimal("5.00")));
+        java.util.List.of(
+            "Opening checks was recorded as failed. Record what was done about it on the Food"
+                + " safety screen.",
+            "Hot cabinet read 58 °C against a limit of at least 63 °C. Record what was done about"
+                + " it on the Food safety screen.",
+            "Chiller read -1 °C against limits of 0 °C to 5 °C. Record what was done about it on"
+                + " the Food safety screen."),
+        channel.bodies);
   }
 
   @Test
@@ -102,8 +119,8 @@ class FoodSafetyAlertHandlersTest {
     assertEquals(1, channel.sends());
     assertEquals("Food safety check overdue: Butchery chiller", channel.subject());
     assertEquals(
-        "Butchery chiller was due a check at 2026-09-11 12:00 UTC and none has been recorded. Take"
-            + " it now on the Food safety screen.",
+        "Butchery chiller was due a check at 11 September 2026, 12:00 UTC and none has been"
+            + " recorded. Take it now on the Food safety screen.",
         channel.body());
   }
 

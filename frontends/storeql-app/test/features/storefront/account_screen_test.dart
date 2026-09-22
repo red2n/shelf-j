@@ -127,9 +127,36 @@ void main() {
     await tester.pumpAndSettle();
     final put = _last(recorder, 'PUT');
     expect(put.path, endsWith('/customers/me'));
-    expect(put.data, {'firstName': 'Christopher', 'lastName': 'Carter', 'phone': null, 'dob': null});
+    expect(put.data, {
+      'firstName': 'Christopher',
+      'lastName': 'Carter',
+      'phone': null,
+      'dob': null,
+      'preferredLanguage': '',
+    });
     expect((put.data as Map).containsKey('email'), isFalse);
     expect(find.text('Saved.'), findsOneWidget);
+  });
+
+  testWidgets('the language of their messages is chosen, and a chosen one is kept', (tester) async {
+    final recorder = _Recorder(responses: {
+      'GET /customer-svc/customers/me': {..._me, 'preferredLanguage': 'pl'},
+      'GET /customer-svc/customers/me/addresses': <dynamic>[],
+      'PUT /customer-svc/customers/me': _me,
+    });
+    await _pump(tester, recorder);
+    expect(find.text('Polish'), findsOneWidget, reason: 'the language they chose is shown');
+    await tester.tap(find.byKey(const Key('profile-save')));
+    await tester.pumpAndSettle();
+    expect((_last(recorder, 'PUT').data as Map)['preferredLanguage'], 'pl');
+
+    await tester.tap(find.byKey(const Key('profile-language')));
+    await tester.pumpAndSettle();
+    await tester.tap(find.text("The shop's language").last);
+    await tester.pumpAndSettle();
+    await tester.tap(find.byKey(const Key('profile-save')));
+    await tester.pumpAndSettle();
+    expect((_last(recorder, 'PUT').data as Map)['preferredLanguage'], '', reason: 'empty clears it');
   });
 
   testWidgets('a blank name is stopped before it is sent', (tester) async {

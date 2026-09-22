@@ -98,7 +98,8 @@ public class CustomerService {
             Boolean.TRUE.equals(req.gdprConsent()) ? now : null,
             null,
             now,
-            now);
+            now,
+            null);
     String payload =
         Json.createObjectBuilder()
             .add("customerId", id.toString())
@@ -415,8 +416,19 @@ public class CustomerService {
             gdprConsent,
             existing.anonymizedAt(),
             existing.createdAt(),
-            now);
+            now,
+            language(req.preferredLanguage(), existing.preferredLanguage()));
     return repo.updateCustomer(updated);
+  }
+
+  /**
+   * The language to keep (13.x): unchanged when the request does not say, cleared by an empty one.
+   * A client that has never heard of languages cannot wipe one the shopper chose.
+   */
+  static String language(String requested, String current) {
+    if (requested == null) return current;
+    String l = requested.strip().toLowerCase(java.util.Locale.ROOT);
+    return l.isEmpty() ? null : l;
   }
 
   /**

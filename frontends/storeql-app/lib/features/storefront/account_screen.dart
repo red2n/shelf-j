@@ -3,6 +3,7 @@ import 'package:flutter/material.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 
 import '../../core/constants.dart';
+import '../../core/l10n/message_languages.dart';
 import '../../core/network/api_error.dart';
 import 'storefront_providers.dart';
 import 'storefront_shell.dart' show StorefrontAuthDialog;
@@ -22,6 +23,9 @@ class MyCustomer {
   final String lastName;
   final String? dob;
 
+  /// The language their messages are written in (13.x); null for the shop's own.
+  final String? preferredLanguage;
+
   const MyCustomer({
     required this.id,
     required this.email,
@@ -29,6 +33,7 @@ class MyCustomer {
     required this.firstName,
     required this.lastName,
     this.dob,
+    this.preferredLanguage,
   });
 
   factory MyCustomer.fromJson(Map<String, dynamic> j) => MyCustomer(
@@ -38,6 +43,7 @@ class MyCustomer {
         firstName: j['firstName'] as String? ?? '',
         lastName: j['lastName'] as String? ?? '',
         dob: j['dob'] as String?,
+        preferredLanguage: j['preferredLanguage'] as String?,
       );
 
   String get fullName => '$firstName $lastName'.trim();
@@ -388,6 +394,7 @@ class _ProfileCardState extends State<ProfileCard> {
   late final _last = TextEditingController(text: widget.customer.lastName);
   late final _phone = TextEditingController(text: widget.customer.phone ?? '');
   late final _dob = TextEditingController(text: widget.customer.dob ?? '');
+  late String _language = widget.customer.preferredLanguage ?? '';
 
   @override
   void dispose() {
@@ -447,6 +454,21 @@ class _ProfileCardState extends State<ProfileCard> {
                   return RegExp(r'^\d{4}-\d{2}-\d{2}$').hasMatch(t) ? null : 'YYYY-MM-DD';
                 },
               ),
+              DropdownButtonFormField<String>(
+                key: const Key('profile-language'),
+                initialValue: _language,
+                decoration: const InputDecoration(
+                  labelText: 'Messages in',
+                  helperText: 'The language of the emails and texts this shop sends you, where it has written them.',
+                ),
+                items: [
+                  const DropdownMenuItem(value: '', child: Text("The shop's language")),
+                  for (final e in knownLanguages.entries) DropdownMenuItem(value: e.key, child: Text(e.value)),
+                  if (_language.isNotEmpty && !knownLanguages.containsKey(_language))
+                    DropdownMenuItem(value: _language, child: Text(_language)),
+                ],
+                onChanged: widget.busy ? null : (v) => setState(() => _language = v ?? ''),
+              ),
               const SizedBox(height: 8),
               TextField(
                 enabled: false,
@@ -472,6 +494,8 @@ class _ProfileCardState extends State<ProfileCard> {
                             'lastName': _last.text.trim(),
                             'phone': phone.isEmpty ? null : phone,
                             'dob': dob.isEmpty ? null : dob,
+                            // Empty is the shop's own language: the server clears the choice.
+                            'preferredLanguage': _language,
                           });
                         },
                   child: const Text('Save'),

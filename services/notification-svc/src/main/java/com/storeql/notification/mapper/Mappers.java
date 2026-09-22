@@ -55,6 +55,8 @@ public final class Mappers {
         n.subject(),
         n.body(),
         n.status(),
-        n.createdAt());
+        n.createdAt(),
+        n.language(),
+        n.template());
   }
 }

@@ -104,6 +104,24 @@ public class CustomerClient {
     return Optional.empty();
   }
 
+  /**
+   * The language the customer reads their messages in (13.x), ISO 639: empty when they have not
+   * said, or customer-svc cannot be reached — the business's own language is used, and the message
+   * still goes.
+   */
+  @Retry(maxRetries = 2, delay = 200)
+  @CircuitBreaker(requestVolumeThreshold = 5, failureRatio = 0.6, delay = 5000)
+  @Fallback(fallbackMethod = "languageUnavailable")
+  public Optional<String> languageOf(UUID tenantId, UUID customerId) {
+    return read(tenantId, customerId, "preferredLanguage");
+  }
+
+  @SuppressWarnings({"PMD.UnusedFormalParameter", "PMD.UnusedPrivateMethod"})
+  private Optional<String> languageUnavailable(UUID tenantId, UUID customerId) {
+    LOG.log(Level.DEBUG, "customer-svc unreachable — no language for customer {0}", customerId);
+    return Optional.empty();
+  }
+
   /** One string field of the customer record, empty when absent, null or blank. */
   private Optional<String> read(UUID tenantId, UUID customerId, String field) {
     ServiceInstance instance = registry.resolve(CUSTOMER_SERVICE).orElse(null);

@@ -262,6 +262,14 @@ const _navItems = [
     ),
     route: '/admin/staff',
   ),
+  _AdminNavItem(
+    destination: AdaptiveNavDestination(
+      label: 'Messages',
+      icon: Icons.mail_outline,
+      selectedIcon: Icons.mail,
+    ),
+    route: '/admin/messages',
+  ),
 ];
 
 class AdminShell extends ConsumerWidget {

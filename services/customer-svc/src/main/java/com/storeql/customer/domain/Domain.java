@@ -30,7 +30,8 @@ public final class Domain {
       Instant gdprConsentAt,
       Instant anonymizedAt,
       Instant createdAt,
-      Instant updatedAt) {
+      Instant updatedAt,
+      String preferredLanguage) {
 
     public static final String STATUS_ACTIVE = "ACTIVE";
     public static final String STATUS_SUSPENDED = "SUSPENDED";

@@ -40,7 +40,13 @@ public final class Dtos {
       @Schema(description = "Date of birth, ISO-8601 yyyy-MM-dd.") String dob,
       @Size(max = 20) String gender,
       @Schema(description = "True if the customer consented to GDPR data processing.")
-          Boolean gdprConsent) {}
+          Boolean gdprConsent,
+      @Schema(
+              description =
+                  "The language their messages are written in, ISO 639 (en, pl, hi…). Left out, it"
+                      + " is unchanged; empty clears it, and the shop's own language is used.")
+          @jakarta.validation.constraints.Pattern(regexp = "([a-zA-Z]{2,3})?")
+          String preferredLanguage) {}
 
   @Schema(name = "AddAddressRequest", description = "Add or replace a customer address.")
   public record AddAddressRequest(
@@ -118,7 +124,9 @@ public final class Dtos {
       @Schema(description = "Timestamp GDPR consent was recorded; null if not given.")
           String gdprConsentAt,
       String createdAt,
-      String updatedAt) {}
+      String updatedAt,
+      @Schema(description = "The language their messages are written in; null when not said")
+          String preferredLanguage) {}
 
   @Schema(name = "AddressResponse", description = "A customer address.")
   public record AddressResponse(

@@ -1,6 +1,9 @@
 package com.storeql.notification.messaging;
 
+import com.storeql.notification.service.Messages;
 import com.storeql.notification.service.Notifier;
+import com.storeql.notification.template.Catalogue;
+import com.storeql.notification.template.Values;
 import jakarta.enterprise.context.ApplicationScoped;
 import jakarta.inject.Inject;
 import jakarta.json.Json;
@@ -55,26 +58,15 @@ class FoodSafetyCheckFailedHandler {
         tenantId,
         null,
         storeId.toString(),
-        "Food safety check failed: " + pointName,
-        describe(pointName, value, min, max));
-  }
-
-  /** What failed, in words a member of staff can act on without opening the screen first. */
-  static String describe(String pointName, BigDecimal value, BigDecimal min, BigDecimal max) {
-    String what =
-        value == null
-            ? pointName + " was recorded as failed."
-            : pointName + " read " + value.toPlainString() + " °C against " + limit(min, max) + ".";
-    return what + " Record what was done about it on the Food safety screen.";
-  }
-
-  private static String limit(BigDecimal min, BigDecimal max) {
-    if (min != null && max != null) {
-      return "limits of " + min.toPlainString() + " °C to " + max.toPlainString() + " °C";
-    }
-    return min != null
-        ? "a limit of at least " + min.toPlainString() + " °C"
-        : "a limit of at most " + max.toPlainString() + " °C";
+        new Messages.Message(
+            "FOOD_SAFETY_CHECK_FAILED",
+            Catalogue.Form.ALERT,
+            null,
+            Values.of()
+                .text("point", pointName)
+                .number("reading", value)
+                .number("min", min)
+                .number("max", max)));
   }
 
   /**

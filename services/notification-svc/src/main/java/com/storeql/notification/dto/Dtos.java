@@ -45,7 +45,11 @@ public final class Dtos {
       String subject,
       String body,
       @Schema(description = "Delivery status, e.g. SENT, FAILED.") String status,
-      Instant createdAt) {}
+      Instant createdAt,
+      @Schema(description = "The language the message was written in; absent before 13.x.")
+          String language,
+      @Schema(description = "Whose words: default for the platform's, v<n> for the business's.")
+          String template) {}
 
   @Schema(
       name = "SendNotificationRequest",

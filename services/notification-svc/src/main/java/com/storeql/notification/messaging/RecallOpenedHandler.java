@@ -1,7 +1,10 @@
 package com.storeql.notification.messaging;
 
 import com.storeql.ids.Ids;
+import com.storeql.notification.service.Messages;
 import com.storeql.notification.service.Notifier;
+import com.storeql.notification.template.Catalogue;
+import com.storeql.notification.template.Values;
 import jakarta.enterprise.context.ApplicationScoped;
 import jakarta.inject.Inject;
 import jakarta.json.Json;
@@ -34,7 +37,7 @@ class RecallOpenedHandler {
     UUID tenantId;
     String reference;
     boolean recall;
-    String hazard;
+    String hazardCode;
     List<UUID> stores;
     try (var reader = Json.createReader(new StringReader(json))) {
       JsonObject obj = reader.readObject();
@@ -42,7 +45,7 @@ class RecallOpenedHandler {
       tenantId = UUID.fromString(obj.getString("tenantId"));
       reference = obj.getString("reference");
       recall = "RECALL".equals(obj.getString("kind"));
-      hazard = RecallText.hazard(obj.getString("hazard"));
+      hazardCode = obj.getString("hazard");
       stores =
           obj.getJsonArray("storeIds").getValuesAs(JsonString.class).stream()
               .map(s -> UUID.fromString(s.getString()))
@@ -51,7 +54,6 @@ class RecallOpenedHandler {
       LOG.log(Level.WARNING, "Malformed RecallOpened payload skipped: " + e.getMessage());
       return;
     }
-    String what = recall ? "Product recall" : "Product withdrawal";
     for (UUID store : stores) {
       notifier.notifyOnce(
           perStore(eventId, store),
@@ -59,15 +61,15 @@ class RecallOpenedHandler {
           tenantId,
           null,
           store.toString(),
-          what + " " + reference + ": stock taken off sale",
-          what
-              + " "
-              + reference
-              + " ("
-              + hazard
-              + ") has taken stock at this store off sale. Pull it from the shelves and record"
-              + " what you found on the Recalls screen"
-              + (recall ? ", and display the recall notice at the tills." : "."));
+          new Messages.Message(
+              "RECALL_OPENED",
+              Catalogue.Form.ALERT,
+              null,
+              Values.of()
+                  .text("reference", reference)
+                  .flag("recall", recall)
+                  .text("hazard", RecallText.hazard(hazardCode))
+                  .text("hazard_code", hazardCode)));
     }
   }
 

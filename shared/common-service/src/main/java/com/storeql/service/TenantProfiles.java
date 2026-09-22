@@ -287,6 +287,41 @@ public class TenantProfiles {
     return s.isEmpty() ? null : s;
   }
 
+  private record CachedName(String name, Instant expiresAt) {}
+
+  private final Map<UUID, CachedName> names = new ConcurrentHashMap<>();
+
+  /**
+   * The name the business trades under, as it gave it at onboarding and may change since: what a
+   * message it sends is signed with. Cached for {@link #TTL}, like the profile; a failed read is
+   * not cached.
+   *
+   * @return the name, or empty when tenant-svc could not be read
+   */
+  public Optional<String> businessName(UUID tenantId) {
+    if (tenantId == null) return Optional.empty();
+    Instant now = clock.instant();
+    CachedName hit = names.get(tenantId);
+    if (hit != null && hit.expiresAt().isAfter(now)) return Optional.of(hit.name());
+    Optional<String> read = fetch.apply(tenantId).flatMap(TenantProfiles::parseName);
+    read.ifPresent(n -> names.put(tenantId, new CachedName(n, now.plus(TTL))));
+    return read;
+  }
+
+  /**
+   * Reads the business name out of a {@code GET /admin/tenant} response: its {@code name}, the one
+   * it trades under — not {@code legalName}, which is for invoices.
+   */
+  static Optional<String> parseName(String body) {
+    try (JsonReader reader = Json.createReader(new StringReader(body))) {
+      JsonObject root = reader.readObject();
+      if (!root.containsKey("data") || root.isNull("data")) return Optional.empty();
+      return Optional.ofNullable(text(root.getJsonObject("data"), "name"));
+    } catch (RuntimeException e) {
+      return Optional.empty();
+    }
+  }
+
   public Optional<Profile> find(UUID tenantId) {
     if (tenantId == null) return Optional.empty();
     Instant now = clock.instant();

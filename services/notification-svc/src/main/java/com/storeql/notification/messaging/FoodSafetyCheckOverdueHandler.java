@@ -1,6 +1,9 @@
 package com.storeql.notification.messaging;
 
+import com.storeql.notification.service.Messages;
 import com.storeql.notification.service.Notifier;
+import com.storeql.notification.template.Catalogue;
+import com.storeql.notification.template.Values;
 import jakarta.enterprise.context.ApplicationScoped;
 import jakarta.inject.Inject;
 import jakarta.json.Json;
@@ -9,8 +12,6 @@ import java.io.StringReader;
 import java.lang.System.Logger;
 import java.lang.System.Logger.Level;
 import java.time.Instant;
-import java.time.ZoneOffset;
-import java.time.format.DateTimeFormatter;
 import java.util.UUID;
 
 /**
@@ -27,9 +28,6 @@ class FoodSafetyCheckOverdueHandler {
   static final String NOTIFICATION_TYPE = "FOOD_SAFETY_CHECK_OVERDUE";
 
   /** The event carries UTC and a message has no viewer's zone to convert to, so it says so. */
-  private static final DateTimeFormatter DUE =
-      DateTimeFormatter.ofPattern("yyyy-MM-dd HH:mm 'UTC'").withZone(ZoneOffset.UTC);
-
   @Inject Notifier notifier;
 
   void handle(String json) {
@@ -55,10 +53,10 @@ class FoodSafetyCheckOverdueHandler {
         tenantId,
         null,
         storeId.toString(),
-        "Food safety check overdue: " + pointName,
-        pointName
-            + " was due a check at "
-            + DUE.format(dueSince)
-            + " and none has been recorded. Take it now on the Food safety screen.");
+        new Messages.Message(
+            "FOOD_SAFETY_CHECK_OVERDUE",
+            Catalogue.Form.ALERT,
+            null,
+            Values.of().text("point", pointName).moment("due_since", dueSince)));
   }
 }

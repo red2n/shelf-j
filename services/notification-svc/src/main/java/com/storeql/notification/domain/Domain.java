@@ -62,5 +62,7 @@ public final class Domain {
       String subject,
       String body,
       String status,
-      Instant createdAt) {}
+      Instant createdAt,
+      String language,
+      String template) {}
 }

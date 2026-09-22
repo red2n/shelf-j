@@ -1,6 +1,9 @@
 package com.storeql.notification.messaging;
 
+import com.storeql.notification.service.Messages;
 import com.storeql.notification.service.Notifier;
+import com.storeql.notification.template.Catalogue;
+import com.storeql.notification.template.Values;
 import jakarta.enterprise.context.ApplicationScoped;
 import jakarta.inject.Inject;
 import jakarta.json.Json;
@@ -10,8 +13,6 @@ import java.lang.System.Logger;
 import java.lang.System.Logger.Level;
 import java.math.BigDecimal;
 import java.time.Instant;
-import java.time.ZoneOffset;
-import java.time.format.DateTimeFormatter;
 import java.util.UUID;
 
 /**
@@ -29,9 +30,6 @@ class PaymentDisputeOpenedHandler {
   static final String NOTIFICATION_TYPE = "PAYMENT_DISPUTE_OPENED";
 
   /** The event carries UTC and a message has no viewer's zone to convert to, so it says so. */
-  private static final DateTimeFormatter DUE =
-      DateTimeFormatter.ofPattern("yyyy-MM-dd HH:mm 'UTC'").withZone(ZoneOffset.UTC);
-
   @Inject Notifier notifier;
 
   void handle(String json) {
@@ -57,24 +55,20 @@ class PaymentDisputeOpenedHandler {
       LOG.log(Level.WARNING, "Malformed PaymentDisputeOpened payload skipped: " + e.getMessage());
       return;
     }
-    String sum = amount.stripTrailingZeros().toPlainString() + " " + currency;
     notifier.notifyOnce(
         eventId,
         NOTIFICATION_TYPE,
         tenantId,
         null,
-        // A store's alert where the payment was taken at one; the business's own otherwise.
         storeId == null || storeId.isBlank() ? tenantId.toString() : storeId,
-        "Chargeback: " + sum + " disputed",
-        "A cardholder's bank has disputed a card payment of "
-            + sum
-            + " ("
-            + reason.toLowerCase(java.util.Locale.ROOT).replace('_', ' ')
-            + "). "
-            + (dueBy == null
-                ? "Answer it on the Disputes screen as soon as you can."
-                : "Answer it on the Disputes screen by "
-                    + DUE.format(dueBy)
-                    + ": after that it is lost."));
+        new Messages.Message(
+            "PAYMENT_DISPUTE_OPENED",
+            Catalogue.Form.ALERT,
+            null,
+            Values.of()
+                .money("amount", amount, currency)
+                .text("reason", reason.toLowerCase(java.util.Locale.ROOT).replace('_', ' '))
+                .text("reason_code", reason)
+                .moment("due_by", dueBy)));
   }
 }

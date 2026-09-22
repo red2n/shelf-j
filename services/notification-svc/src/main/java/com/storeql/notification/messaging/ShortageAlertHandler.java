@@ -1,7 +1,10 @@
 package com.storeql.notification.messaging;
 
+import com.storeql.notification.service.Messages;
 import com.storeql.notification.service.NotificationService;
 import com.storeql.notification.service.Notifier;
+import com.storeql.notification.template.Catalogue;
+import com.storeql.notification.template.Values;
 import jakarta.enterprise.context.ApplicationScoped;
 import jakarta.inject.Inject;
 import jakarta.json.Json;
@@ -71,24 +74,21 @@ class ShortageAlertHandler {
           threshold);
     }
 
-    String body =
-        "Variant "
-            + variantId
-            + " at store "
-            + storeId
-            + ": available "
-            + available.toPlainString()
-            + " (threshold "
-            + threshold.toPlainString()
-            + ")";
-    // Addressed to a store's devices, not to a person, so there is no subject to erase by.
+    // Addressed to a store's devices, not to a person, so there is no subject to erase
     notifier.notifyOnce(
         eventId,
         NOTIFICATION_TYPE,
         tenantId,
         null,
         storeId.toString(),
-        "Stock below threshold",
-        body);
+        new Messages.Message(
+            "STOCK_BELOW_THRESHOLD",
+            Catalogue.Form.ALERT,
+            null,
+            Values.of()
+                .text("variant", variantId.toString())
+                .text("store", storeId.toString())
+                .number("available", available)
+                .number("threshold", threshold)));
   }
 }

@@ -2,7 +2,10 @@ package com.storeql.notification.messaging;
 
 import com.storeql.notification.channel.SmsChannel;
 import com.storeql.notification.client.CustomerClient;
+import com.storeql.notification.service.Messages;
 import com.storeql.notification.service.Notifier;
+import com.storeql.notification.template.Catalogue;
+import com.storeql.notification.template.Values;
 import jakarta.enterprise.context.ApplicationScoped;
 import jakarta.inject.Inject;
 import jakarta.json.Json;
@@ -11,9 +14,10 @@ import jakarta.json.JsonString;
 import java.io.StringReader;
 import java.lang.System.Logger;
 import java.lang.System.Logger.Level;
+import java.math.BigDecimal;
 import java.time.Instant;
+import java.time.LocalDate;
 import java.time.ZoneOffset;
-import java.time.format.DateTimeFormatter;
 import java.util.List;
 import java.util.UUID;
 
@@ -33,10 +37,27 @@ class RecallNoticeIssuedHandler {
   static final String TYPE_EMAIL = "RECALL_NOTICE";
   static final String TYPE_SMS = "RECALL_NOTICE_SMS";
   static final String TYPE_PUSH = "RECALL_NOTICE_PUSH";
-  private static final DateTimeFormatter DAY = DateTimeFormatter.ofPattern("d MMM yyyy");
-
   @Inject Notifier notifier;
   @Inject CustomerClient customers;
+
+  /** A product line the buyer bought: what a recall notice names. */
+  private record Line(String name, String sku, String lot, LocalDate bestBefore, BigDecimal qty) {
+
+    /**
+     * "Crunchy peanut butter (PB-340), lot L1, best before 2026-10-01, 2 bought": English
+     * shorthand.
+     */
+    String inEnglish() {
+      StringBuilder b = new StringBuilder(name != null ? name : "the product");
+      if (sku != null) b.append(" (").append(sku).append(')');
+      if (lot != null) b.append(", lot ").append(lot);
+      if (bestBefore != null) b.append(", best before ").append(bestBefore);
+      return b.append(", ")
+          .append(qty.stripTrailingZeros().toPlainString())
+          .append(" bought")
+          .toString();
+    }
+  }
 
   private record Parsed(
       UUID eventId,
@@ -45,7 +66,7 @@ class RecallNoticeIssuedHandler {
       UUID loginId,
       String buyerPhone,
       String reference,
-      String hazard,
+      String hazardCode,
       String reason,
       String customerNotice,
       List<String> remedies,
@@ -54,7 +75,7 @@ class RecallNoticeIssuedHandler {
       String contactUrl,
       UUID orderId,
       Instant soldAt,
-      List<String> lines) {}
+      List<Line> lines) {}
 
   void handle(String json) {
     Parsed p;
@@ -64,14 +85,24 @@ class RecallNoticeIssuedHandler {
       LOG.log(Level.WARNING, "Malformed RecallNoticeIssued payload skipped: " + e.getMessage());
       return;
     }
-    String subject = "Product safety recall — " + p.reference();
+    // In the buyer's own language when they have said which (13.x). What the notice must say is
+    // held by the template's required parts: a business's words cannot leave any of them out.
+    String language =
+        p.customerId() == null
+            ? null
+            : customers.languageOf(p.tenantId(), p.customerId()).orElse(null);
     String email =
         p.customerId() == null
             ? null
             : customers.emailOf(p.tenantId(), p.customerId()).orElse(null);
     if (email != null) {
       notifier.notifyOnce(
-          p.eventId(), TYPE_EMAIL, p.tenantId(), p.customerId(), email, subject, body(p));
+          p.eventId(),
+          TYPE_EMAIL,
+          p.tenantId(),
+          p.customerId(),
+          email,
+          message(Catalogue.Form.EMAIL, language, p));
     } else {
       String phone = p.buyerPhone();
       if (phone == null && p.customerId() != null) {
@@ -79,7 +110,13 @@ class RecallNoticeIssuedHandler {
       }
       if (phone != null && SmsChannel.E164.matcher(phone).matches()) {
         notifier.notifyOnce(
-            p.eventId(), TYPE_SMS, p.tenantId(), p.customerId(), phone, subject, text(p), "SMS");
+            p.eventId(),
+            TYPE_SMS,
+            p.tenantId(),
+            p.customerId(),
+            phone,
+            message(Catalogue.Form.SMS, language, p),
+            "SMS");
       } else if (p.loginId() == null) {
         LOG.log(
             Level.WARNING,
@@ -95,8 +132,7 @@ class RecallNoticeIssuedHandler {
             p.tenantId(),
             p.customerId(),
             p.loginId().toString(),
-            subject,
-            "Stop using " + p.lines().get(0) + ". Open the app for what to do and your remedy.",
+            message(Catalogue.Form.PUSH, language, p),
             "PUSH");
       } catch (RuntimeException e) {
         LOG.log(Level.DEBUG, "No push for recall notice {0}: {1}", p.orderId(), e.getMessage());
@@ -109,7 +145,7 @@ class RecallNoticeIssuedHandler {
         obj.getJsonArray("remedies").getValuesAs(JsonString.class).stream()
             .map(JsonString::getString)
             .toList();
-    List<String> lines =
+    List<Line> lines =
         obj.getJsonArray("lines").getValuesAs(JsonObject.class).stream()
             .map(RecallNoticeIssuedHandler::line)
             .toList();
@@ -123,7 +159,7 @@ class RecallNoticeIssuedHandler {
         uuid(obj, "loginId"),
         text(obj, "buyerPhone"),
         obj.getString("reference"),
-        RecallText.hazard(obj.getString("hazard")),
+        obj.getString("hazard"),
         obj.getString("reason"),
         obj.getString("customerNotice"),
         remedies,
@@ -135,54 +171,58 @@ class RecallNoticeIssuedHandler {
         lines);
   }
 
-  /** "Crunchy peanut butter (PB-340), lot L1, best before 1 Oct 2026, 2 bought". */
-  private static String line(JsonObject l) {
-    StringBuilder b = new StringBuilder();
-    String name = text(l, "productName");
-    String sku = text(l, "sku");
-    b.append(name != null ? name : "the product");
-    if (sku != null) b.append(" (").append(sku).append(')');
-    String lot = text(l, "batchNo");
-    if (lot != null) b.append(", lot ").append(lot);
+  private static Line line(JsonObject l) {
     String expiry = text(l, "expiryDate");
-    if (expiry != null) b.append(", best before ").append(expiry);
-    b.append(", ").append(l.get("qty").toString()).append(" bought");
-    return b.toString();
+    return new Line(
+        text(l, "productName"),
+        text(l, "sku"),
+        text(l, "batchNo"),
+        expiry == null ? null : LocalDate.parse(expiry),
+        new BigDecimal(l.get("qty").toString()));
   }
 
-  /** The written notice, in the order GPSR art.36(2) lists its parts. */
-  static String body(Parsed p) {
-    StringBuilder b =
-        new StringBuilder("PRODUCT SAFETY RECALL\nReference ").append(p.reference()).append("\n\n");
-    b.append("What: ").append(String.join("; ", p.lines())).append('\n');
-    b.append("Bought on ")
-        .append(DAY.format(p.soldAt().atOffset(ZoneOffset.UTC)))
-        .append(", order ")
-        .append(p.orderId())
-        .append("\n\n");
-    b.append("Hazard: ").append(p.hazard()).append(". ").append(p.reason()).append("\n\n");
-    b.append("What to do: Stop using this product immediately. ")
-        .append(p.customerNotice())
-        .append("\n\n");
-    b.append("Your remedy — you choose: ").append(RecallText.remedies(p.remedies())).append('.');
-    if (p.singleRemedyReason() != null) b.append(' ').append(p.singleRemedyReason());
-    b.append("\n\nContact: ").append(contact(p)).append('\n');
-    b.append("Please pass this notice to anyone you have shared the product with.\n\n— StoreQL");
-    return b.toString();
-  }
-
-  /** The text: the headline, the product, what to do and where to turn, inside one message. */
-  private static String text(Parsed p) {
-    return "PRODUCT SAFETY RECALL "
-        + p.reference()
-        + ": "
-        + p.lines().get(0)
-        + ". Stop using it now. "
-        + p.hazard()
-        + ". You may choose "
-        + RecallText.remedies(p.remedies())
-        + ". Contact "
-        + contact(p);
+  /**
+   * The notice's parts, in the order GPSR art.36(2) lists them: what, when, the hazard, what to do,
+   * the remedy, whom to contact — each as a value, so a business's template can put them in its own
+   * words and language, and codes and flags beside the English, for those words to choose from.
+   */
+  private static Messages.Message message(Catalogue.Form form, String language, Parsed p) {
+    Values v =
+        Values.of()
+            .text("reference", p.reference())
+            .items(
+                "products",
+                p.lines().stream()
+                    .map(
+                        l ->
+                            Values.of()
+                                .text("name", l.name() != null ? l.name() : "the product")
+                                .text("sku", l.sku())
+                                .text("lot", l.lot())
+                                .day("best_before", l.bestBefore())
+                                .number("quantity", l.qty()))
+                    .toList())
+            .text("product", p.lines().get(0).inEnglish())
+            .day("bought_on", p.soldAt().atOffset(ZoneOffset.UTC).toLocalDate())
+            .text("order", p.orderId().toString())
+            .text("hazard", RecallText.hazard(p.hazardCode()))
+            .text("hazard_code", p.hazardCode())
+            .text("reason", p.reason())
+            .text("what_to_do", p.customerNotice())
+            .text("remedies", RecallText.remedies(p.remedies()))
+            .flag("remedy_refund", p.remedies().contains("REFUND"))
+            .flag("remedy_replacement", p.remedies().contains("REPLACEMENT"))
+            .flag("remedy_repair", p.remedies().contains("REPAIR"))
+            .text("single_remedy_reason", p.singleRemedyReason())
+            .text("contact", contact(p))
+            .text("contact_phone", p.contactPhone())
+            .text("contact_url", p.contactUrl());
+    for (String hazard :
+        List.of(
+            "MICROBIOLOGICAL", "ALLERGEN", "FOREIGN_BODY", "CHEMICAL", "LABELLING", "QUALITY")) {
+      v.flag("hazard_" + hazard.toLowerCase(java.util.Locale.ROOT), hazard.equals(p.hazardCode()));
+    }
+    return new Messages.Message("RECALL_NOTICE", form, language, v);
   }
 
   private static String contact(Parsed p) {

@@ -22,6 +22,70 @@ public class Notifier {
   @Inject NotificationChannel channel;
   @Inject Channels channels;
   @Inject NotificationRepository repo;
+  @Inject Messages messages;
+
+  /**
+   * A business's message, written in its words and the reader's language (13.x), on the configured
+   * default channel. Written only once it is known to be due: a redelivered event reads nothing.
+   *
+   * @param subjectId the customer, supplier or account the message is about; null when none
+   */
+  public void notifyOnce(
+      UUID eventId,
+      String type,
+      UUID tenantId,
+      UUID subjectId,
+      String recipient,
+      Messages.Message message) {
+    deliver(eventId, type, tenantId, subjectId, recipient, message, channel);
+  }
+
+  /** The same, on a named channel: EMAIL or APP, SMS, PUSH. */
+  public void notifyOnce(
+      UUID eventId,
+      String type,
+      UUID tenantId,
+      UUID subjectId,
+      String recipient,
+      Messages.Message message,
+      String channelName) {
+    NotificationChannel c = channels.forName(channelName);
+    if (c == null) {
+      throw new IllegalArgumentException("unknown channel " + channelName);
+    }
+    deliver(eventId, type, tenantId, subjectId, recipient, message, c);
+  }
+
+  private void deliver(
+      UUID eventId,
+      String type,
+      UUID tenantId,
+      UUID subjectId,
+      String recipient,
+      Messages.Message message,
+      NotificationChannel c) {
+    if (recipient == null || recipient.isBlank()) {
+      LOG.log(Level.DEBUG, "No recipient for {0} {1} — skipped", type, eventId);
+      return;
+    }
+    if (repo.alreadyNotified(eventId, type)) {
+      return;
+    }
+    Messages.Composed m = messages.compose(tenantId, message);
+    c.send(tenantId, recipient, m.subject(), m.body());
+    repo.recordNotification(
+        tenantId,
+        subjectId,
+        eventId,
+        type,
+        c.name(),
+        recipient,
+        m.subject(),
+        m.body(),
+        "SENT",
+        m.language(),
+        m.template());
+  }
 
   /**
    * @param subjectId the customer or account the message is about, so it can be found and erased

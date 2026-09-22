@@ -324,9 +324,12 @@ class NotificationIT {
     String[] sent = logged(event, "SUPPLIER_REMITTANCE");
     assertThat(sent[0], is("accounts@acme.example"));
     assertThat(sent[1], is("Remittance advice PAY260913-3F9A1C"));
-    assertThat(sent[2].contains("Invoice INV-A1 of 2026-07-15: GBP 40.00"), is(true));
-    assertThat(sent[2].contains("Less credit note CN-A: -GBP 5.00"), is(true));
-    assertThat(sent[2].contains("Total paid: GBP 35.00"), is(true));
+    // Written in English with no country: tenant-svc is not reachable here, so the business's
+    // country is not known and dates come out in CLDR's plain English. A British shop's read
+    // "15 July 2026".
+    assertThat(sent[2], sent[2].contains("Invoice INV-A1 of July 15, 2026: £40.00"), is(true));
+    assertThat(sent[2], sent[2].contains("Less credit note CN-A: -£5.00"), is(true));
+    assertThat(sent[2], sent[2].contains("Total paid: £35.00"), is(true));
     assertThat(notifications.alreadyNotified(event, "SUPPLIER_REMITTANCE"), is(true));
     try (var c = java.sql.DriverManager.getConnection(PG.jdbcUrl(), PG.username(), PG.password());
         var ps =
