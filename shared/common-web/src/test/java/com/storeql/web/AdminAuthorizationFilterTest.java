@@ -475,6 +475,36 @@ class AdminAuthorizationFilterTest {
     assertAborted(invoke("POST", "/auth/mfax/login"), 403);
   }
 
+  // ── 20.x: single sign-on ─────────────────────────────────────────────────────
+
+  @Test
+  void aSignInThroughAProviderStartsReturnsAndRedeemsWithNoRoleAtAll() throws Exception {
+    assertNotAborted(invoke("POST", "/auth/sso/start"));
+    assertNotAborted(invoke("GET", "/auth/sso/callback"));
+    assertNotAborted(invoke("POST", "/auth/sso/token"));
+  }
+
+  @Test
+  void theBusinesssProviderSettingsStayWithManagement() throws Exception {
+    ctx.set(null, null, Set.of("CUSTOMER"), null, null);
+    assertAborted(invoke("GET", "/auth/admin/sso"), 403);
+    assertAborted(invoke("PUT", "/auth/admin/sso"), 403);
+    assertAborted(invoke("DELETE", "/auth/admin/sso"), 403);
+    assertAborted(invoke("GET", "/auth/admin/sso/readiness"), 403);
+    assertAborted(invoke("GET", "/auth/admin/sso/identities"), 403);
+    ctx.set(null, null, Set.of("CASHIER"), null, null);
+    assertAborted(invoke("PUT", "/auth/admin/sso"), 403);
+  }
+
+  @Test
+  void nothingElseUnderTheSignInPathsIsOpened() throws Exception {
+    assertAborted(invoke("POST", "/auth/sso/start/again"), 403);
+    assertAborted(invoke("POST", "/auth/sso/callback"), 403);
+    assertAborted(invoke("GET", "/auth/sso/token"), 403);
+    assertAborted(invoke("GET", "/auth/sso/callbackx"), 403);
+    assertAborted(invoke("POST", "/auth/sso"), 403);
+  }
+
   // ── 20.15: the token signing keys' public halves ─────────────────────────────
 
   @Test

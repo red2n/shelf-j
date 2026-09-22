@@ -1,4 +1,5 @@
 import 'mfa_policy_dialog.dart';
+import 'sso_settings_dialog.dart';
 import 'package:dio/dio.dart';
 import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
@@ -58,28 +59,40 @@ class _PeopleTab extends ConsumerWidget {
       children: [
         Padding(
           padding: const EdgeInsets.fromLTRB(24, 12, 24, 0),
-          child: Row(
-            children: [
-              const Spacer(),
-              OutlinedButton.icon(
-                key: const Key('mfa-policy-open'),
-                onPressed: () => showDialog<bool>(context: context, builder: (_) => const MfaPolicyDialog()),
-                icon: const Icon(Icons.verified_user_outlined),
-                label: const Text('Second step'),
-              ),
-              const SizedBox(width: 8),
-              FilledButton.icon(
-                onPressed: () => _showAssignDialog(context, ref),
-                icon: const Icon(Icons.person_add),
-                label: const Text('Assign Staff'),
-              ),
-              const SizedBox(width: 8),
-              IconButton(
-                icon: const Icon(Icons.refresh),
-                tooltip: 'Refresh staff',
-                onPressed: () => ref.invalidate(staffProvider),
-              ),
-            ],
+          // A Wrap, not a Row: four actions do not fit a phone's width on one line.
+          // Full width, so the end alignment has somewhere to push them to.
+          child: SizedBox(
+            width: double.infinity,
+            child: Wrap(
+              alignment: WrapAlignment.end,
+              crossAxisAlignment: WrapCrossAlignment.center,
+              spacing: 8,
+              runSpacing: 8,
+              children: [
+                OutlinedButton.icon(
+                  key: const Key('sso-open'),
+                  onPressed: () => showDialog<bool>(context: context, builder: (_) => const SsoSettingsDialog()),
+                  icon: const Icon(Icons.business_outlined),
+                  label: const Text('Single sign-on'),
+                ),
+                OutlinedButton.icon(
+                  key: const Key('mfa-policy-open'),
+                  onPressed: () => showDialog<bool>(context: context, builder: (_) => const MfaPolicyDialog()),
+                  icon: const Icon(Icons.verified_user_outlined),
+                  label: const Text('Second step'),
+                ),
+                FilledButton.icon(
+                  onPressed: () => _showAssignDialog(context, ref),
+                  icon: const Icon(Icons.person_add),
+                  label: const Text('Assign Staff'),
+                ),
+                IconButton(
+                  icon: const Icon(Icons.refresh),
+                  tooltip: 'Refresh staff',
+                  onPressed: () => ref.invalidate(staffProvider),
+                ),
+              ],
+            ),
           ),
         ),
         const SizedBox(height: 8),

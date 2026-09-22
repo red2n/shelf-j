@@ -116,6 +116,100 @@ public class ServiceConfig extends BaseServiceConfig {
   @ConfigProperty(name = "storeql.mfa.lockout-window-seconds", defaultValue = "900")
   long mfaLockoutWindowSeconds;
 
+  // --- Single sign-on (20.x, SSO over OpenID Connect) ---
+
+  /**
+   * Where a business's identity provider sends the browser back: this service's callback as the
+   * outside world reaches it, through the gateway. The address a business registers with its
+   * provider. Unset, single sign-on is unavailable on this deployment.
+   */
+  @Inject
+  @ConfigProperty(name = "storeql.sso.callback-url")
+  java.util.Optional<String> ssoCallbackUrl;
+
+  /** The app origins a finished sign-in may return to, comma-separated: nowhere else. */
+  @Inject
+  @ConfigProperty(
+      name = "storeql.sso.return-origins",
+      defaultValue = "http://localhost:8088,http://localhost:40015")
+  String ssoReturnOrigins;
+
+  /**
+   * Hosts this service may reach over plain HTTP and at a private address, comma-separated: a
+   * provider on the deployment's own network, as in local development. Empty in production, where a
+   * provider is HTTPS on a public address — the issuer is typed by a business, and this service
+   * sits inside the cluster.
+   */
+  @Inject
+  @ConfigProperty(name = "storeql.sso.insecure-hosts", defaultValue = " ")
+  String ssoInsecureHosts;
+
+  /** How long a sign-in may spend at the provider. */
+  @Inject
+  @ConfigProperty(name = "storeql.sso.flow-ttl-seconds", defaultValue = "600")
+  long ssoFlowTtlSeconds;
+
+  /** How long the app has to redeem the ticket the provider's return left it. */
+  @Inject
+  @ConfigProperty(name = "storeql.sso.ticket-ttl-seconds", defaultValue = "120")
+  long ssoTicketTtlSeconds;
+
+  /**
+   * How long a session the provider vouched for is renewed before the provider is asked again: a
+   * working day. What makes switching someone off at the provider switch them off here.
+   */
+  @Inject
+  @ConfigProperty(name = "storeql.sso.session-max-seconds", defaultValue = "43200")
+  long ssoSessionMaxSeconds;
+
+  /** How long a provider has to answer one request. */
+  @Inject
+  @ConfigProperty(name = "storeql.sso.http-timeout-seconds", defaultValue = "5")
+  long ssoHttpTimeoutSeconds;
+
+  public java.util.Optional<String> ssoCallbackUrl() {
+    return ssoCallbackUrl == null
+        ? java.util.Optional.empty()
+        : ssoCallbackUrl.map(String::trim).filter(s -> !s.isEmpty());
+  }
+
+  /** In the order configured: the first is where a sign-in nobody can place is sent back to. */
+  public java.util.List<String> ssoReturnOrigins() {
+    return java.util.List.copyOf(csv(ssoReturnOrigins));
+  }
+
+  public java.util.Set<String> ssoInsecureHosts() {
+    return csv(ssoInsecureHosts).stream()
+        .map(h -> h.toLowerCase(java.util.Locale.ROOT))
+        .collect(java.util.stream.Collectors.toUnmodifiableSet());
+  }
+
+  public long ssoFlowTtlSeconds() {
+    return ssoFlowTtlSeconds;
+  }
+
+  public long ssoTicketTtlSeconds() {
+    return ssoTicketTtlSeconds;
+  }
+
+  public long ssoSessionMaxSeconds() {
+    return ssoSessionMaxSeconds;
+  }
+
+  public long ssoHttpTimeoutSeconds() {
+    return ssoHttpTimeoutSeconds;
+  }
+
+  private static java.util.SequencedSet<String> csv(String value) {
+    java.util.SequencedSet<String> out = new java.util.LinkedHashSet<>();
+    if (value == null) return out;
+    java.util.Arrays.stream(value.split(","))
+        .map(String::trim)
+        .filter(o -> !o.isEmpty())
+        .forEach(out::add);
+    return out;
+  }
+
   public int mfaLockoutFailures() {
     return mfaLockoutFailures;
   }

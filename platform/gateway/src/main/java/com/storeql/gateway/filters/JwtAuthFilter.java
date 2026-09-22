@@ -57,6 +57,13 @@ public class JwtAuthFilter implements ContainerRequestFilter {
           "api/iam-svc/auth/mfa/login",
           "api/iam-svc/auth/mfa/login/passkey-options",
           "api/iam-svc/auth/refresh",
+          // Single sign-on through a business's identity provider (20.x): starting it, the
+          // provider sending the browser back, and the app trading the ticket it came back with.
+          // Nobody signing in holds a token yet; the random state and the ticket with the app's
+          // PKCE verifier are the capabilities, each spent on use.
+          "api/iam-svc/auth/sso/start",
+          "api/iam-svc/auth/sso/callback",
+          "api/iam-svc/auth/sso/token",
           "api/iam-svc/bootstrap/admin",
           // The opt-out link in a marketing message (PECR reg.23). Necessarily public: the person
           // clicking it may be on a device that was never signed in, may have no password at all,
@@ -178,6 +185,7 @@ public class JwtAuthFilter implements ContainerRequestFilter {
     ctx.getHeaders().remove(HttpHeaders.STORE_IDS);
     ctx.getHeaders().remove(HttpHeaders.PERMISSIONS);
     ctx.getHeaders().remove(HttpHeaders.AUTH_SCOPE);
+    ctx.getHeaders().remove(HttpHeaders.AUTH_METHODS);
 
     // Allow public auth paths without a token.
     if (isPublic(path)) {
@@ -290,6 +298,7 @@ public class JwtAuthFilter implements ContainerRequestFilter {
     List<String> roles = jwt.getClaim("roles").asList(String.class);
     List<String> storeIds = jwt.getClaim("storeIds").asList(String.class);
     List<String> perms = jwt.getClaim("perms").asList(String.class);
+    List<String> amr = jwt.getClaim("amr").asList(String.class);
 
     if (userId != null) {
       ctx.getHeaders().putSingle(HttpHeaders.USER_ID, userId);
@@ -331,6 +340,13 @@ public class JwtAuthFilter implements ContainerRequestFilter {
     if (perms != null) {
       ctx.getHeaders()
           .putSingle(HttpHeaders.PERMISSIONS, perms.isEmpty() ? "-" : String.join(",", perms));
+    }
+
+    // How the session was authenticated (20.12, 20.x SSO): a password or the business's identity
+    // provider, then any second factor. iam-svc reads it when a sign-in that owed a second factor
+    // sets one up, so the session it ends in records how it began.
+    if (amr != null && !amr.isEmpty()) {
+      ctx.getHeaders().putSingle(HttpHeaders.AUTH_METHODS, String.join(",", amr));
     }
 
     // Restore preserved tenant ID for onboarding paths (flow guard: user provides tenant context)

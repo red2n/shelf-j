@@ -10,6 +10,7 @@ import com.storeql.iam.domain.User;
 import com.storeql.iam.dto.Dtos.ProvisionStaffResponse;
 import com.storeql.iam.dto.Dtos.TokenResponse;
 import com.storeql.iam.repo.RefreshTokenRepository;
+import com.storeql.iam.repo.SsoRepository;
 import com.storeql.iam.repo.UserRepository;
 import com.storeql.ids.Ids;
 import com.storeql.service.OutboxRow;
@@ -43,6 +44,20 @@ public class AuthService {
   @Inject MqttSessionRevoker mqttSessions;
   @Inject TenantStatusRepository tenantStatus;
   @Inject MfaService mfa;
+  @Inject SsoRepository sso;
+
+  /** RFC 8176's name for a password. */
+  public static final String AMR_PASSWORD = "pwd";
+
+  /**
+   * A business's identity provider vouched for the person (20.x, SSO). RFC 8176 registers no value
+   * for "an identity provider signed them in", and OpenID Connect Core §2 allows values outside the
+   * register; this one is ours.
+   */
+  public static final String AMR_SSO = "sso";
+
+  /** RFC 8176's multiple-factor authentication: what a provider says when it asked for two. */
+  public static final String AMR_MFA = "mfa";
 
   /** Customer self-signup → creates a CUSTOMER (global, tenantId null) and returns a token pair. */
   public TokenResponse register(String email, String password, String phone) {
@@ -71,7 +86,7 @@ public class AuthService {
     users.createUserWithOutbox(user, "CUSTOMER", outbox);
     users.audit(null, userId, "USER_REGISTERED", email);
 
-    return issueTokens(user, PASSWORD_ONLY);
+    return issueTokens(user, PASSWORD_ONLY, Instant.now());
   }
 
   /**
@@ -157,8 +172,13 @@ public class AuthService {
           throw ApiException.forbidden(
               "TENANT_INACTIVE", "This business account is suspended. Contact support.");
         }
+        // A business that signs these staff in through its identity provider (20.x, SSO): the
+        // password is right and still does not sign them in — switching someone off at the provider
+        // must switch them off here. Said only after the password was right, so it tells nobody
+        // anything about an account they could not already sign into.
+        refuseIfSsoRequired(user);
         users.audit(user.tenantId(), user.id(), "LOGIN_OK", email);
-        return afterPassword(user);
+        return afterFirstFactor(user, PASSWORD_ONLY);
       }
     }
     if (candidates.isEmpty()) {
@@ -188,7 +208,7 @@ public class AuthService {
       if (passwords.verify(user.passwordHash(), password)
           && users.rolesOf(user.id()).contains("PLATFORM_ADMIN")) {
         users.audit(null, user.id(), "PLATFORM_LOGIN_OK", email);
-        return afterPassword(user);
+        return afterFirstFactor(user, PASSWORD_ONLY);
       }
     }
     if (candidates.isEmpty()) {
@@ -239,45 +259,76 @@ public class AuthService {
     // Again after the consume: the tenant may have been suspended since the check above.
     requireTenantActive(user);
     List<String> amr = amrOf(session.amr());
+    Set<String> roles = users.rolesOf(user.id());
     // A business that has required a second factor since this session began: a session that was
     // only ever a password's is not renewed — its holder signs in again and is walked through
     // setting a factor up. Without this the rule would not bite for a fortnight.
-    if (amr.size() < 2 && mfa.required(user.tenantId(), users.rolesOf(user.id()))) {
+    if (amr.size() < 2 && mfa.required(user.tenantId(), roles)) {
       throw ApiException.unauthorized(
           "MFA_REQUIRED", "A second factor is now required of this login: sign in again");
     }
-    return issueTokens(user, amr);
+    if (amr.contains(AMR_SSO)) {
+      // The provider is asked again after a working day: until then this platform cannot know
+      // whether the person was switched off there, and a fortnight of refreshes would let someone
+      // who has left keep working.
+      if (session.authenticatedAt() != null
+          && session
+              .authenticatedAt()
+              .plusSeconds(config.ssoSessionMaxSeconds())
+              .isBefore(Instant.now())) {
+        users.audit(user.tenantId(), user.id(), "SSO_SESSION_EXPIRED", null);
+        throw ApiException.unauthorized(
+            "SSO_REAUTH_REQUIRED", "Sign in through your identity provider again");
+      }
+    } else if (ssoRequiredOf(user, roles).isPresent()) {
+      // Required since this session began: the password session is not renewed.
+      throw ApiException.unauthorized(
+          "SSO_REQUIRED", "This business now signs its staff in through its identity provider");
+    }
+    return issueTokens(user, amr, session.authenticatedAt());
   }
 
   /**
-   * The password was right. A login that holds a second factor owes it before any token exists; one
-   * that must hold one and does not gets a token good only for setting one up; anyone else is in.
+   * A first factor held: the password, or the business's identity provider (20.x, SSO). A provider
+   * that says it asked for a second factor has proved both, and the person is in. Otherwise a login
+   * that holds a second factor here owes it before any token exists; one that must hold one and
+   * does not gets a token good only for setting one up; anyone else is in.
+   *
+   * @param proved what the sign-in proved, as the session will record it: {@code [pwd]}, {@code
+   *     [sso]}, or {@code [sso, mfa]}
    */
-  private TokenResponse afterPassword(User user) {
+  public TokenResponse afterFirstFactor(User user, List<String> proved) {
+    if (proved.size() >= 2) {
+      return issueTokens(user, proved, Instant.now());
+    }
+    String first = proved.get(0);
     List<String> methods = mfa.methods(user.id());
     if (!methods.isEmpty()) {
-      return TokenResponse.secondFactorOwed(mfa.openLogin(user.id()), methods);
+      return TokenResponse.secondFactorOwed(mfa.openLogin(user.id(), first), methods);
     }
     if (mfa.required(user.tenantId(), users.rolesOf(user.id()))) {
       users.audit(user.tenantId(), user.id(), "MFA_ENROLMENT_REQUIRED", null);
       return TokenResponse.enrolmentOwed(
-          jwt.issueEnrolmentToken(user.id(), user.type(), user.email()),
+          jwt.issueEnrolmentToken(user.id(), user.type(), user.email(), first),
           JwtService.ENROLMENT_TTL_SECONDS);
     }
-    return issueTokens(user, PASSWORD_ONLY);
+    return issueTokens(user, proved, Instant.now());
   }
 
   /** The second factor of a waiting sign-in, judged; the token pair if it held. */
   public TokenResponse completeMfaLogin(com.storeql.iam.dto.MfaDtos.MfaLoginRequest req) {
     MfaService.Proved proved = mfa.verifyLogin(req);
-    return issueAfterSecondFactor(proved.userId(), proved.amr());
+    return issueAfterSecondFactor(proved.userId(), proved.first(), proved.amr());
   }
 
   /**
    * The token pair for a login that has just set up the factor it owed, or answered one: the
-   * account and its business are checked again, because minutes have passed since the password.
+   * account and its business are checked again, because minutes have passed since the first factor.
+   *
+   * @param first what the sign-in proved before: {@code pwd} or {@code sso}
+   * @param amr the second factor: {@code otp} or {@code hwk}
    */
-  public TokenResponse issueAfterSecondFactor(UUID userId, String amr) {
+  public TokenResponse issueAfterSecondFactor(UUID userId, String first, String amr) {
     User user =
         users
             .findById(userId)
@@ -285,14 +336,38 @@ public class AuthService {
             .orElseThrow(
                 () -> ApiException.unauthorized("INVALID_CREDENTIALS", "User no longer exists"));
     requireTenantActive(user);
-    return issueTokens(user, List.of("pwd", amr));
+    String proved = AMR_SSO.equals(first) ? AMR_SSO : AMR_PASSWORD;
+    // The password rule is judged again here, not only at the password: a business may have
+    // required its provider in the minutes a second factor was being set up.
+    if (AMR_PASSWORD.equals(proved)) refuseIfSsoRequired(user);
+    return issueTokens(user, List.of(proved, amr), Instant.now());
   }
 
-  private static final List<String> PASSWORD_ONLY = List.of("pwd");
+  private static final List<String> PASSWORD_ONLY = List.of(AMR_PASSWORD);
 
   private static List<String> amrOf(String stored) {
     if (stored == null || stored.isBlank()) return PASSWORD_ONLY;
     return List.of(stored.split(","));
+  }
+
+  /** The business's connection, when it requires its provider of this login. */
+  private java.util.Optional<com.storeql.iam.domain.Sso.Connection> ssoRequiredOf(
+      User user, Set<String> roles) {
+    if (user.tenantId() == null) return java.util.Optional.empty();
+    return sso.connection(user.tenantId()).filter(c -> c.requiredOf(roles));
+  }
+
+  private void refuseIfSsoRequired(User user) {
+    ssoRequiredOf(user, users.rolesOf(user.id()))
+        .ifPresent(
+            c -> {
+              users.audit(user.tenantId(), user.id(), "LOGIN_REFUSED_SSO_REQUIRED", null);
+              throw new ApiException(
+                  403,
+                  "SSO_REQUIRED",
+                  "This business signs its staff in through its identity provider",
+                  List.of("slug=" + c.slug()));
+            });
   }
 
   /**
@@ -431,7 +506,11 @@ public class AuthService {
         now);
   }
 
-  private TokenResponse issueTokens(User user, List<String> amr) {
+  /**
+   * @param authenticatedAt when the session was signed into, carried unchanged across refreshes;
+   *     null for a session older than the record of it
+   */
+  private TokenResponse issueTokens(User user, List<String> amr, Instant authenticatedAt) {
     // Read again, and all at once (SJ-D63). The row in hand was read before the password was
     // checked, and that check takes long enough for a staff removal to commit meanwhile: the old
     // row's tenant beside the new roles made a token naming a business the login had just left.
@@ -460,7 +539,8 @@ public class AuthService {
         user.id(),
         Tokens.hash(refresh),
         Instant.now().plusSeconds(config.refreshTtlSeconds()),
-        String.join(",", amr));
+        String.join(",", amr),
+        authenticatedAt);
 
     return TokenResponse.bearer(access, refresh, config.accessTtlSeconds());
   }

@@ -38,14 +38,18 @@ public class ExportableData extends TenantDataSpec {
         "roles",
         "the platform's built-in roles, the same for every business; a business's own roles are in tenant-svc",
         "signing_keys",
-        "the platform's token signing keys: a credential of the deployment, not a business's data");
+        "the platform's token signing keys: a credential of the deployment, not a business's data",
+        "sso_flows",
+        "sign-ins in flight through the business's identity provider, minutes old: not data");
   }
 
   @Override
   public Map<String, String> excludedColumns() {
     return Map.of(
         "users.password_hash",
-        "a staff member's password hash: a credential; imported staff set a password at the destination");
+        "a staff member's password hash: a credential; imported staff set a password at the destination",
+        "sso_connections.client_secret_sealed",
+        "the client secret the business's identity provider issued: a credential; entered again at the destination");
   }
 
   @Override
@@ -67,7 +71,12 @@ public class ExportableData extends TenantDataSpec {
   @Override
   public Map<String, String> importSkipped() {
     return Map.of(
-        "tenant_status", "the destination business's own status is kept, set when it signs up");
+        "tenant_status",
+        "the destination business's own status is kept, set when it signs up",
+        "sso_connections",
+        "the sign-in name is unique on the platform and the secret is not exported: the provider is connected again at the destination",
+        "sso_identities",
+        "links to the identity provider's people: each is made again at that person's first sign-in there");
   }
 
   @Override

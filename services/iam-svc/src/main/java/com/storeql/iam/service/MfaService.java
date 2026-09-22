@@ -68,9 +68,10 @@ public class MfaService {
   /**
    * How a second factor was proved.
    *
+   * @param first what the sign-in proved before it: {@code pwd} or {@code sso}
    * @param amr the RFC 8176 name of the method: {@code otp} or {@code hwk}
    */
-  public record Proved(UUID userId, String amr) {}
+  public record Proved(UUID userId, String first, String amr) {}
 
   // ── where a login stands ────────────────────────────────────────────────────
 
@@ -109,8 +110,13 @@ public class MfaService {
 
   // ── a sign-in that owes its second factor ───────────────────────────────────
 
-  /** Opens the wait: the token goes to the client, its hash stays here. */
-  public String openLogin(UUID userId) {
+  /**
+   * Opens the wait: the token goes to the client, its hash stays here.
+   *
+   * @param first what the sign-in has proved so far — {@code pwd} or {@code sso} — which the
+   *     session records beside the second factor once it is answered
+   */
+  public String openLogin(UUID userId, String first) {
     String token = Tokens.newOpaqueToken();
     Instant now = Instant.now();
     mfa.createChallenge(
@@ -118,6 +124,7 @@ public class MfaService {
         Mfa.KIND_LOGIN,
         Tokens.hash(token),
         null,
+        first,
         now,
         now.plusSeconds(config.mfaChallengeTtlSeconds()));
     return token;
@@ -201,7 +208,7 @@ public class MfaService {
           "MFA_CHALLENGE_EXPIRED", "Sign in again: this sign-in is no longer waiting");
     }
     users.audit(null, userId, "MFA_LOGIN_OK", req.method());
-    return new Proved(userId, amr);
+    return new Proved(userId, waiting.firstFactor() == null ? "pwd" : waiting.firstFactor(), amr);
   }
 
   private boolean totpMatches(UUID userId, String code, Instant now) {
@@ -330,6 +337,7 @@ public class MfaService {
         Mfa.KIND_PASSKEY_REGISTRATION,
         Tokens.hash(token),
         challenge,
+        null,
         now,
         now.plusSeconds(config.mfaChallengeTtlSeconds()));
     ByteBuffer handle = ByteBuffer.allocate(16);

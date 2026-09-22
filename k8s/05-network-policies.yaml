@@ -125,7 +125,10 @@ spec:
         - { protocol: TCP, port: 8500 }
 ---
 # The services that speak to the world: payment providers and their webhooks' replies, the
-# e-invoicing networks, the breached-password screen, mail and push. Private ranges stay closed.
+# e-invoicing networks, the breached-password screen, a business's identity provider for single
+# sign-on, mail and push. Private ranges stay closed — for single sign-on that is the backstop to
+# iam-svc's own address check, since the issuer is typed by a business and a name can resolve
+# somewhere else by the time it is connected to.
 apiVersion: networking.k8s.io/v1
 kind: NetworkPolicy
 metadata:

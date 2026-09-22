@@ -40,6 +40,9 @@ dependencies:
   url_launcher: ^6.3.0
   # web-only browser API bindings (Blob/URL) for POS receipt printing
   web: ^1.1.0
+  # SHA-256 for single sign-on's PKCE challenge (lib/core/auth/sso.dart). Pure Dart, so it works
+  # where the browser's crypto.subtle does not: any page not served over HTTPS or from localhost.
+  crypto: ^3.0.6
   # where a native build keeps a saved receipt or export (documents directory) — the
   # non-web half of lib/shared/util/file_download.dart. Web downloads instead.
   path_provider: ^2.1.6

@@ -19,17 +19,21 @@ public class RefreshTokenRepository extends BaseJdbcRepository {
    * @param tokenHash the hash of the token; the raw value is never persisted
    * @param expiresAt when the token stops being redeemable, UTC
    * @param amr how the session was authenticated, carried to the tokens it is renewed into
+   * @param authenticatedAt when the session was signed into, carried unchanged across rotations;
+   *     null for a session older than the record of it
    */
-  public void store(UUID userId, String tokenHash, Instant expiresAt, String amr) {
+  public void store(
+      UUID userId, String tokenHash, Instant expiresAt, String amr, Instant authenticatedAt) {
     exec(
-        "INSERT INTO refresh_tokens (id, user_id, token_hash, expires_at, revoked, amr)"
-            + " VALUES (?,?,?,?,false,?)",
+        "INSERT INTO refresh_tokens (id, user_id, token_hash, expires_at, revoked, amr,"
+            + " authenticated_at) VALUES (?,?,?,?,false,?,?)",
         ps -> {
           ps.setObject(1, Ids.newId());
           ps.setObject(2, userId);
           ps.setString(3, tokenHash);
           ps.setTimestamp(4, Timestamp.from(expiresAt));
           ps.setString(5, amr);
+          ps.setTimestamp(6, authenticatedAt == null ? null : Timestamp.from(authenticatedAt));
         },
         "store refresh token");
   }
@@ -37,10 +41,11 @@ public class RefreshTokenRepository extends BaseJdbcRepository {
   /**
    * A session a refresh token stood for.
    *
-   * @param amr how it was authenticated (20.12): {@code pwd}, {@code pwd,otp}, {@code pwd,hwk}…;
+   * @param amr how it was authenticated (20.12): {@code pwd}, {@code pwd,otp}, {@code sso,mfa}…;
    *     null for a session older than second factors, which was a password's
+   * @param authenticatedAt when it was signed into; null for a session older than the record
    */
-  public record Session(UUID userId, String amr) {}
+  public record Session(UUID userId, String amr, Instant authenticatedAt) {}
 
   /**
    * Atomically consume (revoke) a valid token and return its owner. Validate-then-revoke as two
@@ -51,9 +56,16 @@ public class RefreshTokenRepository extends BaseJdbcRepository {
     return query(
             "UPDATE refresh_tokens SET revoked = true"
                 + " WHERE token_hash = ? AND revoked = false AND expires_at > now()"
-                + " RETURNING user_id, amr",
+                + " RETURNING user_id, amr, authenticated_at",
             ps -> ps.setString(1, tokenHash),
-            rs -> new Session(rs.getObject("user_id", UUID.class), rs.getString("amr")),
+            rs -> {
+              java.time.OffsetDateTime at =
+                  rs.getObject("authenticated_at", java.time.OffsetDateTime.class);
+              return new Session(
+                  rs.getObject("user_id", UUID.class),
+                  rs.getString("amr"),
+                  at == null ? null : at.toInstant());
+            },
             "consume refresh token")
         .stream()
         .findFirst();
