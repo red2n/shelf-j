@@ -10,6 +10,7 @@ import com.storeql.order.service.OrderService;
 import com.storeql.web.ApiException;
 import com.storeql.web.ApiResponse;
 import com.storeql.web.Cursor;
+import com.storeql.web.IdempotencyKeys;
 import com.storeql.web.Parsing;
 import com.storeql.web.TenantContext;
 import com.storeql.web.Validations;
@@ -209,8 +210,7 @@ public class OrderResource {
       ctx.requireAnyRole("CASHIER", "MANAGER", "OWNER");
     }
     // The standard Idempotency-Key header is authoritative; the body field is a legacy fallback.
-    String effectiveKey =
-        idempotencyKey != null && !idempotencyKey.isBlank() ? idempotencyKey : req.idempotencyKey();
+    String effectiveKey = IdempotencyKeys.effective(idempotencyKey, req.idempotencyKey());
     if (effectiveKey == null || effectiveKey.isBlank()) {
       throw ApiException.badRequest(
           "MISSING_IDEMPOTENCY_KEY", "Idempotency-Key header is required to place an order");

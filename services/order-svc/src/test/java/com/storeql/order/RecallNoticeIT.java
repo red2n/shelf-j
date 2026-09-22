@@ -485,11 +485,11 @@ class RecallNoticeIT {
                 (customer == null ? "" : "\"customerId\":\"" + customer + "\",")
                     + "\"currency\":\"GBP\",",
                 "OWNER",
-                UUID.fromString(OWNER))
+                Ids.parse(OWNER))
             .getString("id");
     if (pay != null) {
       orderService.handlePaymentCaptured(
-          UUID.fromString(T), UUID.fromString(id), Ids.newId(), new BigDecimal(pay));
+          Ids.parse(T), Ids.parse(id), Ids.newId(), new BigDecimal(pay));
     }
     return id;
   }

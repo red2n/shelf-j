@@ -3,10 +3,10 @@ package com.storeql.order.fiscal;
 import static org.junit.jupiter.api.Assertions.assertEquals;
 import static org.junit.jupiter.api.Assertions.assertTrue;
 
+import com.storeql.ids.Ids;
 import java.math.BigDecimal;
 import java.time.Instant;
 import java.util.List;
-import java.util.UUID;
 import org.junit.jupiter.api.Test;
 
 /**
@@ -18,7 +18,7 @@ class ProcessDataTest {
   private static SaleFigures sale(
       List<SaleFigures.RateAmount> rates, List<SaleFigures.TenderAmount> tenders) {
     return new SaleFigures(
-        UUID.randomUUID(), "EUR", Instant.parse("2026-09-12T10:00:00Z"), rates, tenders);
+        Ids.newId(), "EUR", Instant.parse("2026-09-12T10:00:00Z"), rates, tenders);
   }
 
   @Test

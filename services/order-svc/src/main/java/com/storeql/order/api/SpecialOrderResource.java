@@ -5,12 +5,15 @@ import com.storeql.order.mapper.Mappers;
 import com.storeql.order.service.OrderService;
 import com.storeql.web.ApiResponse;
 import com.storeql.web.Cursor;
+import com.storeql.web.HttpHeaders;
+import com.storeql.web.IdempotencyKeys;
 import com.storeql.web.TenantContext;
 import com.storeql.web.Validations;
 import jakarta.enterprise.context.RequestScoped;
 import jakarta.inject.Inject;
 import jakarta.ws.rs.Consumes;
 import jakarta.ws.rs.GET;
+import jakarta.ws.rs.HeaderParam;
 import jakarta.ws.rs.POST;
 import jakarta.ws.rs.Path;
 import jakarta.ws.rs.PathParam;
@@ -43,9 +46,12 @@ public class SpecialOrderResource {
    * <p>No inventory is deducted or reserved: the goods do not exist in stock yet, which is the
    * whole point of a special order.
    *
+   * @param idempotencyKey the {@code Idempotency-Key} header (a UUIDv7), or {@code null} to use the
+   *     body's
    * @param req the store, customer, items and optional currency
    * @return {@code 201} with the special order and its lines
-   * @throws com.storeql.web.ApiException {@code 400} when no items are supplied
+   * @throws com.storeql.web.ApiException {@code 400} when no items are supplied or the key is not a
+   *     UUIDv7
    */
   @Operation(
       summary = "Create a special order",
@@ -53,12 +59,20 @@ public class SpecialOrderResource {
           "Places a customer order for future delivery at a store, without immediate inventory"
               + " deduction.")
   @APIResponse(responseCode = "201", description = "Special order created")
-  @APIResponse(responseCode = "400", description = "No items in the special order")
+  @APIResponse(
+      responseCode = "400",
+      description = "No items in the special order, or an Idempotency-Key that is not a UUIDv7")
+  @APIResponse(
+      responseCode = "409",
+      description = "A special order already exists under this Idempotency-Key")
   @POST
-  public Response create(CreateSpecialOrderRequest req) {
+  public Response create(
+      @HeaderParam(HttpHeaders.IDEMPOTENCY_KEY) String idempotencyKey,
+      CreateSpecialOrderRequest req) {
     Validations.validate(req);
     UUID tenantId = ctx.requireTenantId();
-    var so = svc.createSpecialOrder(tenantId, req, ctx);
+    String key = IdempotencyKeys.effective(idempotencyKey, req.idempotencyKey());
+    var so = svc.createSpecialOrder(tenantId, req, key, ctx);
     var items = svc.getSpecialOrderItems(tenantId, so.id());
     return Response.status(201).entity(ApiResponse.ok(Mappers.toDto(so, items))).build();
   }

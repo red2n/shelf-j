@@ -1,5 +1,6 @@
 package com.storeql.inventory.api;
 
+import com.storeql.ids.Ids;
 import com.storeql.inventory.dto.Dtos.CreateReasonCodeRequest;
 import com.storeql.inventory.dto.Dtos.CreateSourceTypeRequest;
 import com.storeql.inventory.dto.Dtos.ReasonCodeResponse;
@@ -171,8 +172,7 @@ public class ReferenceDataResource {
   public ApiResponse<ZoneGlMappingResponse> upsertZoneGlMapping(UpsertZoneGlMappingRequest req) {
     Validations.validate(req);
     UUID tenantId = ctx.requireTenantId();
-    UUID zoneId =
-        req.zoneId() == null || req.zoneId().isBlank() ? null : UUID.fromString(req.zoneId());
+    UUID zoneId = req.zoneId() == null || req.zoneId().isBlank() ? null : Ids.parse(req.zoneId());
     var m =
         service.upsertZoneGlMapping(
             tenantId, uuid(req.storeId(), "storeId"), zoneId, req.nominalCode(), req.description());

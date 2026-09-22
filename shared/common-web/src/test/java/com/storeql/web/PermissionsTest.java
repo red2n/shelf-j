@@ -5,8 +5,8 @@ import static org.junit.jupiter.api.Assertions.assertFalse;
 import static org.junit.jupiter.api.Assertions.assertThrows;
 import static org.junit.jupiter.api.Assertions.assertTrue;
 
+import com.storeql.ids.Ids;
 import java.util.Set;
-import java.util.UUID;
 import org.junit.jupiter.api.DisplayName;
 import org.junit.jupiter.api.Test;
 
@@ -15,7 +15,7 @@ class PermissionsTest {
 
   private static TenantContext ctx(Set<String> roles, Set<String> permissions) {
     TenantContext c = new TenantContext();
-    c.set(UUID.randomUUID(), UUID.randomUUID(), roles, Set.of(), permissions, "r");
+    c.set(Ids.newId(), Ids.newId(), roles, Set.of(), permissions, "r");
     return c;
   }
 

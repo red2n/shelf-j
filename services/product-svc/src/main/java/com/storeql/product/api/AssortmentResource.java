@@ -1,5 +1,6 @@
 package com.storeql.product.api;
 
+import com.storeql.ids.Ids;
 import com.storeql.product.domain.Assortment.Line;
 import com.storeql.product.dto.AssortmentDtos;
 import com.storeql.product.mapper.AssortmentMappers;
@@ -330,7 +331,7 @@ public class AssortmentResource {
       throw ApiException.badRequest("ASSORTMENT_ID_REQUIRED", field + " is required");
     }
     try {
-      return UUID.fromString(value.strip());
+      return Ids.parse(value.strip());
     } catch (IllegalArgumentException e) {
       throw new ApiException(400, "ASSORTMENT_ID_INVALID", field + " is not an id", List.of(), e);
     }

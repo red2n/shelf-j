@@ -74,12 +74,12 @@ public class ProductRepository extends BaseOutboxRepository {
   private static Product decodeProduct(String s) {
     String[] f = s.split(FS, -1);
     return new Product(
-        UUID.fromString(f[0]),
-        UUID.fromString(f[1]),
+        Ids.parse(f[0]),
+        Ids.parse(f[1]),
         f[2],
         f[3].isEmpty() ? null : f[3],
-        f[4].isEmpty() ? null : UUID.fromString(f[4]),
-        f[5].isEmpty() ? null : UUID.fromString(f[5]),
+        f[4].isEmpty() ? null : Ids.parse(f[4]),
+        f[5].isEmpty() ? null : Ids.parse(f[5]),
         f[6],
         Boolean.parseBoolean(f[7]),
         Boolean.parseBoolean(f[8]),

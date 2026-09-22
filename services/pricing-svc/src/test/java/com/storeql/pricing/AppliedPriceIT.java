@@ -710,9 +710,9 @@ class AppliedPriceIT {
     String w = newId();
     price(de, v, "10.00");
     drain();
-    UUID tenant = UUID.fromString(de.tenant());
-    for (int i = 0; i < 3; i++) queue.enqueue(tenant, UUID.fromString(v), null, "ORDER_" + i);
-    queue.enqueue(tenant, UUID.fromString(w), null, "ORDER_W");
+    UUID tenant = Ids.parse(de.tenant());
+    for (int i = 0; i < 3; i++) queue.enqueue(tenant, Ids.parse(v), null, "ORDER_" + i);
+    queue.enqueue(tenant, Ids.parse(w), null, "ORDER_W");
 
     List<UUID> held = new ArrayList<>();
     try {
@@ -783,7 +783,7 @@ class AppliedPriceIT {
       "A catalogue change is queued only where a category scope lets it move a price, and then as an overwrite")
   void aCatalogueChangeIsQueuedOnlyWhereItCanMatter() throws Exception {
     Shop de = shop("EUR", "DE");
-    UUID tenant = UUID.fromString(de.tenant());
+    UUID tenant = Ids.parse(de.tenant());
     UUID product = Ids.newId();
     UUID plain = Ids.newId();
     assertThat(

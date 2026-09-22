@@ -1,5 +1,6 @@
 package com.storeql.purchase.messaging;
 
+import com.storeql.ids.Ids;
 import com.storeql.purchase.domain.SalesPosting;
 import com.storeql.purchase.service.SalesPostingService;
 import jakarta.enterprise.context.ApplicationScoped;
@@ -32,9 +33,9 @@ public class SalesEventHandler {
       JsonObject o = EventJson.parse(json);
       if (!"OrderConfirmed".equals(o.getString("eventType", ""))) return;
       postings.postSale(
-          UUID.fromString(o.getString("eventId")),
-          UUID.fromString(o.getString("tenantId")),
-          UUID.fromString(o.getString("orderId")),
+          Ids.parse(o.getString("eventId")),
+          Ids.parse(o.getString("tenantId")),
+          Ids.parse(o.getString("orderId")),
           EventJson.optUuid(o, "storeId"),
           o.getJsonNumber("total").bigDecimalValue(),
           o.getJsonNumber("taxAmount").bigDecimalValue(),
@@ -49,9 +50,9 @@ public class SalesEventHandler {
     try {
       JsonObject o = EventJson.parse(json);
       if (!"PaymentCaptured".equals(o.getString("eventType", ""))) return;
-      UUID paymentId = UUID.fromString(o.getString("paymentId"));
-      UUID tenantId = UUID.fromString(o.getString("tenantId"));
-      UUID orderId = UUID.fromString(o.getString("orderId"));
+      UUID paymentId = Ids.parse(o.getString("paymentId"));
+      UUID tenantId = Ids.parse(o.getString("tenantId"));
+      UUID orderId = Ids.parse(o.getString("orderId"));
       UUID storeId = EventJson.optUuid(o, "storeId");
       String method = o.getString("method", null);
       BigDecimal amount = o.getJsonNumber("amount").bigDecimalValue();
@@ -88,9 +89,9 @@ public class SalesEventHandler {
         shares.add(new SalesPosting.Allocation(null, o.getJsonNumber("amount").bigDecimalValue()));
       }
       postings.postRefund(
-          UUID.fromString(o.getString("eventId")),
-          UUID.fromString(o.getString("tenantId")),
-          UUID.fromString(o.getString("orderId")),
+          Ids.parse(o.getString("eventId")),
+          Ids.parse(o.getString("tenantId")),
+          Ids.parse(o.getString("orderId")),
           store,
           shares);
     } catch (RuntimeException e) {
@@ -112,9 +113,9 @@ public class SalesEventHandler {
       }
       if (!o.getBoolean("fundsWithdrawn", false)) return;
       postings.postChargebackWithdrawn(
-          UUID.fromString(o.getString("eventId")),
-          UUID.fromString(o.getString("tenantId")),
-          UUID.fromString(o.getString("orderId")),
+          Ids.parse(o.getString("eventId")),
+          Ids.parse(o.getString("tenantId")),
+          Ids.parse(o.getString("orderId")),
           EventJson.optUuid(o, "storeId"),
           o.getJsonNumber("amount").bigDecimalValue(),
           o.getJsonNumber("feeAmount").bigDecimalValue());
@@ -129,9 +130,9 @@ public class SalesEventHandler {
       JsonObject o = EventJson.parse(json);
       if (!"PaymentDisputeClosed".equals(o.getString("eventType", ""))) return;
       postings.postChargebackClosed(
-          UUID.fromString(o.getString("eventId")),
-          UUID.fromString(o.getString("tenantId")),
-          UUID.fromString(o.getString("orderId")),
+          Ids.parse(o.getString("eventId")),
+          Ids.parse(o.getString("tenantId")),
+          Ids.parse(o.getString("orderId")),
           EventJson.optUuid(o, "storeId"),
           o.getJsonNumber("amount").bigDecimalValue(),
           "WON".equals(o.getString("outcome", "")),
@@ -161,9 +162,9 @@ public class SalesEventHandler {
                 s.getJsonNumber("unallocated").bigDecimalValue()));
       }
       postings.postCardSettlement(
-          UUID.fromString(o.getString("eventId")),
-          UUID.fromString(o.getString("tenantId")),
-          UUID.fromString(o.getString("batchId")),
+          Ids.parse(o.getString("eventId")),
+          Ids.parse(o.getString("tenantId")),
+          Ids.parse(o.getString("batchId")),
           o.getString("reference", "") + " paid " + o.getString("payoutDate", ""),
           stores);
     } catch (RuntimeException e) {

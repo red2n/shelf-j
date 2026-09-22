@@ -69,7 +69,7 @@ class RecallTest {
   /** Only that exact shape is the service's: anything close to it is still a supplier's lot. */
   @Test
   void aNearMissOnTheSystemShapeIsStillASupplierLot() {
-    String ref = Ids.shortRef(UUID.fromString("01a0905d-7082-7518-9ec6-aee90d72a43e"));
+    String ref = Ids.shortRef(Ids.parse("01a0905d-7082-7518-9ec6-aee90d72a43e"));
     assertEquals("0d72a43e", ref);
 
     assertTrue(Recall.isSupplierLot("MO-" + ref.toUpperCase(Locale.ROOT)), "upper case");

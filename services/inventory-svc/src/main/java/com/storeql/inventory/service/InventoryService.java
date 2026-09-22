@@ -779,8 +779,8 @@ public class InventoryService {
         if (sep < 0) {
           throw new IllegalArgumentException("missing separator");
         }
-        afterStoreId = UUID.fromString(rawKey.substring(0, sep));
-        afterVariantId = UUID.fromString(rawKey.substring(sep + 1));
+        afterStoreId = Ids.parse(rawKey.substring(0, sep));
+        afterVariantId = Ids.parse(rawKey.substring(sep + 1));
       } catch (RuntimeException e) {
         throw new ApiException(400, "INVALID_CURSOR", "Malformed pagination cursor", List.of(), e);
       }
@@ -3032,9 +3032,9 @@ public class InventoryService {
     int parseFailed = 0;
     for (var req : requests) {
       try {
-        UUID storeId = UUID.fromString(req.storeId());
-        UUID variantId = UUID.fromString(req.variantId());
-        UUID orderId = req.orderId() != null ? UUID.fromString(req.orderId()) : null;
+        UUID storeId = Ids.parse(req.storeId());
+        UUID variantId = Ids.parse(req.variantId());
+        UUID orderId = req.orderId() != null ? Ids.parse(req.orderId()) : null;
         long ttl = req.ttlSeconds() == null ? config.reservationTtlSeconds() : req.ttlSeconds();
         UUID id = Ids.newId();
         var reservation =
@@ -3208,7 +3208,7 @@ public class InventoryService {
             .map(
                 e ->
                     new PickingRuleZonePriority(
-                        null, tenantId, ruleId, UUID.fromString(e.zoneId()), e.priority()))
+                        null, tenantId, ruleId, Ids.parse(e.zoneId()), e.priority()))
             .toList();
     pickingRuleRepo.replaceZonePriorities(tenantId, ruleId, items);
     return pickingRuleRepo.listZonePriorities(tenantId, ruleId);
@@ -3237,7 +3237,7 @@ public class InventoryService {
    */
   public PickingRuleAssignment createPickingRuleAssignment(
       UUID tenantId, com.storeql.inventory.dto.Dtos.CreatePickingRuleAssignmentRequest req) {
-    UUID ruleId = UUID.fromString(req.ruleId());
+    UUID ruleId = Ids.parse(req.ruleId());
     getPickingRule(tenantId, ruleId);
     String scopeType = req.scopeType().toUpperCase(java.util.Locale.ROOT);
     if (!java.util.Set.of("GLOBAL", "STORE", "PRODUCT").contains(scopeType)) {
@@ -3249,7 +3249,7 @@ public class InventoryService {
           null);
     }
     UUID scopeId =
-        (req.scopeId() != null && !req.scopeId().isBlank()) ? UUID.fromString(req.scopeId()) : null;
+        (req.scopeId() != null && !req.scopeId().isBlank()) ? Ids.parse(req.scopeId()) : null;
     if (!"GLOBAL".equals(scopeType) && scopeId == null) {
       throw new ApiException(
           400,

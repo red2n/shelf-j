@@ -3,6 +3,7 @@ package com.storeql.iam.sso;
 import com.auth0.jwt.JWT;
 import com.auth0.jwt.JWTCreator;
 import com.auth0.jwt.algorithms.Algorithm;
+import com.storeql.ids.Ids;
 import com.sun.net.httpserver.HttpExchange;
 import com.sun.net.httpserver.HttpServer;
 import java.io.IOException;
@@ -106,7 +107,7 @@ public final class FakeOidcProvider implements AutoCloseable {
     if (!"code".equals(q.get("response_type")) || !"S256".equals(q.get("code_challenge_method"))) {
       throw new IllegalStateException("not a code flow with S256: " + q);
     }
-    String code = "code-" + java.util.UUID.randomUUID();
+    String code = "code-" + Ids.newId();
     codes.put(
         code,
         new Grant(
@@ -201,7 +202,7 @@ public final class FakeOidcProvider implements AutoCloseable {
         ex,
         200,
         "{\"access_token\":\"at-"
-            + java.util.UUID.randomUUID()
+            + Ids.newId()
             + "\",\"token_type\":\"Bearer\",\"expires_in\":300,\"id_token\":\""
             + idToken
             + "\"}");

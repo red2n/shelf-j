@@ -20,7 +20,7 @@ class MqttChannelTest {
 
   @Test
   void topicIsScopedByTenantThenRecipient() {
-    UUID tenant = UUID.fromString("01a090ae-611e-700b-bde4-50df0324c37c");
+    UUID tenant = Ids.parse("01a090ae-611e-700b-bde4-50df0324c37c");
 
     String topic = MqttChannel.topic(tenant, "store-42");
 

@@ -3,6 +3,7 @@ package com.storeql.inventory.messaging;
 import static org.junit.jupiter.api.Assertions.assertEquals;
 import static org.junit.jupiter.api.Assertions.assertTrue;
 
+import com.storeql.ids.Ids;
 import com.storeql.inventory.service.InventoryService;
 import java.math.BigDecimal;
 import java.util.ArrayList;
@@ -21,12 +22,12 @@ import org.junit.jupiter.api.Test;
  */
 class OrderVoidedHandlerTest {
 
-  private static final UUID EVENT = UUID.fromString("01a090ae-611e-705b-8bb0-8fccd45e4201");
-  private static final UUID TENANT = UUID.fromString("01a090ae-611e-700a-9f77-b94950c4c25a");
-  private static final UUID ORDER = UUID.fromString("01a090ae-611e-700e-89dd-b0cb0b3011a9");
-  private static final UUID STORE = UUID.fromString("01a090ae-611e-7010-be82-c788cf35ea1c");
-  private static final UUID APPLES = UUID.fromString("01a090ae-611e-7012-a14d-4f924d594f00");
-  private static final UUID CHEESE = UUID.fromString("01a090ae-611e-7013-9a2a-bd6e8545fd8a");
+  private static final UUID EVENT = Ids.parse("01a090ae-611e-705b-8bb0-8fccd45e4201");
+  private static final UUID TENANT = Ids.parse("01a090ae-611e-700a-9f77-b94950c4c25a");
+  private static final UUID ORDER = Ids.parse("01a090ae-611e-700e-89dd-b0cb0b3011a9");
+  private static final UUID STORE = Ids.parse("01a090ae-611e-7010-be82-c788cf35ea1c");
+  private static final UUID APPLES = Ids.parse("01a090ae-611e-7012-a14d-4f924d594f00");
+  private static final UUID CHEESE = Ids.parse("01a090ae-611e-7013-9a2a-bd6e8545fd8a");
 
   /**
    * Records the two receive paths. Every other service method is left un-overridden, so if the

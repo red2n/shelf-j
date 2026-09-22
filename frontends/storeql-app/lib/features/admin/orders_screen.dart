@@ -14,6 +14,7 @@ import 'providers/admin_providers.dart';
 import 'providers/orders_pagination.dart';
 import 'sales_invoices_dialog.dart';
 import '../../shared/util/short_ref.dart';
+import 'package:storeql_app/core/ids.dart';
 
 /// The body of a cancel. The reason is optional, and the server takes "no
 /// reason" as no body at all: a body with a blank reason is refused (SJ-D49),
@@ -1088,7 +1089,7 @@ class _CollectPaymentDialogState extends ConsumerState<_CollectPaymentDialog> {
         },
         options: Options(headers: {
           'Idempotency-Key':
-              'collect-${widget.order.id}-${outstanding.toStringAsFixed(2)}'
+              derivedId(widget.order.id, 'collect:${outstanding.toStringAsFixed(2)}')
         }),
       );
       if (!mounted) return;

@@ -1,5 +1,6 @@
 package com.storeql.notification.messaging;
 
+import com.storeql.ids.Ids;
 import com.storeql.notification.service.Messages;
 import com.storeql.notification.service.Notifier;
 import com.storeql.notification.template.Catalogue;
@@ -38,9 +39,9 @@ class FoodSafetyCheckOverdueHandler {
     Instant dueSince;
     try (var reader = Json.createReader(new StringReader(json))) {
       JsonObject obj = reader.readObject();
-      eventId = UUID.fromString(obj.getString("eventId"));
-      tenantId = UUID.fromString(obj.getString("tenantId"));
-      storeId = UUID.fromString(obj.getString("storeId"));
+      eventId = Ids.parse(obj.getString("eventId"));
+      tenantId = Ids.parse(obj.getString("tenantId"));
+      storeId = Ids.parse(obj.getString("storeId"));
       pointName = obj.getString("pointName");
       dueSince = Instant.parse(obj.getString("dueSince"));
     } catch (RuntimeException e) {

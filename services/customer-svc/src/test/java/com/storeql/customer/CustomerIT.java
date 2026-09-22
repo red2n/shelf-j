@@ -321,8 +321,8 @@ class CustomerIT {
             "/customers",
             "{\"email\":\"jill@example.com\",\"firstName\":\"Jill\",\"lastName\":\"Reed\"}");
     String id = field(r.readEntity(String.class), "id");
-    java.util.UUID tenant = java.util.UUID.fromString(TENANT);
-    java.util.UUID customerId = java.util.UUID.fromString(id);
+    java.util.UUID tenant = Ids.parse(TENANT);
+    java.util.UUID customerId = Ids.parse(id);
     java.util.UUID eventA = com.storeql.ids.Ids.newId();
 
     // Order A: £40 spent → 40 points at the default 1-point-per-unit rate.

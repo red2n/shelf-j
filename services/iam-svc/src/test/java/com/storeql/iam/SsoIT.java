@@ -144,7 +144,7 @@ class SsoIT {
             Caller.NOBODY,
             "{\"email\":\"" + email + "\",\"password\":\"" + PASSWORD + "\"}");
     assertThat(a.body().toString(), a.status(), is(201));
-    return UUID.fromString(JWT.decode(a.data().getString("accessToken")).getSubject());
+    return Ids.parse(JWT.decode(a.data().getString("accessToken")).getSubject());
   }
 
   private Answer passwordLogin(String email) {

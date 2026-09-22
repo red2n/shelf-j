@@ -1,5 +1,6 @@
 package com.storeql.notification.messaging;
 
+import com.storeql.ids.Ids;
 import com.storeql.notification.service.NotificationErasure;
 import jakarta.enterprise.context.ApplicationScoped;
 import jakarta.inject.Inject;
@@ -26,8 +27,8 @@ class CustomerErasedHandler {
     UUID customerId;
     try (var reader = Json.createReader(new StringReader(json))) {
       JsonObject obj = reader.readObject();
-      tenantId = UUID.fromString(obj.getString("tenantId"));
-      customerId = UUID.fromString(obj.getString("customerId"));
+      tenantId = Ids.parse(obj.getString("tenantId"));
+      customerId = Ids.parse(obj.getString("customerId"));
     } catch (RuntimeException e) {
       LOG.log(Level.WARNING, "Malformed CustomerErased payload skipped: " + e.getMessage());
       return;

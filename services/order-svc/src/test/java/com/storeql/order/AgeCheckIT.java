@@ -15,7 +15,6 @@ import jakarta.ws.rs.client.WebTarget;
 import jakarta.ws.rs.core.MediaType;
 import jakarta.ws.rs.core.Response;
 import java.sql.DriverManager;
-import java.util.UUID;
 import org.junit.jupiter.api.AfterAll;
 import org.junit.jupiter.api.DisplayName;
 import org.junit.jupiter.api.Test;
@@ -171,8 +170,8 @@ class AgeCheckIT {
             c.prepareStatement(
                 "INSERT INTO \"order\".store_status (store_id, tenant_id, status, status_changed_at)"
                     + " VALUES (?, ?, 'ACTIVE', now())")) {
-      ps.setObject(1, UUID.fromString(theirs));
-      ps.setObject(2, UUID.fromString(OTHER_T));
+      ps.setObject(1, Ids.parse(theirs));
+      ps.setObject(2, Ids.parse(OTHER_T));
       ps.executeUpdate();
     }
     Response r =
@@ -327,7 +326,7 @@ class AgeCheckIT {
             c.prepareStatement(
                 "SELECT category, minimum_age, country, reason FROM \"order\".age_verifications"
                     + " WHERE id = ?")) {
-      ps.setObject(1, UUID.fromString(id));
+      ps.setObject(1, Ids.parse(id));
       try (var rs = ps.executeQuery()) {
         assertThat(rs.next(), is(true));
         assertThat(rs.getString(1), is("ALCOHOL"));
@@ -370,7 +369,7 @@ class AgeCheckIT {
         var ps =
             c.prepareStatement(
                 "SELECT born_before, born_before_policy FROM \"order\".age_verifications WHERE id = ?")) {
-      ps.setObject(1, UUID.fromString(id));
+      ps.setObject(1, Ids.parse(id));
       try (var rs = ps.executeQuery()) {
         assertThat(rs.next(), is(true));
         assertThat(

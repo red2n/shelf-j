@@ -108,7 +108,7 @@ export default function ({ shop, rival }) {
     'COMMISSION_ARRANGEMENT_EXISTS',
   );
   // A path that is not an id at all: refused by the door, not read as somebody.
-  expect(put(`${C}/staff/not-a-person`, { schemeId: flat.id }), '[-] a path that is not an id is refused', 404);
+  expect(put(`${C}/staff/not-a-person`, { schemeId: flat.id }), '[-] a path that is not an id is refused', 400, 'INVALID_UUID');
   const history = data(get(`${C}/staff/${cashier.userId}`));
   truthy('[+] the arrangement reads back as a history, newest first', Array.isArray(history) && history.length === 1 && history[0].schemeId === tiered.id, history);
 

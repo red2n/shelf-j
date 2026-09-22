@@ -18,6 +18,12 @@
         no network, no business decisions — purchase-svc and order-svc decide what an invoice means.</description>
 
     <dependencies>
+        <!-- IdsArchitectureTest: ids are UUIDv7 in this module's tests too. -->
+        <dependency>
+            <groupId>com.tngtech.archunit</groupId>
+            <artifactId>archunit-junit5</artifactId>
+            <scope>test</scope>
+        </dependency>
         <!-- Factur-X: the PDF/A-3 a French or German buyer reads, with the XML inside it. -->
         <dependency>
             <groupId>org.apache.pdfbox</groupId>

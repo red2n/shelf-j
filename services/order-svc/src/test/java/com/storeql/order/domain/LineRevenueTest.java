@@ -4,6 +4,7 @@ import static org.junit.jupiter.api.Assertions.assertEquals;
 import static org.junit.jupiter.api.Assertions.assertNull;
 import static org.junit.jupiter.api.Assertions.assertTrue;
 
+import com.storeql.ids.Ids;
 import com.storeql.order.domain.Domain.Order;
 import com.storeql.order.domain.Domain.OrderItem;
 import java.lang.reflect.RecordComponent;
@@ -16,8 +17,8 @@ import org.junit.jupiter.api.Test;
 
 class LineRevenueTest {
 
-  private static final UUID A = UUID.fromString("01a090ae-611e-7a00-8000-0000000000a1");
-  private static final UUID B = UUID.fromString("01a090ae-611e-7a00-8000-0000000000b1");
+  private static final UUID A = Ids.parse("01a090ae-611e-7a00-8000-0000000000a1");
+  private static final UUID B = Ids.parse("01a090ae-611e-7a00-8000-0000000000b1");
 
   private static BigDecimal d(String v) {
     return new BigDecimal(v);

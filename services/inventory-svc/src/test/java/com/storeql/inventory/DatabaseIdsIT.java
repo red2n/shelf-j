@@ -67,7 +67,7 @@ class DatabaseIdsIT {
   @Test
   void uuidV7MakesVersion7IdsCarryingTheCurrentTime() throws SQLException {
     long before = System.currentTimeMillis();
-    UUID id = UUID.fromString(scalar("SELECT inventory.uuid_v7()::text"));
+    UUID id = Ids.parse(scalar("SELECT inventory.uuid_v7()::text"));
     long after = System.currentTimeMillis();
 
     assertEquals(7, id.version());
@@ -117,7 +117,7 @@ class DatabaseIdsIT {
                 + "'");
     assertEquals(2, ids.size(), "one DAY bucket per variant");
     for (String id : ids) {
-      assertEquals(7, UUID.fromString(id).version(), id);
+      assertEquals(7, Ids.parse(id).version(), id);
     }
   }
 
@@ -214,23 +214,68 @@ class DatabaseIdsIT {
         .migrate();
   }
 
-  /** The audit every integration test ends with must name a table that holds another version. */
+  /**
+   * The database itself refuses a uuid of another version, in any uuid column: a v4 id, a v7 with
+   * the wrong variant, a v4 in a column that is not the id. Whatever path the write took.
+   */
   @Test
-  void theEndOfTestAuditNamesATableHoldingANonV7Id() throws SQLException {
-    UUID legacy = UUID.fromString("f47ac10b-58cc-4372-a567-0e02b2c3d479");
-    exec(
+  void theDatabaseRefusesAnyOtherVersion() throws SQLException {
+    String insert =
         "INSERT INTO inventory.transaction_reason_codes (id, tenant_id, code, description)"
-            + " VALUES ('"
-            + legacy
-            + "', '"
-            + T
-            + "', 'AUDIT_PROBE', 'v4 on purpose')");
+            + " VALUES ('%s', '%s', '%s', 'probe')";
+    for (String[] bad :
+        new String[][] {
+          {"f47ac10b-58cc-4372-a567-0e02b2c3d479", T, "PROBE_V4_ID"},
+          {"01a0905d-7082-7518-cec6-aee90d72a43e", T, "PROBE_VARIANT"},
+          {Ids.newId().toString(), "f47ac10b-58cc-4372-a567-0e02b2c3d479", "PROBE_V4_TENANT"},
+        }) {
+      SQLException refused =
+          org.junit.jupiter.api.Assertions.assertThrows(
+              SQLException.class, () -> exec(String.format(insert, bad[0], bad[1], bad[2])));
+      assertEquals("23514", refused.getSQLState(), "a CHECK refused it: " + refused.getMessage());
+    }
+    String ok = Ids.newId().toString();
+    exec(String.format(insert, ok, T, "PROBE_V7"));
+    exec("DELETE FROM inventory.transaction_reason_codes WHERE id = '" + ok + "'");
+  }
+
+  /**
+   * The audit every integration test ends with names any uuid column, not only an id, that holds
+   * another version — here a scratch table no migration made, so the database's check is not on it.
+   */
+  @Test
+  void theEndOfTestAuditNamesAColumnHoldingANonV7Uuid() throws SQLException {
+    exec("CREATE SCHEMA IF NOT EXISTS audit_probe");
+    exec("CREATE TABLE audit_probe.rows (id uuid, owner_ref uuid, refs uuid[])");
     try {
-      assertEquals(Long.valueOf(1), PG.nonV7Ids().get("inventory.transaction_reason_codes"));
+      exec(
+          "INSERT INTO audit_probe.rows VALUES ('"
+              + Ids.newId()
+              + "', 'f47ac10b-58cc-4372-a567-0e02b2c3d479', ARRAY['"
+              + Ids.newId()
+              + "'::uuid, '01a0905d-7082-7518-cec6-aee90d72a43e'::uuid])");
+      assertEquals(Long.valueOf(1), PG.nonV7Ids().get("audit_probe.rows.owner_ref"));
+      assertEquals(Long.valueOf(1), PG.nonV7Ids().get("audit_probe.rows.refs"));
+      assertTrue(!PG.nonV7Ids().containsKey("audit_probe.rows.id"), "the v7 id is not named");
     } finally {
-      exec("DELETE FROM inventory.transaction_reason_codes WHERE id = '" + legacy + "'");
+      exec("DROP SCHEMA audit_probe CASCADE");
     }
     assertTrue(PG.nonV7Ids().isEmpty(), "clean again: " + PG.nonV7Ids());
+  }
+
+  /** A uuid column the database does not hold to v7 is named too: the check did not arrive. */
+  @Test
+  void theEndOfTestAuditNamesAUuidColumnTheDatabaseDoesNotGuard() throws SQLException {
+    assertTrue(
+        PG.unguardedUuidColumns().isEmpty(), "every column guarded: " + PG.unguardedUuidColumns());
+    exec("ALTER TABLE inventory.transaction_reason_codes ADD COLUMN probe_ref uuid");
+    try {
+      assertTrue(
+          PG.unguardedUuidColumns().contains("inventory.transaction_reason_codes.probe_ref"),
+          PG.unguardedUuidColumns().toString());
+    } finally {
+      exec("ALTER TABLE inventory.transaction_reason_codes DROP COLUMN probe_ref");
+    }
   }
 
   // ── helpers ──────────────────────────────────────────────────────────────────

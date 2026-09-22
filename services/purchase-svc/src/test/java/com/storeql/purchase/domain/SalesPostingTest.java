@@ -3,6 +3,7 @@ package com.storeql.purchase.domain;
 import static org.hamcrest.MatcherAssert.assertThat;
 import static org.hamcrest.Matchers.is;
 
+import com.storeql.ids.Ids;
 import com.storeql.purchase.domain.Domain.NominalLedgerEntry;
 import java.math.BigDecimal;
 import java.time.LocalDate;
@@ -14,9 +15,9 @@ import org.junit.jupiter.api.Test;
 
 class SalesPostingTest {
 
-  private static final UUID TENANT = UUID.fromString("01a090ae-611e-702c-a97b-d1b8025478e1");
-  private static final UUID ORDER = UUID.fromString("01a090ae-611e-7a00-8000-000000000001");
-  private static final UUID STORE = UUID.fromString("01a090ae-611e-703c-a378-a4972ea461c8");
+  private static final UUID TENANT = Ids.parse("01a090ae-611e-702c-a97b-d1b8025478e1");
+  private static final UUID ORDER = Ids.parse("01a090ae-611e-7a00-8000-000000000001");
+  private static final UUID STORE = Ids.parse("01a090ae-611e-703c-a378-a4972ea461c8");
   private static final LocalDate DAY = LocalDate.of(2026, 9, 13);
 
   private static BigDecimal d(String v) {

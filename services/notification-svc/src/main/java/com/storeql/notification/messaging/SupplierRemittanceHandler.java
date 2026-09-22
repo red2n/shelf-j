@@ -1,5 +1,6 @@
 package com.storeql.notification.messaging;
 
+import com.storeql.ids.Ids;
 import com.storeql.notification.service.Messages;
 import com.storeql.notification.service.Notifier;
 import com.storeql.notification.template.Catalogue;
@@ -44,9 +45,9 @@ public class SupplierRemittanceHandler {
     try (var reader = Json.createReader(new StringReader(json))) {
       obj = reader.readObject();
       if (!"SupplierRemittanceIssued".equals(obj.getString("eventType", ""))) return;
-      eventId = UUID.fromString(obj.getString("eventId"));
-      tenantId = UUID.fromString(obj.getString("tenantId"));
-      supplierId = UUID.fromString(obj.getString("supplierId"));
+      eventId = Ids.parse(obj.getString("eventId"));
+      tenantId = Ids.parse(obj.getString("tenantId"));
+      supplierId = Ids.parse(obj.getString("supplierId"));
     } catch (RuntimeException e) {
       LOG.log(Level.WARNING, "Malformed SupplierRemittanceIssued skipped: " + e.getMessage());
       return;

@@ -1,5 +1,6 @@
 package com.storeql.notification.channel;
 
+import com.storeql.ids.Ids;
 import com.storeql.notification.domain.Domain.PushDevice;
 import com.storeql.notification.provider.ProviderException;
 import com.storeql.notification.provider.Providers;
@@ -48,7 +49,7 @@ public class PushChannel implements NotificationChannel {
 
   @Override
   public void send(UUID tenantId, String recipient, String subject, String body) {
-    UUID userId = UUID.fromString(recipient);
+    UUID userId = Ids.parse(recipient);
     List<PushDevice> devices = repo.devicesFor(tenantId, userId);
     if (devices.isEmpty()) {
       throw new NoDeviceException(userId);

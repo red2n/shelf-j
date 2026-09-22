@@ -21,6 +21,7 @@ import 'pos_session_providers.dart';
 import '../../shared/util/short_ref.dart';
 import 'customer_display.dart';
 import 'customer_display_channel.dart';
+import 'package:storeql_app/core/ids.dart';
 
 /// Multi-tender payment screen: a sale can be split across cash, card, gift card
 /// and store credit. The cashier stages tenders until the balance is cleared,
@@ -214,7 +215,7 @@ class _TenderScreenState extends ConsumerState<TenderScreen> {
     // If the network drops partway it is carried into the offline queue with the
     // sale, so every later replay presents the same keys — which is what makes
     // replaying a half-finished sale safe rather than a double charge.
-    final idemBase = 'pos-${DateTime.now().millisecondsSinceEpoch}';
+    final idemBase = newId();
     var sale = OfflineSale(
       id: idemBase,
       capturedAt: DateTime.now(),
@@ -275,7 +276,7 @@ class _TenderScreenState extends ConsumerState<TenderScreen> {
       final orderResp = await dio.post(
         '/${ApiConstants.order}/orders',
         data: sale.orderRequest,
-        options: Options(headers: {'Idempotency-Key': '$idemBase-order'}),
+        options: Options(headers: {'Idempotency-Key': derivedId(idemBase, 'order')}),
       );
       final order = orderResp.data['data'] as Map<String, dynamic>;
       final orderId = order['id'] as String? ?? '';
@@ -304,7 +305,7 @@ class _TenderScreenState extends ConsumerState<TenderScreen> {
             orderId: orderId,
             amount: t.amount,
             currency: currency,
-            idempotencyKey: '$idemBase-term$i',
+            idempotencyKey: derivedId(idemBase, 'term:$i'),
           );
           if (!outcome.approved) throw TerminalNotApproved(outcome);
           // Back onto the till's own tender, because that is what the receipt is
@@ -318,7 +319,7 @@ class _TenderScreenState extends ConsumerState<TenderScreen> {
         await dio.post(
           '/${ApiConstants.payment}/payments',
           data: {...t.body, 'orderId': orderId},
-          options: Options(headers: {'Idempotency-Key': '$idemBase-pay$i'}),
+          options: Options(headers: {'Idempotency-Key': derivedId(idemBase, 'pay:$i')}),
         );
         sale = sale.markTender(i, tenderDone: true);
         final code = t.giftCardCode;
@@ -868,8 +869,8 @@ class _TenderScreenState extends ConsumerState<TenderScreen> {
     // Same shape as the tendered path: one idempotency base per sale, kept with
     // the sale so a queued order replays under the key it was placed with. A
     // catalog-mode sale takes no payment, so it queues with no tenders.
-    final idemBase = 'pos-${DateTime.now().millisecondsSinceEpoch}';
-    final idem = '$idemBase-order';
+    final idemBase = newId();
+    final idem = derivedId(idemBase, 'order');
     final sale = OfflineSale(
       id: idemBase,
       capturedAt: DateTime.now(),

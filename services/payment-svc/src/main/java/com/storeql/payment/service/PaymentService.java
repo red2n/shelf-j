@@ -79,11 +79,11 @@ public class PaymentService {
   public PaymentTender recordTender(
       RecordTenderRequest req, TenantContext ctx, String idempotencyKey) {
     UUID tenantId = ctx.requireTenantId();
-    UUID storeId = req.storeId() == null ? null : UUID.fromString(req.storeId());
+    UUID storeId = req.storeId() == null ? null : Ids.parse(req.storeId());
     if (storeId != null) {
       ctx.requireStoreAccess(storeId);
     }
-    return capture(req, tenantId, UUID.fromString(req.orderId()), storeId, idempotencyKey);
+    return capture(req, tenantId, Ids.parse(req.orderId()), storeId, idempotencyKey);
   }
 
   /**
@@ -103,7 +103,7 @@ public class PaymentService {
   public PaymentTender recordOnlinePayment(
       RecordTenderRequest req, TenantContext ctx, String idempotencyKey) {
     UUID tenantId = ctx.requireTenantId();
-    UUID orderId = UUID.fromString(req.orderId());
+    UUID orderId = Ids.parse(req.orderId());
     // Shared with the payment-intent path — see OrderPaymentGuard for what is checked and why.
     UUID storeId = guard.verifyOnlineClaim(tenantId, orderId, req.amount(), ctx).storeId();
     return capture(req, tenantId, orderId, storeId, idempotencyKey);
@@ -146,21 +146,22 @@ public class PaymentService {
   }
 
   /**
-   * Redeem store credit as tender toward the order. Keyed idempotently on {@code "sc:"+orderId}: a
-   * repeat store-credit tender for the same order returns the existing tender without redeeming
-   * again (belt-and-suspenders with customer-svc's own per-order redeem idempotency). The redeem
-   * happens BEFORE the tender is recorded, so an insufficient balance (422) or an unreachable
-   * customer-svc (503) rejects the tender rather than inflating {@code paid_amount}.
+   * Redeem store credit as tender toward the order. Keyed idempotently on a key derived from the
+   * order ({@code Ids.derived(orderId, "store-credit")}, a UUIDv7 like every key): a repeat
+   * store-credit tender for the same order returns the existing tender without redeeming again
+   * (belt-and-suspenders with customer-svc's own per-order redeem idempotency). The redeem happens
+   * BEFORE the tender is recorded, so an insufficient balance (422) or an unreachable customer-svc
+   * (503) rejects the tender rather than inflating {@code paid_amount}.
    */
   private PaymentTender captureStoreCredit(
       RecordTenderRequest req, UUID tenantId, UUID orderId, UUID storeId) {
     if (req.customerId() == null || req.customerId().isBlank())
       throw ApiException.badRequest(
           "PAYMENT_CUSTOMER_REQUIRED", "customerId is required for a STORE_CREDIT tender");
-    UUID customerId = UUID.fromString(req.customerId());
+    UUID customerId = Ids.parse(req.customerId());
     // The tenant's own currency when the tender names none — never a literal (SJ-D53).
     String currency = profiles.currencyOr(tenantId, req.currency());
-    String key = "sc:" + orderId;
+    String key = Ids.derived(orderId, "store-credit").toString();
 
     Optional<PaymentTender> existing = repo.findTenderByKey(tenantId, key);
     if (existing.isPresent()) {
@@ -362,7 +363,7 @@ public class PaymentService {
             refundId,
             tenantId,
             orderId,
-            UUID.fromString(req.paymentId()),
+            Ids.parse(req.paymentId()),
             req.amount(),
             method,
             req.reference(),
@@ -382,7 +383,7 @@ public class PaymentService {
             req.amount(),
             List.of(
                 new com.storeql.payment.domain.Domain.RefundAllocation(
-                    UUID.fromString(req.paymentId()), method, req.amount(), null))));
+                    Ids.parse(req.paymentId()), method, req.amount(), null))));
   }
 
   /**

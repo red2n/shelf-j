@@ -11,6 +11,7 @@ import '../network/api_error.dart';
 import '../storage/app_storage.dart';
 import 'offline_sale.dart';
 import 'offline_synced.dart';
+import 'package:storeql_app/core/ids.dart';
 
 /// Store-and-forward queue for POS sales taken while the server was unreachable.
 ///
@@ -183,7 +184,7 @@ class OfflineQueueNotifier extends StateNotifier<List<OfflineSale>> {
         final resp = await dio.post(
           '/${ApiConstants.order}/orders',
           data: current.orderRequest,
-          options: Options(headers: {'Idempotency-Key': '${current.id}-order'}),
+          options: Options(headers: {'Idempotency-Key': derivedId(current.id, 'order')}),
         );
         final order = resp.data['data'] as Map<String, dynamic>;
         current = current.copyWith(orderId: order['id'] as String? ?? '');
@@ -198,7 +199,7 @@ class OfflineQueueNotifier extends StateNotifier<List<OfflineSale>> {
           await dio.post(
             '/${ApiConstants.payment}/payments',
             data: {...t.body, 'orderId': current.orderId},
-            options: Options(headers: {'Idempotency-Key': '${current.id}-pay$i'}),
+            options: Options(headers: {'Idempotency-Key': derivedId(current.id, 'pay:$i')}),
           );
           current = current.markTender(i, tenderDone: true);
           await _replace(current);

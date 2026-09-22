@@ -1,5 +1,6 @@
 package com.storeql.web;
 
+import com.storeql.ids.Ids;
 import java.nio.charset.StandardCharsets;
 import java.time.Instant;
 import java.util.Base64;
@@ -95,7 +96,7 @@ public final class Cursor {
         throw new IllegalArgumentException("missing separator");
       }
       return new CreatedAtId(
-          Instant.parse(raw.substring(0, sep)), UUID.fromString(raw.substring(sep + 1)));
+          Instant.parse(raw.substring(0, sep)), Ids.parse(raw.substring(sep + 1)));
     } catch (RuntimeException e) {
       throw new ApiException(400, "INVALID_CURSOR", "Malformed pagination cursor", List.of(), e);
     }

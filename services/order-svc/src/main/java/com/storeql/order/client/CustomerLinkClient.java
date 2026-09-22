@@ -3,6 +3,7 @@ package com.storeql.order.client;
 import com.storeql.discovery.ConsulClient;
 import com.storeql.discovery.ServiceInstance;
 import com.storeql.discovery.ServiceRegistry;
+import com.storeql.ids.Ids;
 import com.storeql.order.config.ServiceConfig;
 import com.storeql.web.HttpHeaders;
 import io.helidon.http.HeaderNames;
@@ -111,7 +112,7 @@ public class CustomerLinkClient {
         if (data == null || !data.containsKey("id") || data.isNull("id")) {
           return Optional.empty();
         }
-        return Optional.of(UUID.fromString(data.getString("id")));
+        return Optional.of(Ids.parse(data.getString("id")));
       }
     }
   }

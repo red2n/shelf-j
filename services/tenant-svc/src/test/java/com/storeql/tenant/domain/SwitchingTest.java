@@ -5,6 +5,7 @@ import static org.hamcrest.Matchers.containsString;
 import static org.hamcrest.Matchers.is;
 import static org.junit.jupiter.api.Assertions.assertThrows;
 
+import com.storeql.ids.Ids;
 import com.storeql.tenant.domain.Switching.Dates;
 import com.storeql.tenant.domain.Switching.Refused;
 import com.storeql.tenant.domain.Switching.Stage;
@@ -12,7 +13,6 @@ import com.storeql.tenant.domain.Switching.Switch;
 import java.time.Instant;
 import java.time.LocalDate;
 import java.util.Set;
-import java.util.UUID;
 import org.junit.jupiter.api.DisplayName;
 import org.junit.jupiter.api.Test;
 import org.junit.jupiter.api.function.Executable;
@@ -24,11 +24,7 @@ class SwitchingTest {
 
   private static Switch notice(String intent, LocalDate ends) {
     return Switching.notice(
-        UUID.randomUUID(),
-        UUID.randomUUID(),
-        intent,
-        UUID.randomUUID(),
-        Switching.forNotice(intent, TODAY, ends));
+        Ids.newId(), Ids.newId(), intent, Ids.newId(), Switching.forNotice(intent, TODAY, ends));
   }
 
   private static Switch with(Switch s, Dates d, Instant extendedAt) {
@@ -41,7 +37,7 @@ class SwitchingTest {
         d.noticeEndsOn(),
         d.transitionEndsOn(),
         extendedAt,
-        extendedAt == null ? null : UUID.randomUUID(),
+        extendedAt == null ? null : Ids.newId(),
         d.retrievalEndsOn(),
         d.erasureDueOn(),
         s.cancelledAt(),
@@ -74,9 +70,9 @@ class SwitchingTest {
         s.retrievalEndsOn(),
         s.erasureDueOn(),
         withdrawn ? Instant.now() : null,
-        withdrawn ? UUID.randomUUID() : null,
+        withdrawn ? Ids.newId() : null,
         withdrawn ? "changed our mind" : null,
-        withdrawn ? null : UUID.randomUUID(),
+        withdrawn ? null : Ids.newId(),
         withdrawn ? null : Instant.now());
   }
 

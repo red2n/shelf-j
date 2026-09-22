@@ -1,6 +1,7 @@
 package com.storeql.cart.messaging;
 
 import com.storeql.cart.service.CartService;
+import com.storeql.ids.Ids;
 import jakarta.enterprise.context.ApplicationScoped;
 import jakarta.inject.Inject;
 import jakarta.json.Json;
@@ -30,7 +31,7 @@ class OrderPlacedHandler {
     UUID storeId;
     try (var reader = Json.createReader(new StringReader(json))) {
       JsonObject obj = reader.readObject();
-      tenantId = UUID.fromString(obj.getString("tenantId"));
+      tenantId = Ids.parse(obj.getString("tenantId"));
       // A cart is held under the login the shopper signed in with, which is not the shop's
       // customer id (SJ-D44) — before that was unpicked, one value stood in both places. loginId
       // is what matches a cart; customerId is the fallback for events published before the split.
@@ -38,9 +39,9 @@ class OrderPlacedHandler {
           obj.containsKey("loginId") && !obj.isNull("loginId")
               ? obj.getString("loginId")
               : (obj.isNull("customerId") ? null : obj.getString("customerId"));
-      customerId = basketOwner == null ? null : UUID.fromString(basketOwner);
+      customerId = basketOwner == null ? null : Ids.parse(basketOwner);
       String storeIdStr = obj.getString("storeId", null);
-      storeId = storeIdStr != null ? UUID.fromString(storeIdStr) : null;
+      storeId = storeIdStr != null ? Ids.parse(storeIdStr) : null;
     } catch (RuntimeException e) {
       LOG.log(Level.WARNING, "Malformed OrderPlaced payload skipped: " + e.getMessage());
       return;

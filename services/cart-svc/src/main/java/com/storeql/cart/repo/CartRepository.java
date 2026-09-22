@@ -111,11 +111,11 @@ public class CartRepository extends BaseJdbcRepository {
   private static Cart decodeCart(String s) {
     String[] f = s.split(FS, -1);
     return new Cart(
-        UUID.fromString(f[0]),
-        UUID.fromString(f[1]),
-        f[2].isEmpty() ? null : UUID.fromString(f[2]),
+        Ids.parse(f[0]),
+        Ids.parse(f[1]),
+        f[2].isEmpty() ? null : Ids.parse(f[2]),
         f[3].isEmpty() ? null : f[3],
-        UUID.fromString(f[4]),
+        Ids.parse(f[4]),
         f[5],
         Instant.parse(f[6]),
         Instant.parse(f[7]));
@@ -136,10 +136,10 @@ public class CartRepository extends BaseJdbcRepository {
   private static CartItem decodeItem(String s) {
     String[] f = s.split(FS, -1);
     return new CartItem(
-        UUID.fromString(f[0]),
-        UUID.fromString(f[1]),
-        UUID.fromString(f[2]),
-        UUID.fromString(f[3]),
+        Ids.parse(f[0]),
+        Ids.parse(f[1]),
+        Ids.parse(f[2]),
+        Ids.parse(f[3]),
         new BigDecimal(f[4]),
         f[5].isEmpty() ? null : new BigDecimal(f[5]),
         Instant.parse(f[6]));
@@ -207,7 +207,7 @@ public class CartRepository extends BaseJdbcRepository {
     String pointerKey = activeByCustomerKey(tenantId, customerId);
     String pointedId = cache.get(pointerKey);
     if (pointedId != null) {
-      Optional<Cart> cart = findById(tenantId, UUID.fromString(pointedId));
+      Optional<Cart> cart = findById(tenantId, Ids.parse(pointedId));
       if (cart.isPresent() && Cart.STATUS_ACTIVE.equals(cart.get().status())) return cart;
       cache.evict(pointerKey);
     }
@@ -237,7 +237,7 @@ public class CartRepository extends BaseJdbcRepository {
     String pointerKey = activeBySessionKey(tenantId, sessionId);
     String pointedId = cache.get(pointerKey);
     if (pointedId != null) {
-      Optional<Cart> cart = findById(tenantId, UUID.fromString(pointedId));
+      Optional<Cart> cart = findById(tenantId, Ids.parse(pointedId));
       if (cart.isPresent() && Cart.STATUS_ACTIVE.equals(cart.get().status())) return cart;
       cache.evict(pointerKey);
     }

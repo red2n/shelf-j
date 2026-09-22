@@ -179,7 +179,7 @@ class OrderEventHandlerTest {
     handler.handle(containerRefund("0.75"));
     assertEquals(1, drawer.recorded.size());
     assertEquals(
-        "PAY_OUT 0.75 01a090ae-611e-7035-a4da-400bf673cfe8 deposit-refund:" + EVENT,
+        "PAY_OUT 0.75 01a090ae-611e-7035-a4da-400bf673cfe8 " + Ids.derived(EVENT, "deposit-refund"),
         drawer.recorded.get(0));
     assertNull(service.eventId, "a deposit refund is no order refund");
   }

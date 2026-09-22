@@ -1,5 +1,6 @@
 package com.storeql.order.messaging;
 
+import com.storeql.ids.Ids;
 import com.storeql.order.repo.OrderRepository;
 import jakarta.enterprise.context.ApplicationScoped;
 import jakarta.inject.Inject;
@@ -50,10 +51,10 @@ class InventoryEventHandler {
         return;
       }
 
-      eventId = UUID.fromString(eventIdStr);
-      tenantId = UUID.fromString(tenantIdStr);
-      storeId = UUID.fromString(storeIdStr);
-      variantId = UUID.fromString(variantIdStr);
+      eventId = Ids.parse(eventIdStr);
+      tenantId = Ids.parse(tenantIdStr);
+      storeId = Ids.parse(storeIdStr);
+      variantId = Ids.parse(variantIdStr);
 
       if ("StockReceived".equals(eventType)) {
         if (!obj.containsKey("qty") || obj.isNull("qty")) return;

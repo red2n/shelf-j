@@ -83,7 +83,7 @@ class NotificationIT {
   @Test
   void notifyOnceRecordsAndIsIdempotent() {
     UUID event = Ids.newId();
-    UUID tenant = UUID.fromString(T);
+    UUID tenant = Ids.parse(T);
     assertThat(notifications.alreadyNotified(event, "WELCOME"), is(false));
 
     notifier.notifyOnce(event, "WELCOME", tenant, null, "kit@example.com", "Welcome", "hi");
@@ -103,7 +103,7 @@ class NotificationIT {
   @Test
   void noRecipientRecordsNothing() {
     UUID event = Ids.newId();
-    notifier.notifyOnce(event, "WELCOME", UUID.fromString(T), null, null, "Welcome", "hi");
+    notifier.notifyOnce(event, "WELCOME", Ids.parse(T), null, null, "Welcome", "hi");
     assertThat(notifications.alreadyNotified(event, "WELCOME"), is(false));
   }
 
@@ -129,7 +129,7 @@ class NotificationIT {
 
   @Test
   void erasingACustomerErasesTheMessagesThatShopSentThem() {
-    UUID tenant = UUID.fromString(T);
+    UUID tenant = Ids.parse(T);
     UUID customer = Ids.newId();
     UUID sent = Ids.newId();
     notifier.notifyOnce(
@@ -161,13 +161,13 @@ class NotificationIT {
     notifier.notifyOnce(
         theirs,
         "ORDER_CONFIRMATION",
-        UUID.fromString(OTHER),
+        Ids.parse(OTHER),
         customer,
         "chris@example.com",
         "Your order is confirmed",
         "body");
 
-    assertThat(erasure.customerErased(UUID.fromString(T), customer), is(0));
+    assertThat(erasure.customerErased(Ids.parse(T), customer), is(0));
     assertThat(logged(theirs, "ORDER_CONFIRMATION")[0], is("chris@example.com"));
   }
 
@@ -181,7 +181,7 @@ class NotificationIT {
     notifier.notifyOnce(
         shopMessage,
         "ORDER_CONFIRMATION",
-        UUID.fromString(T),
+        Ids.parse(T),
         user,
         "leaving@example.com",
         "Your order is confirmed",
@@ -214,8 +214,8 @@ class NotificationIT {
                         + "\"}"));
     assertThat(r.getStatus(), is(202));
 
-    assertThat(erasure.customerErased(UUID.fromString(T), customer), is(1));
-    assertThat(logged(UUID.fromString(eventId), "POS_RECEIPT")[0], is("[erased]"));
+    assertThat(erasure.customerErased(Ids.parse(T), customer), is(1));
+    assertThat(logged(Ids.parse(eventId), "POS_RECEIPT")[0], is("[erased]"));
   }
 
   @Test

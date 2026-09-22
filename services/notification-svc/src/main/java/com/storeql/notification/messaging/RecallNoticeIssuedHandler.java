@@ -1,5 +1,6 @@
 package com.storeql.notification.messaging;
 
+import com.storeql.ids.Ids;
 import com.storeql.notification.channel.SmsChannel;
 import com.storeql.notification.client.CustomerClient;
 import com.storeql.notification.service.Messages;
@@ -153,8 +154,8 @@ class RecallNoticeIssuedHandler {
       throw new IllegalArgumentException("a recall notice names what was bought");
     }
     return new Parsed(
-        UUID.fromString(obj.getString("eventId")),
-        UUID.fromString(obj.getString("tenantId")),
+        Ids.parse(obj.getString("eventId")),
+        Ids.parse(obj.getString("tenantId")),
         uuid(obj, "customerId"),
         uuid(obj, "loginId"),
         text(obj, "buyerPhone"),
@@ -166,7 +167,7 @@ class RecallNoticeIssuedHandler {
         text(obj, "singleRemedyReason"),
         text(obj, "contactPhone"),
         text(obj, "contactUrl"),
-        UUID.fromString(obj.getString("orderId")),
+        Ids.parse(obj.getString("orderId")),
         Instant.parse(obj.getString("soldAt")),
         lines);
   }
@@ -238,6 +239,6 @@ class RecallNoticeIssuedHandler {
 
   private static UUID uuid(JsonObject obj, String field) {
     String value = text(obj, field);
-    return value == null ? null : UUID.fromString(value);
+    return value == null ? null : Ids.parse(value);
   }
 }

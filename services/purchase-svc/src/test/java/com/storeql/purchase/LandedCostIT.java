@@ -203,7 +203,7 @@ class LandedCostIT {
         var ps =
             c.prepareStatement(
                 "SELECT event_type FROM purchase.outbox WHERE aggregate_id = ? ORDER BY created_at")) {
-      ps.setObject(1, java.util.UUID.fromString(aggregateId));
+      ps.setObject(1, Ids.parse(aggregateId));
       try (var rs = ps.executeQuery()) {
         StringBuilder sb = new StringBuilder();
         while (rs.next()) sb.append(rs.getString(1)).append(',');
@@ -356,7 +356,7 @@ class LandedCostIT {
     assertThat(rival.getStatus(), is(404));
     JsonObject c = data(post("/landed-costs", charge(grId, "FREIGHT", "BY_VALUE", "1.00")));
     assertThat(
-        call("GET", "/landed-costs/" + c.getString("id"), null, OTHER_T, "OWNER", "k").getStatus(),
+        call("GET", "/landed-costs/" + c.getString("id"), null, OTHER_T, "OWNER", null).getStatus(),
         is(404));
     assertThat(
         call(
@@ -365,11 +365,12 @@ class LandedCostIT {
                 "{\"reason\":\"mine\"}",
                 OTHER_T,
                 "OWNER",
-                "k")
+                Ids.newId().toString())
             .getStatus(),
         is(404));
     assertThat(
-        call("GET", "/landed-costs?grId=" + grId, null, OTHER_T, "OWNER", "k").getStatus(),
+        call("GET", "/landed-costs?grId=" + grId, null, OTHER_T, "OWNER", Ids.newId().toString())
+            .getStatus(),
         is(404));
   }
 }

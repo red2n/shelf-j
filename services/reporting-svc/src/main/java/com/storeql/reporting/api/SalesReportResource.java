@@ -1,5 +1,6 @@
 package com.storeql.reporting.api;
 
+import com.storeql.ids.Ids;
 import com.storeql.reporting.mapper.Mappers;
 import com.storeql.reporting.service.ReportingService;
 import com.storeql.web.ApiResponse;
@@ -96,7 +97,7 @@ public class SalesReportResource {
   }
 
   private static UUID optUuid(String s) {
-    return s == null || s.isBlank() ? null : UUID.fromString(s);
+    return s == null || s.isBlank() ? null : Ids.parse(s);
   }
 
   private static String blankToNull(String s) {

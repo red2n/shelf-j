@@ -204,7 +204,13 @@ public class BillingService {
                 : date(req.receivedOn()),
             actorId,
             Instant.now());
-    if (!repo.pay(payment, invoice.tenantId(), req.providerRef())) {
+    // The provider's reference says which payment this is, so it is what makes a second report of
+    // it the same payment — as a key derived from it, a UUIDv7 like every key the platform stores.
+    String key =
+        req.providerRef() == null || req.providerRef().isBlank()
+            ? null
+            : Ids.derived(invoice.tenantId(), "billing-payment:" + req.providerRef()).toString();
+    if (!repo.pay(payment, invoice.tenantId(), key)) {
       throw ApiException.conflict(
           "INVOICE_NOT_OPEN",
           "This invoice is " + invoice.status() + ", so no payment can be applied to it");

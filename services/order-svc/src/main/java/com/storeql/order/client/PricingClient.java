@@ -3,6 +3,7 @@ package com.storeql.order.client;
 import com.storeql.discovery.ConsulClient;
 import com.storeql.discovery.ServiceInstance;
 import com.storeql.discovery.ServiceRegistry;
+import com.storeql.ids.Ids;
 import com.storeql.order.config.ServiceConfig;
 import com.storeql.service.ServiceReader;
 import com.storeql.web.ApiException;
@@ -372,10 +373,10 @@ public class PricingClient {
         JsonObject o = a.asJsonObject();
         applied.add(
             new AppliedPromotion(
-                UUID.fromString(o.getString("promotionId")),
+                Ids.parse(o.getString("promotionId")),
                 o.containsKey("name") && !o.isNull("name") ? o.getString("name") : "",
                 o.containsKey("variantId") && !o.isNull("variantId")
-                    ? UUID.fromString(o.getString("variantId"))
+                    ? Ids.parse(o.getString("variantId"))
                     : null,
                 num(o, "amount", BigDecimal.ZERO)));
       }

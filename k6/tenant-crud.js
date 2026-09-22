@@ -83,7 +83,7 @@ export default function ({ admin, tenant, rival }) {
   expect(call('GET', `/api/tenant-svc/admin/stores/${warehouseId}`, { token: t }), '[+] get store', 200);
   expect(call('GET', `/api/tenant-svc/admin/stores/${warehouseId}`, { token: rival.owner.token }), "[-] a rival cannot read our store", 404);
   // A UUID path parameter that does not convert is a JAX-RS 404, never a 5xx.
-  expect(call('GET', '/api/tenant-svc/admin/stores/not-a-uuid', { token: t }), '[-] get store: id is not a UUID', 404);
+  expect(call('GET', '/api/tenant-svc/admin/stores/not-a-uuid', { token: t }), '[-] get store: id is not a UUID', 400, 'INVALID_UUID');
   expect(call('PUT', `/api/tenant-svc/admin/stores/${warehouseId}`, { token: t, body: { name: 'Main Warehouse', showPrices: true } }), '[+] update store', 200);
   // SJ-D54: a store's zone is required, must be real, and an update that leaves it out keeps it.
   truthy('[+] an update that leaves the zone out keeps it, not UTC', data(call('GET', `/api/tenant-svc/admin/stores/${warehouseId}`, { token: t })).timezone === 'Europe/London');

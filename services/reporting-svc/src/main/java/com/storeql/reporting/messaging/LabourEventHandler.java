@@ -1,5 +1,6 @@
 package com.storeql.reporting.messaging;
 
+import com.storeql.ids.Ids;
 import com.storeql.reporting.service.ReportingService;
 import jakarta.enterprise.context.ApplicationScoped;
 import jakarta.inject.Inject;
@@ -56,10 +57,10 @@ public class LabourEventHandler {
     try {
       // Each required field is asked for by name rather than trusted: an event missing one is a
       // malformed event, and reading it as a null would be a row about nowhere.
-      tenantId = UUID.fromString(required(o, "tenantId"));
-      entryId = UUID.fromString(required(o, "aggregateId"));
+      tenantId = Ids.parse(required(o, "tenantId"));
+      entryId = Ids.parse(required(o, "aggregateId"));
       supersedes = uuid(o, "supersedes");
-      storeId = UUID.fromString(required(o, "storeId"));
+      storeId = Ids.parse(required(o, "storeId"));
       day = LocalDate.parse(required(o, "day"));
       if (!o.containsKey("minutes") || o.isNull("minutes")) {
         throw new IllegalArgumentException("minutes is missing");
@@ -86,7 +87,7 @@ public class LabourEventHandler {
 
   private static UUID uuid(JsonObject o, String name) {
     String value = text(o, name);
-    return value == null ? null : UUID.fromString(value);
+    return value == null ? null : Ids.parse(value);
   }
 
   private static String text(JsonObject o, String name) {

@@ -86,7 +86,9 @@ public class TenantContextFilter implements ContainerRequestFilter, ContainerRes
       return null;
     }
     try {
-      return UUID.fromString(value.trim());
+      // The gateway stamps these from a verified token, and every id it can carry is a v7 that
+      // iam-svc or tenant-svc minted. Anything else names nobody, and is read as nobody.
+      return Ids.parse(value.trim());
     } catch (IllegalArgumentException e) {
       return null;
     }

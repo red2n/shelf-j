@@ -4,11 +4,15 @@ import 'package:dio/dio.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:flutter_test/flutter_test.dart';
 import 'package:storeql_app/core/constants.dart';
+import 'package:storeql_app/core/ids.dart';
 import 'package:storeql_app/core/network/api_client.dart';
 import 'package:storeql_app/core/offline/offline_queue.dart';
 import 'package:storeql_app/core/offline/offline_sale.dart';
 import 'package:storeql_app/core/offline/offline_synced.dart';
 import 'package:storeql_app/core/storage/app_storage.dart';
+
+/// A sale's local id: a UUIDv7, as the till mints it, and the base of every key its steps send.
+const _saleId = '01a0c830-0e7a-7b3c-9d2e-5f1a2b3c4d5e';
 
 // ---------------------------------------------------------------------------
 // Replay is the dangerous half of an offline till: every request in a queued
@@ -111,7 +115,7 @@ class _ScriptedAdapter implements HttpClientAdapter {
 }
 
 OfflineSale _sale({
-  String id = 'pos-1700000123456',
+  String id = _saleId,
   String? orderId,
   List<OfflineTender>? tenders,
 }) =>
@@ -157,7 +161,7 @@ void main() {
     final stored =
         jsonDecode(h.storage.data[StorageKeys.posOfflineSales]!) as List;
     expect(stored, hasLength(1));
-    expect((stored.single as Map)['id'], 'pos-1700000123456');
+    expect((stored.single as Map)['id'], _saleId);
   });
 
   test('replay uses the keys stored with the sale, not fresh ones', () async {
@@ -170,8 +174,8 @@ void main() {
     await notifier.sync();
 
     expect(h.adapter.calls.map((c) => c.idempotencyKey), [
-      'pos-1700000123456-order',
-      'pos-1700000123456-pay0',
+      derivedId(_saleId, 'order'),
+      derivedId(_saleId, 'pay:0'),
       null, // the journal write is idempotent on the order id, so it needs no key
     ]);
     expect(h.container.read(offlineQueueProvider), isEmpty,
@@ -191,9 +195,9 @@ void main() {
 
     final synced = h.container.read(offlineSyncedProvider);
     expect(synced, hasLength(1));
-    expect(synced.single.id, 'pos-1700000123456');
+    expect(synced.single.id, _saleId);
     expect(synced.single.orderId, 'order-1');
-    expect(synced.single.reference, '123456');
+    expect(synced.single.reference, '3c4d5e', reason: 'the id\'s random tail, as a person reads it');
     expect(synced.single.fiscalNumber, isNull,
         reason: 'the number is looked up when someone asks, not during replay');
     // Replay made no extra request for it: the queue owes the server writes,
@@ -229,7 +233,7 @@ void main() {
     await notifier.sync();
 
     expect(h.adapter.countOf('/payments'), 1);
-    expect(h.adapter.calls.first.idempotencyKey, 'pos-1700000123456-pay1',
+    expect(h.adapter.calls.first.idempotencyKey, derivedId(_saleId, 'pay:1'),
         reason: 'the key is positional, so the second tender keeps its own key');
   });
 
@@ -350,7 +354,7 @@ void main() {
     await notifier.sync();
 
     h.adapter.rejectWith.clear();
-    await notifier.retry('pos-1700000123456');
+    await notifier.retry(_saleId);
     expect(h.container.read(offlineQueueProvider), isEmpty);
   });
 
@@ -358,7 +362,7 @@ void main() {
     final h = _harness();
     final notifier = h.container.read(offlineQueueProvider.notifier);
     await notifier.enqueue(_sale());
-    await notifier.discard('pos-1700000123456');
+    await notifier.discard(_saleId);
 
     expect(h.container.read(offlineQueueProvider), isEmpty);
     expect(h.adapter.calls, isEmpty);
@@ -376,7 +380,7 @@ void main() {
     await restarted.container.read(offlineQueueProvider.notifier).restore();
 
     final held = restarted.container.read(offlineQueueProvider).single;
-    expect(held.id, 'pos-1700000123456');
+    expect(held.id, _saleId);
     expect(held.orderId, 'order-1');
   });
 
@@ -412,7 +416,7 @@ void _lossTests() {
     // The unreadable payload survives somewhere a developer can reach it.
     expect(storage.data[StorageKeys.posOfflineSalesCorrupt], '{not json at all');
     // …and the till still works: the new sale is durable.
-    expect(storage.data[StorageKeys.posOfflineSales], contains('pos-1700000123456'));
+    expect(storage.data[StorageKeys.posOfflineSales], contains(_saleId));
   });
 
   test('a sale taken before restore finishes does not replace what is on disk',

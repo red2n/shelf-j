@@ -1,5 +1,6 @@
 package com.storeql.pricing.messaging;
 
+import com.storeql.ids.Ids;
 import com.storeql.pricing.repo.PricingRepository;
 import jakarta.enterprise.context.ApplicationScoped;
 import jakarta.inject.Inject;
@@ -47,35 +48,35 @@ public class CatalogueEventHandler {
     try {
       return switch (type) {
         case "ProductCategorised" -> {
-          UUID productId = UUID.fromString(obj.getString("productId"));
+          UUID productId = Ids.parse(obj.getString("productId"));
           boolean done =
               repo.projectProductCategorisedOnce(
-                  UUID.fromString(obj.getString("eventId")),
+                  Ids.parse(obj.getString("eventId")),
                   CONSUMER,
-                  UUID.fromString(obj.getString("tenantId")),
+                  Ids.parse(obj.getString("tenantId")),
                   productId,
                   ids(obj, "categoryPath"),
                   ids(obj, "variantIds"));
           if (done) LOG.log(Level.INFO, "Catalogue: product {0} categorised", productId);
-          if (done) appliedPrices.catchUp(UUID.fromString(obj.getString("tenantId")));
+          if (done) appliedPrices.catchUp(Ids.parse(obj.getString("tenantId")));
           yield done;
         }
         case "VariantCreated" -> {
-          UUID variantId = UUID.fromString(obj.getString("aggregateId"));
+          UUID variantId = Ids.parse(obj.getString("aggregateId"));
           boolean done =
               repo.projectVariantCreatedOnce(
-                  UUID.fromString(obj.getString("eventId")),
+                  Ids.parse(obj.getString("eventId")),
                   CONSUMER,
-                  UUID.fromString(obj.getString("tenantId")),
+                  Ids.parse(obj.getString("tenantId")),
                   variantId,
-                  UUID.fromString(obj.getString("productId")));
+                  Ids.parse(obj.getString("productId")));
           if (done) LOG.log(Level.INFO, "Catalogue: variant {0} placed", variantId);
-          if (done) appliedPrices.catchUp(UUID.fromString(obj.getString("tenantId")));
+          if (done) appliedPrices.catchUp(Ids.parse(obj.getString("tenantId")));
           yield done;
         }
         case "VariantMeasured" -> {
           // 03.13: the measure a unit price is computed from, or nulls when none is declared.
-          UUID variantId = UUID.fromString(obj.getString("aggregateId"));
+          UUID variantId = Ids.parse(obj.getString("aggregateId"));
           String unit = obj.isNull("unit") ? null : obj.getString("unit");
           java.math.BigDecimal quantity =
               obj.isNull("quantity") ? null : new java.math.BigDecimal(obj.getString("quantity"));
@@ -87,17 +88,17 @@ public class CatalogueEventHandler {
           }
           boolean done =
               repo.projectVariantMeasuredOnce(
-                  UUID.fromString(obj.getString("eventId")),
+                  Ids.parse(obj.getString("eventId")),
                   CONSUMER,
-                  UUID.fromString(obj.getString("tenantId")),
+                  Ids.parse(obj.getString("tenantId")),
                   variantId,
-                  UUID.fromString(obj.getString("productId")),
+                  Ids.parse(obj.getString("productId")),
                   obj.isNull("soldBy") ? null : obj.getString("soldBy"),
                   unit,
                   quantity,
                   version);
           if (done) LOG.log(Level.INFO, "Catalogue: variant {0} measured", variantId);
-          if (done) appliedPrices.catchUp(UUID.fromString(obj.getString("tenantId")));
+          if (done) appliedPrices.catchUp(Ids.parse(obj.getString("tenantId")));
           yield done;
         }
         default -> false;
@@ -112,7 +113,7 @@ public class CatalogueEventHandler {
     List<UUID> out = new ArrayList<>();
     if (obj.containsKey(field) && !obj.isNull(field)) {
       for (JsonString v : obj.getJsonArray(field).getValuesAs(JsonString.class)) {
-        out.add(UUID.fromString(v.getString()));
+        out.add(Ids.parse(v.getString()));
       }
     }
     return out;

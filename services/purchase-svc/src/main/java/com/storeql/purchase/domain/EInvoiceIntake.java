@@ -3,6 +3,7 @@ package com.storeql.purchase.domain;
 import com.storeql.einvoice.ElectronicAddress;
 import com.storeql.einvoice.Invoice;
 import com.storeql.einvoice.VatIdentifier;
+import com.storeql.ids.Ids;
 import java.math.BigDecimal;
 import java.math.RoundingMode;
 import java.util.ArrayList;
@@ -165,7 +166,7 @@ public final class EInvoiceIntake {
     String ref = inv.orderReference();
     if (ref == null) return Optional.empty();
     Matcher m = UUID_TEXT.matcher(ref);
-    return m.find() ? Optional.of(UUID.fromString(m.group())) : Optional.empty();
+    return m.find() ? Optional.of(Ids.parse(m.group())) : Optional.empty();
   }
 
   /**
@@ -206,7 +207,7 @@ public final class EInvoiceIntake {
     String ref = reference.strip();
     Matcher m = UUID_TEXT.matcher(ref);
     if (m.matches()) {
-      UUID id = UUID.fromString(ref);
+      UUID id = Ids.parse(ref);
       return orderLines.stream()
           .filter(o -> o.id().equals(id) && !taken.contains(o.id()))
           .findFirst()
@@ -238,7 +239,7 @@ public final class EInvoiceIntake {
     }
     // A buyer's item identifier that is one of the order's own variants is ours already.
     if (item.buyersId() != null && UUID_TEXT.matcher(item.buyersId().strip()).matches()) {
-      UUID id = UUID.fromString(item.buyersId().strip());
+      UUID id = Ids.parse(item.buyersId().strip());
       if (orderLines.stream().anyMatch(o -> o.variantId().equals(id))) return id;
     }
     return null;

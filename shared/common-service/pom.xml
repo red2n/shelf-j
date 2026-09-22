@@ -20,6 +20,12 @@
     </description>
 
     <dependencies>
+        <!-- IdsArchitectureTest: ids are UUIDv7 in this module's tests too. -->
+        <dependency>
+            <groupId>com.tngtech.archunit</groupId>
+            <artifactId>archunit-junit5</artifactId>
+            <scope>test</scope>
+        </dependency>
         <!-- Web utilities: ApiException, ApiResponse, TenantContext, etc. -->
         <dependency>
             <groupId>com.storeql</groupId>

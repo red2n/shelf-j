@@ -1,5 +1,6 @@
 package com.storeql.payment.api;
 
+import com.storeql.ids.Ids;
 import com.storeql.payment.dto.Dtos.CashMovementRequest;
 import com.storeql.payment.dto.Dtos.GenerateZReportRequest;
 import com.storeql.payment.service.CashMovementService;
@@ -75,7 +76,7 @@ public class CashMovementResource {
     ctx.requireAnyRole("MANAGER", "OWNER");
     ctx.requirePermission(com.storeql.web.Permissions.TILL_MANAGE);
     UUID tenantId = ctx.requireTenantId();
-    UUID sessionId = UUID.fromString(tillSessionId);
+    UUID sessionId = Ids.parse(tillSessionId);
     return ApiResponse.ok(
         svc.listMovements(tenantId, sessionId), ApiResponse.Meta.of(ctx.requestId()));
   }
@@ -117,7 +118,7 @@ public class CashMovementResource {
     ctx.requirePermission(com.storeql.web.Permissions.TILL_MANAGE);
     UUID tenantId = ctx.requireTenantId();
     return ApiResponse.ok(
-        svc.getZReport(tenantId, UUID.fromString(storeId), businessDate, ctx),
+        svc.getZReport(tenantId, Ids.parse(storeId), businessDate, ctx),
         ApiResponse.Meta.of(ctx.requestId()));
   }
 }

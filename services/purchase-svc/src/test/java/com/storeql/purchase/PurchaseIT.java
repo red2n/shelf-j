@@ -353,7 +353,7 @@ class PurchaseIT {
   @Test
   void aReplayedReceiptDoesNotCountTwice() {
     String poId = submittedPo("Replay Ltd", 10);
-    String key = "grn-replay-" + com.storeql.ids.Ids.newId();
+    String key = com.storeql.ids.Ids.newId().toString();
     for (int i = 0; i < 3; i++) {
       Response r =
           target

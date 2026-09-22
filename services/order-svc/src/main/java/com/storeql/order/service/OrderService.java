@@ -244,7 +244,7 @@ public class OrderService {
             "an online sale is credited to nobody; a seller belongs to a sale somebody made");
       }
       try {
-        return UUID.fromString(named.strip());
+        return Ids.parse(named.strip());
       } catch (IllegalArgumentException e) {
         throw new ApiException(
             400, "ORDER_SELLER_INVALID", "sellerUserId is not an id: " + named, List.of(), e);
@@ -440,7 +440,7 @@ public class OrderService {
         reserveLines.add(
             new com.storeql.order.client.InventoryClient.ReserveLine(it.variantId(), it.qty()));
       }
-      String idemBase = idempotencyKey != null ? idempotencyKey : orderId.toString();
+      UUID idemBase = idempotencyKey != null ? Ids.parse(idempotencyKey) : orderId;
       heldReservations =
           inventory.reserveForOrder(
               tenantId, orderId, storeId, reserveLines, config.reservationTtlSeconds(), idemBase);
@@ -621,7 +621,7 @@ public class OrderService {
       try {
         if (sep < 0) throw new IllegalArgumentException("missing separator");
         afterCreatedAt = Instant.parse(rawKey.substring(0, sep));
-        afterId = UUID.fromString(rawKey.substring(sep + 1));
+        afterId = Ids.parse(rawKey.substring(sep + 1));
       } catch (RuntimeException e) {
         throw new ApiException(400, "INVALID_CURSOR", "Malformed pagination cursor", List.of(), e);
       }
@@ -2069,7 +2069,7 @@ public class OrderService {
       try {
         if (sep < 0) throw new IllegalArgumentException("missing separator");
         afterCheckedAt = Instant.parse(rawKey.substring(0, sep));
-        afterId = UUID.fromString(rawKey.substring(sep + 1));
+        afterId = Ids.parse(rawKey.substring(sep + 1));
       } catch (RuntimeException e) {
         throw new ApiException(400, "INVALID_CURSOR", "Malformed pagination cursor", List.of(), e);
       }
@@ -2187,12 +2187,13 @@ public class OrderService {
    *
    * @param tenantId owning tenant
    * @param req the store, customer, items and optional currency
+   * @param idempotencyKey the caller's key, already checked to be a UUIDv7, or {@code null}
    * @param ctx caller context, checked for access to the store
    * @return the opened special order
    * @throws ApiException {@code SPECIAL_ORDER_NO_ITEMS} (400) when no items are supplied
    */
   public SpecialOrder createSpecialOrder(
-      UUID tenantId, CreateSpecialOrderRequest req, TenantContext ctx) {
+      UUID tenantId, CreateSpecialOrderRequest req, String idempotencyKey, TenantContext ctx) {
     if (req.items() == null || req.items().isEmpty())
       throw ApiException.badRequest(
           "SPECIAL_ORDER_NO_ITEMS", "special order must have at least one item");
@@ -2241,7 +2242,7 @@ public class OrderService {
             subtotal,
             subtotal,
             currency,
-            req.idempotencyKey(),
+            idempotencyKey,
             Instant.now(),
             Instant.now());
 
@@ -2274,7 +2275,7 @@ public class OrderService {
       try {
         if (sep < 0) throw new IllegalArgumentException("missing separator");
         afterCreatedAt = Instant.parse(rawKey.substring(0, sep));
-        afterId = UUID.fromString(rawKey.substring(sep + 1));
+        afterId = Ids.parse(rawKey.substring(sep + 1));
       } catch (RuntimeException e) {
         throw new ApiException(400, "INVALID_CURSOR", "Malformed pagination cursor", List.of(), e);
       }
@@ -2610,7 +2611,7 @@ public class OrderService {
       try {
         if (sep < 0) throw new IllegalArgumentException("missing separator");
         afterTransactionTs = Instant.parse(rawKey.substring(0, sep));
-        afterId = UUID.fromString(rawKey.substring(sep + 1));
+        afterId = Ids.parse(rawKey.substring(sep + 1));
       } catch (RuntimeException e) {
         throw new ApiException(400, "INVALID_CURSOR", "Malformed pagination cursor", List.of(), e);
       }

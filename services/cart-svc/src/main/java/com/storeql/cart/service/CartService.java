@@ -324,7 +324,7 @@ public class CartService {
 
   private UUID parseUuid(String val, String field) {
     try {
-      return UUID.fromString(val);
+      return Ids.parse(val);
     } catch (IllegalArgumentException e) {
       throw new ApiException(
           400,

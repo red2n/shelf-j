@@ -1,5 +1,6 @@
 package com.storeql.service;
 
+import com.storeql.ids.Ids;
 import jakarta.enterprise.context.ApplicationScoped;
 import jakarta.inject.Inject;
 import jakarta.json.Json;
@@ -38,8 +39,8 @@ public class StoreStatusChangedHandler {
     Instant occurredAt;
     try (var reader = Json.createReader(new StringReader(json))) {
       JsonObject obj = reader.readObject();
-      tenantId = UUID.fromString(obj.getString("tenantId"));
-      storeId = UUID.fromString(obj.getString("storeId"));
+      tenantId = Ids.parse(obj.getString("tenantId"));
+      storeId = Ids.parse(obj.getString("storeId"));
       status = obj.getString("status").toUpperCase(java.util.Locale.ROOT);
       occurredAt = Instant.parse(obj.getString("occurredAt"));
     } catch (RuntimeException e) {

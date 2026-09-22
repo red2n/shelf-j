@@ -1,5 +1,6 @@
 package com.storeql.tenant.messaging;
 
+import com.storeql.ids.Ids;
 import com.storeql.tenant.domain.Meters;
 import com.storeql.tenant.service.UsageService;
 import jakarta.enterprise.context.ApplicationScoped;
@@ -31,8 +32,8 @@ class UsageHandler {
     UUID orderId;
     try {
       JsonObject e = read(json);
-      tenantId = UUID.fromString(e.getString("tenantId"));
-      orderId = UUID.fromString(e.getString("orderId"));
+      tenantId = Ids.parse(e.getString("tenantId"));
+      orderId = Ids.parse(e.getString("orderId"));
     } catch (RuntimeException e) {
       LOG.log(Level.WARNING, "Malformed OrderPlaced skipped by the meter: " + e.getMessage());
       return false;
@@ -49,8 +50,8 @@ class UsageHandler {
     long parts;
     try {
       JsonObject e = read(json);
-      tenantId = UUID.fromString(e.getString("tenantId"));
-      eventId = UUID.fromString(e.getString("eventId"));
+      tenantId = Ids.parse(e.getString("tenantId"));
+      eventId = Ids.parse(e.getString("eventId"));
       parts = e.getJsonNumber("parts").longValueExact();
     } catch (RuntimeException e) {
       LOG.log(Level.WARNING, "Malformed SmsSent skipped by the meter: " + e.getMessage());

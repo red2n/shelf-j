@@ -1,5 +1,6 @@
 package com.storeql.inventory.messaging;
 
+import com.storeql.ids.Ids;
 import com.storeql.inventory.repo.ShelfTargetRepository;
 import com.storeql.inventory.repo.ShelfTargetRepository.Target;
 import jakarta.enterprise.context.ApplicationScoped;
@@ -49,9 +50,9 @@ public class ShelfCapacityHandler {
     try (var reader = Json.createReader(new StringReader(json))) {
       obj = reader.readObject();
       eventType = obj.getString("eventType", "");
-      tenantId = UUID.fromString(obj.getString("tenantId"));
-      storeId = UUID.fromString(obj.getString("storeId"));
-      fixtureId = UUID.fromString(obj.getString("fixtureId"));
+      tenantId = Ids.parse(obj.getString("tenantId"));
+      storeId = Ids.parse(obj.getString("storeId"));
+      fixtureId = Ids.parse(obj.getString("fixtureId"));
     } catch (RuntimeException e) {
       LOG.log(Level.WARNING, "Malformed merchandising event skipped: " + e.getMessage());
       return;
@@ -70,14 +71,14 @@ public class ShelfCapacityHandler {
     int version;
     List<Target> rows = new ArrayList<>();
     try {
-      planogramId = UUID.fromString(obj.getString("planogramId"));
+      planogramId = Ids.parse(obj.getString("planogramId"));
       // No version, no projection. It can only come from a build that never shipped, and assuming
       // one would let a stale layout overwrite a current shelf — the exact thing the guard is for.
       version = obj.getInt("version");
       for (JsonObject pos : obj.getJsonArray("positions").getValuesAs(JsonObject.class)) {
         rows.add(
             new Target(
-                UUID.fromString(pos.getString("variantId")),
+                Ids.parse(pos.getString("variantId")),
                 pos.getInt("capacity"),
                 pos.getInt("minPresentation", 0)));
       }

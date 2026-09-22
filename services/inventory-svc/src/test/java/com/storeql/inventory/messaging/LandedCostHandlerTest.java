@@ -4,6 +4,7 @@ import static org.junit.jupiter.api.Assertions.assertEquals;
 import static org.junit.jupiter.api.Assertions.assertThrows;
 import static org.junit.jupiter.api.Assertions.assertTrue;
 
+import com.storeql.ids.Ids;
 import com.storeql.inventory.service.InventoryService;
 import com.storeql.web.ApiException;
 import java.math.BigDecimal;
@@ -20,13 +21,13 @@ import org.junit.jupiter.api.Test;
  */
 class LandedCostHandlerTest {
 
-  private static final UUID EVENT = UUID.fromString("01a0be6a-611e-705b-8bb0-8fccd45e4301");
-  private static final UUID TENANT = UUID.fromString("01a0be6a-611e-700a-9f77-b94950c4c25a");
-  private static final UUID STORE = UUID.fromString("01a0be6a-611e-7010-be82-c788cf35ea1c");
-  private static final UUID RECEIPT = UUID.fromString("01a0be6a-611e-7011-be82-c788cf35ea1c");
-  private static final UUID CHARGE = UUID.fromString("01a0be6a-611e-7016-be82-c788cf35ea1c");
-  private static final UUID APPLES = UUID.fromString("01a0be6a-611e-7012-a14d-4f924d594f00");
-  private static final UUID PEARS = UUID.fromString("01a0be6a-611e-7013-9a2a-bd6e8545fd8a");
+  private static final UUID EVENT = Ids.parse("01a0be6a-611e-705b-8bb0-8fccd45e4301");
+  private static final UUID TENANT = Ids.parse("01a0be6a-611e-700a-9f77-b94950c4c25a");
+  private static final UUID STORE = Ids.parse("01a0be6a-611e-7010-be82-c788cf35ea1c");
+  private static final UUID RECEIPT = Ids.parse("01a0be6a-611e-7011-be82-c788cf35ea1c");
+  private static final UUID CHARGE = Ids.parse("01a0be6a-611e-7016-be82-c788cf35ea1c");
+  private static final UUID APPLES = Ids.parse("01a0be6a-611e-7012-a14d-4f924d594f00");
+  private static final UUID PEARS = Ids.parse("01a0be6a-611e-7013-9a2a-bd6e8545fd8a");
 
   static final class RecordingService extends InventoryService {
     final List<String> calls = new ArrayList<>();

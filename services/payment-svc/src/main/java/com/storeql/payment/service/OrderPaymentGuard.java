@@ -1,5 +1,6 @@
 package com.storeql.payment.service;
 
+import com.storeql.ids.Ids;
 import com.storeql.payment.client.OrderClient;
 import com.storeql.web.ApiException;
 import com.storeql.web.TenantContext;
@@ -80,7 +81,7 @@ public class OrderPaymentGuard {
     // The order's own storeId is authoritative, not any store the caller named — this path has no
     // staff role to trust, so an unverified store would let a guest attribute the payment to an
     // arbitrary store and corrupt that store's Z-report and reporting.
-    UUID storeId = order.storeId() == null ? null : UUID.fromString(order.storeId());
+    UUID storeId = order.storeId() == null ? null : Ids.parse(order.storeId());
     return new VerifiedOrder(order, storeId);
   }
 

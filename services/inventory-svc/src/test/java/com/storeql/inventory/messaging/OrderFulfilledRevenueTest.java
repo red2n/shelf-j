@@ -2,6 +2,7 @@ package com.storeql.inventory.messaging;
 
 import static org.junit.jupiter.api.Assertions.assertEquals;
 
+import com.storeql.ids.Ids;
 import com.storeql.inventory.domain.Domain.Reservation;
 import com.storeql.inventory.service.InventoryService;
 import java.math.BigDecimal;
@@ -18,11 +19,11 @@ import org.junit.jupiter.api.Test;
  */
 class OrderFulfilledRevenueTest {
 
-  private static final UUID EVENT = UUID.fromString("01a090ae-611e-705b-8bb0-8fccd45e4202");
-  private static final UUID TENANT = UUID.fromString("01a090ae-611e-700a-9f77-b94950c4c25b");
-  private static final UUID ORDER = UUID.fromString("01a090ae-611e-700e-89dd-b0cb0b3011aa");
-  private static final UUID STORE = UUID.fromString("01a090ae-611e-7010-be82-c788cf35ea1d");
-  private static final UUID VARIANT = UUID.fromString("01a090ae-611e-7012-a14d-4f924d594f01");
+  private static final UUID EVENT = Ids.parse("01a090ae-611e-705b-8bb0-8fccd45e4202");
+  private static final UUID TENANT = Ids.parse("01a090ae-611e-700a-9f77-b94950c4c25b");
+  private static final UUID ORDER = Ids.parse("01a090ae-611e-700e-89dd-b0cb0b3011aa");
+  private static final UUID STORE = Ids.parse("01a090ae-611e-7010-be82-c788cf35ea1d");
+  private static final UUID VARIANT = Ids.parse("01a090ae-611e-7012-a14d-4f924d594f01");
 
   /** Records each deduction with the revenue it was given; nothing is held for the order. */
   static final class RecordingService extends InventoryService {

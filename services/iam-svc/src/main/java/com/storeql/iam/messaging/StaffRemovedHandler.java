@@ -1,6 +1,7 @@
 package com.storeql.iam.messaging;
 
 import com.storeql.iam.repo.UserRepository;
+import com.storeql.ids.Ids;
 import jakarta.enterprise.context.ApplicationScoped;
 import jakarta.inject.Inject;
 import jakarta.json.Json;
@@ -34,10 +35,10 @@ public class StaffRemovedHandler {
     try (var reader = Json.createReader(new StringReader(json))) {
       JsonObject obj = reader.readObject();
       if (!"StaffRemoved".equals(obj.getString("eventType", ""))) return;
-      eventId = UUID.fromString(obj.getString("eventId"));
-      tenantId = UUID.fromString(obj.getString("tenantId"));
-      userId = UUID.fromString(obj.getString("userId"));
-      storeId = UUID.fromString(obj.getString("storeId"));
+      eventId = Ids.parse(obj.getString("eventId"));
+      tenantId = Ids.parse(obj.getString("tenantId"));
+      userId = Ids.parse(obj.getString("userId"));
+      storeId = Ids.parse(obj.getString("storeId"));
       role = obj.getString("role");
     } catch (RuntimeException e) {
       LOG.log(Level.WARNING, "Malformed StaffRemoved payload skipped: " + e.getMessage());

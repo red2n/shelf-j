@@ -1,5 +1,6 @@
 package com.storeql.tenant.api;
 
+import com.storeql.ids.Ids;
 import com.storeql.tenant.domain.Domain.Store;
 import com.storeql.tenant.dto.Dtos.StorefrontConfigResponse;
 import com.storeql.tenant.service.TenantService;
@@ -63,7 +64,7 @@ public class StorefrontResource {
     }
     UUID storeId;
     try {
-      storeId = UUID.fromString(store.trim());
+      storeId = Ids.parse(store.trim());
     } catch (IllegalArgumentException e) {
       throw new ApiException(400, "INVALID_STORE", "store must be a UUID", java.util.List.of(), e);
     }

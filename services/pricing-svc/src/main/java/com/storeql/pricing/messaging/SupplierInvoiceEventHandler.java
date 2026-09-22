@@ -58,9 +58,9 @@ public class SupplierInvoiceEventHandler {
       if (!rejected && !"SupplierInvoiceCaptured".equals(type)) {
         return false;
       }
-      eventId = UUID.fromString(obj.getString("eventId"));
-      tenantId = UUID.fromString(obj.getString("tenantId"));
-      invoiceId = UUID.fromString(obj.getString("invoiceId"));
+      eventId = Ids.parse(obj.getString("eventId"));
+      tenantId = Ids.parse(obj.getString("tenantId"));
+      invoiceId = Ids.parse(obj.getString("invoiceId"));
       net = obj.getJsonNumber("netAmount").bigDecimalValue();
       vat = obj.getJsonNumber("vatAmount").bigDecimalValue();
       gross = obj.getJsonNumber("grossAmount").bigDecimalValue();
@@ -105,7 +105,7 @@ public class SupplierInvoiceEventHandler {
       return null;
     }
     try {
-      return UUID.fromString(v);
+      return Ids.parse(v);
     } catch (IllegalArgumentException e) {
       return null;
     }

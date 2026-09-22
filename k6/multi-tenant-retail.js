@@ -2463,7 +2463,7 @@ export function orderPos(d) {
     fulfilmentType: 'INSTORE',
     items: [{ variantId, qty: 2, unitPrice: '15.00' }],
     currency: tenant.currency,
-    idempotencyKey: `pos-order-${__VU}-${__ITER}`,
+    idempotencyKey: newId(),
   }, tenant.ownerToken);
   orderPosLatency.add(Date.now() - t0);
   if (!ok(placeRes, `${tag} place order 201`)) { sleep(1); return; }
@@ -2489,7 +2489,7 @@ export function orderPos(d) {
     fulfilmentType: 'INSTORE',
     items: [{ variantId, qty: 1, unitPrice: '5.00' }],
     currency: tenant.currency,
-    idempotencyKey: `pos-void-${__VU}-${__ITER}`,
+    idempotencyKey: newId(),
   }, tenant.ownerToken);
   if (placeVoidRes.status === 201) {
     const voidOrderId = (() => { try { return JSON.parse(placeVoidRes.body).data.id; } catch (_) { return null; } })();
@@ -3118,7 +3118,7 @@ export function negativeTests(d) {
     channel: 'ONLINE',
     items: [{ variantId: vid, qty: 1, unitPrice: '5.00' }],
     currency: tenant.currency,
-    idempotencyKey: `neg-online-${__VU}-${__ITER}`,
+    idempotencyKey: newId(),
   }, tenant.ownerToken);
   if (onlineOrderRes.status === 201) {
     const onlineId = (() => { try { return JSON.parse(onlineOrderRes.body).data.id; } catch (_) { return null; } })();
@@ -3560,18 +3560,19 @@ export function paymentFlow(d) {
     fulfilmentType: 'INSTORE',
     items: [{ variantId, qty: 1, unitPrice: '20.00' }],
     currency: tenant.currency,
-    idempotencyKey: `pay-order-${__VU}-${__ITER}`,
+    idempotencyKey: newId(),
   }, tenant.ownerToken);
   if (!ok(placeRes, `${tag} place order for payment 201`)) { sleep(1); return; }
   const orderId = (() => { try { return JSON.parse(placeRes.body).data.id; } catch (_) { return null; } })();
   if (!orderId) { sleep(1); return; }
 
   // 2. Record CASH tender
+  const cashKey = newId();
   const cashRes = post('/api/payment-svc/payments', {
     orderId,
     amount: '20.00',
     method: 'CASH',
-    idempotencyKey: `cash-${__VU}-${__ITER}`,
+    idempotencyKey: cashKey,
   }, tenant.ownerToken);
   ok(cashRes, `${tag} record cash tender 201`);
   const paymentId = (() => { try { return JSON.parse(cashRes.body).data.id; } catch (_) { return null; } })();
@@ -3582,7 +3583,7 @@ export function paymentFlow(d) {
       orderId,
       amount: '20.00',
       method: 'CASH',
-      idempotencyKey: `cash-${__VU}-${__ITER}`,
+      idempotencyKey: cashKey,
     }, tenant.ownerToken);
     check(replayRes, {
       [`${tag} idempotent tender replay returns original id`]: r => {
@@ -3742,7 +3743,7 @@ export function gatewaySecurity(d) {
 
   // Gaps #67 + #71: the Idempotency-Key HTTP header is forwarded by the gateway and a
   // retried checkout replays the original order instead of duplicating or erroring.
-  const idemKey   = `gw-idem-${__VU}-${__ITER}-${Date.now()}`;
+  const idemKey   = newKey('gateway-idempotency');
   const orderBody = JSON.stringify({
     storeId, channel: 'POS', fulfilmentType: 'INSTORE',
     items: [{ variantId, qty: 1, unitPrice: '9.99' }], currency: tenant.currency,

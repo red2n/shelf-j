@@ -1,5 +1,6 @@
 package com.storeql.tenant.api;
 
+import com.storeql.ids.Ids;
 import com.storeql.tenant.domain.Workforce;
 import com.storeql.tenant.dto.WorkforceDtos;
 import com.storeql.tenant.mapper.WorkforceMappers;
@@ -161,7 +162,7 @@ public class TimeClockResource {
       throw ApiException.badRequest("WORKFORCE_ID_REQUIRED", field + " is required");
     }
     try {
-      return UUID.fromString(value.strip());
+      return Ids.parse(value.strip());
     } catch (IllegalArgumentException e) {
       throw new ApiException(400, "WORKFORCE_ID_INVALID", field + " is not an id", List.of(), e);
     }

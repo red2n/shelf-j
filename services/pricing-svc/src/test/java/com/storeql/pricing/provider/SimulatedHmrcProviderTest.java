@@ -4,6 +4,7 @@ import static org.junit.jupiter.api.Assertions.assertEquals;
 import static org.junit.jupiter.api.Assertions.assertNotNull;
 import static org.junit.jupiter.api.Assertions.assertThrows;
 
+import com.storeql.ids.Ids;
 import com.storeql.pricing.domain.Domain.VatObligation;
 import com.storeql.pricing.domain.Domain.VatRegistration;
 import com.storeql.pricing.domain.Domain.VatReturn;
@@ -13,7 +14,6 @@ import java.time.LocalDate;
 import java.util.List;
 import java.util.Map;
 import java.util.Set;
-import java.util.UUID;
 import org.junit.jupiter.api.Test;
 
 /**
@@ -25,7 +25,7 @@ class SimulatedHmrcProviderTest {
   private static final SimulatedHmrcProvider HMRC = new SimulatedHmrcProvider();
   private static final VatRegistration REG =
       new VatRegistration(
-          UUID.randomUUID(), "123456782", "SIMULATED", null, null, null, null, null, null);
+          Ids.newId(), "123456782", "SIMULATED", null, null, null, null, null, null);
 
   private static VatReturn boxes(String b1, String b4, String b6, String b7) {
     BigDecimal box1 = new BigDecimal(b1);

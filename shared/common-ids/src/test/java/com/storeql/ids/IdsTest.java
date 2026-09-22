@@ -140,4 +140,105 @@ class IdsTest {
     assertNotEquals(a, b);
     assertEquals(Ids.shortRef(a), Ids.shortRef(b));
   }
+
+  // ── what is accepted from outside (RFC 9562 version 7 only) ─────────────────
+
+  @Test
+  void aCanonicalV7IsAcceptedInEitherCase() {
+    UUID id = Ids.newId();
+    assertEquals(id, Ids.parse(id.toString()));
+    assertEquals(id, Ids.parse(id.toString().toUpperCase(java.util.Locale.ROOT)));
+    assertTrue(Ids.isV7(Ids.parse("01a0905d-7082-7518-9ec6-aee90d72a43e")));
+  }
+
+  @Test
+  void everyOtherVersionIsRefused() {
+    for (String other :
+        new String[] {
+          "f81d4fae-7dec-11d0-a765-00a0c91e6bf6", // v1, RFC 9562's own example
+          "000003e8-cbb9-21ea-b201-00045a86c8a1", // v2
+          "5df41881-3aed-3515-88a7-2f4a814cf09e", // v3
+          "919108f7-52d1-4320-9bac-f847db4148a8", // v4
+          "2ed6657d-e927-568b-95e1-2665a8aea6a2", // v5
+          "1ec9414c-232a-6b00-b3c8-9f6bdeced846", // v6
+          "320c3d4d-cc00-875b-8ec9-32d5f69181c0", // v8
+          "00000000-0000-0000-0000-000000000000", // nil
+          "ffffffff-ffff-ffff-ffff-ffffffffffff" // max
+        }) {
+      Ids.InvalidIdException e =
+          org.junit.jupiter.api.Assertions.assertThrows(
+              Ids.InvalidIdException.class, () -> Ids.parse(other), other);
+      assertTrue(e.getMessage().contains("not a UUIDv7"), e.getMessage());
+    }
+  }
+
+  @Test
+  void aVersion7WithTheWrongVariantIsRefused() {
+    // Version nibble 7, but the variant bits are 110 (Microsoft) and 111 (reserved), not 10.
+    for (String wrong :
+        new String[] {
+          "01a0905d-7082-7518-cec6-aee90d72a43e", "01a0905d-7082-7518-eec6-aee90d72a43e"
+        }) {
+      org.junit.jupiter.api.Assertions.assertThrows(
+          Ids.InvalidIdException.class, () -> Ids.parse(wrong), wrong);
+    }
+  }
+
+  @Test
+  void onlyTheCanonicalFormIsAccepted() {
+    // UUID.fromString takes several of these; an id that is not written the one way is not an id.
+    for (String odd :
+        new String[] {
+          "1-1-1-1-1",
+          "01a0905d70827518 9ec6aee90d72a43e",
+          "01a0905d70827518-9ec6-aee90d72a43e",
+          "{01a0905d-7082-7518-9ec6-aee90d72a43e}",
+          " 01a0905d-7082-7518-9ec6-aee90d72a43e",
+          "01a0905d-7082-7518-9ec6-aee90d72a43e ",
+          "01a0905d_7082_7518_9ec6_aee90d72a43e",
+          "01a0905d-7082-7518-9ec6-aee90d72a43g",
+          "urn:uuid:01a0905d-7082-7518-9ec6-aee90d72a43e",
+          "",
+        }) {
+      org.junit.jupiter.api.Assertions.assertThrows(
+          Ids.InvalidIdException.class, () -> Ids.parse(odd), odd);
+    }
+    org.junit.jupiter.api.Assertions.assertThrows(
+        Ids.InvalidIdException.class, () -> Ids.parse(null));
+  }
+
+  @Test
+  void everyIdMintedOrDerivedIsV7() {
+    for (int i = 0; i < 10_000; i++) {
+      UUID id = Ids.newId();
+      assertTrue(Ids.isV7(id), id.toString());
+      assertTrue(Ids.isV7(Ids.derived(id, "line:" + i)));
+    }
+    // Even from a source that is not v7: the derived key is still one StoreQL accepts.
+    assertTrue(Ids.isV7(Ids.derived(new UUID(0x919108f752d14320L, 0x9bacf847db4148a8L), "x")));
+  }
+
+  @Test
+  void requireV7NamesWhatItRefused() {
+    UUID id = Ids.newId();
+    assertEquals(id, Ids.requireV7(id, "an order"));
+    Ids.InvalidIdException e =
+        org.junit.jupiter.api.Assertions.assertThrows(
+            Ids.InvalidIdException.class,
+            () -> Ids.requireV7(new UUID(0x919108f752d14320L, 0x9bacf847db4148a8L), "an order"));
+    assertTrue(e.getMessage().contains("an order"), e.getMessage());
+    org.junit.jupiter.api.Assertions.assertThrows(
+        Ids.InvalidIdException.class, () -> Ids.requireV7(null, "an order"));
+  }
+
+  /**
+   * The same vector the Flutter app's derivedId is tested against, computed a third way (Python)
+   * when it was written: a key derived on a till and a key derived on the server agree bit for bit.
+   */
+  @Test
+  void derivedIdsMatchTheSharedVector() {
+    assertEquals(
+        "01a0905d-7082-7bcd-a20b-17cf9c3cdc20",
+        Ids.derived(Ids.parse("01a0905d-7082-7518-9ec6-aee90d72a43e"), "pay:1").toString());
+  }
 }

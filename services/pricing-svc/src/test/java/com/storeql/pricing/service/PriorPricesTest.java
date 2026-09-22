@@ -5,6 +5,7 @@ import static org.junit.jupiter.api.Assertions.assertFalse;
 import static org.junit.jupiter.api.Assertions.assertNull;
 import static org.junit.jupiter.api.Assertions.assertTrue;
 
+import com.storeql.ids.Ids;
 import com.storeql.pricing.domain.Domain.AppliedPrice;
 import com.storeql.pricing.domain.Domain.PriorPrice;
 import java.math.BigDecimal;
@@ -13,7 +14,6 @@ import java.time.Duration;
 import java.time.Instant;
 import java.util.ArrayList;
 import java.util.List;
-import java.util.UUID;
 import org.junit.jupiter.api.DisplayName;
 import org.junit.jupiter.api.Test;
 
@@ -32,7 +32,7 @@ class PriorPricesTest {
     boolean priced = price != null;
     BigDecimal gross = priced ? new BigDecimal(price) : null;
     return new AppliedPrice(
-        UUID.randomUUID(),
+        Ids.newId(),
         null,
         null,
         "ONLINE",

@@ -40,7 +40,7 @@ class RetentionPurgeIT {
   private static final String UNSET = "01a090ae-611e-7072-8516-000000000002";
   private static final String YEAR = "01a090ae-611e-7072-8516-000000000003";
   private static final String OWNER = "01a090ae-611e-7072-8516-000000000031";
-  private static final UUID HELD_CUSTOMER = UUID.fromString("01a090ae-611e-7072-8516-000000000041");
+  private static final UUID HELD_CUSTOMER = Ids.parse("01a090ae-611e-7072-8516-000000000041");
 
   static {
     PG = PostgresSupport.start().wire("customer");

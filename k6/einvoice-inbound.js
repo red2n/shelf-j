@@ -215,7 +215,7 @@ export default function ({ tenant, rival, store, variantId, manager, storekeeper
   // ── a credit note closes the return it credits, for someone who may record one ─
   let raised = null;
   const waited = poll(60, () => {
-    const res = call('POST', `${P}/vendor-returns`, { token: owner, idem: `rtv-${stamp}`, body: { poId: po1.id, reason: 'DAMAGED', notes: 'crushed', lines: [{ variantId, qty: 2 }] } });
+    const res = call('POST', `${P}/vendor-returns`, { token: owner, idem: true, body: { poId: po1.id, reason: 'DAMAGED', notes: 'crushed', lines: [{ variantId, qty: 2 }] } });
     if (res.status === 201) raised = data(res);
     return res.status === 201 || res.status !== 422;
   }, 2);

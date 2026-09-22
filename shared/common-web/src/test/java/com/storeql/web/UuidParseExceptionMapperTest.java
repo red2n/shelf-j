@@ -4,8 +4,8 @@ import static org.junit.jupiter.api.Assertions.assertEquals;
 import static org.junit.jupiter.api.Assertions.assertFalse;
 import static org.junit.jupiter.api.Assertions.assertTrue;
 
+import com.storeql.ids.Ids;
 import jakarta.ws.rs.core.Response;
-import java.util.UUID;
 import org.junit.jupiter.api.Test;
 
 class UuidParseExceptionMapperTest {
@@ -40,7 +40,7 @@ class UuidParseExceptionMapperTest {
 
   private static IllegalArgumentException captureFromString(String bad) {
     try {
-      UUID.fromString(bad);
+      Ids.parse(bad);
       throw new AssertionError("expected UUID.fromString to throw for: " + bad);
     } catch (IllegalArgumentException e) {
       return e;

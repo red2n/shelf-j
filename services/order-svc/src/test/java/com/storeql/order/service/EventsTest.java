@@ -44,7 +44,7 @@ class EventsTest {
     var row = Events.orderFulfilled(TENANT, ORDER, STORE, List.of(item));
 
     JsonObject json = Json.createReader(new StringReader(row.payload())).readObject();
-    assertDoesNotThrow(() -> UUID.fromString(json.getString("eventId")));
+    assertDoesNotThrow(() -> Ids.parse(json.getString("eventId")));
   }
 
   @Test
@@ -79,7 +79,7 @@ class EventsTest {
             TENANT, ORDER, RETURN, STORE, List.of(item), BigDecimal.TEN, "ORIGINAL", "GBP");
 
     JsonObject json = Json.createReader(new StringReader(row.payload())).readObject();
-    assertDoesNotThrow(() -> UUID.fromString(json.getString("eventId")));
+    assertDoesNotThrow(() -> Ids.parse(json.getString("eventId")));
     assertEquals("OrderReturned", json.getString("eventType"));
     // payment-svc reverses the captured payment from these fields for ORIGINAL-tender returns.
     assertEquals("ORIGINAL", json.getString("refundMethod"));

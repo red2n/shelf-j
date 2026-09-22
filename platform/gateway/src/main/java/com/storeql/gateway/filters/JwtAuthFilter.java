@@ -6,6 +6,7 @@ import com.auth0.jwt.algorithms.Algorithm;
 import com.auth0.jwt.exceptions.JWTVerificationException;
 import com.auth0.jwt.interfaces.DecodedJWT;
 import com.storeql.gateway.GatewayConfig;
+import com.storeql.ids.Ids;
 import com.storeql.web.HttpHeaders;
 import jakarta.annotation.Priority;
 import jakarta.enterprise.context.ApplicationScoped;
@@ -478,15 +479,17 @@ public class JwtAuthFilter implements ContainerRequestFilter {
   }
 
   /** Whether a path segment has the shape of a UUID: 36 characters of hex and hyphens. */
+  /**
+   * Whether a path segment is an id this platform could have made: a canonical UUIDv7. Any other
+   * version names nothing here, so a shape that turns on "an id goes here" never opens for one.
+   */
   private static boolean looksLikeUuid(String id) {
-    return id.length() == 36
-        && id.chars()
-            .allMatch(
-                c ->
-                    c == '-'
-                        || (c >= '0' && c <= '9')
-                        || (c >= 'a' && c <= 'f')
-                        || (c >= 'A' && c <= 'F'));
+    try {
+      Ids.parse(id);
+      return true;
+    } catch (IllegalArgumentException e) {
+      return false;
+    }
   }
 
   /**

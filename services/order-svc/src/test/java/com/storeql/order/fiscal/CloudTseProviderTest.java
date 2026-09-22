@@ -4,6 +4,7 @@ import static org.junit.jupiter.api.Assertions.assertEquals;
 import static org.junit.jupiter.api.Assertions.assertThrows;
 import static org.junit.jupiter.api.Assertions.assertTrue;
 
+import com.storeql.ids.Ids;
 import com.storeql.order.domain.Domain.TseDevice;
 import com.storeql.order.domain.Domain.TseStamp;
 import com.sun.net.httpserver.HttpServer;
@@ -15,7 +16,6 @@ import java.nio.charset.StandardCharsets;
 import java.time.Instant;
 import java.util.ArrayList;
 import java.util.List;
-import java.util.UUID;
 import org.junit.jupiter.api.AfterEach;
 import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.Test;
@@ -95,9 +95,9 @@ class CloudTseProviderTest {
 
   private static TseDevice device() {
     return new TseDevice(
-        UUID.randomUUID(),
-        UUID.randomUUID(),
-        UUID.randomUUID(),
+        Ids.newId(),
+        Ids.newId(),
+        Ids.newId(),
         "CLOUD",
         "till",
         "serial-1",
@@ -114,7 +114,7 @@ class CloudTseProviderTest {
 
   private static SaleFigures sale() {
     return new SaleFigures(
-        UUID.randomUUID(),
+        Ids.newId(),
         "EUR",
         Instant.parse("2026-09-12T10:00:00Z"),
         List.of(
@@ -178,7 +178,7 @@ class CloudTseProviderTest {
         provider("key")
             .register(
                 new TseProvider.RegistrationRequest(
-                    UUID.randomUUID(), UUID.randomUUID(), "till-2", "tss-1", null));
+                    Ids.newId(), Ids.newId(), "till-2", "tss-1", null));
     assertEquals("serial-1", d.serialNumber());
     assertEquals("PUB", d.publicKey());
     assertEquals("tss-1", d.externalTssId());
@@ -195,7 +195,7 @@ class CloudTseProviderTest {
                 provider("key")
                     .register(
                         new TseProvider.RegistrationRequest(
-                            UUID.randomUUID(), UUID.randomUUID(), "t", "", null)));
+                            Ids.newId(), Ids.newId(), "t", "", null)));
     assertEquals("FISCAL_TSE_ID_REQUIRED", noId.code());
     var unconfigured = CloudTseProvider.forTest("http://127.0.0.1:1", "", "");
     var noCreds =
@@ -204,7 +204,7 @@ class CloudTseProviderTest {
             () ->
                 unconfigured.register(
                     new TseProvider.RegistrationRequest(
-                        UUID.randomUUID(), UUID.randomUUID(), "t", "tss-1", null)));
+                        Ids.newId(), Ids.newId(), "t", "tss-1", null)));
     assertEquals("FISCAL_TSE_CLOUD_NOT_CONFIGURED", noCreds.code());
   }
 }

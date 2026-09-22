@@ -15,6 +15,7 @@ import 'providers/inventory_levels_pagination.dart';
 import 'inventory_markdown_tab.dart';
 import 'inventory_warehouse_tabs.dart';
 import '../../shared/util/short_ref.dart';
+import 'package:storeql_app/core/ids.dart';
 
 class InventoryScreen extends ConsumerStatefulWidget {
   const InventoryScreen({super.key});
@@ -1512,11 +1513,8 @@ class _SummaryChip extends StatelessWidget {
 
 // ── Adjust stock ─────────────────────────────────────────────────────────────
 
-String _newIdempotencyKey() {
-  final ms = DateTime.now().microsecondsSinceEpoch.toRadixString(16);
-  final r = (ms.hashCode & 0xFFFFFFFF).toRadixString(16).padLeft(8, '0');
-  return '$ms-$r-adjust';
-}
+/// A fresh key per attempt at an adjustment: a UUIDv7, which every service requires.
+String _newIdempotencyKey() => newId();
 
 class _AdjustStockDialog extends ConsumerStatefulWidget {
   final InventoryLevel level;

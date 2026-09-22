@@ -33,8 +33,8 @@ class PromotionEngineTest {
 
   private final PromotionEngine engine = new PromotionEngine();
 
-  private static final UUID SHIRT = UUID.fromString("01a090ae-611e-700b-bde4-50df0324c37c");
-  private static final UUID MUG = UUID.fromString("01a090ae-611e-700f-b645-a14095230b77");
+  private static final UUID SHIRT = Ids.parse("01a090ae-611e-700b-bde4-50df0324c37c");
+  private static final UUID MUG = Ids.parse("01a090ae-611e-700f-b645-a14095230b77");
 
   // ── line-level ─────────────────────────────────────────────────────────────
 

@@ -1287,13 +1287,13 @@ public class PurchaseService {
   public List<IntercompanyInvoice> raiseIntercompanyInvoices(
       RaiseIntercompanyInvoiceRequest req, TenantContext ctx) {
     UUID tenantId = ctx.requireTenantId();
-    UUID fromStore = UUID.fromString(req.fromStoreId());
-    UUID toStore = UUID.fromString(req.toStoreId());
+    UUID fromStore = Ids.parse(req.fromStoreId());
+    UUID toStore = Ids.parse(req.toStoreId());
     if (fromStore.equals(toStore))
       throw ApiException.badRequest(
           "PURCHASE_IC_SAME_STORE", "from and to store must be different");
 
-    UUID transferRef = req.transferRef() != null ? UUID.fromString(req.transferRef()) : null;
+    UUID transferRef = req.transferRef() != null ? Ids.parse(req.transferRef()) : null;
     String vatCode =
         req.vatCode() != null ? req.vatCode().toUpperCase(java.util.Locale.ROOT) : "T1";
     // Intercompany invoicing is store-to-store inside one tenant, so the tenant's own currency is
@@ -1594,7 +1594,7 @@ public class PurchaseService {
       try {
         afterEntryDate = LocalDate.parse(parts[0]);
         afterCreatedAt = java.time.Instant.parse(parts[1]);
-        afterId = UUID.fromString(parts[2]);
+        afterId = Ids.parse(parts[2]);
       } catch (RuntimeException e) {
         throw new ApiException(400, "INVALID_CURSOR", "Malformed pagination cursor", List.of(), e);
       }

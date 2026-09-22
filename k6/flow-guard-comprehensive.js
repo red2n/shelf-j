@@ -23,6 +23,7 @@ import {
   data,
   expect,
   login,
+  newId,
   onboardTenant,
   priceVariants,
   register,
@@ -260,7 +261,7 @@ export default function () {
     const t = ctx.owner.token;
     const receipt = { storeId: ctx.storeId, variantId: ctx.variantId, qty: 500, batchNo: `B-${run}`.slice(0, 32), costPrice: '250.00', expiryDate: '2027-12-31' };
     expect(call('POST', '/api/inventory-svc/admin/inventory/receive', { token: t, idem: true, body: { ...receipt, qty: 0 } }), 'receive: qty must be positive', 400);
-    const key = `flow-receive-${run}`;
+    const key = newId();
     const received = call('POST', '/api/inventory-svc/admin/inventory/receive', { token: t, idem: key, body: receipt });
     expect(received, 'receive stock', 201);
     ctx.batchId = data(received).id;
@@ -327,7 +328,7 @@ export default function () {
       "rival cannot sell our variant",
       [400, 404, 409, 422]
     );
-    const key = `flow-sale-${run}`;
+    const key = newId();
     const placed = pos(sale, key);
     expect(placed, 'POS order placed', 201);
     truthy('the order is in INR at the listed price', data(placed).currency === 'INR' && Number(data(placed).subtotal) === 120, data(placed));

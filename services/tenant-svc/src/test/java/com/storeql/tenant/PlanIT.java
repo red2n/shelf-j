@@ -458,8 +458,8 @@ class PlanIT {
     assertThat(owner("GET", MINE, null, shop).status(), is(200));
 
     // Each business reads its own, and there is no route that takes somebody else's.
-    UUID shopId = UUID.fromString(shop);
-    UUID rivalId = UUID.fromString(rival);
+    UUID shopId = Ids.parse(shop);
+    UUID rivalId = Ids.parse(rival);
     assertThat(shopId, is(not(rivalId)));
     assertThat(
         owner("GET", MINE, null, rival).data().getJsonObject("plan").getString("code"),

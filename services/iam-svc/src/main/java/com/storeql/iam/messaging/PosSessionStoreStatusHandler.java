@@ -1,6 +1,7 @@
 package com.storeql.iam.messaging;
 
 import com.storeql.iam.repo.PosSessionRepository;
+import com.storeql.ids.Ids;
 import jakarta.enterprise.context.ApplicationScoped;
 import jakarta.inject.Inject;
 import jakarta.json.Json;
@@ -33,7 +34,7 @@ class PosSessionStoreStatusHandler {
     String status;
     try (var reader = Json.createReader(new StringReader(json))) {
       JsonObject obj = reader.readObject();
-      storeId = UUID.fromString(obj.getString("storeId"));
+      storeId = Ids.parse(obj.getString("storeId"));
       status = obj.getString("status", "ACTIVE").toUpperCase(Locale.ROOT);
     } catch (RuntimeException e) {
       LOG.log(

@@ -3,6 +3,7 @@ package com.storeql.pricing.client;
 import com.storeql.discovery.ConsulClient;
 import com.storeql.discovery.ServiceInstance;
 import com.storeql.discovery.ServiceRegistry;
+import com.storeql.ids.Ids;
 import com.storeql.pricing.config.ServiceConfig;
 import com.storeql.web.HttpHeaders;
 import com.storeql.web.TenantContext;
@@ -109,8 +110,8 @@ public class InventoryClient {
           for (JsonObject b : data.getValuesAs(JsonObject.class)) {
             out.add(
                 new ExpiringBatch(
-                    UUID.fromString(b.getString("id")),
-                    UUID.fromString(b.getString("variantId")),
+                    Ids.parse(b.getString("id")),
+                    Ids.parse(b.getString("variantId")),
                     b.getString("batchNo", null),
                     new BigDecimal(b.get("remainingQty").toString()),
                     b.containsKey("expiryDate") && !b.isNull("expiryDate")

@@ -1,6 +1,7 @@
 package com.storeql.customer.messaging;
 
 import com.storeql.customer.service.CustomerService;
+import com.storeql.ids.Ids;
 import jakarta.enterprise.context.ApplicationScoped;
 import jakarta.inject.Inject;
 import jakarta.json.Json;
@@ -41,10 +42,10 @@ class OrderConfirmedHandler {
       if (!obj.containsKey("customerId") || obj.isNull("customerId")) {
         return;
       }
-      eventId = UUID.fromString(obj.getString("eventId"));
-      tenantId = UUID.fromString(obj.getString("tenantId"));
-      orderId = UUID.fromString(obj.getString("orderId"));
-      customerId = UUID.fromString(obj.getString("customerId"));
+      eventId = Ids.parse(obj.getString("eventId"));
+      tenantId = Ids.parse(obj.getString("tenantId"));
+      orderId = Ids.parse(obj.getString("orderId"));
+      customerId = Ids.parse(obj.getString("customerId"));
       total = obj.getJsonNumber("total").bigDecimalValue();
       // The VAT inside the total; an event from before 17.7 carries none.
       tax =

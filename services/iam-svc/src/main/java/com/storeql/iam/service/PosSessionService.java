@@ -37,7 +37,7 @@ public class PosSessionService {
     if (timeout < 60 || timeout > 86400)
       throw ApiException.badRequest(
           "POS_SESSION_INVALID_TIMEOUT", "idleTimeoutSeconds must be 60–86400");
-    UUID storeId = UUID.fromString(req.storeId());
+    UUID storeId = Ids.parse(req.storeId());
     UUID tenantId = ctx.requireTenantId();
     // Checked in addition to store status: tenant suspension in tenant-svc cascades to the
     // stores' own status column locally, but does not fan out a StoreStatusChanged event per

@@ -1,5 +1,6 @@
 package com.storeql.notification.messaging;
 
+import com.storeql.ids.Ids;
 import com.storeql.notification.service.Messages;
 import com.storeql.notification.service.NotificationService;
 import com.storeql.notification.service.Notifier;
@@ -49,10 +50,10 @@ class ShortageAlertHandler {
     BigDecimal threshold;
     try (var reader = Json.createReader(new StringReader(json))) {
       JsonObject obj = reader.readObject();
-      eventId = UUID.fromString(obj.getString("eventId"));
-      tenantId = UUID.fromString(obj.getString("tenantId"));
-      storeId = UUID.fromString(obj.getString("storeId"));
-      variantId = UUID.fromString(obj.getString("variantId"));
+      eventId = Ids.parse(obj.getString("eventId"));
+      tenantId = Ids.parse(obj.getString("tenantId"));
+      storeId = Ids.parse(obj.getString("storeId"));
+      variantId = Ids.parse(obj.getString("variantId"));
       available = new BigDecimal(obj.get("available").toString());
       threshold = new BigDecimal(obj.get("threshold").toString());
     } catch (RuntimeException e) {

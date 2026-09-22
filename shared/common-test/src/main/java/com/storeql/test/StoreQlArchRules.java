@@ -103,4 +103,27 @@ public final class StoreQlArchRules {
           .because(
               "DTOs are the HTTP contract — they must not expose domain internals."
                   + " Use Mappers to convert. See docs/coding-standards.md §2.1.");
+
+  /**
+   * Every id is an RFC 9562 UUIDv7 — in main code and in tests alike: minted with {@code
+   * Ids.newId()}, derived with {@code Ids.derived}, read with {@code Ids.parse}. Nothing outside
+   * the id module makes a UUID of another version or reads one leniently. PMD holds main code to
+   * the same rule; this is what holds the tests, which PMD does not read — a test that stores a v4
+   * or sends one proves nothing about the platform that refuses them.
+   */
+  public static final ArchRule IDS_ARE_V7 =
+      noClasses()
+          .that()
+          .resideOutsideOfPackage("com.storeql.ids..")
+          .should()
+          .callMethod(java.util.UUID.class, "randomUUID")
+          .orShould()
+          .callMethod(java.util.UUID.class, "nameUUIDFromBytes", byte[].class)
+          .orShould()
+          .callMethod(java.util.UUID.class, "fromString", String.class)
+          .orShould()
+          .callConstructor(java.util.UUID.class, long.class, long.class)
+          .because(
+              "StoreQL ids are RFC 9562 UUIDv7: Ids.newId() / Ids.derived() to make one,"
+                  + " Ids.parse() to read one");
 }

@@ -1,5 +1,6 @@
 package com.storeql.tenant.api;
 
+import com.storeql.ids.Ids;
 import com.storeql.tenant.domain.Commission.Band;
 import com.storeql.tenant.domain.Commission.Day;
 import com.storeql.tenant.domain.Commission.Scheme;
@@ -236,7 +237,7 @@ public class CommissionResource {
 
   private static UUID uuid(String value) {
     try {
-      return UUID.fromString(value);
+      return Ids.parse(value);
     } catch (IllegalArgumentException e) {
       throw new ApiException(
           400, "COMMISSION_ID_INVALID", "that is not an id: " + value, List.of(), e);
