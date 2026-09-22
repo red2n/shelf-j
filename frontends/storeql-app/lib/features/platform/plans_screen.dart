@@ -18,7 +18,9 @@ import '../../shared/widgets/loading_view.dart';
 // off sale and leaves the businesses that bought it exactly where they are.
 //
 // The allowance keys are not typed here: they come from the platform, because a
-// key nothing enforces would be a promise nobody keeps.
+// key nothing enforces would be a promise nobody keeps. The same goes for what
+// is metered (21.10): how many orders and texts a plan includes each period,
+// and what each one beyond that costs — or, for a marketing text, that it stops.
 // ---------------------------------------------------------------------------
 
 class PlanPrice {
@@ -55,6 +57,58 @@ class PlanGrant {
   }
 }
 
+/// What a plan includes of one meter each billing period (21.10).
+class PlanMeter {
+  final String meter;
+  final String label;
+  final String? unit;
+  final int? included;
+  final bool hard;
+  const PlanMeter({required this.meter, required this.label, required this.unit, required this.included, required this.hard});
+
+  factory PlanMeter.fromJson(Map<String, dynamic> j) => PlanMeter(
+        meter: j['meter'] as String? ?? '',
+        label: j['label'] as String? ?? (j['meter'] as String? ?? ''),
+        unit: j['unit'] as String?,
+        included: (j['included'] as num?)?.toInt(),
+        hard: j['hard'] == true,
+      );
+}
+
+/// What one unit beyond a plan's allowance costs, in a currency, from a date.
+class PlanMeterPrice {
+  final String meter;
+  final String currency;
+  final num unitAmount;
+  final String effectiveFrom;
+  const PlanMeterPrice({required this.meter, required this.currency, required this.unitAmount, required this.effectiveFrom});
+
+  factory PlanMeterPrice.fromJson(Map<String, dynamic> j) => PlanMeterPrice(
+        meter: j['meter'] as String? ?? '',
+        currency: j['currency'] as String? ?? '',
+        unitAmount: j['unitAmount'] as num? ?? 0,
+        effectiveFrom: j['effectiveFrom'] as String? ?? '',
+      );
+}
+
+/// Something the platform counts, and whether use of it may ever be refused.
+class MeterKey {
+  final String key;
+  final String label;
+  final String unit;
+  final bool refusable;
+  final String countedBy;
+  const MeterKey({required this.key, required this.label, required this.unit, required this.refusable, required this.countedBy});
+
+  factory MeterKey.fromJson(Map<String, dynamic> j) => MeterKey(
+        key: j['key'] as String? ?? '',
+        label: j['label'] as String? ?? '',
+        unit: j['unit'] as String? ?? '',
+        refusable: j['refusable'] == true,
+        countedBy: j['countedBy'] as String? ?? '',
+      );
+}
+
 class Plan {
   final String id;
   final String code;
@@ -67,6 +121,8 @@ class Plan {
   final bool isPublic;
   final List<PlanPrice> prices;
   final List<PlanGrant> includes;
+  final List<PlanMeter> meters;
+  final List<PlanMeterPrice> meterPrices;
 
   const Plan({
     required this.id,
@@ -80,6 +136,8 @@ class Plan {
     required this.isPublic,
     required this.prices,
     required this.includes,
+    this.meters = const [],
+    this.meterPrices = const [],
   });
 
   factory Plan.fromJson(Map<String, dynamic> j) => Plan(
@@ -100,11 +158,37 @@ class Plan {
           for (final g in j['includes'] as List<dynamic>? ?? const [])
             PlanGrant.fromJson(Map<String, dynamic>.from(g as Map)),
         ],
+        meters: [
+          for (final m in j['meters'] as List<dynamic>? ?? const [])
+            PlanMeter.fromJson(Map<String, dynamic>.from(m as Map)),
+        ],
+        meterPrices: [
+          for (final m in j['meterPrices'] as List<dynamic>? ?? const [])
+            PlanMeterPrice.fromJson(Map<String, dynamic>.from(m as Map)),
+        ],
       );
+
+  /// What a plan says of one meter, as a person reads it: the allowance, then what happens beyond it.
+  String meterSays(PlanMeter m) {
+    if (m.included == null) return '${m.label}: unlimited';
+    if (m.hard) return '${m.label}: ${m.included} a period, then marketing stops';
+    final priced = meterPrices.where((x) => x.meter == m.meter).toList();
+    if (priced.isEmpty) return '${m.label}: ${m.included} a period, then not charged';
+    return '${m.label}: ${m.included} a period, then '
+        '${priced.map((x) => '${x.unitAmount} ${x.currency}').join(' / ')} each';
+  }
 
   bool get sold => status == 'ACTIVE';
   bool get draft => status == 'DRAFT';
 }
+
+final meterKeysProvider = FutureProvider.autoDispose<List<MeterKey>>((ref) async {
+  final resp = await ref.watch(apiClientProvider).dio.get('$_base/meter-keys');
+  return [
+    for (final m in (resp.data['data'] as Map)['meters'] as List<dynamic>)
+      MeterKey.fromJson(Map<String, dynamic>.from(m as Map)),
+  ];
+});
 
 class EntitlementKey {
   final String key;
@@ -311,6 +395,20 @@ class _PlanCardState extends ConsumerState<_PlanCard> {
                     Chip(key: Key('plan-grant-${p.code}-${g.key}'), label: Text('${g.label}: ${g.says}')),
                 ],
               ),
+            const SizedBox(height: 12),
+            Text('Metered use', style: text.titleSmall),
+            const SizedBox(height: 4),
+            if (p.meters.isEmpty)
+              Text('Nothing metered — orders and texts are uncounted against this plan.', style: text.bodyMedium)
+            else
+              Wrap(
+                spacing: 8,
+                runSpacing: 6,
+                children: [
+                  for (final m in p.meters)
+                    Chip(key: Key('plan-meter-${p.code}-${m.meter}'), label: Text(p.meterSays(m))),
+                ],
+              ),
             if (_error != null) ...[
               const SizedBox(height: 10),
               Text(_error!, key: Key('plan-error-${p.code}'), style: TextStyle(color: cs.error)),
@@ -338,6 +436,26 @@ class _PlanCardState extends ConsumerState<_PlanCard> {
                           if (set == true) widget.onChanged();
                         },
                   child: const Text('What it includes'),
+                ),
+                TextButton(
+                  key: Key('plan-meters-${p.code}'),
+                  onPressed: _busy
+                      ? null
+                      : () async {
+                          final set = await showDialog<bool>(context: context, builder: (_) => SetMetersDialog(plan: p));
+                          if (set == true) widget.onChanged();
+                        },
+                  child: const Text('Metered use'),
+                ),
+                TextButton(
+                  key: Key('plan-meter-price-${p.code}'),
+                  onPressed: _busy
+                      ? null
+                      : () async {
+                          final set = await showDialog<bool>(context: context, builder: (_) => SetMeterPriceDialog(planId: p.id));
+                          if (set == true) widget.onChanged();
+                        },
+                  child: const Text('Price beyond the allowance'),
                 ),
                 if (!p.sold)
                   FilledButton(
@@ -727,6 +845,268 @@ class _SetIncludesDialogState extends ConsumerState<SetIncludesDialog> {
           onPressed: _busy || !keys.hasValue ? null : () => _save(keys.value!),
           child: Text(_busy ? 'Saving…' : 'Set'),
         ),
+      ],
+    );
+  }
+}
+
+/// What a plan includes of each meter each billing period (21.10). Only a meter that may be
+/// refused can be made a hard ceiling: an order never is.
+class SetMetersDialog extends ConsumerStatefulWidget {
+  final Plan plan;
+  const SetMetersDialog({super.key, required this.plan});
+
+  @override
+  ConsumerState<SetMetersDialog> createState() => _SetMetersDialogState();
+}
+
+class _SetMetersDialogState extends ConsumerState<SetMetersDialog> {
+  final Map<String, TextEditingController> _included = {};
+  final Map<String, bool> _hard = {};
+  String? _error;
+  bool _busy = false;
+
+  @override
+  void dispose() {
+    for (final c in _included.values) {
+      c.dispose();
+    }
+    super.dispose();
+  }
+
+  PlanMeter? _named(String key) {
+    for (final m in widget.plan.meters) {
+      if (m.meter == key) return m;
+    }
+    return null;
+  }
+
+  void _seed(List<MeterKey> keys) {
+    for (final k in keys) {
+      _included.putIfAbsent(k.key, () {
+        final has = _named(k.key);
+        if (has == null) return TextEditingController();
+        return TextEditingController(text: has.included?.toString() ?? '-');
+      });
+      _hard.putIfAbsent(k.key, () => _named(k.key)?.hard ?? false);
+    }
+  }
+
+  Future<void> _save(List<MeterKey> keys) async {
+    setState(() {
+      _busy = true;
+      _error = null;
+    });
+    final meters = <Map<String, dynamic>>[];
+    for (final k in keys) {
+      final raw = _included[k.key]?.text.trim() ?? '';
+      if (raw.isEmpty) continue;
+      if (raw == '-') {
+        meters.add({'meter': k.key}); // named, with no number: unlimited
+        continue;
+      }
+      final n = int.tryParse(raw);
+      if (n == null || n < 0) {
+        setState(() {
+          _busy = false;
+          _error = '${k.label} is a whole number, or “-” for unlimited.';
+        });
+        return;
+      }
+      meters.add({'meter': k.key, 'included': n, 'hard': k.refusable && (_hard[k.key] ?? false)});
+    }
+    try {
+      await ref.read(apiClientProvider).dio.put('$_base/${widget.plan.id}/meters', data: {'meters': meters});
+      if (mounted) Navigator.of(context).pop(true);
+    } catch (e) {
+      if (!mounted) return;
+      setState(() {
+        _busy = false;
+        _error = switch (apiErrorCode(e)) {
+          'PLAN_METER_NOT_REFUSABLE' => 'Orders are never refused. Price what is used beyond the allowance instead.',
+          'PLAN_METER_HARD_UNLIMITED' => 'A hard ceiling needs a number to stop at.',
+          _ => friendlyError(e),
+        };
+      });
+    }
+  }
+
+  @override
+  Widget build(BuildContext context) {
+    final cs = Theme.of(context).colorScheme;
+    final keys = ref.watch(meterKeysProvider);
+    return AlertDialog(
+      title: Text('What ${widget.plan.code} includes each period'),
+      content: SizedBox(
+        width: 480,
+        child: keys.when(
+          loading: () => const SizedBox(height: 120, child: Center(child: CircularProgressIndicator())),
+          error: (e, _) => Text(friendlyError(e, fallback: 'Could not load what the platform counts.')),
+          data: (list) {
+            _seed(list);
+            return SingleChildScrollView(
+              child: Column(
+                mainAxisSize: MainAxisSize.min,
+                crossAxisAlignment: CrossAxisAlignment.start,
+                children: [
+                  const Text(
+                    'How many each billing period. Beyond it, use is charged at the plan’s overage price — '
+                    'or, for what may be refused, stopped. Leave empty to say nothing; “-” for unlimited.',
+                  ),
+                  const SizedBox(height: 12),
+                  for (final k in list) ...[
+                    TextField(
+                      key: Key('meter-${k.key}'),
+                      controller: _included[k.key],
+                      keyboardType: TextInputType.number,
+                      decoration: InputDecoration(labelText: '${k.label} (${k.unit}s)', helperText: 'counted by ${k.countedBy}'),
+                    ),
+                    if (k.refusable)
+                      SwitchListTile(
+                        key: Key('meter-hard-${k.key}'),
+                        contentPadding: EdgeInsets.zero,
+                        title: const Text('Stop marketing beyond it, rather than charge'),
+                        subtitle: const Text('What a customer must be told — an order ready, a recall — always goes.'),
+                        value: _hard[k.key] ?? false,
+                        onChanged: (v) => setState(() => _hard[k.key] = v),
+                      ),
+                    const SizedBox(height: 8),
+                  ],
+                  if (_error != null) Text(_error!, key: const Key('meters-error'), style: TextStyle(color: cs.error)),
+                ],
+              ),
+            );
+          },
+        ),
+      ),
+      actions: [
+        TextButton(onPressed: _busy ? null : () => Navigator.of(context).pop(false), child: const Text('Cancel')),
+        FilledButton(
+          key: const Key('meters-save'),
+          onPressed: _busy || !keys.hasValue ? null : () => _save(keys.value!),
+          child: Text(_busy ? 'Saving…' : 'Set'),
+        ),
+      ],
+    );
+  }
+}
+
+/// What one unit beyond a plan's allowance costs, from a date. An earlier price is kept, so a period
+/// is charged at the price in force the day it began.
+class SetMeterPriceDialog extends ConsumerStatefulWidget {
+  final String planId;
+  const SetMeterPriceDialog({super.key, required this.planId});
+
+  @override
+  ConsumerState<SetMeterPriceDialog> createState() => _SetMeterPriceDialogState();
+}
+
+class _SetMeterPriceDialogState extends ConsumerState<SetMeterPriceDialog> {
+  final _currency = TextEditingController(text: 'GBP');
+  final _amount = TextEditingController();
+  String? _meter;
+  DateTime? _from;
+  String? _error;
+  bool _busy = false;
+
+  @override
+  void dispose() {
+    _currency.dispose();
+    _amount.dispose();
+    super.dispose();
+  }
+
+  Future<void> _save() async {
+    final amount = num.tryParse(_amount.text.trim());
+    if (_meter == null) {
+      setState(() => _error = 'Choose what is being priced.');
+      return;
+    }
+    if (amount == null || amount < 0) {
+      setState(() => _error = 'A price is a number, like 0.05 — up to four places.');
+      return;
+    }
+    setState(() {
+      _busy = true;
+      _error = null;
+    });
+    try {
+      await ref.read(apiClientProvider).dio.post('$_base/${widget.planId}/meter-prices', data: {
+        'meter': _meter,
+        'currency': _currency.text.trim().toUpperCase(),
+        'unitAmount': amount,
+        'effectiveFrom': ?_from?.toIso8601String().substring(0, 10),
+      });
+      if (mounted) Navigator.of(context).pop(true);
+    } catch (e) {
+      if (!mounted) return;
+      setState(() {
+        _busy = false;
+        _error = apiErrorCode(e) == 'CURRENCY_INVALID' ? 'A currency is a three-letter code, like GBP.' : friendlyError(e);
+      });
+    }
+  }
+
+  @override
+  Widget build(BuildContext context) {
+    final cs = Theme.of(context).colorScheme;
+    final keys = ref.watch(meterKeysProvider);
+    return AlertDialog(
+      title: const Text('Price beyond the allowance'),
+      content: SizedBox(
+        width: 420,
+        child: Column(
+          mainAxisSize: MainAxisSize.min,
+          crossAxisAlignment: CrossAxisAlignment.start,
+          children: [
+            const Text('Each one beyond what the plan includes, before tax. A period is charged at the price in force the day it began.'),
+            const SizedBox(height: 12),
+            DropdownButtonFormField<String>(
+              key: const Key('meter-price-meter'),
+              initialValue: _meter,
+              decoration: const InputDecoration(labelText: 'What'),
+              items: [
+                for (final k in keys.value ?? const <MeterKey>[])
+                  DropdownMenuItem(value: k.key, child: Text('${k.label}, per ${k.unit}')),
+              ],
+              onChanged: (v) => setState(() => _meter = v),
+            ),
+            const SizedBox(height: 8),
+            Row(
+              children: [
+                SizedBox(
+                  width: 110,
+                  child: TextField(key: const Key('meter-price-currency'), controller: _currency, decoration: const InputDecoration(labelText: 'Currency')),
+                ),
+                const SizedBox(width: 12),
+                Expanded(
+                  child: TextField(
+                    key: const Key('meter-price-amount'),
+                    controller: _amount,
+                    keyboardType: const TextInputType.numberWithOptions(decimal: true),
+                    decoration: const InputDecoration(labelText: 'Each, up to four places'),
+                  ),
+                ),
+              ],
+            ),
+            ListTile(
+              key: const Key('meter-price-from'),
+              contentPadding: EdgeInsets.zero,
+              leading: const Icon(Icons.event_outlined),
+              title: Text(_from == null ? 'From today' : 'From ${_from!.toIso8601String().substring(0, 10)}'),
+              onTap: () async {
+                final now = DateTime.now();
+                final picked = await showDatePicker(context: context, firstDate: now.subtract(const Duration(days: 365)), lastDate: now.add(const Duration(days: 730)), initialDate: now);
+                if (picked != null) setState(() => _from = picked);
+              },
+            ),
+            if (_error != null) Text(_error!, key: const Key('meter-price-error'), style: TextStyle(color: cs.error)),
+          ],
+        ),
+      ),
+      actions: [
+        TextButton(onPressed: _busy ? null : () => Navigator.of(context).pop(false), child: const Text('Cancel')),
+        FilledButton(key: const Key('meter-price-save'), onPressed: _busy ? null : _save, child: Text(_busy ? 'Saving…' : 'Set')),
       ],
     );
   }

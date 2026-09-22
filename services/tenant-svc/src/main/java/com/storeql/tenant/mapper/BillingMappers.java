@@ -12,6 +12,8 @@ import com.storeql.tenant.domain.Subscriptions.Subscription;
 import com.storeql.tenant.domain.Subscriptions.SubscriptionEvent;
 import com.storeql.tenant.domain.Subscriptions.SubscriptionFile;
 import com.storeql.tenant.dto.BillingDtos;
+import java.math.BigDecimal;
+import java.math.RoundingMode;
 import java.time.Instant;
 import java.time.LocalDate;
 import java.util.List;
@@ -167,8 +169,18 @@ public final class BillingMappers {
         l.kind(),
         l.description(),
         l.quantity(),
-        money(l.unitAmount()),
-        money(l.amount()));
+        exact(l.unitAmount()),
+        exact(l.amount()));
+  }
+
+  /**
+   * A line's price as it was set, at least to pence: 10.00 stays 10.00, and a text part at 0.0350
+   * reads 0.035 rather than a 0.04 nobody charged (21.10). The invoice's total is what is rounded.
+   */
+  private static BigDecimal exact(BigDecimal amount) {
+    if (amount == null) return null;
+    BigDecimal stripped = amount.stripTrailingZeros();
+    return stripped.scale() < 2 ? amount.setScale(2, RoundingMode.UNNECESSARY) : stripped;
   }
 
   public static BillingDtos.PaymentResponse toDto(Payment p) {

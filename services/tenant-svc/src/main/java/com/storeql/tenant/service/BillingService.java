@@ -3,6 +3,7 @@ package com.storeql.tenant.service;
 import com.storeql.ids.Ids;
 import com.storeql.tenant.domain.BillingTax;
 import com.storeql.tenant.domain.BillingTax.Treatment;
+import com.storeql.tenant.domain.Meters;
 import com.storeql.tenant.domain.Plans;
 import com.storeql.tenant.domain.Plans.Plan;
 import com.storeql.tenant.domain.Proration;
@@ -73,6 +74,7 @@ public class BillingService {
 
   @Inject BillingRepository repo;
   @Inject PlanRepository plans;
+  @Inject UsageService usageOf;
 
   /**
    * Membership is asked of a date, not of a list: the platform already records which countries
@@ -425,22 +427,25 @@ public class BillingService {
    */
   private Optional<Invoice> renew(Subscription s, BillingProfile seller, LocalDate asOf) {
     if (s.cancelAtPeriodEnd()) {
+      // Its last period's usage is owed like any other's, and billed before it ends: a failure here
+      // leaves it due, so the next run tries again rather than letting the usage go unbilled.
+      closeLastPeriod(s, seller, asOf);
       end(s, "the business asked for it to end when the period it had paid for ran out");
       return Optional.empty();
     }
+    // The usage of the period that is ending, on the plan it was lived on (21.10) — read before a
+    // waiting downgrade moves the subscription, and billed in arrears on the same invoice as the
+    // next period in advance.
+    UsageService.Closing usage = usageOf.close(s, s.periodStart(), s.periodEnd(), 2);
     // A downgrade waits for the period already paid for; this is that moment.
     Subscription moved = applyPending(s);
     LocalDate start = moved.periodEnd();
     LocalDate end = advance(start, moved.billingInterval());
+    List<InvoiceLine> lines = new ArrayList<>();
+    lines.add(planLine(moved, start, end));
+    lines.addAll(usage.lines());
     Invoice invoice =
-        issue(
-            moved,
-            seller,
-            start,
-            end,
-            asOf,
-            List.of(planLine(moved, start, end)),
-            Subscriptions.PERIOD);
+        issue(moved, seller, start, end, asOf, lines, Subscriptions.PERIOD, usage.periods());
     repo.save(
         new Builder(moved).status(Subscriptions.ACTIVE).period(start, end).trialEnd(null).build());
     repo.record(
@@ -467,6 +472,23 @@ public class BillingService {
       LocalDate issued,
       List<InvoiceLine> lines,
       String kind) {
+    return issue(s, seller, periodStart, periodEnd, issued, lines, kind, List.of());
+  }
+
+  /**
+   * Writes one invoice with what each meter billed on it, in one transaction (21.10).
+   *
+   * @throws ApiException 409 {@code BILLING_RATE_NOT_SET} as above
+   */
+  private Invoice issue(
+      Subscription s,
+      BillingProfile seller,
+      LocalDate periodStart,
+      LocalDate periodEnd,
+      LocalDate issued,
+      List<InvoiceLine> lines,
+      String kind,
+      List<Meters.UsagePeriod> usage) {
     Buyer buyer = s.buyer();
     String buyerCountry = buyer.country();
     Treatment treatment =
@@ -509,7 +531,7 @@ public class BillingService {
             null,
             now,
             now);
-    return repo.issue(invoice, lines, seller.invoicePrefix());
+    return repo.issue(invoice, lines, seller.invoicePrefix(), usage);
   }
 
   /** The rate a treatment charges, refusing where the platform has set none. */
@@ -645,6 +667,27 @@ public class BillingService {
         "moved to " + plan.code() + " as this period began",
         null);
     return moved;
+  }
+
+  /**
+   * Bills the usage of a subscription's last period, as an adjustment of its own: there is no next
+   * period for it to ride on. Nothing over the allowance is still written down, with no invoice.
+   */
+  private void closeLastPeriod(Subscription s, BillingProfile seller, LocalDate asOf) {
+    UsageService.Closing usage = usageOf.close(s, s.periodStart(), s.periodEnd(), 1);
+    if (usage.lines().isEmpty()) {
+      usageOf.closeWithoutInvoice(usage);
+      return;
+    }
+    issue(
+        s,
+        seller,
+        s.periodStart(),
+        s.periodEnd(),
+        asOf,
+        usage.lines(),
+        Subscriptions.ADJUSTMENT,
+        usage.periods());
   }
 
   private void end(Subscription s, String why) {

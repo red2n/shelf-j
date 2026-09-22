@@ -196,7 +196,8 @@ public final class BillingDtos {
   @Schema(name = "InvoiceLine")
   public record LineResponse(
       int lineNo,
-      @Schema(description = "PLAN, PRORATION or CREDIT.") String kind,
+      @Schema(description = "PLAN, PRORATION, CREDIT or USAGE (beyond the plan, in arrears).")
+          String kind,
       String description,
       BigDecimal quantity,
       BigDecimal unitAmount,

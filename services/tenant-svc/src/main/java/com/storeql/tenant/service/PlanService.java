@@ -3,6 +3,10 @@ package com.storeql.tenant.service;
 import com.storeql.ids.Ids;
 import com.storeql.service.Entitlements;
 import com.storeql.tenant.domain.Domain.Tenant;
+import com.storeql.tenant.domain.Meters;
+import com.storeql.tenant.domain.Meters.Meter;
+import com.storeql.tenant.domain.Meters.MeterPrice;
+import com.storeql.tenant.domain.Meters.PlanMeter;
 import com.storeql.tenant.domain.Plans;
 import com.storeql.tenant.domain.Plans.Entitlement;
 import com.storeql.tenant.domain.Plans.Grant;
@@ -65,7 +69,8 @@ public class PlanService {
   }
 
   private PlanFile file(Plan p) {
-    return new PlanFile(p, repo.prices(p.id()), repo.grants(p.id()));
+    return new PlanFile(
+        p, repo.prices(p.id()), repo.grants(p.id()), repo.meters(p.id()), repo.meterPrices(p.id()));
   }
 
   /**
@@ -236,6 +241,85 @@ public class PlanService {
               e.limit() ? null : g.enabled() != null && g.enabled()));
     }
     repo.setGrants(id, grants);
+    return get(id);
+  }
+
+  // ── metered usage (21.10) ───────────────────────────────────────────────────
+
+  /**
+   * Sets what a plan includes of each meter, whole: a meter left out is one the plan does not name,
+   * which leaves it unlimited and uncharged.
+   *
+   * @throws ApiException 400 {@code PLAN_METER_UNKNOWN} for something the platform does not count,
+   *     {@code PLAN_METER_NOT_REFUSABLE} for a hard ceiling on a meter that must never be refused,
+   *     {@code PLAN_METER_HARD_UNLIMITED} for a hard ceiling with nothing included, {@code
+   *     PLAN_METER_TWICE} for a meter named twice
+   */
+  public PlanFile setMeters(UUID id, List<PlanDtos.PlanMeterRequest> wanted) {
+    require(id);
+    List<PlanMeter> meters = new ArrayList<>(wanted.size());
+    java.util.Set<String> seen = new java.util.HashSet<>();
+    for (PlanDtos.PlanMeterRequest m : wanted) {
+      Meter meter =
+          Meters.meter(m.meter())
+              .orElseThrow(
+                  () ->
+                      ApiException.badRequest(
+                          "PLAN_METER_UNKNOWN",
+                          m.meter()
+                              + " is not something the platform counts: "
+                              + Meters.CATALOGUE.stream().map(Meter::key).toList()));
+      if (!seen.add(meter.key())) {
+        throw ApiException.badRequest("PLAN_METER_TWICE", meter.key() + " is named twice");
+      }
+      boolean hard = Boolean.TRUE.equals(m.hard());
+      if (hard && !meter.refusable()) {
+        // An order refused because the month's allowance ran out is a sale lost at the till and a
+        // customer turned away. Beyond what is included, an order is charged, never refused.
+        throw ApiException.badRequest(
+            "PLAN_METER_NOT_REFUSABLE",
+            meter.label() + " are never refused: price what is used beyond the allowance instead");
+      }
+      if (m.included() != null && m.included() < 0) {
+        throw ApiException.badRequest(
+            "PLAN_METER_INCLUDED_INVALID", "What a plan includes is a whole number, 0 or more");
+      }
+      if (hard && m.included() == null) {
+        throw ApiException.badRequest(
+            "PLAN_METER_HARD_UNLIMITED", "A hard ceiling needs a number to stop at");
+      }
+      meters.add(new PlanMeter(meter.key(), m.included(), hard));
+    }
+    repo.setMeters(id, meters);
+    return get(id);
+  }
+
+  /**
+   * Sets what one unit beyond a plan's allowance costs, in one currency, from a date. Never edited
+   * in place, as a plan's price is not: a period is charged at the price in force the day it began.
+   *
+   * @throws ApiException 400 {@code PLAN_METER_UNKNOWN}, {@code CURRENCY_INVALID}, {@code
+   *     PLAN_PRICE_DATE_INVALID}
+   */
+  public PlanFile setMeterPrice(UUID id, UUID actorId, PlanDtos.MeterPriceRequest req) {
+    require(id);
+    Meter meter =
+        Meters.meter(req.meter())
+            .orElseThrow(
+                () ->
+                    ApiException.badRequest(
+                        "PLAN_METER_UNKNOWN",
+                        req.meter() + " is not something the platform counts"));
+    repo.setMeterPrice(
+        new MeterPrice(
+            Ids.newId(),
+            id,
+            meter.key(),
+            currency(req.currency()),
+            req.unitAmount(),
+            day(req.effectiveFrom()),
+            actorId,
+            Instant.now()));
     return get(id);
   }
 

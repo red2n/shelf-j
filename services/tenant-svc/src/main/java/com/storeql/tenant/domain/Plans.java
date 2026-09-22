@@ -127,11 +127,23 @@ public final class Plans {
     }
   }
 
-  /** A plan with its prices and what it includes, as the price list and the console show it. */
-  public record PlanFile(Plan plan, List<Price> prices, List<Grant> grants) {
+  /**
+   * A plan with its prices and what it includes, as the price list and the console show it.
+   *
+   * @param meters what it includes of each meter (21.10)
+   * @param meterPrices what each unit beyond that costs, per currency and from a date
+   */
+  public record PlanFile(
+      Plan plan,
+      List<Price> prices,
+      List<Grant> grants,
+      List<Meters.PlanMeter> meters,
+      List<Meters.MeterPrice> meterPrices) {
     public PlanFile {
       prices = List.copyOf(prices);
       grants = List.copyOf(grants);
+      meters = List.copyOf(meters);
+      meterPrices = List.copyOf(meterPrices);
     }
 
     /** What this plan grants for a key: the row it carries, or nothing said. */

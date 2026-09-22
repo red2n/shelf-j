@@ -47,6 +47,7 @@ public class SendResource {
   @Inject com.storeql.notification.client.MarketingConsentClient consent;
   @Inject com.storeql.notification.channel.Channels channels;
   @Inject com.storeql.notification.service.NotificationService service;
+  @Inject com.storeql.service.Quotas quotas;
   @Inject TenantContext ctx;
 
   /**
@@ -78,8 +79,9 @@ public class SendResource {
       responseCode = "409",
       description =
           "A marketing message with no recorded consent, or with consent that could not be"
-              + " checked, or on a channel consent cannot cover; a push to a login with no device"
-              + " — nothing is sent")
+              + " checked, or on a channel consent cannot cover; a marketing text past the hard"
+              + " ceiling the business's plan puts on texts (USAGE_QUOTA_REACHED); a push to a"
+              + " login with no device — nothing is sent")
   @APIResponse(responseCode = "503", description = "The channel's provider is not configured")
   @POST
   @Path("/send")
@@ -157,6 +159,12 @@ public class SendResource {
       // Every marketing message carries its own way out (reg.23). Appended here rather than left
       // to each caller, so a caller cannot forget the part that makes the send lawful.
       body = body + unsubscribeFooter(allowance.unsubscribeToken());
+      // A plan may cap the texts it includes (21.10). Only marketing is ever refused for it — an
+      // order that is ready, a recall notice, go whatever the count — and it is asked last, of
+      // the text as it will actually go, footer and all, in the parts the carrier will bill.
+      if (Channel.SMS.equals(channelName)) {
+        quotas.requireRoom(tenantId, "SMS", SmsChannel.parts(body), "text message parts");
+      }
     }
     try {
       notifier.notifyOnce(

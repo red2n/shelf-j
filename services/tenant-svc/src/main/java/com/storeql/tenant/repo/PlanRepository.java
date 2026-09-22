@@ -2,6 +2,8 @@ package com.storeql.tenant.repo;
 
 import com.storeql.ids.Ids;
 import com.storeql.service.BaseJdbcRepository;
+import com.storeql.tenant.domain.Meters.MeterPrice;
+import com.storeql.tenant.domain.Meters.PlanMeter;
 import com.storeql.tenant.domain.Plans;
 import com.storeql.tenant.domain.Plans.Grant;
 import com.storeql.tenant.domain.Plans.Plan;
@@ -289,6 +291,104 @@ public class PlanRepository extends BaseJdbcRepository {
         rs ->
             new Grant(rs.getString(1), rs.getObject(2, Long.class), rs.getObject(3, Boolean.class)),
         "list what a plan includes");
+  }
+
+  // ── what a plan includes of each meter (21.10) ──────────────────────────────
+
+  /**
+   * Replaces what a plan includes of each meter, whole: a meter left out is one it does not name.
+   */
+  public void setMeters(UUID planId, List<PlanMeter> meters) {
+    inTx(
+        c -> {
+          try (PreparedStatement ps =
+              c.prepareStatement("DELETE FROM plan_meters WHERE plan_id = ?")) {
+            ps.setObject(1, planId);
+            ps.executeUpdate();
+          }
+          try (PreparedStatement ps =
+              c.prepareStatement(
+                  "INSERT INTO plan_meters (plan_id, meter, included, hard) VALUES (?,?,?,?)")) {
+            for (PlanMeter m : meters) {
+              ps.setObject(1, planId);
+              ps.setString(2, m.meter());
+              ps.setObject(3, m.included());
+              ps.setBoolean(4, m.hard());
+              ps.addBatch();
+            }
+            ps.executeBatch();
+          }
+          return true;
+        },
+        "set what a plan includes of each meter");
+  }
+
+  public List<PlanMeter> meters(UUID planId) {
+    return query(
+        "SELECT meter, included, hard FROM plan_meters WHERE plan_id = ? ORDER BY meter",
+        ps -> ps.setObject(1, planId),
+        rs -> new PlanMeter(rs.getString(1), rs.getObject(2, Long.class), rs.getBoolean(3)),
+        "list a plan's meters");
+  }
+
+  /** Adds an overage price from a date. An existing row for that day is replaced, as a price is. */
+  public void setMeterPrice(MeterPrice p) {
+    exec(
+        "INSERT INTO plan_meter_prices (id, plan_id, meter, currency, unit_amount,"
+            + " effective_from, created_by, created_at) VALUES (?,?,?,?,?,?,?,?)"
+            + " ON CONFLICT (plan_id, meter, currency, effective_from)"
+            + " DO UPDATE SET unit_amount = EXCLUDED.unit_amount, created_by = EXCLUDED.created_by,"
+            + " created_at = EXCLUDED.created_at",
+        ps -> {
+          ps.setObject(1, p.id());
+          ps.setObject(2, p.planId());
+          ps.setString(3, p.meter());
+          ps.setString(4, p.currency());
+          ps.setBigDecimal(5, p.unitAmount());
+          ps.setObject(6, p.effectiveFrom());
+          ps.setObject(7, p.createdBy());
+          ps.setObject(8, p.createdAt().atOffset(ZoneOffset.UTC));
+        },
+        "set an overage price");
+  }
+
+  public List<MeterPrice> meterPrices(UUID planId) {
+    return query(
+        "SELECT id, plan_id, meter, currency, unit_amount, effective_from, created_by, created_at"
+            + " FROM plan_meter_prices WHERE plan_id = ?"
+            + " ORDER BY meter, currency, effective_from DESC",
+        ps -> ps.setObject(1, planId),
+        rs ->
+            new MeterPrice(
+                rs.getObject(1, UUID.class),
+                rs.getObject(2, UUID.class),
+                rs.getString(3),
+                rs.getString(4),
+                rs.getBigDecimal(5),
+                rs.getObject(6, LocalDate.class),
+                rs.getObject(7, UUID.class),
+                rs.getObject(8, OffsetDateTime.class).toInstant()),
+        "list a plan's overage prices");
+  }
+
+  /**
+   * What one over cost on a day: the latest price in the currency that had taken effect by then.
+   */
+  public Optional<BigDecimal> meterPriceOn(
+      UUID planId, String meter, String currency, LocalDate day) {
+    return query(
+            "SELECT unit_amount FROM plan_meter_prices WHERE plan_id = ? AND meter = ?"
+                + " AND currency = ? AND effective_from <= ? ORDER BY effective_from DESC LIMIT 1",
+            ps -> {
+              ps.setObject(1, planId);
+              ps.setString(2, meter);
+              ps.setString(3, currency);
+              ps.setObject(4, day);
+            },
+            rs -> rs.getBigDecimal(1),
+            "read an overage price")
+        .stream()
+        .findFirst();
   }
 
   // ── which plan a business is on ─────────────────────────────────────────────

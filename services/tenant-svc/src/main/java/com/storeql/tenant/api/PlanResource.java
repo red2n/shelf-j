@@ -1,5 +1,6 @@
 package com.storeql.tenant.api;
 
+import com.storeql.tenant.domain.Meters;
 import com.storeql.tenant.domain.Plans;
 import com.storeql.tenant.dto.PlanDtos;
 import com.storeql.tenant.mapper.PlanMappers;
@@ -139,6 +140,52 @@ public class PlanResource {
     ctx.requireAnyRole("PLATFORM_ADMIN");
     Validations.validate(req);
     return ApiResponse.ok(PlanMappers.toDto(svc.setGrants(id, req.grants())));
+  }
+
+  @Operation(
+      summary = "Set what a plan includes of each meter (21.10)",
+      description =
+          "Replaced whole: a meter left out is one the plan does not name, which leaves it"
+              + " unlimited and uncharged. `included` is per billing period; `hard` refuses use"
+              + " beyond it rather than charging for it, and only a refusable meter may be hard"
+              + " (PLAN_METER_NOT_REFUSABLE): an order is never refused.")
+  @PUT
+  @Path("/{id}/meters")
+  public ApiResponse<PlanDtos.PlanResponse> setMeters(
+      @PathParam("id") UUID id, PlanDtos.PlanMetersRequest req) {
+    ctx.requireAnyRole("PLATFORM_ADMIN");
+    Validations.validate(req);
+    return ApiResponse.ok(PlanMappers.toDto(svc.setMeters(id, req.meters())));
+  }
+
+  @Operation(
+      summary = "Set what one unit beyond a plan's allowance costs",
+      description =
+          "Per meter and currency, from a date. Never edited in place: a period is charged at the"
+              + " price in force the day it began.")
+  @POST
+  @Path("/{id}/meter-prices")
+  public ApiResponse<PlanDtos.PlanResponse> setMeterPrice(
+      @PathParam("id") UUID id, PlanDtos.MeterPriceRequest req) {
+    ctx.requireAnyRole("PLATFORM_ADMIN");
+    Validations.validate(req);
+    return ApiResponse.ok(PlanMappers.toDto(svc.setMeterPrice(id, ctx.requireUserId(), req)));
+  }
+
+  /** What the platform counts, and which of it may ever be refused. */
+  @Operation(summary = "The meters a plan may include, who counts each, and which may be refused")
+  @GET
+  @Path("/meter-keys")
+  public ApiResponse<PlanDtos.MeterCatalogueResponse> meters() {
+    ctx.requireAnyRole("PLATFORM_ADMIN");
+    return ApiResponse.ok(
+        new PlanDtos.MeterCatalogueResponse(
+            Meters.CATALOGUE.stream()
+                .map(
+                    m ->
+                        new PlanDtos.MeterCatalogueEntry(
+                            m.key(), m.label(), m.unit(), m.refusable(), m.countedBy()))
+                .toList()));
   }
 
   /**

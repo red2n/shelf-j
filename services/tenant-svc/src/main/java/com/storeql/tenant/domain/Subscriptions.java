@@ -92,6 +92,9 @@ public final class Subscriptions {
   public static final String LINE_PRORATION = "PRORATION";
   public static final String LINE_CREDIT = "CREDIT";
 
+  /** Use beyond what the plan includes, billed in arrears for the period just ended (21.10). */
+  public static final String LINE_USAGE = "USAGE";
+
   public static final String BANK_TRANSFER = "BANK_TRANSFER";
   public static final String CARD = "CARD";
 

@@ -1,6 +1,7 @@
 package com.storeql.tenant.repo;
 
 import com.storeql.service.BaseJdbcRepository;
+import com.storeql.tenant.domain.Meters.UsagePeriod;
 import com.storeql.tenant.domain.Subscriptions.BillingProfile;
 import com.storeql.tenant.domain.Subscriptions.Buyer;
 import com.storeql.tenant.domain.Subscriptions.Invoice;
@@ -197,8 +198,20 @@ public class BillingRepository extends BaseJdbcRepository {
    *     subscription end with one of them doing the work — the 21.8 lesson, where moving from
    *     whatever the row happened to be made "retire a retired plan" succeed and mean nothing
    */
+  /**
+   * Moves a subscription's status, keeping {@code cancelled_at} true to it in the same statement:
+   * set on the move to CANCELLED, cleared on any other move.
+   *
+   * <p>{@code ck_subscriptions_cancelled} holds the two together, and this statement used to set
+   * the status alone. So every move to CANCELLED broke the constraint — a subscription cancelled at
+   * its period end was passed over by every billing run and never ended, and a debt given up on
+   * never ended the subscription it was owed on (SJ-D69). Found by the first test that let a period
+   * end.
+   */
   private static final String MOVE_STATUS =
-      "UPDATE subscriptions SET status = ?, updated_at = ? WHERE id = ? AND status = ?";
+      "UPDATE subscriptions SET status = ?,"
+          + " cancelled_at = CASE WHEN ? = 'CANCELLED' THEN COALESCE(cancelled_at, ?) END,"
+          + " updated_at = ? WHERE id = ? AND status = ?";
 
   public Optional<Subscription> ofTenant(UUID tenantId) {
     return query(
@@ -245,10 +258,13 @@ public class BillingRepository extends BaseJdbcRepository {
     return inTx(
         c -> {
           try (PreparedStatement ps = c.prepareStatement(MOVE_STATUS)) {
+            OffsetDateTime now = Instant.now().atOffset(ZoneOffset.UTC);
             ps.setString(1, to);
-            ps.setObject(2, Instant.now().atOffset(ZoneOffset.UTC));
-            ps.setObject(3, id);
-            ps.setString(4, from);
+            ps.setString(2, to);
+            ps.setObject(3, now);
+            ps.setObject(4, now);
+            ps.setObject(5, id);
+            ps.setString(6, from);
             return ps.executeUpdate() == 1;
           }
         },
@@ -355,6 +371,16 @@ public class BillingRepository extends BaseJdbcRepository {
    * @return the invoice as it was written, carrying the number it was given
    */
   public Invoice issue(Invoice invoice, List<InvoiceLine> lines, String prefix) {
+    return issue(invoice, lines, prefix, List.of());
+  }
+
+  /**
+   * Numbers and writes an invoice with its lines, and what each meter billed with it (21.10), in
+   * one transaction: an invoice and its usage stand or fall together, so a second replica renewing
+   * the same period rolls both back rather than billing the same usage twice.
+   */
+  public Invoice issue(
+      Invoice invoice, List<InvoiceLine> lines, String prefix, List<UsagePeriod> usage) {
     return inTx(
         c -> {
           int year = invoice.issueDate().getYear();
@@ -380,6 +406,7 @@ public class BillingRepository extends BaseJdbcRepository {
             }
             ps.executeBatch();
           }
+          UsageRepository.insertPeriods(c, usage, numbered.id());
           return numbered;
         },
         "issue invoice");

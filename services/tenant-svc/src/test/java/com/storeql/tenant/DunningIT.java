@@ -290,6 +290,27 @@ class DunningIT {
   }
 
   @Test
+  @DisplayName("Giving up on the debt ends the subscription it was owed on")
+  void givingUpEndsTheSubscription() {
+    // SJ-D69: the move to CANCELLED set the status without cancelled_at, which the table's own
+    // constraint refuses, so the write-off happened and the subscription never ended.
+    sellerIs();
+    tightPolicy();
+    planOnSale("IT-DUN-GIVE-" + Ids.newId().toString().substring(28));
+    String shop = onboard("Given up on");
+    JsonObject invoice = onlyInvoice(shop);
+    LocalDate due = LocalDate.parse(invoice.getString("dueDate"));
+
+    Answer run = platform("POST", DUNNING + "/run?asOf=" + plus(due, 6), null);
+    assertThat(run.text(), run.status(), is(200));
+
+    assertThat(steps(invoice.getString("id")), hasItem("UNCOLLECTIBLE"));
+    JsonObject sub =
+        owner("GET", "/admin/tenant/billing", null, shop).data().getJsonObject("subscription");
+    assertThat(sub.toString(), sub.getString("status"), is("CANCELLED"));
+  }
+
+  @Test
   @DisplayName("A pay link pays once, and a second use of it opens nothing")
   void aPayLinkPaysOnce() {
     sellerIs();

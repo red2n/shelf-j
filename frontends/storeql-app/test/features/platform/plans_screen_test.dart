@@ -22,6 +22,8 @@ Map<String, dynamic> _plan(
   bool isDefault = false,
   List<Map<String, dynamic>> prices = const [],
   List<Map<String, dynamic>> includes = const [],
+  List<Map<String, dynamic>> meters = const [],
+  List<Map<String, dynamic>> meterPrices = const [],
 }) => {
       'id': 'id-$code',
       'code': code,
@@ -35,7 +37,14 @@ Map<String, dynamic> _plan(
       'sortOrder': 1,
       'prices': prices,
       'includes': includes,
+      'meters': meters,
+      'meterPrices': meterPrices,
     };
+
+final _meterKeys = [
+  {'key': 'ORDERS', 'label': 'Orders taken', 'unit': 'order', 'refusable': false, 'countedBy': 'order-svc'},
+  {'key': 'SMS', 'label': 'Text messages', 'unit': 'text part', 'refusable': true, 'countedBy': 'notification-svc'},
+];
 
 final _keys = [
   {'key': 'stores.max', 'label': 'Stores and warehouses', 'limit': true, 'enforcedBy': 'tenant-svc'},
@@ -57,6 +66,11 @@ class _Server implements HttpClientAdapter {
   @override
   Future<ResponseBody> fetch(RequestOptions o, Stream<List<int>>? s, Future<void>? c) async {
     requests.add(o);
+    if (o.path.endsWith('/meter-keys')) {
+      return jsonResponse(jsonEncode({
+        'data': {'meters': _meterKeys},
+      }));
+    }
     if (o.path.endsWith('/entitlement-keys')) {
       return jsonResponse(jsonEncode({
         'data': {'entitlements': _keys},
@@ -201,5 +215,76 @@ void main() {
 
     expect(find.text('Stores and warehouses is a whole number, or “-” for unlimited.'), findsOneWidget);
     expect(server.requests.where((r) => r.method == 'PUT'), isEmpty);
+  });
+
+  // ── metered use (21.10) ─────────────────────────────────────────────────────
+
+  testWidgets('a plan says what it includes of each meter, and what happens beyond it', (tester) async {
+    final plan = _plan('GROWTH', 'ACTIVE', prices: [
+      {'currency': 'GBP', 'amount': 49, 'effectiveFrom': '2026-01-01'},
+    ], meters: [
+      {'meter': 'ORDERS', 'label': 'Orders taken', 'unit': 'order', 'included': 1000, 'hard': false},
+      {'meter': 'SMS', 'label': 'Text messages', 'unit': 'text part', 'included': 50, 'hard': true},
+    ], meterPrices: [
+      {'meter': 'ORDERS', 'currency': 'GBP', 'unitAmount': 0.05, 'effectiveFrom': '2026-01-01'},
+    ]);
+    await _pump(tester, [plan], const PlansScreen());
+
+    expect(find.text('Orders taken: 1000 a period, then 0.05 GBP each'), findsOneWidget);
+    expect(find.text('Text messages: 50 a period, then marketing stops'), findsOneWidget);
+  });
+
+  testWidgets('only a meter that may be refused can stop, and a dash means unlimited', (tester) async {
+    final plan = _plan('GROWTH', 'ACTIVE', meters: [
+      {'meter': 'ORDERS', 'label': 'Orders taken', 'unit': 'order', 'included': 1000, 'hard': false},
+    ]);
+    final server = await _pump(tester, [plan], SetMetersDialog(plan: Plan.fromJson(plan)));
+
+    expect(find.text('1000'), findsOneWidget, reason: 'what the plan already says is shown');
+    expect(find.byKey(const Key('meter-hard-ORDERS')), findsNothing, reason: 'an order is never refused');
+    expect(find.byKey(const Key('meter-hard-SMS')), findsOneWidget);
+
+    await tester.enterText(find.byKey(const Key('meter-SMS')), '50');
+    await tester.tap(find.byKey(const Key('meter-hard-SMS')));
+    await tester.pumpAndSettle();
+    await tester.tap(find.byKey(const Key('meters-save')));
+    await tester.pumpAndSettle();
+
+    expect(server.requests.lastWhere((r) => r.method == 'PUT').data, {
+      'meters': [
+        {'meter': 'ORDERS', 'included': 1000, 'hard': false},
+        {'meter': 'SMS', 'included': 50, 'hard': true},
+      ],
+    });
+
+    await tester.pumpWidget(const SizedBox());
+    final again = await _pump(tester, [plan], SetMetersDialog(plan: Plan.fromJson(plan)));
+    await tester.enterText(find.byKey(const Key('meter-ORDERS')), '-');
+    await tester.enterText(find.byKey(const Key('meter-SMS')), 'lots');
+    await tester.tap(find.byKey(const Key('meters-save')));
+    await tester.pumpAndSettle();
+    expect(find.text('Text messages is a whole number, or “-” for unlimited.'), findsOneWidget);
+    expect(again.requests.where((r) => r.method == 'PUT'), isEmpty);
+  });
+
+  testWidgets('an overage price is set per meter, to four places', (tester) async {
+    final plan = _plan('GROWTH', 'ACTIVE');
+    final server = await _pump(tester, [plan], const SetMeterPriceDialog(planId: 'id-GROWTH'));
+
+    await tester.tap(find.byKey(const Key('meter-price-save')));
+    await tester.pumpAndSettle();
+    expect(find.text('Choose what is being priced.'), findsOneWidget);
+
+    await tester.tap(find.byKey(const Key('meter-price-meter')));
+    await tester.pumpAndSettle();
+    await tester.tap(find.text('Text messages, per text part').last);
+    await tester.pumpAndSettle();
+    await tester.enterText(find.byKey(const Key('meter-price-amount')), '0.035');
+    await tester.tap(find.byKey(const Key('meter-price-save')));
+    await tester.pumpAndSettle();
+
+    final sent = server.requests.lastWhere((r) => r.method == 'POST');
+    expect(sent.path, '/tenant-svc/platform/plans/id-GROWTH/meter-prices');
+    expect(sent.data, {'meter': 'SMS', 'currency': 'GBP', 'unitAmount': 0.035});
   });
 }
