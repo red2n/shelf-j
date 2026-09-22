@@ -1,5 +1,6 @@
 package com.storeql.notification.service;
 
+import com.storeql.notification.channel.SmsChannel;
 import com.storeql.notification.dto.TemplateDtos;
 import com.storeql.notification.repo.TemplateRepository;
 import com.storeql.notification.template.Catalogue;
@@ -183,7 +184,9 @@ public class MessageTemplateService {
     return new TemplateDtos.Preview(
         spec.form().hasSubject() ? renderedSubject : null,
         renderedBody,
-        spec.form() == Catalogue.Form.SMS && renderedBody != null ? segments(renderedBody) : null,
+        spec.form() == Catalogue.Form.SMS && renderedBody != null
+            ? SmsChannel.parts(renderedBody)
+            : null,
         problems.stream()
             .map(p -> new TemplateDtos.PreviewProblem(p.code(), p.message(), p.names()))
             .toList());
@@ -297,22 +300,6 @@ public class MessageTemplateService {
               List.of("body")));
     }
     return out;
-  }
-
-  /** How many text messages a body takes: 160 characters, or 70 outside the GSM alphabet. */
-  static int segments(String body) {
-    boolean gsm =
-        body.chars()
-            .allMatch(
-                c ->
-                    (c >= 0x20 && c <= 0x7e && c != '`')
-                        || c == '\n'
-                        || c == '\r'
-                        || "£¥èéùìòÇØøÅåÄÖÑÜ§äöñüà€".indexOf(c) >= 0);
-    int single = gsm ? 160 : 70;
-    int part = gsm ? 153 : 67;
-    int length = body.length();
-    return length <= single ? 1 : (length + part - 1) / part;
   }
 
   private String signOff(UUID tenantId) {
