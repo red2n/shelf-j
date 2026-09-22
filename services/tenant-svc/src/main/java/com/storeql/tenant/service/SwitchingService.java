@@ -176,11 +176,11 @@ public class SwitchingService {
     Evidence evidence;
     try (var reader = Json.createReader(new StringReader(json))) {
       JsonObject o = reader.readObject();
-      tenantId = UUID.fromString(o.getString("tenantId"));
-      erasureEventId = UUID.fromString(o.getString("erasureEventId"));
+      tenantId = Ids.parse(o.getString("tenantId"));
+      erasureEventId = Ids.parse(o.getString("erasureEventId"));
       evidence =
           new Evidence(
-              UUID.fromString(o.getString("eventId")),
+              Ids.parse(o.getString("eventId")),
               erasureEventId,
               o.getString("service"),
               o.getInt("rows"),

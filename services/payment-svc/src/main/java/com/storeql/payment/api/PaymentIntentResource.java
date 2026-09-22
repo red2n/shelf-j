@@ -5,6 +5,7 @@ import com.storeql.payment.mapper.Mappers;
 import com.storeql.payment.service.PaymentIntentService;
 import com.storeql.web.ApiResponse;
 import com.storeql.web.HttpHeaders;
+import com.storeql.web.IdempotencyKeys;
 import com.storeql.web.TenantContext;
 import com.storeql.web.Validations;
 import jakarta.enterprise.context.RequestScoped;
@@ -68,8 +69,7 @@ public class PaymentIntentResource {
       @HeaderParam(HttpHeaders.IDEMPOTENCY_KEY) String idempotencyKey,
       CreatePaymentIntentRequest req) {
     Validations.validate(req);
-    String key =
-        idempotencyKey != null && !idempotencyKey.isBlank() ? idempotencyKey : req.idempotencyKey();
+    String key = IdempotencyKeys.effective(idempotencyKey, req.idempotencyKey());
     var intent = svc.create(req, ctx, key);
     return Response.status(201).entity(ApiResponse.ok(Mappers.toDto(intent))).build();
   }

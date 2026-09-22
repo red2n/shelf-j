@@ -196,7 +196,7 @@ public class ParkedSaleRepository extends BaseOutboxRepository {
       ps.setObject(2, tenantId);
       ps.setObject(3, storeId);
       ps.setObject(4, cashierId);
-      ps.setObject(5, customerId == null ? null : UUID.fromString(customerId));
+      ps.setObject(5, customerId == null ? null : Ids.parse(customerId));
       ps.setString(6, customerName);
       ps.setBigDecimal(7, subtotal);
       ps.setBigDecimal(8, discountAmount);
@@ -216,7 +216,7 @@ public class ParkedSaleRepository extends BaseOutboxRepository {
       ps.setObject(1, Ids.newId());
       ps.setObject(2, tenantId);
       ps.setObject(3, saleId);
-      ps.setObject(4, UUID.fromString(item.variantId()));
+      ps.setObject(4, Ids.parse(item.variantId()));
       ps.setBigDecimal(5, item.qty());
       ps.setBigDecimal(6, item.unitPrice());
       ps.setBigDecimal(7, item.lineTotal());

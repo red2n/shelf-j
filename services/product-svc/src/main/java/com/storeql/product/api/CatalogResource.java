@@ -1,5 +1,6 @@
 package com.storeql.product.api;
 
+import com.storeql.ids.Ids;
 import com.storeql.product.dto.Dtos.AgeCheckResponse;
 import com.storeql.product.dto.Dtos.AllergenDeclarationResponse;
 import com.storeql.product.dto.Dtos.AllergenResponse;
@@ -260,7 +261,7 @@ public class CatalogResource {
       return null;
     }
     try {
-      return UUID.fromString(s);
+      return Ids.parse(s);
     } catch (IllegalArgumentException e) {
       throw new ApiException(400, code, message, List.of(), e);
     }

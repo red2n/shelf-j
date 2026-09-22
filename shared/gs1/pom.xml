@@ -18,6 +18,12 @@
         decisions — product-svc decides what item a GTIN names and inventory-svc what a batch means.</description>
 
     <dependencies>
+        <!-- IdsArchitectureTest: ids are UUIDv7 in this module's tests too. -->
+        <dependency>
+            <groupId>com.tngtech.archunit</groupId>
+            <artifactId>archunit-junit5</artifactId>
+            <scope>test</scope>
+        </dependency>
         <dependency>
             <groupId>org.junit.jupiter</groupId>
             <artifactId>junit-jupiter</artifactId>

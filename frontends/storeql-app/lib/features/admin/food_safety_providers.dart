@@ -1,4 +1,3 @@
-import 'dart:math';
 
 import 'package:dio/dio.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
@@ -6,6 +5,7 @@ import 'package:flutter_riverpod/legacy.dart';
 import '../../core/constants.dart';
 import '../../core/network/api_client.dart';
 import '../../core/network/paged.dart';
+import 'package:storeql_app/core/ids.dart';
 
 // Temperature monitoring and HACCP checks. The server judges every check and
 // keeps the limits it judged against; the app shows a live preview so a
@@ -258,11 +258,7 @@ DateTime? _time(Object? v) =>
 
 /// One key per attempt at a check, reused if that attempt is retried, so a
 /// tablet on poor Wi-Fi records the reading once however often it resends.
-String newFoodSafetyKey() {
-  final r = Random.secure();
-  final bytes = List<int>.generate(16, (_) => r.nextInt(256));
-  return 'fs-${bytes.map((b) => b.toRadixString(16).padLeft(2, '0')).join()}';
-}
+String newFoodSafetyKey() => newId();
 
 // ── Selection ────────────────────────────────────────────────────────────────
 

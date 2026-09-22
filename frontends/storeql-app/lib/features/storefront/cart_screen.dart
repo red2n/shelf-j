@@ -14,6 +14,7 @@ import 'storefront_providers.dart';
 import 'storefront_shell.dart' show StorefrontAuthDialog;
 import 'survey_widgets.dart';
 import '../../shared/util/short_ref.dart';
+import 'package:storeql_app/core/ids.dart';
 
 class StorefrontCartScreen extends ConsumerStatefulWidget {
   const StorefrontCartScreen({super.key});
@@ -679,7 +680,7 @@ class _StorefrontCartScreenState extends ConsumerState<StorefrontCartScreen> {
     // one here once stamped pounds on every catalog-mode order (SJ-D53).
     final currency = cart.first.currency;
     final cartTotal = cart.fold<double>(0, (s, l) => s + l.lineTotal);
-    final idemBase = 'sf-${DateTime.now().millisecondsSinceEpoch}';
+    final idemBase = newId();
     setState(() => _placing = true);
     try {
       // 1. Place the order (created PENDING). In catalog mode we send no client price — the
@@ -715,7 +716,7 @@ class _StorefrontCartScreenState extends ConsumerState<StorefrontCartScreen> {
             'deliveryRecipientPhone': _recipientPhoneCtrl.text.trim(),
           },
         },
-        options: Options(headers: {'Idempotency-Key': '$idemBase-order'}),
+        options: Options(headers: {'Idempotency-Key': derivedId(idemBase, 'order')}),
       );
       final data = resp.data['data'] as Map<String, dynamic>;
       final orderId = data['id'] as String? ?? '';
@@ -736,7 +737,7 @@ class _StorefrontCartScreenState extends ConsumerState<StorefrontCartScreen> {
             'method': pay.method,
             'storeId': storeId,
           },
-          options: Options(headers: {'Idempotency-Key': '$idemBase-pay'}),
+          options: Options(headers: {'Idempotency-Key': derivedId(idemBase, 'pay')}),
         );
       }
 

@@ -13,6 +13,7 @@ import {
   data,
   expect,
   must,
+  newId,
   poll,
   sellingTenant,
   truthy,
@@ -98,7 +99,7 @@ export default function ({ tenant, rival, store, variantId, storekeeper, cashier
 
   // ── abuse: ten payments on one key are one tender, posted once ───────────────
   const keyed = placeSale(1);
-  const key = `k6-sales-post-${Date.now()}`;
+  const key = newId();
   const tries = Array.from({ length: 10 }, () => pay(keyed.id, '3.00', 'CARD', key));
   truthy('[abuse] ten payments on one idempotency key answer as one', tries.every((r) => [200, 201].includes(r.status)) && new Set(tries.map((r) => data(r).id)).size === 1, tries.map((r) => r.status));
   let keyedLines = [];

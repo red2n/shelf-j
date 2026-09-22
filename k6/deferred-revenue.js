@@ -15,6 +15,7 @@ import {
   data,
   expect,
   must,
+  newId,
   poll,
   sellingTenant,
   truthy,
@@ -140,7 +141,7 @@ export default function ({ tenant, rival, store, variantId, storekeeper, cashier
   const giftSale = placeSale(3);
   const spend = num(giftSale.total);
   must(call('POST', `/api/order-svc/gift-cards/${card.code}/redeem`, { token: owner, body: { amount: spend, orderId: giftSale.id } }), 200, 'the card spent at the till');
-  const tenderKey = `k6-gift-tender-${uniq()}`;
+  const tenderKey = newId();
   const tender = must(pay(giftSale.id, spend.toFixed(2), 'GIFT_CARD', { reference: card.code }, tenderKey), [200, 201], 'a gift card tender');
   const replay = pay(giftSale.id, spend.toFixed(2), 'GIFT_CARD', { reference: card.code }, tenderKey);
   truthy('[-] the tender replayed on its key is the same payment', [200, 201].includes(replay.status) && data(replay).id === tender.id, { status: replay.status, first: tender.id, again: data(replay).id });

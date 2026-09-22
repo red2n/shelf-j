@@ -1,5 +1,6 @@
 package com.storeql.purchase.messaging;
 
+import com.storeql.ids.Ids;
 import com.storeql.purchase.domain.Domain.GiftCardLoad;
 import com.storeql.purchase.domain.Domain.LoyaltyEvent;
 import com.storeql.purchase.service.DeferredRevenueService;
@@ -8,7 +9,6 @@ import jakarta.inject.Inject;
 import jakarta.json.JsonObject;
 import java.lang.System.Logger;
 import java.lang.System.Logger.Level;
-import java.util.UUID;
 
 /**
  * Reads what customer-svc announces about loyalty points and order-svc about gift cards, and hands
@@ -39,8 +39,8 @@ public class DeferredRevenueHandler {
       if (kind == null) return;
       event =
           new LoyaltyEvent(
-              UUID.fromString(o.getString("tenantId")),
-              UUID.fromString(o.getString("eventId")),
+              Ids.parse(o.getString("tenantId")),
+              Ids.parse(o.getString("eventId")),
               kind,
               EventJson.optUuid(o, "customerId"),
               EventJson.optUuid(o, "orderId"),
@@ -62,9 +62,9 @@ public class DeferredRevenueHandler {
       if (!"GiftCardLoaded".equals(o.getString("eventType", ""))) return;
       load =
           new GiftCardLoad(
-              UUID.fromString(o.getString("tenantId")),
-              UUID.fromString(o.getString("transactionId")),
-              UUID.fromString(o.getString("giftCardId")),
+              Ids.parse(o.getString("tenantId")),
+              Ids.parse(o.getString("transactionId")),
+              Ids.parse(o.getString("giftCardId")),
               EventJson.optUuid(o, "storeId"),
               o.getString("kind"),
               o.getString("paidBy"),

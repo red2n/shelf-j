@@ -1,5 +1,6 @@
 package com.storeql.product.api;
 
+import com.storeql.ids.Ids;
 import com.storeql.product.dto.Dtos.AddCategorySetMemberRequest;
 import com.storeql.product.dto.Dtos.AgeRestrictionRuleResponse;
 import com.storeql.product.dto.Dtos.AllergenDeclarationRequest;
@@ -740,7 +741,7 @@ public class AdminResource {
   public Response upsertItemConversion(UomItemConversionRequest req) {
     Validations.validate(req);
     UUID tenantId = ctx.requireTenantId();
-    UUID variantId = UUID.fromString(req.variantId());
+    UUID variantId = Ids.parse(req.variantId());
     return Response.status(Response.Status.OK)
         .entity(
             ApiResponse.ok(

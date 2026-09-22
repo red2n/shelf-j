@@ -41,14 +41,14 @@ class RecallOpenedHandler {
     List<UUID> stores;
     try (var reader = Json.createReader(new StringReader(json))) {
       JsonObject obj = reader.readObject();
-      eventId = UUID.fromString(obj.getString("eventId"));
-      tenantId = UUID.fromString(obj.getString("tenantId"));
+      eventId = Ids.parse(obj.getString("eventId"));
+      tenantId = Ids.parse(obj.getString("tenantId"));
       reference = obj.getString("reference");
       recall = "RECALL".equals(obj.getString("kind"));
       hazardCode = obj.getString("hazard");
       stores =
           obj.getJsonArray("storeIds").getValuesAs(JsonString.class).stream()
-              .map(s -> UUID.fromString(s.getString()))
+              .map(s -> Ids.parse(s.getString()))
               .toList();
     } catch (RuntimeException e) {
       LOG.log(Level.WARNING, "Malformed RecallOpened payload skipped: " + e.getMessage());

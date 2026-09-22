@@ -62,9 +62,9 @@ public class RecallSaleAffectedHandler {
       if (!"RECALL".equals(obj.getString("kind", ""))) {
         return false; // a withdrawal takes stock off sale and tells nobody
       }
-      eventId = UUID.fromString(obj.getString("eventId"));
-      tenantId = UUID.fromString(obj.getString("tenantId"));
-      orderId = UUID.fromString(obj.getString("orderId"));
+      eventId = Ids.parse(obj.getString("eventId"));
+      tenantId = Ids.parse(obj.getString("tenantId"));
+      orderId = Ids.parse(obj.getString("orderId"));
     } catch (RuntimeException e) {
       LOG.log(Level.WARNING, "Malformed RecallSaleAffected payload skipped: " + e.getMessage());
       return false;
@@ -113,7 +113,7 @@ public class RecallSaleAffectedHandler {
     return new Notice(
         Ids.newId(),
         order.tenantId(),
-        UUID.fromString(obj.getString("recallId")),
+        Ids.parse(obj.getString("recallId")),
         obj.getString("reference"),
         obj.getString("hazard"),
         obj.getString("reason"),
@@ -141,14 +141,13 @@ public class RecallSaleAffectedHandler {
     if (raw.isEmpty()) {
       throw new IllegalArgumentException("a recall notice names what was bought");
     }
-    List<UUID> variantIds =
-        raw.stream().map(l -> UUID.fromString(l.getString("variantId"))).toList();
+    List<UUID> variantIds = raw.stream().map(l -> Ids.parse(l.getString("variantId"))).toList();
     // Best-effort: a notice without the product's name still says which lot and when; the buyer's
     // own order has the rest.
     Map<UUID, VariantName> names = products.namesAsSystem(tenantId, variantIds).orElse(Map.of());
     List<Line> out = new ArrayList<>(raw.size());
     for (JsonObject l : raw) {
-      UUID variantId = UUID.fromString(l.getString("variantId"));
+      UUID variantId = Ids.parse(l.getString("variantId"));
       VariantName name = names.get(variantId);
       String expiry = text(l, "expiryDate");
       out.add(

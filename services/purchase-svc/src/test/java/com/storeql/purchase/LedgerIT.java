@@ -103,9 +103,10 @@ class LedgerIT {
     assertThat(cr.getString("journalId"), is(dr.getString("journalId")));
 
     // The receipt is idempotent on its key, and so is its posting.
-    Response again = receiveWithKey(po, "4", "grn-key-1");
+    String key = Ids.newId().toString();
+    Response again = receiveWithKey(po, "4", key);
     assertThat(again.getStatus(), is(201));
-    Response replay = receiveWithKey(po, "4", "grn-key-1");
+    Response replay = receiveWithKey(po, "4", key);
     assertThat(replay.getStatus(), is(201));
     assertThat(ledger("?code=1001").size(), is(2));
   }

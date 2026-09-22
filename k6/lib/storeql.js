@@ -88,8 +88,14 @@ export function uniq() {
   return `${Date.now().toString(36)}${counter.toString(36)}${Math.floor(Math.random() * 46656).toString(36)}`;
 }
 
-export function newKey(prefix = 'k6') {
-  return `${prefix}-${uniq()}`;
+/**
+ * An Idempotency-Key: a UUIDv7, the only kind StoreQL accepts (any other is 400
+ * IDEMPOTENCY_KEY_INVALID). A fresh one per attempt at a write; pass the same one to retry it.
+ * The argument only says, to the reader, what the key is for.
+ */
+// eslint-disable-next-line no-unused-vars
+export function newKey(purpose = 'k6') {
+  return newId();
 }
 
 /**

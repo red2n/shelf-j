@@ -1,5 +1,6 @@
 package com.storeql.inventory.api;
 
+import com.storeql.ids.Ids;
 import com.storeql.inventory.dto.Dtos.BatchResponse;
 import com.storeql.inventory.dto.Dtos.CreateLotLinkRequest;
 import com.storeql.inventory.dto.Dtos.ExpiringBatchResponse;
@@ -159,7 +160,7 @@ public class LotResource {
     UUID tenantId = ctx.requireTenantId();
     var result =
         service.splitLot(
-            tenantId, UUID.fromString(req.sourceBatchId()), req.qty(), req.batchNo(), req.notes());
+            tenantId, Ids.parse(req.sourceBatchId()), req.qty(), req.batchNo(), req.notes());
     return ApiResponse.ok(Mappers.toLotAction(result.action()));
   }
 
@@ -187,8 +188,8 @@ public class LotResource {
     var result =
         service.mergeLot(
             tenantId,
-            UUID.fromString(req.sourceBatchId()),
-            UUID.fromString(req.targetBatchId()),
+            Ids.parse(req.sourceBatchId()),
+            Ids.parse(req.targetBatchId()),
             req.qty(),
             req.notes(),
             ctx.userId());

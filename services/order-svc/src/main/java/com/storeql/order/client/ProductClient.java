@@ -3,6 +3,7 @@ package com.storeql.order.client;
 import com.storeql.discovery.ConsulClient;
 import com.storeql.discovery.ServiceInstance;
 import com.storeql.discovery.ServiceRegistry;
+import com.storeql.ids.Ids;
 import com.storeql.order.config.ServiceConfig;
 import com.storeql.web.HttpHeaders;
 import com.storeql.web.TenantContext;
@@ -144,7 +145,7 @@ public class ProductClient {
           for (var v : data.getValuesAs(JsonObject.class)) {
             if (v.containsKey("variantId") && !v.isNull("variantId")) {
               out.put(
-                  UUID.fromString(v.getString("variantId")),
+                  Ids.parse(v.getString("variantId")),
                   new VariantName(
                       v.getString("productName", null),
                       v.getString("sku", null),

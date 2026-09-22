@@ -49,7 +49,7 @@ class RetentionPurgeIT {
   private static final String S = "01a090ae-611e-7070-8516-000000000011";
   private static final String V = "01a090ae-611e-7070-8516-000000000021";
   private static final String OWNER = "01a090ae-611e-7070-8516-000000000031";
-  private static final UUID HELD_CUSTOMER = UUID.fromString("01a090ae-611e-7070-8516-000000000041");
+  private static final UUID HELD_CUSTOMER = Ids.parse("01a090ae-611e-7070-8516-000000000041");
 
   static {
     PG = PostgresSupport.start().wire("order");
@@ -199,7 +199,7 @@ class RetentionPurgeIT {
     String id = created(r).getString("id");
     if (paid) {
       orderService.handlePaymentCaptured(
-          UUID.fromString(tenant), UUID.fromString(id), Ids.newId(), new BigDecimal("5.00"));
+          Ids.parse(tenant), Ids.parse(id), Ids.newId(), new BigDecimal("5.00"));
     }
     return id;
   }

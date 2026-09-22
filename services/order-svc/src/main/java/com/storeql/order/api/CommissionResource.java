@@ -1,5 +1,6 @@
 package com.storeql.order.api;
 
+import com.storeql.ids.Ids;
 import com.storeql.order.domain.SalesAttribution.SellerChange;
 import com.storeql.order.domain.SalesAttribution.Statement;
 import com.storeql.order.domain.SalesAttribution.StatementLine;
@@ -239,7 +240,7 @@ public class CommissionResource {
   private static UUID optionalUuid(String value, String field) {
     if (value == null || value.isBlank()) return null;
     try {
-      return UUID.fromString(value.strip());
+      return Ids.parse(value.strip());
     } catch (IllegalArgumentException e) {
       throw new ApiException(
           400, "COMMISSION_ID_INVALID", field + " is not an id: " + value, List.of(), e);

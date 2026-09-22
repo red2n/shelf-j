@@ -512,7 +512,7 @@ class SettlementIT {
                 + "\"caseReference\":\"WP-CASE-78\",\"evidenceDueBy\":\""
                 + Instant.now().plusSeconds(864_000)
                 + "\"}");
-    UUID recordedId = UUID.fromString(recorded.data().getString("id"));
+    UUID recordedId = Ids.parse(recorded.data().getString("id"));
     Answer differs = resolve(me, id, untold.getString("id"), "MATCHED_BY_HAND", recordedId, null);
     assertThat(
         "recorded with a fee of 10, settled with 15",

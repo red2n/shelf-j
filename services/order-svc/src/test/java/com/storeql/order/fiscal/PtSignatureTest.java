@@ -6,6 +6,7 @@ import static org.junit.jupiter.api.Assertions.assertNull;
 import static org.junit.jupiter.api.Assertions.assertThrows;
 import static org.junit.jupiter.api.Assertions.assertTrue;
 
+import com.storeql.ids.Ids;
 import com.storeql.web.ApiException;
 import java.math.BigDecimal;
 import java.security.KeyPair;
@@ -110,14 +111,7 @@ class PtSignatureTest {
     module.key = new PtSigningKey();
     var settings =
         new com.storeql.order.domain.Domain.FiscalStoreSettings(
-            java.util.UUID.randomUUID(),
-            java.util.UUID.randomUUID(),
-            "PT_SAFT",
-            "500000000",
-            null,
-            null,
-            null,
-            null);
+            Ids.newId(), Ids.newId(), "PT_SAFT", "500000000", null, null, null, null);
     ApiException e = assertThrows(ApiException.class, () -> module.validate(settings, null));
     assertEquals("FISCAL_PT_KEY_NOT_CONFIGURED", e.code());
     assertEquals(409, e.status());

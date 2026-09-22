@@ -1,5 +1,6 @@
 package com.storeql.notification.api;
 
+import com.storeql.ids.Ids;
 import com.storeql.notification.dto.Dtos.ChannelStatusResponse;
 import com.storeql.notification.mapper.Mappers;
 import com.storeql.notification.service.NotificationService;
@@ -59,9 +60,9 @@ public class AdminResource {
 
     var alerts =
         variantId != null
-            ? service.listAlertsByVariant(tenantId, UUID.fromString(variantId), effectiveLimit)
+            ? service.listAlertsByVariant(tenantId, Ids.parse(variantId), effectiveLimit)
             : service.listAlerts(
-                tenantId, storeId != null ? UUID.fromString(storeId) : null, effectiveLimit);
+                tenantId, storeId != null ? Ids.parse(storeId) : null, effectiveLimit);
 
     var dtos = alerts.stream().map(Mappers::toDto).toList();
     return ApiResponse.ok(dtos);

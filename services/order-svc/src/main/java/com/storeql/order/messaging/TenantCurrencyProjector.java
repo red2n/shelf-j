@@ -1,5 +1,6 @@
 package com.storeql.order.messaging;
 
+import com.storeql.ids.Ids;
 import com.storeql.service.TenantStatusRepository;
 import jakarta.enterprise.context.ApplicationScoped;
 import jakarta.inject.Inject;
@@ -42,8 +43,8 @@ class TenantCurrencyProjector {
     String currency;
     try (var reader = Json.createReader(new StringReader(json))) {
       JsonObject obj = reader.readObject();
-      eventId = UUID.fromString(obj.getString("eventId"));
-      tenantId = UUID.fromString(obj.getString("tenantId"));
+      eventId = Ids.parse(obj.getString("eventId"));
+      tenantId = Ids.parse(obj.getString("tenantId"));
       currency = obj.getString("currency", null);
     } catch (RuntimeException e) {
       // Malformed payload will never parse on redelivery either — log and skip.

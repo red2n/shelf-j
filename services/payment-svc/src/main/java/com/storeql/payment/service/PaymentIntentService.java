@@ -84,7 +84,7 @@ public class PaymentIntentService {
   public PaymentIntent create(
       CreatePaymentIntentRequest req, TenantContext ctx, String idempotencyKey) {
     UUID tenantId = ctx.requireTenantId();
-    UUID orderId = UUID.fromString(req.orderId());
+    UUID orderId = Ids.parse(req.orderId());
     OrderPaymentGuard.VerifiedOrder verified =
         guard.verifyOnlineClaim(tenantId, orderId, req.amount(), ctx);
     OrderClient.OrderInfo order = verified.order();
@@ -217,7 +217,9 @@ public class PaymentIntentService {
 
     PaymentProvider.Capture captured;
     try {
-      captured = provider.capture(intent.providerRef(), intent.amount(), "capture:" + intentId);
+      captured =
+          provider.capture(
+              intent.providerRef(), intent.amount(), Ids.derived(intentId, "capture").toString());
     } catch (PaymentProvider.ProviderException e) {
       throw new ApiException(
           e.retryable() ? 503 : 502,
@@ -348,7 +350,7 @@ public class PaymentIntentService {
             reference,
             // Keyed on the intent, so a webhook and a manual capture racing each other cannot both
             // write a tender even if they get past the row lock in different transactions.
-            "intent:" + intent.id(),
+            Ids.derived(intent.id(), "tender").toString(),
             PaymentTender.STATUS_CAPTURED,
             null,
             Instant.now(),

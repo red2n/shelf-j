@@ -152,8 +152,8 @@ public class RetentionService {
       JsonObject o = reader.readObject();
       run =
           new Run(
-              UUID.fromString(o.getString("eventId")),
-              UUID.fromString(o.getString("tenantId")),
+              Ids.parse(o.getString("eventId")),
+              Ids.parse(o.getString("tenantId")),
               o.getString("service"),
               o.getString("dataClass"),
               Instant.parse(o.getString("cutoff")),

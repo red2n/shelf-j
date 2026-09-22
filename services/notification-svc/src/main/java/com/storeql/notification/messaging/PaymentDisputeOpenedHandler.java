@@ -1,5 +1,6 @@
 package com.storeql.notification.messaging;
 
+import com.storeql.ids.Ids;
 import com.storeql.notification.service.Messages;
 import com.storeql.notification.service.Notifier;
 import com.storeql.notification.template.Catalogue;
@@ -43,8 +44,8 @@ class PaymentDisputeOpenedHandler {
     try (var reader = Json.createReader(new StringReader(json))) {
       JsonObject obj = reader.readObject();
       if (!"PaymentDisputeOpened".equals(obj.getString("eventType", ""))) return;
-      eventId = UUID.fromString(obj.getString("eventId"));
-      tenantId = UUID.fromString(obj.getString("tenantId"));
+      eventId = Ids.parse(obj.getString("eventId"));
+      tenantId = Ids.parse(obj.getString("tenantId"));
       storeId = obj.getString("storeId", null);
       amount = obj.getJsonNumber("amount").bigDecimalValue();
       currency = obj.getString("currency");

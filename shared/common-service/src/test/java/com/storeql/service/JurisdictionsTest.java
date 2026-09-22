@@ -5,6 +5,7 @@ import static org.junit.jupiter.api.Assertions.assertFalse;
 import static org.junit.jupiter.api.Assertions.assertThrows;
 import static org.junit.jupiter.api.Assertions.assertTrue;
 
+import com.storeql.ids.Ids;
 import com.storeql.web.ApiException;
 import java.time.Clock;
 import java.time.Instant;
@@ -19,7 +20,7 @@ import org.junit.jupiter.api.Test;
 
 class JurisdictionsTest {
 
-  private static final UUID TENANT = UUID.fromString("01a090ae-611e-702c-a97b-d1b8025478e2");
+  private static final UUID TENANT = Ids.parse("01a090ae-611e-702c-a97b-d1b8025478e2");
 
   /** A clock a test can move. */
   private static final class Hands extends Clock {
@@ -226,10 +227,10 @@ class JurisdictionsTest {
   @DisplayName(
       "An offer at a store reaches its country and the business's; with no store, every store's")
   void theCountriesAnOfferReaches() {
-    UUID de = UUID.fromString("01a090ae-611e-702c-a97b-d1b8025478f1");
-    UUID none = UUID.fromString("01a090ae-611e-702c-a97b-d1b8025478f2");
-    UUID fr = UUID.fromString("01a090ae-611e-702c-a97b-d1b8025478f3");
-    UUID stranger = UUID.fromString("01a090ae-611e-702c-a97b-d1b8025478f4");
+    UUID de = Ids.parse("01a090ae-611e-702c-a97b-d1b8025478f1");
+    UUID none = Ids.parse("01a090ae-611e-702c-a97b-d1b8025478f2");
+    UUID fr = Ids.parse("01a090ae-611e-702c-a97b-d1b8025478f3");
+    UUID stranger = Ids.parse("01a090ae-611e-702c-a97b-d1b8025478f4");
     TenantProfiles profiles =
         TenantProfiles.forTest(
             id -> Optional.of("{\"data\":{\"currency\":\"GBP\",\"country\":\"GB\"}}"),

@@ -42,12 +42,12 @@ class GoodsReceivedHandler {
     JsonArray lines;
     try (var reader = Json.createReader(new StringReader(json))) {
       JsonObject obj = reader.readObject();
-      eventId = UUID.fromString(obj.getString("eventId"));
-      tenantId = UUID.fromString(obj.getString("tenantId"));
-      storeId = UUID.fromString(obj.getString("storeId"));
+      eventId = Ids.parse(obj.getString("eventId"));
+      tenantId = Ids.parse(obj.getString("tenantId"));
+      storeId = Ids.parse(obj.getString("storeId"));
       refId =
           obj.containsKey("refId") && !obj.isNull("refId")
-              ? UUID.fromString(obj.getString("refId"))
+              ? Ids.parse(obj.getString("refId"))
               : null;
       lines = obj.getJsonArray("lines");
     } catch (RuntimeException e) {
@@ -61,7 +61,7 @@ class GoodsReceivedHandler {
     int created = 0;
     for (int i = 0; i < lines.size(); i++) {
       JsonObject line = lines.getJsonObject(i);
-      UUID variantId = UUID.fromString(line.getString("variantId"));
+      UUID variantId = Ids.parse(line.getString("variantId"));
       BigDecimal qty = new BigDecimal(line.get("qty").toString());
       String batchNo = nullableString(line, "batchNo");
       BigDecimal cost =

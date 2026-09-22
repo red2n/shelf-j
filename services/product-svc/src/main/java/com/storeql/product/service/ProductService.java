@@ -676,7 +676,7 @@ public class ProductService {
       try {
         if (sep < 0) throw new IllegalArgumentException("missing separator");
         afterCreatedAt = Instant.parse(rawKey.substring(0, sep));
-        afterId = UUID.fromString(rawKey.substring(sep + 1));
+        afterId = Ids.parse(rawKey.substring(sep + 1));
       } catch (RuntimeException e) {
         throw new ApiException(400, "INVALID_CURSOR", "Malformed pagination cursor", List.of(), e);
       }
@@ -2250,7 +2250,7 @@ public class ProductService {
       UUID variantId,
       com.storeql.product.dto.Dtos.CreateVariantContainerLinkRequest req) {
     requireVariant(tenantId, variantId);
-    UUID containerTypeId = UUID.fromString(req.containerTypeId());
+    UUID containerTypeId = Ids.parse(req.containerTypeId());
     getContainerType(tenantId, containerTypeId);
     return containerTypeRepo.createVariantContainerLink(
         tenantId,
@@ -2497,7 +2497,7 @@ public class ProductService {
   public CategorySetMember addCategorySetMember(
       UUID tenantId, UUID setId, AddCategorySetMemberRequest req) {
     getCategorySet(tenantId, setId);
-    UUID catId = UUID.fromString(req.categoryId());
+    UUID catId = Ids.parse(req.categoryId());
     categoryRepo
         .findCategory(tenantId, catId)
         .orElseThrow(() -> ApiException.notFound("CATEGORY_NOT_FOUND", "Category not found"));
@@ -2545,8 +2545,8 @@ public class ProductService {
   public VariantCategorySetAssignment assignVariantCategorySet(
       UUID tenantId, UUID variantId, AssignVariantCategorySetRequest req) {
     requireVariant(tenantId, variantId);
-    UUID setId = UUID.fromString(req.setId());
-    UUID catId = UUID.fromString(req.categoryId());
+    UUID setId = Ids.parse(req.setId());
+    UUID catId = Ids.parse(req.categoryId());
     getCategorySet(tenantId, setId);
     return categorySetRepo.upsertVariantCategorySetAssignment(
         new VariantCategorySetAssignment(
@@ -2636,7 +2636,7 @@ public class ProductService {
       if (!receiveItems.isEmpty()) {
         var r =
             inventoryClient.batchReceive(
-                tenantId, UUID.fromString(req.storeId()), rolesHeader, receiveItems);
+                tenantId, Ids.parse(req.storeId()), rolesHeader, receiveItems);
         stockReceived = r.received();
         stockErrors = r.errors().isEmpty() ? null : r.errors();
       }

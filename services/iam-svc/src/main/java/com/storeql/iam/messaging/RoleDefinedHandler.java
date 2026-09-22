@@ -1,6 +1,7 @@
 package com.storeql.iam.messaging;
 
 import com.storeql.iam.repo.UserRepository;
+import com.storeql.ids.Ids;
 import jakarta.enterprise.context.ApplicationScoped;
 import jakarta.inject.Inject;
 import jakarta.json.Json;
@@ -36,8 +37,8 @@ public class RoleDefinedHandler {
     try (var reader = Json.createReader(new StringReader(json))) {
       JsonObject obj = reader.readObject();
       if (!"RoleDefined".equals(obj.getString("eventType", ""))) return;
-      eventId = UUID.fromString(obj.getString("eventId"));
-      tenantId = UUID.fromString(obj.getString("tenantId"));
+      eventId = Ids.parse(obj.getString("eventId"));
+      tenantId = Ids.parse(obj.getString("tenantId"));
       code = obj.getString("code");
       permissions = Permissions.parse(obj);
       updatedAt = Permissions.instant(obj, "updatedAt");

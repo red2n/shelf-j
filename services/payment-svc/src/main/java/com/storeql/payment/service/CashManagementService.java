@@ -43,7 +43,7 @@ public class CashManagementService {
    */
   public TillSessionResponse openTill(
       UUID tenantId, UUID openedBy, OpenTillRequest req, TenantContext ctx) {
-    UUID storeId = UUID.fromString(req.storeId());
+    UUID storeId = Ids.parse(req.storeId());
     ctx.requireStoreAccess(storeId);
     TillSession session =
         new TillSession(

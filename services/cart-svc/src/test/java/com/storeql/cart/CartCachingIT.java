@@ -19,7 +19,6 @@ import java.sql.Connection;
 import java.sql.DriverManager;
 import java.sql.PreparedStatement;
 import java.sql.SQLException;
-import java.util.UUID;
 import org.junit.jupiter.api.AfterAll;
 import org.junit.jupiter.api.Test;
 
@@ -185,18 +184,15 @@ class CartCachingIT {
     // simulate the OrderPlaced handler marking the cart checked out, then a raw mutation (as if a
     // human inspected the now-archived cart's data directly)
     repo.markCheckedOutByCustomerAndStore(
-        UUID.fromString(TENANT_A), UUID.fromString(CUSTOMER_A), UUID.fromString(STORE_A));
+        Ids.parse(TENANT_A), Ids.parse(CUSTOMER_A), Ids.parse(STORE_A));
     rawUpdateItemQty(itemId, "99");
 
     // the items cache was evicted by markCheckedOutByCustomerAndStore itself, not left to expire —
     // a direct repo read reflects the raw mutation immediately. (Other tests share this customer's
     // cart, so find the item we just mutated by id rather than assuming list position.)
-    var freshItems = repo.findItemsByCart(UUID.fromString(TENANT_A), UUID.fromString(cartId));
+    var freshItems = repo.findItemsByCart(Ids.parse(TENANT_A), Ids.parse(cartId));
     var mutated =
-        freshItems.stream()
-            .filter(i -> i.id().equals(UUID.fromString(itemId)))
-            .findFirst()
-            .orElseThrow();
+        freshItems.stream().filter(i -> i.id().equals(Ids.parse(itemId))).findFirst().orElseThrow();
     assertThat(mutated.qty().toPlainString(), is("99.0000"));
   }
 

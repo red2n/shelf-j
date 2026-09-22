@@ -117,6 +117,31 @@
         </properties>
     </rule>
 
+    <rule name="ParseIdsAsV7"
+          language="java"
+          message="Read an id with Ids.parse(text): UUID.fromString takes every version (and '1-1-1-1-1'); StoreQL accepts only a canonical UUIDv7"
+          class="net.sourceforge.pmd.lang.rule.xpath.XPathRule">
+        <description>
+            Every id StoreQL holds is an RFC 9562 UUIDv7, so every id it reads — from a request, a
+            header, an event, another service's response or a row — is read with Ids.parse(text),
+            which refuses any other version, the wrong variant and any non-canonical text.
+            UUID.fromString accepts all of those. Building a UUID from bits (new UUID(msb, lsb)) is
+            the id module's alone: it is how a version is chosen.
+        </description>
+        <priority>3</priority>
+        <properties>
+            <property name="xpath">
+                <value><![CDATA[
+//MethodCall[pmd-java:matchesSig('java.util.UUID#fromString(java.lang.String)')]
+    [not(ancestor::CompilationUnit/PackageDeclaration[@Name = 'com.storeql.ids'])]
+|
+//ConstructorCall[pmd-java:typeIs('java.util.UUID')]
+    [not(ancestor::CompilationUnit/PackageDeclaration[@Name = 'com.storeql.ids'])]
+                ]]></value>
+            </property>
+        </properties>
+    </rule>
+
     <rule name="NoDatabaseMintedIds"
           language="java"
           message="Bind Ids.newId() instead of letting SQL make a uuid: gen_random_uuid() and uuid_generate_v4() make version-4 ids"

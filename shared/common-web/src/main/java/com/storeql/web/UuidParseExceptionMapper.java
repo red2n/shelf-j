@@ -1,5 +1,6 @@
 package com.storeql.web;
 
+import com.storeql.ids.Ids;
 import jakarta.ws.rs.core.MediaType;
 import jakarta.ws.rs.core.Response;
 import jakarta.ws.rs.ext.Provider;
@@ -37,6 +38,9 @@ public class UuidParseExceptionMapper implements ExtendedExceptionMapper<Illegal
    */
   @Override
   public boolean isMappable(IllegalArgumentException ex) {
+    if (ex instanceof Ids.InvalidIdException) {
+      return true;
+    }
     StackTraceElement[] frames = ex.getStackTrace();
     int limit = Math.min(frames.length, MAX_FRAMES);
     for (int i = 0; i < limit; i++) {
@@ -59,7 +63,7 @@ public class UuidParseExceptionMapper implements ExtendedExceptionMapper<Illegal
         .type(MediaType.APPLICATION_JSON)
         .entity(
             ApiResponse.error(
-                ErrorBody.of(ErrorCodes.INVALID_UUID, "A request identifier is not a valid UUID")))
+                ErrorBody.of(ErrorCodes.INVALID_UUID, "A request identifier is not a UUIDv7")))
         .build();
   }
 }

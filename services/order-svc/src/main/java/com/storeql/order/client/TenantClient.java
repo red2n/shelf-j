@@ -3,6 +3,7 @@ package com.storeql.order.client;
 import com.storeql.discovery.ConsulClient;
 import com.storeql.discovery.ServiceInstance;
 import com.storeql.discovery.ServiceRegistry;
+import com.storeql.ids.Ids;
 import com.storeql.order.config.ServiceConfig;
 import com.storeql.web.ApiException;
 import com.storeql.web.HttpHeaders;
@@ -97,7 +98,7 @@ public class TenantClient {
           JsonObject data = reader.readObject().getJsonObject("data");
           return Optional.of(
               new ResolvedStore(
-                  UUID.fromString(data.getString("storeId")),
+                  Ids.parse(data.getString("storeId")),
                   data.getString("storeName", ""),
                   data.getString("storeCode", "")));
         }
@@ -343,7 +344,7 @@ public class TenantClient {
         }
         out.add(
             new RatedSeller(
-                UUID.fromString(o.getString("userId")),
+                Ids.parse(o.getString("userId")),
                 segments,
                 decimal(o, "commission"),
                 text(o, "currency")));
@@ -363,7 +364,7 @@ public class TenantClient {
 
   private static UUID uuid(JsonObject o, String key) {
     String v = text(o, key);
-    return v == null ? null : UUID.fromString(v);
+    return v == null ? null : Ids.parse(v);
   }
 
   // Only called reflectively by MicroProfile Fault Tolerance via @Fallback above.

@@ -1,10 +1,10 @@
 package com.storeql.test;
 
+import com.storeql.ids.Ids;
 import jakarta.ws.rs.client.Entity;
 import jakarta.ws.rs.client.WebTarget;
 import jakarta.ws.rs.core.MediaType;
 import jakarta.ws.rs.core.Response;
-import java.util.concurrent.atomic.AtomicLong;
 
 /**
  * Drives one service's permission gates (20.10) the same way in every service: a manager narrowed
@@ -33,8 +33,6 @@ public final class PermissionGate {
           "customers.privacy",
           "staff.manage",
           "finance.payments");
-
-  private static final AtomicLong KEYS = new AtomicLong();
 
   private final WebTarget target;
   private final String tenantId;
@@ -70,7 +68,7 @@ public final class PermissionGate {
             .header("X-Tenant-Id", tenantId)
             .header("X-User-Id", userId)
             .header("X-Roles", roles)
-            .header("Idempotency-Key", "perm-" + KEYS.incrementAndGet());
+            .header("Idempotency-Key", Ids.newId().toString());
     if (permissions != null) req = req.header("X-Permissions", permissions);
     return switch (method) {
       case "GET" -> req.get();

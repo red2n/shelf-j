@@ -16,6 +16,12 @@
     <description>Shared JAX-RS building blocks: response envelope, error mapper, tenant-context filter, request-id. No business logic.</description>
 
     <dependencies>
+        <!-- IdsArchitectureTest: ids are UUIDv7 in this module's tests too. -->
+        <dependency>
+            <groupId>com.tngtech.archunit</groupId>
+            <artifactId>archunit-junit5</artifactId>
+            <scope>test</scope>
+        </dependency>
         <!-- Ids.newId(): time-ordered (UUIDv7) ids. -->
         <dependency>
             <groupId>com.storeql</groupId>
@@ -45,6 +51,18 @@
         <dependency>
             <groupId>jakarta.validation</groupId>
             <artifactId>jakarta.validation-api</artifactId>
+            <scope>provided</scope>
+        </dependency>
+        <!-- V7JsonbProvider: request bodies bind a UUID field only as a UUIDv7. The implementation
+             (Yasson) is each service's, as the rest of JSON-B is. -->
+        <dependency>
+            <groupId>jakarta.json.bind</groupId>
+            <artifactId>jakarta.json.bind-api</artifactId>
+            <scope>provided</scope>
+        </dependency>
+        <dependency>
+            <groupId>jakarta.json</groupId>
+            <artifactId>jakarta.json-api</artifactId>
             <scope>provided</scope>
         </dependency>
         <!-- OTel Logs bridge (OtelLoggingBridge): API only, provided by helidon-microprofile-telemetry
@@ -79,6 +97,13 @@
             <groupId>org.mockito</groupId>
             <artifactId>mockito-junit-jupiter</artifactId>
             <version>5.23.0</version>
+            <scope>test</scope>
+        </dependency>
+        <!-- V7JsonbProviderTest binds a real body, with the JSON-B every service runs. -->
+        <dependency>
+            <groupId>org.eclipse</groupId>
+            <artifactId>yasson</artifactId>
+            <version>3.0.5</version>
             <scope>test</scope>
         </dependency>
 </dependencies>

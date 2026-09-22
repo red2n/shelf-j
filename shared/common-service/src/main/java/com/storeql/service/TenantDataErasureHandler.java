@@ -59,8 +59,8 @@ public class TenantDataErasureHandler {
         LOG.log(Level.WARNING, "Not a " + DUE + " record; skipped");
         return;
       }
-      eventId = UUID.fromString(o.getString("eventId"));
-      tenantId = UUID.fromString(o.getString("tenantId"));
+      eventId = Ids.parse(o.getString("eventId"));
+      tenantId = Ids.parse(o.getString("tenantId"));
     } catch (RuntimeException e) {
       LOG.log(Level.WARNING, "Malformed " + DUE + " payload skipped: " + e.getMessage());
       return;

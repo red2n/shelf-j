@@ -1,6 +1,7 @@
 package com.storeql.purchase.client;
 
 import com.storeql.einvoice.ElectronicAddress;
+import com.storeql.ids.Ids;
 import com.storeql.purchase.config.ServiceConfig;
 import com.storeql.service.ServiceReader;
 import com.storeql.service.ServiceReader.Reply;
@@ -82,8 +83,7 @@ public class TenantLookupClient {
     Reply r = tenantSvc.get(null, LOOKUP, query);
     if (r.ok()) {
       try (JsonReader reader = Json.createReader(new StringReader(r.body()))) {
-        return Optional.of(
-            UUID.fromString(reader.readObject().getJsonObject("data").getString("id")));
+        return Optional.of(Ids.parse(reader.readObject().getJsonObject("data").getString("id")));
       }
     }
     if (r.status() == 404) return Optional.empty();

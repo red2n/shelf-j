@@ -128,7 +128,7 @@ class DisputeIT {
     Answer recorded = post("/admin/disputes", me, chargeback(payment, null, inTenDays()));
     assertThat(recorded.body().toString(), recorded.status(), is(201));
     JsonObject d = recorded.data();
-    UUID id = UUID.fromString(d.getString("id"));
+    UUID id = Ids.parse(d.getString("id"));
     assertThat(d.getString("status"), is("NEEDS_RESPONSE"));
     assertThat(d.getString("provider"), is("MANUAL"));
     assertThat(d.getString("reference"), is("CB-2026-0042"));
@@ -239,11 +239,11 @@ class DisputeIT {
     }
 
     // The same request again is the same chargeback; another request is refused while it is open.
-    Answer first =
-        call("POST", "/admin/disputes", me, chargeback(card, "12.50", inTenDays()), "cb-key-1");
+    String key = Ids.newId().toString();
+    Answer first = call("POST", "/admin/disputes", me, chargeback(card, "12.50", inTenDays()), key);
     assertThat(first.body().toString(), first.status(), is(201));
     Answer replay =
-        call("POST", "/admin/disputes", me, chargeback(card, "12.50", inTenDays()), "cb-key-1");
+        call("POST", "/admin/disputes", me, chargeback(card, "12.50", inTenDays()), key);
     assertThat(replay.data().getString("id"), is(first.data().getString("id")));
     Answer second = post("/admin/disputes", me, chargeback(card, "12.50", inTenDays()));
     assertThat(second.status(), is(409));
@@ -409,7 +409,7 @@ class DisputeIT {
     JsonArray mine = get("/admin/disputes", me).body().getJsonArray("data");
     assertThat("one dispute however often it is told", mine.size(), is(1));
     JsonObject d = mine.getJsonObject(0);
-    UUID id = UUID.fromString(d.getString("id"));
+    UUID id = Ids.parse(d.getString("id"));
     assertThat(d.getString("provider"), is("STRIPE"));
     assertThat(d.getString("reference"), is("dp_it_1"));
     assertThat(d.getString("currency"), is("EUR"));

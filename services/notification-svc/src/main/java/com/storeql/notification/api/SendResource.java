@@ -90,13 +90,11 @@ public class SendResource {
     Validations.validate(req);
     UUID tenantId = ctx.requireTenantId();
     UUID eventId =
-        req.eventId() != null && !req.eventId().isBlank()
-            ? UUID.fromString(req.eventId())
-            : Ids.newId();
+        req.eventId() != null && !req.eventId().isBlank() ? Ids.parse(req.eventId()) : Ids.newId();
     String type = req.type() == null || req.type().isBlank() ? "MANUAL" : req.type().trim();
     UUID customerId =
         req.customerId() != null && !req.customerId().isBlank()
-            ? UUID.fromString(req.customerId())
+            ? Ids.parse(req.customerId())
             : null;
     String body = req.body();
     String channelName =

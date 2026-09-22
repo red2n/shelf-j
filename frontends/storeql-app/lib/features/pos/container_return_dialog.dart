@@ -8,6 +8,7 @@ import '../../core/network/api_error.dart';
 import '../storefront/storefront_providers.dart' show DepositScheme;
 import 'pos_providers.dart';
 import 'pos_session_providers.dart';
+import 'package:storeql_app/core/ids.dart';
 
 // ---------------------------------------------------------------------------
 // Container return (09.16).
@@ -100,7 +101,7 @@ class _ContainerReturnDialogState extends ConsumerState<ContainerReturnDialog> {
             },
             options: Options(headers: {
               'Idempotency-Key':
-                  'return-${session.id}-${DateTime.now().microsecondsSinceEpoch}',
+                  newId(),
             }),
           );
       final amount =

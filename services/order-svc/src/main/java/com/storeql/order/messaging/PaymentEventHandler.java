@@ -1,5 +1,6 @@
 package com.storeql.order.messaging;
 
+import com.storeql.ids.Ids;
 import com.storeql.order.service.OrderService;
 import com.storeql.web.ApiException;
 import jakarta.enterprise.context.ApplicationScoped;
@@ -42,10 +43,10 @@ class PaymentEventHandler {
       String paymentIdStr = stringOrNull(obj, "paymentId");
       String eventIdStr = stringOrNull(obj, "eventId");
       if (orderIdStr == null || tenantIdStr == null) return;
-      orderId = UUID.fromString(orderIdStr);
-      tenantId = UUID.fromString(tenantIdStr);
-      paymentId = paymentIdStr != null ? UUID.fromString(paymentIdStr) : null;
-      eventId = eventIdStr != null ? UUID.fromString(eventIdStr) : null;
+      orderId = Ids.parse(orderIdStr);
+      tenantId = Ids.parse(tenantIdStr);
+      paymentId = paymentIdStr != null ? Ids.parse(paymentIdStr) : null;
+      eventId = eventIdStr != null ? Ids.parse(eventIdStr) : null;
       amount =
           obj.containsKey("amount") && !obj.isNull("amount")
               ? obj.getJsonNumber("amount").bigDecimalValue()

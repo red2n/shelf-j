@@ -100,7 +100,7 @@ export default function ({ tenant, rival, store, variantId, cashier }) {
     { type: 'CHARGEBACK', reference: caseRef, original: c.reference, gross: -c.total, fee: 15 },
     { type: 'FEE', reference: 'TERMINAL-RENTAL', gross: 0, fee: 10 },
   ]);
-  const cleanKey = `settle-${tag}-1`;
+  const cleanKey = newId();
   const imported = importFile(clean.body, owner, cleanKey);
   expect(imported, '[+] the acquirer\'s file for the payout is imported', 201);
   const first = data(imported);
@@ -246,7 +246,7 @@ export default function ({ tenant, rival, store, variantId, cashier }) {
       method: 'POST',
       url: `${BASE}${SETTLEMENTS}`,
       body: JSON.stringify(raced.body),
-      params: { headers: { 'Content-Type': 'application/json', Authorization: `Bearer ${owner}`, 'Idempotency-Key': `race-${tag}-${i}` } },
+      params: { headers: { 'Content-Type': 'application/json', Authorization: `Bearer ${owner}`, 'Idempotency-Key': newId() } },
     }))
   ).map((r) => r.status);
   truthy('[abuse] ten imports of one payout at once make one batch', answers.filter((s) => s === 201).length === 1 && answers.filter((s) => s === 409).length === 9, answers);

@@ -68,12 +68,11 @@ CREATE TABLE commission_statements (
     )
 );
 
--- One approved statement per scope and period. COALESCE, because a NULL store_id in a plain unique
--- index would let a whole-business statement be approved twice for the same month.
+-- One approved statement per scope and period. NULLS NOT DISTINCT, because a NULL store_id in a
+-- plain unique index would let a whole-business statement be approved twice for the same month.
 CREATE UNIQUE INDEX uq_statement_approved_period ON commission_statements (
-    tenant_id, COALESCE(store_id, '00000000-0000-0000-0000-000000000000'::uuid),
-    period_start, period_end, currency
-) WHERE status = 'APPROVED' AND superseded_by IS NULL;
+    tenant_id, store_id, period_start, period_end, currency
+) NULLS NOT DISTINCT WHERE status = 'APPROVED' AND superseded_by IS NULL;
 
 CREATE INDEX idx_statements_tenant ON commission_statements (tenant_id, period_start DESC, created_at DESC);
 

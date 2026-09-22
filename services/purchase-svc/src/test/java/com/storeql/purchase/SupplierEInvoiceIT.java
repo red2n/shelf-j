@@ -36,7 +36,6 @@ import java.sql.DriverManager;
 import java.time.LocalDate;
 import java.util.ArrayList;
 import java.util.List;
-import java.util.UUID;
 import org.junit.jupiter.api.AfterAll;
 import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.Test;
@@ -288,7 +287,7 @@ class SupplierEInvoiceIT {
     assertCode(
         post(
             "/e-invoices/" + waiting.getString("id") + "/match",
-            "{\"lines\":[{\"position\":1,\"poLineId\":\"" + UUID.randomUUID() + "\"}]}",
+            "{\"lines\":[{\"position\":1,\"poLineId\":\"" + Ids.newId() + "\"}]}",
             T,
             "OWNER"),
         400,
@@ -749,7 +748,7 @@ class SupplierEInvoiceIT {
         var ps =
             c.prepareStatement(
                 "SELECT received_by FROM purchase.supplier_einvoices WHERE id = ?")) {
-      ps.setObject(1, UUID.fromString(id));
+      ps.setObject(1, Ids.parse(id));
       try (var rs = ps.executeQuery()) {
         if (!rs.next()) throw new AssertionError("no document " + id);
         return rs.getString(1);

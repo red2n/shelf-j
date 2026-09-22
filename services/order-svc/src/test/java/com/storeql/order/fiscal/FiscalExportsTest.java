@@ -3,6 +3,7 @@ package com.storeql.order.fiscal;
 import static org.junit.jupiter.api.Assertions.assertEquals;
 import static org.junit.jupiter.api.Assertions.assertTrue;
 
+import com.storeql.ids.Ids;
 import com.storeql.order.domain.Domain.FiscalReceipt;
 import com.storeql.order.domain.Domain.FiscalStoreSettings;
 import com.storeql.order.domain.Domain.PtStamp;
@@ -33,10 +34,10 @@ import org.w3c.dom.Document;
  */
 class FiscalExportsTest {
 
-  static final UUID TENANT = UUID.fromString("01a090ae-611e-702a-9bdf-bcc7032115c4");
-  static final UUID STORE = UUID.fromString("01a090ae-611e-7035-a4da-400bf673cfe8");
-  static final UUID V1 = UUID.fromString("01a090ae-611e-7055-9838-5de027ce9e0a");
-  static final UUID V2 = UUID.fromString("01a090ae-611e-7055-9838-5de027ce9e0b");
+  static final UUID TENANT = Ids.parse("01a090ae-611e-702a-9bdf-bcc7032115c4");
+  static final UUID STORE = Ids.parse("01a090ae-611e-7035-a4da-400bf673cfe8");
+  static final UUID V1 = Ids.parse("01a090ae-611e-7055-9838-5de027ce9e0a");
+  static final UUID V2 = Ids.parse("01a090ae-611e-7055-9838-5de027ce9e0b");
 
   static FiscalReceipt doc(
       long n,
@@ -48,16 +49,16 @@ class FiscalExportsTest {
       boolean voided) {
     Instant at = Instant.parse(day);
     return new FiscalReceipt(
-        UUID.randomUUID(),
+        Ids.newId(),
         TENANT,
         STORE,
         "MAIN",
         "2026",
         n,
         "DE-B-2026-00000" + n,
-        UUID.randomUUID(),
+        Ids.newId(),
         at,
-        UUID.fromString("01a090ae-611e-7055-9838-5de027ce9e0c"),
+        Ids.parse("01a090ae-611e-7055-9838-5de027ce9e0c"),
         "EUR",
         gross,
         tax,
@@ -74,7 +75,7 @@ class FiscalExportsTest {
     TseDevice device =
         german
             ? new TseDevice(
-                UUID.randomUUID(),
+                Ids.newId(),
                 TENANT,
                 STORE,
                 "SIMULATED",

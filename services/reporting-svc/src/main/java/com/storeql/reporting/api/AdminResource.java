@@ -1,5 +1,6 @@
 package com.storeql.reporting.api;
 
+import com.storeql.ids.Ids;
 import com.storeql.reporting.mapper.Mappers;
 import com.storeql.reporting.service.ReportingService;
 import com.storeql.web.ApiResponse;
@@ -12,7 +13,6 @@ import jakarta.ws.rs.Path;
 import jakarta.ws.rs.Produces;
 import jakarta.ws.rs.QueryParam;
 import jakarta.ws.rs.core.MediaType;
-import java.util.UUID;
 import org.eclipse.microprofile.openapi.annotations.Operation;
 import org.eclipse.microprofile.openapi.annotations.responses.APIResponse;
 import org.eclipse.microprofile.openapi.annotations.tags.Tag;
@@ -48,8 +48,8 @@ public class AdminResource {
     var rows =
         service.onHand(
             ctx.tenantId(),
-            storeId != null ? UUID.fromString(storeId) : null,
-            variantId != null ? UUID.fromString(variantId) : null);
+            storeId != null ? Ids.parse(storeId) : null,
+            variantId != null ? Ids.parse(variantId) : null);
     return ApiResponse.ok(Mappers.toOnHandReport(rows));
   }
 
@@ -68,8 +68,8 @@ public class AdminResource {
     var result =
         service.supplyDemandNetting(
             ctx.tenantId(),
-            storeId != null ? UUID.fromString(storeId) : null,
-            variantId != null ? UUID.fromString(variantId) : null);
+            storeId != null ? Ids.parse(storeId) : null,
+            variantId != null ? Ids.parse(variantId) : null);
     return ApiResponse.ok(Mappers.toNettingReport(result));
   }
 
@@ -90,8 +90,8 @@ public class AdminResource {
     var stats =
         service.movementStats(
             ctx.tenantId(),
-            storeId != null ? UUID.fromString(storeId) : null,
-            variantId != null ? UUID.fromString(variantId) : null,
+            storeId != null ? Ids.parse(storeId) : null,
+            variantId != null ? Ids.parse(variantId) : null,
             bucketDays);
     return ApiResponse.ok(Mappers.toMovementStatsReport(stats));
   }

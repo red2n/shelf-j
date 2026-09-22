@@ -6,8 +6,8 @@ import static org.junit.jupiter.api.Assertions.assertSame;
 import static org.junit.jupiter.api.Assertions.assertThrows;
 import static org.junit.jupiter.api.Assertions.assertTrue;
 
+import com.storeql.ids.Ids;
 import java.time.Instant;
-import java.util.UUID;
 import org.junit.jupiter.api.Test;
 
 /**
@@ -66,7 +66,7 @@ class ParsingTest {
 
   @Test
   void presentOptionalValuesAreParsed() {
-    assertEquals(UUID.fromString(VALID_UUID), Parsing.optionalUuid(VALID_UUID, "storeId"));
+    assertEquals(Ids.parse(VALID_UUID), Parsing.optionalUuid(VALID_UUID, "storeId"));
     assertEquals(
         Instant.parse("2026-01-31T00:00:00Z"),
         Parsing.optionalInstant("2026-01-31T00:00:00Z", "from"));
@@ -75,8 +75,7 @@ class ParsingTest {
   /** Padding survives being pasted into a URL and says nothing about the caller's intent. */
   @Test
   void surroundingWhitespaceIsTolerated() {
-    assertEquals(
-        UUID.fromString(VALID_UUID), Parsing.optionalUuid("  " + VALID_UUID + " ", "storeId"));
+    assertEquals(Ids.parse(VALID_UUID), Parsing.optionalUuid("  " + VALID_UUID + " ", "storeId"));
     assertEquals(
         Instant.parse("2026-01-31T00:00:00Z"),
         Parsing.optionalInstant(" 2026-01-31T00:00:00Z\t", "from"));

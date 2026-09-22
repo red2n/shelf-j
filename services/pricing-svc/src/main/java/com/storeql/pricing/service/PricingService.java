@@ -180,7 +180,7 @@ public class PricingService {
         new ProductVatCategory(
             Ids.newId(),
             ctx.tenantId(),
-            UUID.fromString(req.variantId()),
+            Ids.parse(req.variantId()),
             vatCode,
             Instant.now(),
             null,
@@ -245,7 +245,7 @@ public class PricingService {
         new CustomerVatStatus(
             Ids.newId(),
             ctx.tenantId(),
-            UUID.fromString(req.customerId()),
+            Ids.parse(req.customerId()),
             vatNumber,
             req.vatRegistered(),
             req.reverseChargeEligible(),
@@ -362,7 +362,7 @@ public class PricingService {
             Ids.newId(),
             ctx.tenantId(),
             priceListId,
-            UUID.fromString(req.variantId()),
+            Ids.parse(req.variantId()),
             req.price(),
             req.minQty() != null ? req.minQty() : BigDecimal.ONE,
             Instant.now(),
@@ -477,7 +477,7 @@ public class PricingService {
       Instant at,
       boolean withPriorPrice,
       boolean asRecorded) {
-    UUID variantId = UUID.fromString(req.variantId());
+    UUID variantId = Ids.parse(req.variantId());
     BigDecimal qty = req.qty() != null ? req.qty() : BigDecimal.ONE;
     String channel =
         req.channel() != null
@@ -1183,7 +1183,7 @@ public class PricingService {
         new Promotion(
             Ids.newId(),
             ctx.tenantId(),
-            req.storeId() != null ? UUID.fromString(req.storeId()) : null,
+            req.storeId() != null ? Ids.parse(req.storeId()) : null,
             req.name(),
             type,
             req.value(),
@@ -1456,13 +1456,13 @@ public class PricingService {
         new PriceOverride(
             Ids.newId(),
             tenantId,
-            req.orderId() != null ? UUID.fromString(req.orderId()) : null,
-            UUID.fromString(req.variantId()),
-            UUID.fromString(req.storeId()),
+            req.orderId() != null ? Ids.parse(req.orderId()) : null,
+            Ids.parse(req.variantId()),
+            Ids.parse(req.storeId()),
             req.originalPrice(),
             req.overridePrice(),
             req.overrideReason(),
-            req.overriddenBy() != null ? UUID.fromString(req.overriddenBy()) : null,
+            req.overriddenBy() != null ? Ids.parse(req.overriddenBy()) : null,
             java.time.Instant.now());
     return repo.insertPriceOverride(override);
   }
@@ -1480,8 +1480,8 @@ public class PricingService {
   public Cursor.Page<PriceOverride> listPriceOverrides(
       TenantContext ctx, String storeIdStr, String variantIdStr, String after, int limit) {
     UUID tenantId = ctx.requireTenantId();
-    UUID storeId = storeIdStr != null ? UUID.fromString(storeIdStr) : null;
-    UUID variantId = variantIdStr != null ? UUID.fromString(variantIdStr) : null;
+    UUID storeId = storeIdStr != null ? Ids.parse(storeIdStr) : null;
+    UUID variantId = variantIdStr != null ? Ids.parse(variantIdStr) : null;
     Cursor.CreatedAtId key = Cursor.decodeCreatedAtId(after);
     List<PriceOverride> rows =
         repo.listPriceOverrides(

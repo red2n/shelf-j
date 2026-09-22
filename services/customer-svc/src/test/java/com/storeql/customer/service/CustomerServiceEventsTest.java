@@ -108,7 +108,7 @@ class CustomerServiceEventsTest {
             captor.capture());
     JsonObject p = Json.createReader(new StringReader(captor.getValue().payload())).readObject();
     assertEquals("LoyaltyEarned", p.getString("eventType"));
-    assertNotNull(UUID.fromString(p.getString("eventId")));
+    assertNotNull(Ids.parse(p.getString("eventId")));
     assertEquals(order.toString(), p.getString("orderId"));
     assertEquals(
         0, new BigDecimal("24.00").compareTo(p.getJsonNumber("orderTotal").bigDecimalValue()));

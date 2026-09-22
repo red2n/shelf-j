@@ -31,7 +31,6 @@ import java.util.Base64;
 import java.util.HashSet;
 import java.util.List;
 import java.util.Set;
-import java.util.UUID;
 import org.junit.jupiter.api.AfterAll;
 import org.junit.jupiter.api.DisplayName;
 import org.junit.jupiter.api.Test;
@@ -104,7 +103,7 @@ class AuditTrailIT {
 
   private Response post(String path, String json, String user, String roles) {
     return as(target.path(path), T, roles, user, null)
-        .header("Idempotency-Key", "it-audit-" + Ids.newId())
+        .header("Idempotency-Key", Ids.newId().toString())
         .post(Entity.entity(json, MediaType.APPLICATION_JSON));
   }
 
@@ -130,7 +129,7 @@ class AuditTrailIT {
 
   private void pay(String orderId, String total) {
     orderService.handlePaymentCaptured(
-        UUID.fromString(T), UUID.fromString(orderId), Ids.newId(), new BigDecimal(total));
+        Ids.parse(T), Ids.parse(orderId), Ids.newId(), new BigDecimal(total));
   }
 
   /** Five sensitive actions by three people, once per class. */

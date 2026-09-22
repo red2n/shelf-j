@@ -31,22 +31,54 @@ import org.testcontainers.containers.PostgreSQLContainer;
 public final class PostgresSupport implements AutoCloseable {
 
   /**
-   * Counts non-v7 ids table by table in one statement: query_to_xml runs the per-table count inside
+   * Counts values that are not RFC 9562 v7 (version nibble 7, variant 10) in every uuid and uuid[]
+   * column of every table, column by column in one statement: query_to_xml runs each count inside
    * Postgres, so no table name is ever concatenated into SQL here. Character 15 of a uuid's text is
-   * its version digit.
+   * its version digit and character 20 its variant digit, which is 8, 9, a or b for variant 10.
    */
-  private static final String NON_V7_IDS =
-      "SELECT table_name, rows FROM ("
-          + " SELECT c.table_schema || '.' || c.table_name AS table_name,"
+  private static final String NON_V7_UUIDS =
+      "SELECT column_name, rows FROM ("
+          + " SELECT c.table_schema || '.' || c.table_name || '.' || c.column_name AS column_name,"
           + "  (xpath('/row/n/text()', query_to_xml(format("
-          + "   'SELECT count(*) AS n FROM %I.%I WHERE substring(id::text, 15, 1) <> ''7''',"
-          + "   c.table_schema, c.table_name), false, true, '')))[1]::text::bigint AS rows"
+          + "   CASE WHEN c.udt_name = '_uuid'"
+          + "    THEN 'SELECT count(*) AS n FROM %I.%I, unnest(%I) AS u"
+          + " WHERE substring(u::text, 15, 1) <> ''7'' OR substring(u::text, 20, 1) NOT IN"
+          + " (''8'', ''9'', ''a'', ''b'')'"
+          + "    ELSE 'SELECT count(*) AS n FROM %I.%I WHERE %I IS NOT NULL AND"
+          + " (substring(%I::text, 15, 1) <> ''7'' OR substring(%I::text, 20, 1) NOT IN"
+          + " (''8'', ''9'', ''a'', ''b''))' END,"
+          + "   c.table_schema, c.table_name, c.column_name, c.column_name, c.column_name),"
+          + "   false, true, '')))[1]::text::bigint AS rows"
           + " FROM information_schema.columns c"
           + " JOIN information_schema.tables t"
           + "  ON t.table_schema = c.table_schema AND t.table_name = c.table_name"
-          + " WHERE c.column_name = 'id' AND c.data_type = 'uuid' AND t.table_type = 'BASE TABLE'"
+          + " WHERE c.udt_name IN ('uuid', '_uuid') AND t.table_type = 'BASE TABLE'"
           + "  AND c.table_schema NOT IN ('pg_catalog', 'information_schema')"
-          + ") counted WHERE rows > 0 ORDER BY table_name";
+          + ") counted WHERE rows > 0 ORDER BY column_name";
+
+  /**
+   * Every uuid and uuid[] column — and every idempotency_key column — of a schema Flyway migrated
+   * that does not carry the v7 CHECK common-service's afterMigrate__uuid_v7_everywhere.sql adds —
+   * proof the database, and not only the code, refuses another version. A schema Flyway never ran
+   * on (a test's own scratch tables) is not asked.
+   */
+  private static final String UNGUARDED_UUID_COLUMNS =
+      "SELECT c.table_schema || '.' || c.table_name || '.' || c.column_name"
+          + " FROM information_schema.columns c"
+          + " JOIN information_schema.tables t"
+          + "  ON t.table_schema = c.table_schema AND t.table_name = c.table_name"
+          + " WHERE (c.udt_name IN ('uuid', '_uuid')"
+          + "   OR (c.column_name = 'idempotency_key' AND c.udt_name IN ('text', 'varchar')))"
+          + "  AND t.table_type = 'BASE TABLE'"
+          + "  AND c.table_schema NOT IN ('pg_catalog', 'information_schema')"
+          + "  AND EXISTS (SELECT 1 FROM information_schema.tables h"
+          + "   WHERE h.table_schema = c.table_schema AND h.table_name = 'flyway_schema_history')"
+          + "  AND NOT EXISTS (SELECT 1 FROM pg_constraint k"
+          + "   JOIN pg_class r ON r.oid = k.conrelid JOIN pg_namespace n ON n.oid = r.relnamespace"
+          + "   JOIN pg_attribute a ON a.attrelid = r.oid AND a.attname = c.column_name"
+          + "   WHERE n.nspname = c.table_schema AND r.relname = c.table_name AND k.contype = 'c'"
+          + "    AND k.conname LIKE 'v7\\_%' AND a.attnum = ANY (k.conkey))"
+          + " ORDER BY 1";
 
   @SuppressWarnings("PMD.NoDatabaseMintedIds") // names the generators to find them, never calls one
   private static final String ID_GENERATING_DEFAULTS =
@@ -169,7 +201,8 @@ public final class PostgresSupport implements AutoCloseable {
    * turns any path that still stores another version — a column default, SQL that makes its own
    * uuid, a fixture — into a failure that names the table.
    *
-   * @throws AssertionError if any table's {@code id} column holds an id that is not version 7
+   * @throws AssertionError if any uuid column holds a value that is not an RFC 9562 UUIDv7, or a
+   *     migrated uuid column lacks the database's own v7 check
    */
   public void stop() {
     try {
@@ -190,9 +223,18 @@ public final class PostgresSupport implements AutoCloseable {
       Map<String, Long> offenders = nonV7Ids();
       if (!offenders.isEmpty()) {
         throw new AssertionError(
-            "ids that are not UUIDv7 (table=rows): "
+            "uuids that are not RFC 9562 UUIDv7 (column=rows): "
                 + offenders
-                + ". Mint ids with Ids.newId(); see docs/coding-standards.md §3.");
+                + ". Mint ids with Ids.newId() and read them with Ids.parse(); see"
+                + " docs/coding-standards.md §3.");
+      }
+      List<String> unguarded = unguardedUuidColumns();
+      if (!unguarded.isEmpty()) {
+        throw new AssertionError(
+            "uuid columns the database does not hold to v7: "
+                + unguarded
+                + ". common-service's afterMigrate__uuid_v7_everywhere.sql adds the check after every"
+                + " migrate; did the migration fail?");
       }
     } finally {
       container.stop();
@@ -231,16 +273,24 @@ public final class PostgresSupport implements AutoCloseable {
   }
 
   /**
-   * @return every base table with a uuid {@code id} column that holds ids of another version, with
-   *     how many; empty when all ids are v7
+   * @return every uuid, uuid[] or idempotency_key column of a Flyway-migrated schema that lacks the
+   *     database's own v7 check; empty when the database refuses another version everywhere
+   */
+  public List<String> unguardedUuidColumns() {
+    return columnsMatching(UNGUARDED_UUID_COLUMNS);
+  }
+
+  /**
+   * @return every uuid or uuid[] column, in any table, holding values that are not RFC 9562 v7,
+   *     with how many; empty when every uuid is v7
    */
   public Map<String, Long> nonV7Ids() {
     Map<String, Long> offenders = new TreeMap<>();
     try (Connection c = dataSource().getConnection();
-        PreparedStatement ps = c.prepareStatement(NON_V7_IDS);
+        PreparedStatement ps = c.prepareStatement(NON_V7_UUIDS);
         ResultSet rs = ps.executeQuery()) {
       while (rs.next()) {
-        offenders.put(rs.getString("table_name"), rs.getLong("rows"));
+        offenders.put(rs.getString("column_name"), rs.getLong("rows"));
       }
     } catch (SQLException e) {
       throw new IllegalStateException("could not audit id versions", e);

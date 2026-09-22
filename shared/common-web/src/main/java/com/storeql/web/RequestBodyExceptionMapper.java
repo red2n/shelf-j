@@ -1,5 +1,6 @@
 package com.storeql.web;
 
+import com.storeql.ids.Ids;
 import jakarta.ws.rs.ProcessingException;
 import jakarta.ws.rs.core.MediaType;
 import jakarta.ws.rs.core.Response;
@@ -56,6 +57,18 @@ public class RequestBodyExceptionMapper implements ExtendedExceptionMapper<Proce
    */
   @Override
   public Response toResponse(ProcessingException ex) {
+    // A body that parsed but carried an id that is not a UUIDv7 is refused in the same words as
+    // one in a path or a query, rather than as JSON of the wrong shape.
+    for (Throwable t = ex; t != null; t = t.getCause()) {
+      if (t instanceof Ids.InvalidIdException) {
+        return Response.status(Response.Status.BAD_REQUEST)
+            .type(MediaType.APPLICATION_JSON)
+            .entity(
+                ApiResponse.error(
+                    ErrorBody.of(ErrorCodes.INVALID_UUID, "A request identifier is not a UUIDv7")))
+            .build();
+      }
+    }
     return Response.status(Response.Status.BAD_REQUEST)
         .type(MediaType.APPLICATION_JSON)
         .entity(

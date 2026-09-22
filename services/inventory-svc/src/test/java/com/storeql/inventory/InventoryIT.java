@@ -650,9 +650,9 @@ class InventoryIT {
                 "INSERT INTO inventory.stock_movements (id, tenant_id, store_id, variant_id,"
                     + " type, qty, created_at) VALUES (?,?,?,?,'ADJUST',1,?)")) {
       ps.setObject(1, movementId);
-      ps.setObject(2, UUID.fromString(T));
-      ps.setObject(3, UUID.fromString(S));
-      ps.setObject(4, UUID.fromString(V));
+      ps.setObject(2, Ids.parse(T));
+      ps.setObject(3, Ids.parse(S));
+      ps.setObject(4, Ids.parse(V));
       ps.setObject(5, oldDate);
       ps.executeUpdate();
     }
@@ -991,9 +991,9 @@ class InventoryIT {
                     + " method, safety_stock_qty, computed_at)"
                     + " VALUES (?,?,?,?,'USER_DEFINED',25,now())")) {
       ps.setObject(1, Ids.newId());
-      ps.setObject(2, UUID.fromString(tenant));
-      ps.setObject(3, UUID.fromString(S));
-      ps.setObject(4, UUID.fromString(v));
+      ps.setObject(2, Ids.parse(tenant));
+      ps.setObject(3, Ids.parse(S));
+      ps.setObject(4, Ids.parse(v));
       ps.executeUpdate();
     } catch (java.sql.SQLException e) {
       throw new AssertionError("could not seed safety stock", e);
@@ -1516,9 +1516,9 @@ class InventoryIT {
    */
   private void sellByOrderThenVoid(String tenant, String variantId, String qty) {
     UUID order = Ids.newId();
-    UUID t = UUID.fromString(tenant);
-    UUID s = UUID.fromString(S);
-    UUID v = UUID.fromString(variantId);
+    UUID t = Ids.parse(tenant);
+    UUID s = Ids.parse(S);
+    UUID v = Ids.parse(variantId);
     var q = new java.math.BigDecimal(qty);
     inventoryService.deductSaleFromOrderOnce(Ids.newId(), "it", t, s, v, q, order);
     inventoryService.receiveVoidFromOrderOnce(Ids.newId(), "it", t, s, v, q, order);
@@ -1676,7 +1676,7 @@ class InventoryIT {
   @Test
   void grossMarginSetsWhatTheSalesEarnedAgainstWhatTheyCost() {
     UUID t = Ids.newId();
-    UUID s = UUID.fromString(S);
+    UUID s = Ids.parse(S);
     UUID v = Ids.newId();
     String tenant = t.toString();
     receiveCosted(tenant, v.toString(), "10", "3.00");
@@ -1697,7 +1697,7 @@ class InventoryIT {
                 + "\"}",
             tenant);
     assertThat(held.getStatus(), is(201));
-    UUID hold = UUID.fromString(field(held.readEntity(String.class), "id"));
+    UUID hold = Ids.parse(field(held.readEntity(String.class), "id"));
     inventoryService.consumeOnce(Ids.newId(), "it", t, hold, money("11.00"));
 
     String body = windowReport("gross-margin", tenant, "VARIANT", null);
@@ -1731,7 +1731,7 @@ class InventoryIT {
   @Test
   void aReturnTakesBackRevenueAndCostOnceAndNeverMoreThanWasSold() {
     UUID t = Ids.newId();
-    UUID s = UUID.fromString(S);
+    UUID s = Ids.parse(S);
     UUID v = Ids.newId();
     UUID order = Ids.newId();
     String tenant = t.toString();
@@ -1775,7 +1775,7 @@ class InventoryIT {
   @Test
   void grossMarginDeclaresUnpricedSalesExcludesVoidsAndIsGuarded() {
     UUID t = Ids.newId();
-    UUID s = UUID.fromString(S);
+    UUID s = Ids.parse(S);
     UUID v = Ids.newId();
     String tenant = t.toString();
     receiveCosted(tenant, v.toString(), "10", "1.00");

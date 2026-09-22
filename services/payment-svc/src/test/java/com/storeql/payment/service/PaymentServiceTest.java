@@ -241,7 +241,7 @@ class PaymentServiceTest {
 
     var tender =
         svc.recordOnlinePayment(
-            req(orderId, new BigDecimal("10.00")), ctx(Ids.newId(), null), "idem-1");
+            req(orderId, new BigDecimal("10.00")), ctx(Ids.newId(), null), Ids.newId().toString());
     assertEquals(orderId, tender.orderId());
     assertEquals(new BigDecimal("10.00"), tender.amount());
   }
@@ -383,7 +383,7 @@ class PaymentServiceTest {
             new BigDecimal("15.00"),
             "STORE_CREDIT",
             null,
-            "sc:" + orderId,
+            Ids.derived(orderId, "store-credit").toString(),
             "CAPTURED",
             null,
             java.time.Instant.now(),
@@ -392,7 +392,8 @@ class PaymentServiceTest {
         new PaymentRepository() {
           @Override
           public java.util.Optional<PaymentTender> findTenderByKey(UUID tenantId, String key) {
-            return java.util.Optional.of(existing); // replay: the tender for this order exists
+            // replay: the tender for this order exists, under the order's derived UUIDv7 key
+            return java.util.Optional.of(existing).filter(t -> t.idempotencyKey().equals(key));
           }
         };
     var cust = new RecordingCustomerClient();

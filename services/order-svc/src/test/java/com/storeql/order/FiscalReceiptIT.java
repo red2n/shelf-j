@@ -252,8 +252,8 @@ class FiscalReceiptIT {
     // hand and almost none of the ones rung up at a till — the ones fiscal law is written about.
     String store = Ids.newId().toString();
     String orderId = placeOnly(store);
-    UUID tenant = UUID.fromString(T);
-    UUID order = UUID.fromString(orderId);
+    UUID tenant = Ids.parse(T);
+    UUID order = Ids.parse(orderId);
 
     // A split tender: nothing is numbered until the sale is complete.
     orderService.handlePaymentCaptured(tenant, order, Ids.newId(), new BigDecimal("2.00"), "CASH");
@@ -273,7 +273,7 @@ class FiscalReceiptIT {
     String store = Ids.newId().toString();
     String orderId = placeOnly(store);
     orderService.handlePaymentCaptured(
-        UUID.fromString(T), UUID.fromString(orderId), Ids.newId(), new BigDecimal("5.00"));
+        Ids.parse(T), Ids.parse(orderId), Ids.newId(), new BigDecimal("5.00"));
 
     Response asCashier = getAs("/orders/" + orderId + "/fiscal-receipt", T, "CASHIER");
     assertThat(asCashier.getStatus(), is(200));
@@ -318,9 +318,7 @@ class FiscalReceiptIT {
     try (var c = DriverManager.getConnection(PG.jdbcUrl(), PG.username(), PG.password());
         var st =
             c.prepareStatement("DELETE FROM \"order\".fiscal_receipts WHERE order_id = ANY (?)")) {
-      st.setArray(
-          1,
-          c.createArrayOf("uuid", new Object[] {UUID.fromString(gone), UUID.fromString(alsoGone)}));
+      st.setArray(1, c.createArrayOf("uuid", new Object[] {Ids.parse(gone), Ids.parse(alsoGone)}));
       st.executeUpdate();
     }
 
@@ -525,8 +523,8 @@ class FiscalReceiptIT {
   void theTillWaitsServerSideForTheNumber() throws Exception {
     String store = Ids.newId().toString();
     String orderId = placeOnly(store);
-    UUID tenant = UUID.fromString(T);
-    UUID order = UUID.fromString(orderId);
+    UUID tenant = Ids.parse(T);
+    UUID order = Ids.parse(orderId);
     // Before anything lands, a bounded wait still ends in 404 — it does not hang and does not lie.
     long started = System.nanoTime();
     Response early =
@@ -606,8 +604,8 @@ class FiscalReceiptIT {
             c.prepareStatement(
                 "SELECT hash FROM \"order\".fiscal_receipts WHERE tenant_id = ? AND store_id = ?"
                     + " AND number = ?")) {
-      st.setObject(1, UUID.fromString(T));
-      st.setObject(2, UUID.fromString(store));
+      st.setObject(1, Ids.parse(T));
+      st.setObject(2, Ids.parse(store));
       st.setLong(3, number);
       try (var rs = st.executeQuery()) {
         return rs.next() ? rs.getString(1) : null;
@@ -646,8 +644,8 @@ class FiscalReceiptIT {
             c.prepareStatement(
                 "UPDATE \"order\".fiscal_receipts SET gross_total = gross_total + 100"
                     + " WHERE tenant_id = ? AND store_id = ? AND number = 2")) {
-      st.setObject(1, UUID.fromString(T));
-      st.setObject(2, UUID.fromString(store));
+      st.setObject(1, Ids.parse(T));
+      st.setObject(2, Ids.parse(store));
       assertThat(st.executeUpdate(), is(1));
     }
     String audit = audit(store);
@@ -669,8 +667,8 @@ class FiscalReceiptIT {
             c.prepareStatement(
                 "UPDATE \"order\".fiscal_receipts SET hash = NULL, prev_hash = NULL"
                     + " WHERE tenant_id = ? AND store_id = ? AND number = 1")) {
-      st.setObject(1, UUID.fromString(T));
-      st.setObject(2, UUID.fromString(store));
+      st.setObject(1, Ids.parse(T));
+      st.setObject(2, Ids.parse(store));
       st.executeUpdate();
     }
     String audit = audit(store);

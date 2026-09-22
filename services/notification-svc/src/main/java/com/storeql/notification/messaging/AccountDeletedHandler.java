@@ -1,5 +1,6 @@
 package com.storeql.notification.messaging;
 
+import com.storeql.ids.Ids;
 import com.storeql.notification.service.NotificationErasure;
 import jakarta.enterprise.context.ApplicationScoped;
 import jakarta.inject.Inject;
@@ -25,7 +26,7 @@ class AccountDeletedHandler {
     UUID userId;
     try (var reader = Json.createReader(new StringReader(json))) {
       JsonObject obj = reader.readObject();
-      userId = UUID.fromString(obj.getString("aggregateId"));
+      userId = Ids.parse(obj.getString("aggregateId"));
     } catch (RuntimeException e) {
       LOG.log(Level.WARNING, "Malformed AccountDeleted payload skipped: " + e.getMessage());
       return;

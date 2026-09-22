@@ -1,5 +1,6 @@
 package com.storeql.service;
 
+import com.storeql.ids.Ids;
 import com.storeql.web.ApiException;
 import jakarta.annotation.PostConstruct;
 import jakarta.enterprise.context.ApplicationScoped;
@@ -204,7 +205,7 @@ public class TenantProfiles {
       Map<UUID, String> countries = new HashMap<>();
       for (JsonValue value : root.getJsonArray("data")) {
         JsonObject store = value.asJsonObject();
-        UUID id = UUID.fromString(store.getString("id"));
+        UUID id = Ids.parse(store.getString("id"));
         ids.add(id);
         String country =
             store.containsKey("country") && !store.isNull("country")

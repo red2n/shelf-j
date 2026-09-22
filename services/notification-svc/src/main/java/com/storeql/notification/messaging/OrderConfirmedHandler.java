@@ -1,5 +1,6 @@
 package com.storeql.notification.messaging;
 
+import com.storeql.ids.Ids;
 import com.storeql.notification.client.CustomerClient;
 import com.storeql.notification.service.Messages;
 import com.storeql.notification.service.Notifier;
@@ -41,10 +42,10 @@ class OrderConfirmedHandler {
       if (!obj.containsKey("customerId") || obj.isNull("customerId")) {
         return; // guest checkout — no account to email
       }
-      eventId = UUID.fromString(obj.getString("eventId"));
-      tenantId = UUID.fromString(obj.getString("tenantId"));
-      orderId = UUID.fromString(obj.getString("orderId"));
-      customerId = UUID.fromString(obj.getString("customerId"));
+      eventId = Ids.parse(obj.getString("eventId"));
+      tenantId = Ids.parse(obj.getString("tenantId"));
+      orderId = Ids.parse(obj.getString("orderId"));
+      customerId = Ids.parse(obj.getString("customerId"));
       total = obj.getJsonNumber("total").bigDecimalValue();
       // order-svc always sends the order's currency; one without is malformed, not pounds (SJ-D53).
       currency = obj.getString("currency");

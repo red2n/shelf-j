@@ -301,9 +301,9 @@ class RecallIT {
     inventoryService.deductSaleFromOrderOnce(
         Ids.newId(),
         "it",
-        UUID.fromString(T),
-        UUID.fromString(store),
-        UUID.fromString(variant),
+        Ids.parse(T),
+        Ids.parse(store),
+        Ids.parse(variant),
         new BigDecimal(qty),
         order);
     return order.toString();

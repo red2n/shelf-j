@@ -590,7 +590,7 @@ public class CustomerRepository extends BaseOutboxRepository {
             + " AND id < ? ORDER BY created_at DESC, id LIMIT ?",
         ps -> {
           ps.setObject(1, tenantId);
-          ps.setObject(2, UUID.fromString(afterId));
+          ps.setObject(2, Ids.parse(afterId));
           ps.setInt(3, limit + 1);
         },
         CustomerRepository::mapCustomer,

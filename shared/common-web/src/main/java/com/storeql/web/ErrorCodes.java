@@ -16,6 +16,13 @@ public final class ErrorCodes {
   /** A path/query/body field that should be a UUID failed {@code UUID.fromString}. */
   public static final String INVALID_UUID = "INVALID_UUID";
 
+  /**
+   * An {@code Idempotency-Key} that is not a UUIDv7. A key is the identity of one attempt at a
+   * write: a clock reading or a hand-made string repeats, and a repeated key hands one caller
+   * another's result (SJ-D70).
+   */
+  public static final String IDEMPOTENCY_KEY_INVALID = "IDEMPOTENCY_KEY_INVALID";
+
   /** A date/timestamp field failed to parse against its expected format. */
   public static final String INVALID_DATE = "INVALID_DATE";
 

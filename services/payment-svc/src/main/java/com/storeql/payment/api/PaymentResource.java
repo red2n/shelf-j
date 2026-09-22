@@ -5,6 +5,7 @@ import com.storeql.payment.dto.Dtos.RecordTenderRequest;
 import com.storeql.payment.mapper.Mappers;
 import com.storeql.payment.service.PaymentService;
 import com.storeql.web.ApiResponse;
+import com.storeql.web.IdempotencyKeys;
 import com.storeql.web.TenantContext;
 import com.storeql.web.Validations;
 import jakarta.enterprise.context.RequestScoped;
@@ -195,7 +196,7 @@ public class PaymentResource {
 
   /** The standard Idempotency-Key header is authoritative; the body field is a legacy fallback. */
   private static String effectiveKey(String header, String bodyField) {
-    return header != null && !header.isBlank() ? header : bodyField;
+    return IdempotencyKeys.effective(header, bodyField);
   }
 
   /**

@@ -1,5 +1,6 @@
 package com.storeql.reporting.messaging;
 
+import com.storeql.ids.Ids;
 import com.storeql.reporting.service.ReportingService;
 import jakarta.enterprise.context.ApplicationScoped;
 import jakarta.inject.Inject;
@@ -52,8 +53,8 @@ class SalesEventDispatcher {
   }
 
   private void handleOrderConfirmed(JsonObject obj) {
-    UUID tenantId = UUID.fromString(obj.getString("tenantId"));
-    UUID orderId = UUID.fromString(obj.getString("orderId"));
+    UUID tenantId = Ids.parse(obj.getString("tenantId"));
+    UUID orderId = Ids.parse(obj.getString("orderId"));
     UUID storeId = optUuid(obj, "storeId");
     String channel = obj.getString("channel", null);
     UUID customerId = optUuid(obj, "customerId");
@@ -64,15 +65,15 @@ class SalesEventDispatcher {
   }
 
   private void handleRefunded(JsonObject obj) {
-    UUID eventId = UUID.fromString(obj.getString("eventId"));
-    UUID tenantId = UUID.fromString(obj.getString("tenantId"));
-    UUID orderId = UUID.fromString(obj.getString("orderId"));
+    UUID eventId = Ids.parse(obj.getString("eventId"));
+    UUID tenantId = Ids.parse(obj.getString("tenantId"));
+    UUID orderId = Ids.parse(obj.getString("orderId"));
     BigDecimal amount = obj.getJsonNumber("amount").bigDecimalValue();
     service.applySalesRefund(eventId, CONSUMER, tenantId, orderId, amount);
   }
 
   private static UUID optUuid(JsonObject obj, String key) {
-    return obj.containsKey(key) && !obj.isNull(key) ? UUID.fromString(obj.getString(key)) : null;
+    return obj.containsKey(key) && !obj.isNull(key) ? Ids.parse(obj.getString(key)) : null;
   }
 
   private static boolean isMalformed(RuntimeException e) {

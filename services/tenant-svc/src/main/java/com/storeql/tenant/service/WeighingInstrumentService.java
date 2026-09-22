@@ -308,7 +308,7 @@ public class WeighingInstrumentService {
     }
     UUID zoneId;
     try {
-      zoneId = UUID.fromString(raw.trim());
+      zoneId = Ids.parse(raw.trim());
     } catch (IllegalArgumentException e) {
       throw new ApiException(400, "ZONE_NOT_FOUND", "zoneId is not a UUID", List.of(), e);
     }

@@ -1,5 +1,6 @@
 package com.storeql.payment.messaging;
 
+import com.storeql.ids.Ids;
 import com.storeql.payment.service.PaymentService;
 import jakarta.enterprise.context.ApplicationScoped;
 import jakarta.inject.Inject;
@@ -56,9 +57,9 @@ class OrderEventHandler {
       } else {
         return; // not a refund-triggering event
       }
-      eventId = UUID.fromString(obj.getString("eventId"));
-      tenantId = UUID.fromString(obj.getString("tenantId"));
-      orderId = UUID.fromString(obj.getString("orderId"));
+      eventId = Ids.parse(obj.getString("eventId"));
+      tenantId = Ids.parse(obj.getString("tenantId"));
+      orderId = Ids.parse(obj.getString("orderId"));
     } catch (RuntimeException e) {
       LOG.log(Level.WARNING, "Malformed order event skipped: " + e.getMessage());
       return;
@@ -82,11 +83,11 @@ class OrderEventHandler {
     try (var reader = Json.createReader(new StringReader(json))) {
       JsonObject obj = reader.readObject();
       if (!"ContainerDepositRefunded".equals(obj.getString("eventType", null))) return;
-      eventId = UUID.fromString(obj.getString("eventId"));
-      tenantId = UUID.fromString(obj.getString("tenantId"));
-      storeId = UUID.fromString(obj.getString("storeId"));
-      tillSessionId = UUID.fromString(obj.getString("tillSessionId"));
-      refundedBy = UUID.fromString(obj.getString("refundedBy"));
+      eventId = Ids.parse(obj.getString("eventId"));
+      tenantId = Ids.parse(obj.getString("tenantId"));
+      storeId = Ids.parse(obj.getString("storeId"));
+      tillSessionId = Ids.parse(obj.getString("tillSessionId"));
+      refundedBy = Ids.parse(obj.getString("refundedBy"));
       amount = obj.getJsonNumber("amount").bigDecimalValue();
     } catch (RuntimeException e) {
       LOG.log(Level.WARNING, "Malformed container refund event skipped: " + e.getMessage());
@@ -102,6 +103,6 @@ class OrderEventHandler {
         "Container deposit refund",
         null,
         refundedBy,
-        "deposit-refund:" + eventId);
+        Ids.derived(eventId, "deposit-refund").toString());
   }
 }

@@ -1,5 +1,6 @@
 package com.storeql.reporting.messaging;
 
+import com.storeql.ids.Ids;
 import com.storeql.reporting.repo.ReportingRepository;
 import com.storeql.reporting.service.ReportingService;
 import jakarta.enterprise.context.ApplicationScoped;
@@ -35,7 +36,7 @@ class StockEventDispatcher {
     UUID eventId;
     try (var reader = Json.createReader(new StringReader(json))) {
       obj = reader.readObject();
-      eventId = UUID.fromString(obj.getString("eventId"));
+      eventId = Ids.parse(obj.getString("eventId"));
     } catch (RuntimeException e) {
       LOG.log(Level.WARNING, "Malformed stock event on {0} skipped: {1}", topic, e.getMessage());
       return;
@@ -66,9 +67,9 @@ class StockEventDispatcher {
   }
 
   private void applyDelta(UUID eventId, JsonObject obj, BigDecimal delta, String eventType) {
-    UUID tenantId = UUID.fromString(obj.getString("tenantId"));
-    UUID storeId = UUID.fromString(obj.getString("storeId"));
-    UUID variantId = UUID.fromString(obj.getString("variantId"));
+    UUID tenantId = Ids.parse(obj.getString("tenantId"));
+    UUID storeId = Ids.parse(obj.getString("storeId"));
+    UUID variantId = Ids.parse(obj.getString("variantId"));
     service.applyStockDeltaOnce(eventId, CONSUMER, tenantId, storeId, variantId, delta, eventType);
   }
 
@@ -82,9 +83,9 @@ class StockEventDispatcher {
   }
 
   private void handleTransferShipped(UUID eventId, JsonObject obj) {
-    UUID tenantId = UUID.fromString(obj.getString("tenantId"));
-    UUID fromStoreId = UUID.fromString(obj.getString("fromStoreId"));
-    UUID toStoreId = UUID.fromString(obj.getString("toStoreId"));
+    UUID tenantId = Ids.parse(obj.getString("tenantId"));
+    UUID fromStoreId = Ids.parse(obj.getString("fromStoreId"));
+    UUID toStoreId = Ids.parse(obj.getString("toStoreId"));
     // Dedupe BEFORE inserting: supply-line ids are random, so a redelivered event would
     // otherwise add duplicate rows. (Currently the event carries no line details and the
     // lists are empty placeholders — see applyTransferShipped.)

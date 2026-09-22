@@ -12,16 +12,21 @@ import java.util.function.Consumer;
 /**
  * The one way StoreQL mints ids: primary keys, event ids, outbox rows and request ids.
  *
- * <p>Ids are UUIDv7, so new rows land at the right-hand edge of a B-tree index instead of on a
- * random page — denser indexes, fewer page splits and less WAL than {@code UUID.randomUUID()}. v7
- * is the only version StoreQL stores: PMD rules {@code UseTimeOrderedIds} and {@code
- * NoDatabaseMintedIds} reject other generators in main code, and every integration test ends by
- * failing on a column that fills in its own uuid or a stored id of another version.
+ * <p>Ids are RFC 9562 UUIDv7 — minted here, and the only kind accepted from outside ({@link
+ * #parse}) or stored. Being time-ordered, new rows land at the right-hand edge of a B-tree index
+ * instead of on a random page — denser indexes, fewer page splits and less WAL than {@code
+ * UUID.randomUUID()}. PMD ({@code UseTimeOrderedIds}, {@code NoDatabaseMintedIds}, {@code
+ * ParseIdsAsV7}) holds main code to this, ArchUnit ({@code IDS_ARE_V7}) holds tests, common-web
+ * refuses another version at every HTTP entry, every uuid column carries a database CHECK, and
+ * every integration test ends by failing on a uuid of another version anywhere.
  */
 public final class Ids {
 
   /** 256 longs = one 2 KB DRBG call per refill. */
   private static final int BATCH_SIZE = 256;
+
+  /** {@code 01a0905d-7082-7518-9ec6-aee90d72a43e}: 32 hex digits and four hyphens. */
+  private static final int CANONICAL_LENGTH = 36;
 
   /** Hex digits in a {@link #shortRef}: 32 random bits, as the v4 prefixes they replace had. */
   public static final int SHORT_REF_LENGTH = 8;
@@ -38,6 +43,87 @@ public final class Ids {
    */
   public static UUID newId() {
     return GENERATOR.next();
+  }
+
+  /**
+   * Whether an id is an RFC 9562 version-7 UUID: version nibble 7 and the RFC variant ({@code 10}).
+   * The only kind StoreQL mints, stores or accepts.
+   */
+  public static boolean isV7(UUID id) {
+    return id != null && id.version() == 7 && id.variant() == 2;
+  }
+
+  /**
+   * An id as StoreQL accepts it from anywhere outside the JVM — a request, a header, an event, a
+   * row: the canonical 36-character form (hex in either case), version 7, the RFC variant.
+   *
+   * <p>Stricter than {@code UUID.fromString}, which takes {@code "1-1-1-1-1"} and every version. An
+   * id that is not v7 cannot name anything StoreQL made, so it is refused where it arrives rather
+   * than looked up, stored or passed on.
+   *
+   * @param text the id's text
+   * @return the id
+   * @throws InvalidIdException if the text is not a canonical UUIDv7
+   */
+  public static UUID parse(String text) {
+    if (text == null || text.length() != CANONICAL_LENGTH) {
+      throw new InvalidIdException(text, "is not a 36-character UUID");
+    }
+    long msb = 0;
+    long lsb = 0;
+    int digits = 0;
+    for (int i = 0; i < CANONICAL_LENGTH; i++) {
+      char ch = text.charAt(i);
+      if (i == 8 || i == 13 || i == 18 || i == 23) {
+        if (ch != '-') throw new InvalidIdException(text, "is not a UUID in canonical form");
+        continue;
+      }
+      int nibble = Character.digit(ch, 16);
+      if (nibble < 0) throw new InvalidIdException(text, "is not a UUID in canonical form");
+      if (digits < 16) {
+        msb = (msb << 4) | nibble;
+      } else {
+        lsb = (lsb << 4) | nibble;
+      }
+      digits++;
+    }
+    UUID id = new UUID(msb, lsb);
+    if (!isV7(id)) {
+      throw new InvalidIdException(text, "is a version-" + id.version() + " UUID, not a UUIDv7");
+    }
+    return id;
+  }
+
+  /**
+   * An id handed over as a {@link UUID}, refused unless it is v7.
+   *
+   * @param what what the id is, as a person would say it, for the refusal
+   * @throws InvalidIdException if it is null or not a v7 UUID
+   */
+  public static UUID requireV7(UUID id, String what) {
+    if (!isV7(id)) {
+      throw new InvalidIdException(
+          String.valueOf(id), "is not a UUIDv7" + (what == null ? "" : " (" + what + ")"));
+    }
+    return id;
+  }
+
+  /**
+   * An id that is not a canonical RFC 9562 version-7 UUID. An {@link IllegalArgumentException}, so
+   * every place that already treats a malformed id as bad input treats this one the same way.
+   */
+  public static final class InvalidIdException extends IllegalArgumentException {
+
+    private static final long serialVersionUID = 1L;
+
+    InvalidIdException(String text, String why) {
+      super("'" + abbreviate(text) + "' " + why);
+    }
+
+    private static String abbreviate(String text) {
+      if (text == null) return "null";
+      return text.length() <= 64 ? text : text.substring(0, 64) + "…";
+    }
   }
 
   /**

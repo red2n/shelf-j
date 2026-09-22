@@ -14,7 +14,7 @@
 //   k6/run.sh chargeback-flow
 import { sleep } from 'k6';
 import { Counter } from 'k6/metrics';
-import { ALL_CHECKS_PASS, call, data, expect, must, poll, sellingTenant, truthy } from './lib/storeql.js';
+import { ALL_CHECKS_PASS, call, data, expect, must, newId, poll, sellingTenant, truthy } from './lib/storeql.js';
 
 const completed = new Counter('flow_completed');
 export const options = {
@@ -55,12 +55,13 @@ export default function ({ tenant, rival, store, variantId, cashier }) {
   const total = num(first.total);
   const card = pay(first.id, total.toFixed(2), 'CARD');
 
-  const recorded = record(chargeback(card.id), owner, 'cb-first');
+  const firstKey = newId();
+  const recorded = record(chargeback(card.id), owner, firstKey);
   expect(recorded, '[+] a manager records the chargeback the acquirer wrote about', 201);
   const dispute = data(recorded);
   truthy('[+] it needs an answer, by the acquirer\'s date, for the whole payment', dispute.status === 'NEEDS_RESPONSE' && num(dispute.amount) === total && !!dispute.evidenceDueBy && dispute.overdue === false, dispute);
   truthy('[+] it is the acquirer\'s, not a provider\'s: MANUAL, under its case number', dispute.provider === 'MANUAL' && dispute.reference === `CB-${card.id.slice(-6)}` && dispute.fundsWithdrawn === true, dispute);
-  truthy('[+] the same request again is the same chargeback', data(record(chargeback(card.id), owner, 'cb-first')).id === dispute.id);
+  truthy('[+] the same request again is the same chargeback', data(record(chargeback(card.id), owner, firstKey)).id === dispute.id);
   expect(record(chargeback(card.id)), '[-] a second dispute on a payment that has one open', 409, 'DISPUTE_ALREADY_OPEN');
 
   let lines = [];

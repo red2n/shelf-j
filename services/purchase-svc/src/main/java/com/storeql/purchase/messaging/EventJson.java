@@ -1,5 +1,6 @@
 package com.storeql.purchase.messaging;
 
+import com.storeql.ids.Ids;
 import jakarta.json.Json;
 import jakarta.json.JsonObject;
 import java.io.StringReader;
@@ -21,7 +22,7 @@ final class EventJson {
   static UUID optUuid(JsonObject o, String key) {
     if (!o.containsKey(key) || o.isNull(key)) return null;
     String v = o.getString(key, "");
-    return v.isBlank() ? null : UUID.fromString(v);
+    return v.isBlank() ? null : Ids.parse(v);
   }
 
   /** A number field, or null when it is absent or null. */

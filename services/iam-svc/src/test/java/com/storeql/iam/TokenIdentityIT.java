@@ -84,7 +84,7 @@ class TokenIdentityIT {
   @Test
   @DisplayName("One reading: a cashier at a store, then let go, then nobody at all")
   void theIdentityFollowsTheAssignment() {
-    UUID userId = UUID.fromString(session("/auth/register", "identity-1@example.com").getSubject());
+    UUID userId = Ids.parse(session("/auth/register", "identity-1@example.com").getSubject());
     UUID tenant = Ids.newId();
     UUID store = Ids.newId();
 
@@ -136,8 +136,7 @@ class TokenIdentityIT {
     assertThat(users.tokenIdentity(Ids.newId()).isPresent(), is(false));
 
     // An owner's role has no store: tenant-wide, and not narrowed by a store-scoped role held too.
-    UUID ownerId =
-        UUID.fromString(session("/auth/register", "identity-3@example.com").getSubject());
+    UUID ownerId = Ids.parse(session("/auth/register", "identity-3@example.com").getSubject());
     users.bindOwnerOnce(Ids.newId(), CONSUMER, ownerId, tenant, "OWNER");
     users.bindStaffOnce(Ids.newId(), CONSUMER, ownerId, tenant, "CASHIER", store);
     TokenIdentity owner = users.tokenIdentity(ownerId).orElseThrow();
@@ -149,7 +148,7 @@ class TokenIdentityIT {
   @DisplayName("Signed in while being let go and taken on again: never a tenant without a role")
   void noTokenMixesTwoMomentsOfTheSameLogin() throws Exception {
     String email = "identity-2@example.com";
-    UUID userId = UUID.fromString(session("/auth/register", email).getSubject());
+    UUID userId = Ids.parse(session("/auth/register", email).getSubject());
     UUID tenant = Ids.newId();
     UUID store = Ids.newId();
 

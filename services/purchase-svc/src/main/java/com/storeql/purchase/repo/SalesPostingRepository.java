@@ -1,5 +1,6 @@
 package com.storeql.purchase.repo;
 
+import com.storeql.ids.Ids;
 import com.storeql.purchase.domain.Domain;
 import com.storeql.purchase.domain.Domain.NominalLedgerEntry;
 import com.storeql.purchase.domain.Domain.OpenClearing;
@@ -152,7 +153,7 @@ public class SalesPostingRepository extends BaseJdbcRepository {
           String store = rs.getString("store_id");
           return new OpenClearing(
               rs.getObject("source_ref", UUID.class),
-              store == null ? null : UUID.fromString(store),
+              store == null ? null : Ids.parse(store),
               rs.getBigDecimal("balance"),
               rs.getObject("first_posted", LocalDate.class),
               rs.getObject("last_posted", LocalDate.class));

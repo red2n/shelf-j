@@ -1,5 +1,6 @@
 package com.storeql.notification.messaging;
 
+import com.storeql.ids.Ids;
 import com.storeql.notification.service.Notifier;
 import jakarta.enterprise.context.ApplicationScoped;
 import jakarta.inject.Inject;
@@ -29,16 +30,16 @@ class UserRegisteredHandler {
     String email;
     try (var reader = Json.createReader(new StringReader(json))) {
       JsonObject obj = reader.readObject();
-      eventId = UUID.fromString(obj.getString("eventId"));
+      eventId = Ids.parse(obj.getString("eventId"));
       email = obj.getString("email", null);
       // The account the welcome is about, so deleting the account can erase it.
       userId =
           obj.containsKey("aggregateId") && !obj.isNull("aggregateId")
-              ? UUID.fromString(obj.getString("aggregateId"))
+              ? Ids.parse(obj.getString("aggregateId"))
               : null;
       tenantId =
           obj.containsKey("tenantId") && !obj.isNull("tenantId")
-              ? UUID.fromString(obj.getString("tenantId"))
+              ? Ids.parse(obj.getString("tenantId"))
               : null;
     } catch (RuntimeException e) {
       LOG.log(Level.WARNING, "Malformed UserRegistered payload skipped: " + e.getMessage());

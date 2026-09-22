@@ -130,6 +130,9 @@ High-level modules depend on abstractions, not on concrete classes.
 - **IDs are `UUID`, and only UUIDv7.** Never `long`, never `String` for primary keys.
   - Mint with `Ids.newId()`. A key a redelivered event must reproduce (a dedupe id per line) is `Ids.derived(eventId, name)`. A random value that is not an id comes from `SecureRandom`.
   - Never `UUID.randomUUID()` (v4) or `UUID.nameUUIDFromBytes()` (v3) — PMD `UseTimeOrderedIds`.
+  - Read an id with `Ids.parse(text)`, never `UUID.fromString` — it refuses any version but 7, the wrong variant and non-canonical text; never `new UUID(msb, lsb)` outside `common-ids` — PMD `ParseIdsAsV7`, and ArchUnit `IDS_ARE_V7` in tests. At the HTTP edge `common-web` already does it (`400 INVALID_UUID`).
+  - An `Idempotency-Key` is a UUIDv7: `Ids.newId()` per attempt, `Ids.derived(attemptId, "step")` for a step of it (`400 IDEMPOTENCY_KEY_INVALID` otherwise). That includes a key a service makes for itself or sends to another service — `Ids.derived(orderId, "store-credit")`, never `"sc:" + orderId` — and a body's key field, read through `IdempotencyKeys.effective(header, body)`. Every `idempotency_key` column refuses anything but a canonical lowercase v7.
+  - Every uuid column carries a database `CHECK` for v7, added by common-service's `afterMigrate__uuid_v7_everywhere.sql`; a migration adds nothing for it.
   - Never `gen_random_uuid()` / `uuid_generate_v4()` in SQL — PMD `NoDatabaseMintedIds`. Every `INSERT` names `id` in its column list and binds `Ids.newId()`.
   - Never a column `DEFAULT` that fills in a uuid, in any migration — the integration-test audit in `PostgresSupport.stop()` fails the build, and the Flyway `afterMigrate` check fails `flyway migrate`. Seed rows carry literal v7 ids.
   - A short handle for people (order number, batch-number suffix) is `Ids.shortRef(id)`, the end of the id — never `id.toString().substring(0, n)` (PMD `ShortRefFromIdTail`).

@@ -7,6 +7,7 @@ import static org.hamcrest.Matchers.not;
 
 import com.auth0.jwt.JWT;
 import com.auth0.jwt.interfaces.DecodedJWT;
+import com.storeql.ids.Ids;
 import com.storeql.test.PostgresSupport;
 import io.helidon.microprofile.testing.junit5.HelidonTest;
 import jakarta.inject.Inject;
@@ -338,7 +339,7 @@ class AuthIT {
     // Verify no user_roles row was created — the account is intentionally role-less at this point.
     try (var c = iamConnection();
         var ps = c.prepareStatement("SELECT count(*) FROM user_roles WHERE user_id = ?")) {
-      ps.setObject(1, java.util.UUID.fromString(userId));
+      ps.setObject(1, Ids.parse(userId));
       try (var rs = ps.executeQuery()) {
         rs.next();
         assertThat(rs.getInt(1), is(0));
@@ -471,7 +472,7 @@ class AuthIT {
         var ps =
             c.prepareStatement(
                 "SELECT email, phone, password_hash, status FROM users WHERE id = ?")) {
-      ps.setObject(1, java.util.UUID.fromString(userId));
+      ps.setObject(1, Ids.parse(userId));
       try (var rs = ps.executeQuery()) {
         assertThat(rs.next(), is(true));
         assertThat(rs.getString("email"), org.hamcrest.Matchers.nullValue());
@@ -482,7 +483,7 @@ class AuthIT {
       try (var ev =
           c.prepareStatement(
               "SELECT payload FROM outbox WHERE event_type = 'AccountDeleted' AND aggregate_id = ?")) {
-        ev.setObject(1, java.util.UUID.fromString(userId));
+        ev.setObject(1, Ids.parse(userId));
         try (var rs = ev.executeQuery()) {
           assertThat(rs.next(), is(true));
           assertThat(rs.getString(1).contains("leaving@example.com"), is(false));
@@ -519,7 +520,7 @@ class AuthIT {
     try (var c = iamConnection();
         var ps =
             c.prepareStatement("SELECT count(*) FROM audit_log WHERE user_id = ? AND detail = ?")) {
-      ps.setObject(1, java.util.UUID.fromString(userId));
+      ps.setObject(1, Ids.parse(userId));
       ps.setString(2, email);
       try (var rs = ps.executeQuery()) {
         rs.next();
@@ -532,7 +533,7 @@ class AuthIT {
     try (var c = iamConnection()) {
       try (var ps =
           c.prepareStatement("SELECT count(*) FROM audit_log WHERE user_id = ? AND detail = ?")) {
-        ps.setObject(1, java.util.UUID.fromString(userId));
+        ps.setObject(1, Ids.parse(userId));
         ps.setString(2, email);
         try (var rs = ps.executeQuery()) {
           rs.next();
@@ -544,7 +545,7 @@ class AuthIT {
           c.prepareStatement(
               "SELECT count(*) FROM audit_log WHERE user_id = ? AND action IN"
                   + " ('USER_REGISTERED','LOGIN_OK','LOGIN_FAILED','ACCOUNT_DELETED')")) {
-        ps.setObject(1, java.util.UUID.fromString(userId));
+        ps.setObject(1, Ids.parse(userId));
         try (var rs = ps.executeQuery()) {
           rs.next();
           assertThat(rs.getInt(1) >= 4, is(true));
@@ -590,14 +591,14 @@ class AuthIT {
                 "INSERT INTO user_roles (id, user_id, role_id, store_id)"
                     + " SELECT ?, ?, id, ? FROM roles WHERE name = 'CASHIER'")) {
       ps.setObject(1, com.storeql.ids.Ids.newId());
-      ps.setObject(2, java.util.UUID.fromString(userId));
+      ps.setObject(2, Ids.parse(userId));
       ps.setObject(3, store);
       ps.executeUpdate();
     }
     try (var c = iamConnection();
         var ps = c.prepareStatement("UPDATE users SET tenant_id = ? WHERE id = ?")) {
       ps.setObject(1, tenant);
-      ps.setObject(2, java.util.UUID.fromString(userId));
+      ps.setObject(2, Ids.parse(userId));
       ps.executeUpdate();
     }
     Response login =
@@ -626,7 +627,7 @@ class AuthIT {
     String userId = registerAndGetUserId("employee@example.com");
     try (var c = iamConnection();
         var ps = c.prepareStatement("UPDATE users SET type = 'STAFF' WHERE id = ?")) {
-      ps.setObject(1, java.util.UUID.fromString(userId));
+      ps.setObject(1, Ids.parse(userId));
       ps.executeUpdate();
     }
     // A staff login belongs to the business that employs its holder, which removes it.
@@ -911,7 +912,7 @@ class AuthIT {
                 "INSERT INTO user_roles (id, user_id, role_id, store_id)"
                     + " SELECT ?, ?, id, NULL FROM roles WHERE name = 'OWNER'")) {
       ps.setObject(1, com.storeql.ids.Ids.newId());
-      ps.setObject(2, java.util.UUID.fromString(owner));
+      ps.setObject(2, Ids.parse(owner));
       ps.executeUpdate();
     }
     // An owner who is also given a narrowed role somewhere still carries no claim: the owner is

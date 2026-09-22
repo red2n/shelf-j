@@ -5,6 +5,7 @@ import com.storeql.einvoice.Invoice;
 import com.storeql.einvoice.Irp;
 import com.storeql.einvoice.Rules;
 import com.storeql.einvoice.Violation;
+import com.storeql.ids.Ids;
 import com.storeql.order.client.ServiceReads;
 import com.storeql.order.domain.Domain.Order;
 import com.storeql.order.domain.Domain.OrderItem;
@@ -527,7 +528,7 @@ public class SalesInvoiceService {
         JsonObject o = v.asJsonObject();
         if (blank(str(o, "variantId"))) continue;
         out.put(
-            UUID.fromString(str(o, "variantId")),
+            Ids.parse(str(o, "variantId")),
             new ItemInfo(str(o, "productName"), str(o, "sku"), str(o, "unit"), str(o, "hsnCode")));
       }
     }

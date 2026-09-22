@@ -1,5 +1,6 @@
 package com.storeql.web;
 
+import com.storeql.ids.Ids;
 import java.time.Instant;
 import java.time.LocalDate;
 import java.util.List;
@@ -22,13 +23,15 @@ public final class Parsing {
    * @param field the field name, used only to build the error message (e.g. {@code "storeId"})
    * @return the parsed {@link UUID}
    * @throws ApiException 400 {@link ErrorCodes#INVALID_UUID} if {@code value} is {@code null} or
-   *     not a valid UUID
+   *     not a canonical RFC 9562 UUIDv7 — the only kind StoreQL mints, so any other cannot name
+   *     anything here
    */
   public static UUID uuid(String value, String field) {
     try {
-      return UUID.fromString(value);
-    } catch (RuntimeException e) {
-      throw new ApiException(400, ErrorCodes.INVALID_UUID, field + " must be a UUID", List.of(), e);
+      return Ids.parse(value);
+    } catch (IllegalArgumentException e) {
+      throw new ApiException(
+          400, ErrorCodes.INVALID_UUID, field + " must be a UUIDv7", List.of(), e);
     }
   }
 

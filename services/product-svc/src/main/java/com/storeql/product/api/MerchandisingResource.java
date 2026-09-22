@@ -1,5 +1,6 @@
 package com.storeql.product.api;
 
+import com.storeql.ids.Ids;
 import com.storeql.product.domain.Merchandising.Position;
 import com.storeql.product.dto.MerchandisingDtos;
 import com.storeql.product.mapper.MerchandisingMappers;
@@ -407,7 +408,7 @@ public class MerchandisingResource {
       throw ApiException.badRequest("MERCH_ID_REQUIRED", field + " is required");
     }
     try {
-      return UUID.fromString(value.strip());
+      return Ids.parse(value.strip());
     } catch (IllegalArgumentException e) {
       throw new ApiException(400, "MERCH_ID_INVALID", field + " is not an id", List.of(), e);
     }

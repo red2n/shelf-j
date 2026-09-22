@@ -30,7 +30,6 @@ import java.util.Base64;
 import java.util.HashSet;
 import java.util.List;
 import java.util.Set;
-import java.util.UUID;
 import java.util.concurrent.Callable;
 import java.util.concurrent.Executors;
 import org.junit.jupiter.api.AfterAll;
@@ -101,8 +100,8 @@ class FiscalRegimeIT {
             c.prepareStatement(
                 "INSERT INTO \"order\".store_status (store_id, tenant_id, status, status_changed_at)"
                     + " VALUES (?, ?, 'ACTIVE', now())")) {
-      ps.setObject(1, UUID.fromString(id));
-      ps.setObject(2, UUID.fromString(tenant));
+      ps.setObject(1, Ids.parse(id));
+      ps.setObject(2, Ids.parse(tenant));
       ps.executeUpdate();
     } catch (Exception e) {
       throw new IllegalStateException(e);
@@ -200,19 +199,18 @@ class FiscalRegimeIT {
               c.prepareStatement(
                   "UPDATE \"order\".orders SET tax_amount = ?, total = total + ? WHERE id = ?")) {
         line.setBigDecimal(1, new BigDecimal(vat));
-        line.setObject(2, UUID.fromString(id));
+        line.setObject(2, Ids.parse(id));
         line.executeUpdate();
         order.setBigDecimal(1, new BigDecimal(vat));
         order.setBigDecimal(2, new BigDecimal(vat));
-        order.setObject(3, UUID.fromString(id));
+        order.setObject(3, Ids.parse(id));
         order.executeUpdate();
       } catch (Exception e) {
         throw new IllegalStateException(e);
       }
       total = total.add(new BigDecimal(vat));
     }
-    orderService.handlePaymentCaptured(
-        UUID.fromString(T), UUID.fromString(id), Ids.newId(), total, method);
+    orderService.handlePaymentCaptured(Ids.parse(T), Ids.parse(id), Ids.newId(), total, method);
     return id;
   }
 
@@ -349,7 +347,7 @@ class FiscalRegimeIT {
         var ps =
             c.prepareStatement(
                 "UPDATE \"order\".fiscal_receipts SET tse_signature = 'forged' WHERE order_id = ?")) {
-      ps.setObject(1, UUID.fromString(second));
+      ps.setObject(1, Ids.parse(second));
       assertThat(ps.executeUpdate(), is(1));
     }
     JsonObject a = audit(store);

@@ -1,5 +1,6 @@
 package com.storeql.payment.service;
 
+import com.storeql.ids.Ids;
 import com.storeql.payment.dto.Dtos.CashMovementRequest;
 import com.storeql.payment.dto.Dtos.CashMovementResponse;
 import com.storeql.payment.dto.Dtos.GenerateZReportRequest;
@@ -43,10 +44,10 @@ public class CashMovementService {
       throw new ApiException(
           400, "INVALID_DIRECTION", "direction must be PAY_IN or PAY_OUT", List.of());
     }
-    UUID tillSessionId = UUID.fromString(req.tillSessionId());
-    UUID storeId = UUID.fromString(req.storeId());
+    UUID tillSessionId = Ids.parse(req.tillSessionId());
+    UUID storeId = Ids.parse(req.storeId());
     ctx.requireStoreAccess(storeId);
-    UUID authorisedBy = req.authorisedBy() == null ? null : UUID.fromString(req.authorisedBy());
+    UUID authorisedBy = req.authorisedBy() == null ? null : Ids.parse(req.authorisedBy());
     return repo.insertMovement(
         tenantId,
         storeId,
@@ -83,7 +84,7 @@ public class CashMovementService {
    */
   public ZReportResponse generateZReport(
       UUID tenantId, UUID generatedBy, GenerateZReportRequest req, TenantContext ctx) {
-    UUID storeId = UUID.fromString(req.storeId());
+    UUID storeId = Ids.parse(req.storeId());
     ctx.requireStoreAccess(storeId);
     LocalDate businessDate = com.storeql.web.Parsing.date(req.businessDate(), "businessDate");
     String currency = profiles.currencyOr(tenantId, req.currency());

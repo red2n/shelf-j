@@ -5,6 +5,7 @@ import static org.junit.jupiter.api.Assertions.assertEquals;
 import static org.junit.jupiter.api.Assertions.assertNull;
 import static org.junit.jupiter.api.Assertions.assertThrows;
 
+import com.storeql.ids.Ids;
 import com.storeql.tenant.domain.Domain.IncidentEvent;
 import com.storeql.tenant.domain.Domain.ReportingStage;
 import com.storeql.tenant.domain.Domain.SecurityIncident;
@@ -22,7 +23,7 @@ import org.junit.jupiter.api.Test;
 class IncidentRulesTest {
 
   private static final Instant AWARE = Instant.parse("2026-09-14T08:00:00Z");
-  private static final UUID ID = UUID.fromString("01a090ae-611e-7040-8a4b-1f6d1c3a9e01");
+  private static final UUID ID = Ids.parse("01a090ae-611e-7040-8a4b-1f6d1c3a9e01");
 
   private static final List<ReportingStage> VULNERABILITY =
       List.of(
@@ -104,7 +105,7 @@ class IncidentRulesTest {
   }
 
   private static IncidentEvent event(String kind, Instant at) {
-    return new IncidentEvent(UUID.randomUUID(), ID, kind, at, at, null, null, null);
+    return new IncidentEvent(Ids.newId(), ID, kind, at, at, null, null, null);
   }
 
   private static StageStatus stage(List<StageStatus> stages, String name) {

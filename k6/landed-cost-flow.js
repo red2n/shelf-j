@@ -14,6 +14,7 @@ import {
   data,
   expect,
   must,
+  newId,
   onboardTenant,
   poll,
   sellableVariant,
@@ -89,7 +90,7 @@ export default function ({ tenant, rival, store, apples, pears, storekeeper, cas
   truthy('[+] one charge with its lines', one && one.lines && one.lines.length === 2 && one.reference === 'CN-4471', one);
 
   // ── the same key twice is one charge ─────────────────────────────────────────────────────────
-  const key = `landed-${uniq()}`;
+  const key = newId();
   const first = data(call('POST', `${P}/landed-costs`, { token: owner, idem: key, body: { grId: gr.id, chargeType: 'HANDLING', basis: 'BY_QUANTITY', amount: '1.50' } }));
   const replay = data(call('POST', `${P}/landed-costs`, { token: owner, idem: key, body: { grId: gr.id, chargeType: 'HANDLING', basis: 'BY_QUANTITY', amount: '1.50' } }));
   truthy('[+] a retried charge is the same charge', first && replay && first.id === replay.id && list(get(`${P}/landed-costs?grId=${gr.id}`)).length === 3, { first, replay });

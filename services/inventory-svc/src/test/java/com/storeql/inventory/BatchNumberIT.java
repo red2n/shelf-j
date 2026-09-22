@@ -71,9 +71,9 @@ class BatchNumberIT {
    */
   @Test
   void returnsForOrdersFromTheSameMillisecondGetDifferentBatchNumbers() {
-    UUID first = UUID.fromString("01a0905d-7082-7518-9ec6-00000000a001");
-    UUID second = UUID.fromString("01a0905d-7082-7518-9ec6-00000000a002");
-    UUID tenant = UUID.fromString(T);
+    UUID first = Ids.parse("01a0905d-7082-7518-9ec6-00000000a001");
+    UUID second = Ids.parse("01a0905d-7082-7518-9ec6-00000000a002");
+    UUID tenant = Ids.parse(T);
     UUID store = Ids.newId();
     UUID variant = Ids.newId();
 
@@ -85,7 +85,7 @@ class BatchNumberIT {
 
   @Test
   void aRedeliveredReturnEventMintsNoSecondBatch() {
-    UUID tenant = UUID.fromString(T);
+    UUID tenant = Ids.parse(T);
     UUID store = Ids.newId();
     UUID variant = Ids.newId();
     UUID order = Ids.newId();
@@ -211,8 +211,8 @@ class BatchNumberIT {
   /** Same construction as the returns case: two counts whose ids differ only in the random tail. */
   @Test
   void cycleCountsFromTheSameMillisecondGetDifferentAdjustmentBatchNumbers() {
-    UUID first = UUID.fromString("01a0905d-7082-7518-9ec6-00000000c001");
-    UUID second = UUID.fromString("01a0905d-7082-7518-9ec6-00000000c002");
+    UUID first = Ids.parse("01a0905d-7082-7518-9ec6-00000000c001");
+    UUID second = Ids.parse("01a0905d-7082-7518-9ec6-00000000c002");
     String store = uuid();
     UUID variant = Ids.newId();
     seedApprovedCount(first, store, variant, "4", "6");
@@ -285,8 +285,8 @@ class BatchNumberIT {
               "INSERT INTO inventory.cycle_count_headers (id, tenant_id, store_id, name, status)"
                   + " VALUES (?, ?, ?, 'IT count', 'PENDING_APPROVAL')")) {
         ps.setObject(1, headerId);
-        ps.setObject(2, UUID.fromString(T));
-        ps.setObject(3, UUID.fromString(store));
+        ps.setObject(2, Ids.parse(T));
+        ps.setObject(3, Ids.parse(store));
         ps.executeUpdate();
       }
       try (var ps =
@@ -295,9 +295,9 @@ class BatchNumberIT {
                   + " variant_id, system_qty, counted_qty, variance, status, counted_at)"
                   + " VALUES (?, ?, ?, ?, ?, ?, ?, ?, 'APPROVED', now())")) {
         ps.setObject(1, Ids.newId());
-        ps.setObject(2, UUID.fromString(T));
+        ps.setObject(2, Ids.parse(T));
         ps.setObject(3, headerId);
-        ps.setObject(4, UUID.fromString(store));
+        ps.setObject(4, Ids.parse(store));
         ps.setObject(5, variant);
         ps.setBigDecimal(6, system);
         ps.setBigDecimal(7, counted);
@@ -318,7 +318,7 @@ class BatchNumberIT {
                 "SELECT batch_no FROM inventory.inventory_batches"
                     + " WHERE tenant_id = ? AND variant_id = ? AND batch_no LIKE ?"
                     + " ORDER BY batch_no")) {
-      ps.setObject(1, UUID.fromString(T));
+      ps.setObject(1, Ids.parse(T));
       ps.setObject(2, variant);
       ps.setString(3, like);
       try (var rs = ps.executeQuery()) {
@@ -344,7 +344,7 @@ class BatchNumberIT {
   }
 
   private static String tail(String id) {
-    return Ids.shortRef(UUID.fromString(id));
+    return Ids.shortRef(Ids.parse(id));
   }
 
   private static String uuid() {

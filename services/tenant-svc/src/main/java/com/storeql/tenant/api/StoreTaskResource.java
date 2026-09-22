@@ -1,5 +1,6 @@
 package com.storeql.tenant.api;
 
+import com.storeql.ids.Ids;
 import com.storeql.tenant.dto.StoreTaskDtos;
 import com.storeql.tenant.mapper.StoreTaskMappers;
 import com.storeql.tenant.service.StoreTaskService;
@@ -226,7 +227,7 @@ public class StoreTaskResource {
       throw ApiException.badRequest("TASK_ID_INVALID", field + " is required");
     }
     try {
-      return UUID.fromString(value.strip());
+      return Ids.parse(value.strip());
     } catch (IllegalArgumentException e) {
       throw new ApiException(
           400, "TASK_ID_INVALID", field + " is not an id: " + value, List.of(), e);

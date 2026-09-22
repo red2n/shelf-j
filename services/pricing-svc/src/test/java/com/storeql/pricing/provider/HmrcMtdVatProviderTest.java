@@ -4,6 +4,7 @@ import static org.junit.jupiter.api.Assertions.assertEquals;
 import static org.junit.jupiter.api.Assertions.assertThrows;
 import static org.junit.jupiter.api.Assertions.assertTrue;
 
+import com.storeql.ids.Ids;
 import com.storeql.pricing.domain.Domain.VatObligation;
 import com.storeql.pricing.domain.Domain.VatRegistration;
 import com.storeql.pricing.domain.Domain.VatReturn;
@@ -20,7 +21,6 @@ import java.util.Base64;
 import java.util.List;
 import java.util.Map;
 import java.util.Set;
-import java.util.UUID;
 import org.junit.jupiter.api.AfterEach;
 import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.Test;
@@ -99,7 +99,7 @@ class HmrcMtdVatProviderTest {
 
   private static VatRegistration connected(TokenCipher c) {
     return new VatRegistration(
-        UUID.randomUUID(),
+        Ids.newId(),
         "123456782",
         "HMRC",
         c.encrypt("acc"),
@@ -228,8 +228,7 @@ class HmrcMtdVatProviderTest {
   void withoutTheGrantNothingIsSent() {
     TokenCipher c = cipher();
     var reg =
-        new VatRegistration(
-            UUID.randomUUID(), "123456782", "HMRC", null, null, null, null, null, null);
+        new VatRegistration(Ids.newId(), "123456782", "HMRC", null, null, null, null, null, null);
     var e =
         assertThrows(
             VatSubmissionProvider.ProviderException.class,

@@ -171,7 +171,7 @@ class UsageIT {
 
   private void orders(String tenantId, int n) {
     for (int i = 0; i < n; i++) {
-      usage.record(java.util.UUID.fromString(tenantId), Meters.ORDERS, 1, "order:" + Ids.newId());
+      usage.record(Ids.parse(tenantId), Meters.ORDERS, 1, "order:" + Ids.newId());
     }
   }
 
@@ -280,7 +280,7 @@ class UsageIT {
     sellerIs();
     meteredPlan(0, "[{\"meter\":\"ORDERS\",\"included\":20}]", price("ORDERS", "0.5000"));
     String shop = onboard("Counts once");
-    java.util.UUID tenant = java.util.UUID.fromString(shop);
+    java.util.UUID tenant = Ids.parse(shop);
 
     // Twenty orders, each announced twice, at once: the till's offline replay of the same sale is
     // the same order.
@@ -334,7 +334,7 @@ class UsageIT {
         price("ORDERS", "0.5000"),
         price("SMS", "0.0350"));
     String shop = onboard("Bills its overage");
-    java.util.UUID tenant = java.util.UUID.fromString(shop);
+    java.util.UUID tenant = Ids.parse(shop);
     String periodEnd = subscription(shop).getString("periodEnd");
 
     orders(shop, 5);
@@ -466,7 +466,7 @@ class UsageIT {
         0,
         "[{\"meter\":\"ORDERS\",\"included\":1},{\"meter\":\"SMS\",\"included\":2,\"hard\":true}]");
     String shop = onboard("Hard ceiling");
-    java.util.UUID tenant = java.util.UUID.fromString(shop);
+    java.util.UUID tenant = Ids.parse(shop);
     String allowance = USAGE + "/allowance?meter=SMS&quantity=";
 
     Answer before = call("GET", allowance + "2", null, shop, "STOREKEEPER");

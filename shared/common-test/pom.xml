@@ -24,6 +24,11 @@
             <groupId>com.tngtech.archunit</groupId>
             <artifactId>archunit-junit5</artifactId>
         </dependency>
+        <!-- PermissionGate sends a UUIDv7 Idempotency-Key, as every client must. -->
+        <dependency>
+            <groupId>com.storeql</groupId>
+            <artifactId>common-ids</artifactId>
+        </dependency>
 
         <dependency>
             <groupId>org.testcontainers</groupId>

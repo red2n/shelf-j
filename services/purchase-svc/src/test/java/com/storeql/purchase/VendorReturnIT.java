@@ -163,7 +163,7 @@ class VendorReturnIT {
     try (var c = DriverManager.getConnection(PG.jdbcUrl(), PG.username(), PG.password());
         var ps =
             c.prepareStatement("SELECT event_type FROM purchase.outbox WHERE aggregate_id = ?")) {
-      ps.setObject(1, java.util.UUID.fromString(returnId));
+      ps.setObject(1, Ids.parse(returnId));
       try (var rs = ps.executeQuery()) {
         StringBuilder sb = new StringBuilder();
         while (rs.next()) sb.append(rs.getString(1)).append(',');

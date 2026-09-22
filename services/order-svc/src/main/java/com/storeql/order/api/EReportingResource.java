@@ -1,5 +1,6 @@
 package com.storeql.order.api;
 
+import com.storeql.ids.Ids;
 import com.storeql.order.dto.EReportingDtos;
 import com.storeql.order.mapper.EReportingMappers;
 import com.storeql.order.service.EReportingService;
@@ -159,7 +160,7 @@ public class EReportingResource {
 
   private static UUID uuid(String value) {
     try {
-      return UUID.fromString(value.strip());
+      return Ids.parse(value.strip());
     } catch (IllegalArgumentException e) {
       throw new ApiException(400, "EREPORTING_ID_INVALID", "corrects is not an id", List.of(), e);
     }

@@ -19,6 +19,7 @@ import {
   data,
   expect,
   must,
+  newId,
   sellingTenant,
   truthy,
 } from './lib/storeql.js';
@@ -106,7 +107,7 @@ export default function ({ de, gb }) {
   expect(refund(de, { lines: [{ material: 'PET', volumeMl: 500, count: 501 }] }), '[-] more than five hundred of one kind is not one refund', 400, 'ORDER_CONTAINER_COUNT_TOO_MANY');
   expect(refund(de, { lines: [{ material: 'PET', volumeMl: 500, count: 1 }] }, { idem: false }), '[-] a refund without a till key is refused', 400, 'MISSING_IDEMPOTENCY_KEY');
   expect(refund(gb, { lines: [{ material: 'ALUMINIUM', volumeMl: 330, count: 1 }] }), '[-] the British till pays nothing back: no scheme is in force there yet', 409, 'ORDER_DEPOSIT_SCHEME_NOT_IN_FORCE');
-  const key = `empties-${de.session}`;
+  const key = newId();
   const back = refund(de, { lines: [{ material: 'pet', volumeMl: 500, count: 2 }, { material: 'ALUMINIUM', volumeMl: 330, count: 1 }] }, { key });
   expect(back, '[+] two bottles and a can come back', 201);
   const r = data(back) || {};

@@ -7,6 +7,7 @@ import '../../core/network/api_client.dart';
 import '../../core/network/api_error.dart';
 import '../../shared/widgets/error_view.dart';
 import '../../shared/widgets/loading_view.dart';
+import 'package:storeql_app/core/ids.dart';
 
 // ---------------------------------------------------------------------------
 // Chargebacks (11.9).
@@ -531,7 +532,8 @@ class _RecordDisputeDialogState extends ConsumerState<RecordDisputeDialog> {
           'caseReference': _caseRef.text.trim(),
           'evidenceDueBy': _dueBy!.toUtc().toIso8601String(),
         },
-        options: Options(headers: {'Idempotency-Key': 'dispute-${_payment.text.trim()}-${_caseRef.text.trim()}'}),
+        // The same payment and case entered twice is one dispute, so the key is derived from them.
+        options: Options(headers: {'Idempotency-Key': derivedId(_payment.text.trim(), 'dispute:${_caseRef.text.trim()}')}),
       );
       if (mounted) Navigator.of(context).pop(true);
     } catch (e) {

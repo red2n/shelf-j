@@ -14,7 +14,6 @@ import jakarta.ws.rs.client.WebTarget;
 import jakarta.ws.rs.core.MediaType;
 import jakarta.ws.rs.core.Response;
 import java.sql.DriverManager;
-import java.util.UUID;
 import org.junit.jupiter.api.AfterAll;
 import org.junit.jupiter.api.DisplayName;
 import org.junit.jupiter.api.Test;
@@ -128,7 +127,7 @@ class PrivacyIT {
     assertThat(field(second.readEntity(String.class), "id"), is(id));
 
     assertThat(
-        column("SELECT login_id FROM \"customer\".customers WHERE id = ?", UUID.fromString(id)),
+        column("SELECT login_id FROM \"customer\".customers WHERE id = ?", Ids.parse(id)),
         is(login));
   }
 
@@ -213,13 +212,13 @@ class PrivacyIT {
         column(
             "SELECT notice FROM \"customer\".marketing_consent_log WHERE customer_id = ?"
                 + " ORDER BY recorded_at DESC LIMIT 1",
-            UUID.fromString(id)),
+            Ids.parse(id)),
         is("Email me about offers and new lines"));
     assertThat(
         column(
             "SELECT source FROM \"customer\".marketing_consent_log WHERE customer_id = ?"
                 + " ORDER BY recorded_at DESC LIMIT 1",
-            UUID.fromString(id)),
+            Ids.parse(id)),
         is("PREFERENCE_CENTRE"));
   }
 
@@ -347,7 +346,7 @@ class PrivacyIT {
         column(
             "SELECT payload FROM \"customer\".outbox WHERE event_type = 'CustomerErased'"
                 + " AND aggregate_id = ?",
-            UUID.fromString(id));
+            Ids.parse(id));
     assertThat(payload, containsString("\"loginId\":\"" + login + "\""));
     // Ids only: the event outlives its handling and must not carry what it exists to erase.
     assertThat(payload, not(containsString("bye@example.com")));
@@ -379,8 +378,7 @@ class PrivacyIT {
               .current()
               .select(com.storeql.customer.service.CustomerService.class)
               .get();
-      svc.export(
-          java.util.UUID.fromString(TENANT), null, java.util.UUID.fromString(login), "x@y.z");
+      svc.export(Ids.parse(TENANT), null, Ids.parse(login), "x@y.z");
     } catch (RuntimeException e) {
       System.out.println("EXPORT-DEBUG direct threw " + e.getClass().getName() + ": " + e);
     }
@@ -421,7 +419,7 @@ class PrivacyIT {
     assertThat(
         column(
             "SELECT count(*)::text FROM \"customer\".customers WHERE login_id = ?",
-            UUID.fromString(login)),
+            Ids.parse(login)),
         is("1"));
   }
 

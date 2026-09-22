@@ -115,7 +115,7 @@ class MfaIT {
   private UUID register(String email) {
     Answer a = call("POST", "/auth/register", Caller.NOBODY, credentials(email));
     assertThat(a.body().toString(), a.status(), is(201));
-    return UUID.fromString(JWT.decode(a.data().getString("accessToken")).getSubject());
+    return Ids.parse(JWT.decode(a.data().getString("accessToken")).getSubject());
   }
 
   private Answer login(String email) {
@@ -713,7 +713,7 @@ class MfaIT {
     assertThat(token.getClaim("roles").asList(String.class), hasItem("PLATFORM_ADMIN"));
     assertThat(token.getClaim("amr").asList(String.class), contains("pwd", "otp"));
 
-    UUID root = UUID.fromString(token.getSubject());
+    UUID root = Ids.parse(token.getSubject());
     Caller admin = new Caller(root, "PLATFORM_ADMIN", null, null);
     assertThat(call("GET", "/auth/mfa", admin, null).data().getBoolean("required"), is(true));
     Answer refused =

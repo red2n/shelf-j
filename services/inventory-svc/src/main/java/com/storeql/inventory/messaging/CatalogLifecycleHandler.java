@@ -1,5 +1,6 @@
 package com.storeql.inventory.messaging;
 
+import com.storeql.ids.Ids;
 import com.storeql.inventory.repo.CatalogLinesOutRepository;
 import jakarta.enterprise.context.ApplicationScoped;
 import jakarta.inject.Inject;
@@ -39,15 +40,14 @@ public class CatalogLifecycleHandler {
     try (var reader = Json.createReader(new StringReader(json))) {
       JsonObject obj = reader.readObject();
       eventType = obj.getString("eventType", "");
-      tenantId = UUID.fromString(obj.getString("tenantId"));
-      productId = UUID.fromString(obj.getString("aggregateId", obj.getString("productId", "")));
+      tenantId = Ids.parse(obj.getString("tenantId"));
+      productId = Ids.parse(obj.getString("aggregateId", obj.getString("productId", "")));
       JsonArray ids =
           obj.containsKey("variantIds") && !obj.isNull("variantIds")
               ? obj.getJsonArray("variantIds")
               : null;
       if (ids != null) {
-        for (var v : ids.getValuesAs(JsonString.class))
-          variantIds.add(UUID.fromString(v.getString()));
+        for (var v : ids.getValuesAs(JsonString.class)) variantIds.add(Ids.parse(v.getString()));
       }
     } catch (RuntimeException e) {
       LOG.log(Level.WARNING, "Malformed catalogue lifecycle event skipped: " + e.getMessage());

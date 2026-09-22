@@ -3,6 +3,7 @@ package com.storeql.order.client;
 import com.storeql.discovery.ConsulClient;
 import com.storeql.discovery.ServiceInstance;
 import com.storeql.discovery.ServiceRegistry;
+import com.storeql.ids.Ids;
 import com.storeql.order.config.ServiceConfig;
 import com.storeql.web.ApiException;
 import com.storeql.web.HttpHeaders;
@@ -69,8 +70,10 @@ public class InventoryClient {
    * ORDER_INSUFFICIENT_STOCK when any line is short (after releasing the lines already held for
    * this attempt), 503 ORDER_INVENTORY_UNAVAILABLE when inventory-svc cannot be reached.
    *
-   * <p>Each line's hold is idempotent on {@code idemBase + variantId}, so a retried placement
-   * replays the original holds instead of double-holding stock (golden rule #11).
+   * <p>Each line's hold is idempotent on a key derived from {@code idemBase}, the line's index and
+   * its variant, so a retried placement replays the original holds instead of double-holding stock
+   * (golden rule #11). The derived key is a UUIDv7 ({@link Ids#derived}), as inventory-svc requires
+   * of every Idempotency-Key.
    */
   public List<UUID> reserveForOrder(
       UUID tenantId,
@@ -78,13 +81,13 @@ public class InventoryClient {
       UUID storeId,
       List<ReserveLine> lines,
       long ttlSeconds,
-      String idemBase) {
+      UUID idemBase) {
     List<UUID> held = new ArrayList<>(lines.size());
     for (int i = 0; i < lines.size(); i++) {
       ReserveLine line = lines.get(i);
       // Line index in the key so two order lines for the same variant hold stock separately
       // instead of the second replaying the first line's hold.
-      String lineKey = idemBase + ":" + i + ":v:" + line.variantId();
+      String lineKey = Ids.derived(idemBase, "reserve:" + i + ":" + line.variantId()).toString();
       try {
         held.add(reserveLine(tenantId, orderId, storeId, line, ttlSeconds, lineKey));
       } catch (RuntimeException e) {
@@ -133,7 +136,7 @@ public class InventoryClient {
       String body = res.as(String.class);
       if (status == 201 || status == 200) {
         try (JsonReader reader = Json.createReader(new StringReader(body))) {
-          return UUID.fromString(reader.readObject().getJsonObject("data").getString("id"));
+          return Ids.parse(reader.readObject().getJsonObject("data").getString("id"));
         } catch (RuntimeException e) {
           throw unavailable("malformed response from inventory-svc", e);
         }

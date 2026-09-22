@@ -58,8 +58,8 @@ class OrderEventHandler {
     try (var reader = Json.createReader(new StringReader(json))) {
       obj = reader.readObject();
       eventType = obj.getString("eventType", "");
-      tenantId = UUID.fromString(obj.getString("tenantId"));
-      orderId = UUID.fromString(obj.getString("orderId"));
+      tenantId = Ids.parse(obj.getString("tenantId"));
+      orderId = Ids.parse(obj.getString("orderId"));
     } catch (RuntimeException e) {
       LOG.log(Level.WARNING, "Malformed order event skipped: " + e.getMessage());
       return;
@@ -85,8 +85,8 @@ class OrderEventHandler {
     UUID storeId;
     JsonArray items;
     try {
-      eventId = UUID.fromString(obj.getString("eventId"));
-      storeId = UUID.fromString(obj.getString("storeId"));
+      eventId = Ids.parse(obj.getString("eventId"));
+      storeId = Ids.parse(obj.getString("storeId"));
       items = obj.getJsonArray("items");
     } catch (RuntimeException e) {
       LOG.log(Level.WARNING, "Malformed order event skipped: " + e.getMessage());
@@ -103,7 +103,7 @@ class OrderEventHandler {
 
     for (int i = 0; i < items.size(); i++) {
       JsonObject line = items.getJsonObject(i);
-      UUID variantId = UUID.fromString(line.getString("variantId"));
+      UUID variantId = Ids.parse(line.getString("variantId"));
       BigDecimal qty = new BigDecimal(line.get("qty").toString());
       BigDecimal netAmount = netAmount(line);
       UUID dedupeId = lineDedupeId(eventId, i);

@@ -201,10 +201,7 @@ class ShelfTargetIT {
     handler.handle(event);
     handler.handle(event);
     assertThat(gaps(store, T), containsString("\"capacity\":40"));
-    assertThat(
-        "one row, not two",
-        targets.versionOf(java.util.UUID.fromString(T), java.util.UUID.fromString(fixture)),
-        is(2));
+    assertThat("one row, not two", targets.versionOf(Ids.parse(T), Ids.parse(fixture)), is(2));
 
     // Version 1 arriving after version 2 — a re-delivery, or a partition read out of order.
     handler.handle(capacityEvent(T, store, fixture, 1, "[" + position(variant, 8, 2) + "]"));

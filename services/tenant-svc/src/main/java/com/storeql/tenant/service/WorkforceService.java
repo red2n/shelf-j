@@ -468,8 +468,8 @@ public class WorkforceService {
       out.add(
           new AttendanceDay(
               LocalDate.parse(parts[0]),
-              UUID.fromString(parts[1]),
-              UUID.fromString(parts[2]),
+              Ids.parse(parts[1]),
+              Ids.parse(parts[2]),
               e.getValue()[0],
               e.getValue()[1],
               (int) e.getValue()[2],

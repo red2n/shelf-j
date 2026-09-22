@@ -13,6 +13,7 @@ import 'receipts_tab.dart';
 import 'sales_providers.dart';
 import 'widgets/variant_picker.dart';
 import '../../shared/util/short_ref.dart';
+import 'package:storeql_app/core/ids.dart';
 
 class SalesScreen extends ConsumerWidget {
   const SalesScreen({super.key});
@@ -770,7 +771,7 @@ class _CreateSpecialOrderDialogState
           'items': _items,
         },
         options: Options(headers: {
-          'Idempotency-Key': 'so-${DateTime.now().millisecondsSinceEpoch}'
+          'Idempotency-Key': newId()
         }),
       );
       if (!mounted) return;

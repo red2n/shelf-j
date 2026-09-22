@@ -1,5 +1,6 @@
 package com.storeql.payment.api;
 
+import com.storeql.ids.Ids;
 import com.storeql.payment.dto.TerminalDtos;
 import com.storeql.payment.mapper.TerminalMappers;
 import com.storeql.payment.service.TerminalService;
@@ -147,7 +148,7 @@ public class TerminalPaymentResource {
 
   private static UUID uuid(String value, String field) {
     try {
-      return UUID.fromString(value);
+      return Ids.parse(value);
     } catch (IllegalArgumentException e) {
       throw new ApiException(400, "TERMINAL_ID_INVALID", field + " is not an id", List.of(), e);
     }

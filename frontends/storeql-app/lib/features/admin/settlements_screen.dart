@@ -10,6 +10,7 @@ import '../../core/network/api_client.dart';
 import '../../core/network/api_error.dart';
 import '../../shared/widgets/error_view.dart';
 import '../../shared/widgets/loading_view.dart';
+import 'package:storeql_app/core/ids.dart';
 
 // ---------------------------------------------------------------------------
 // Card settlements (11.10).
@@ -709,7 +710,8 @@ class _ImportSettlementDialogState extends ConsumerState<ImportSettlementDialog>
           'declaredNet': ?num.tryParse(declared),
           'content': _content,
         },
-        options: Options(headers: {'Idempotency-Key': 'settlement-${_provider.text.trim()}-${_reference.text.trim()}-${_content!.length}'}),
+        // The same payout file imported twice is one batch, so the key is derived from it.
+        options: Options(headers: {'Idempotency-Key': derivedId('settlement', '${_provider.text.trim()}:${_reference.text.trim()}:${_content!.length}')}),
       );
       if (mounted) Navigator.of(context).pop((resp.data['data'] as Map)['id'] as String);
     } catch (e) {

@@ -258,7 +258,7 @@ public class Retention {
                     : null,
                 h.getString("subjectKind"),
                 h.containsKey("subjectId") && !h.isNull("subjectId")
-                    ? UUID.fromString(h.getString("subjectId"))
+                    ? Ids.parse(h.getString("subjectId"))
                     : null));
       }
       return Optional.of(new Sheet(Map.copyOf(periods), List.copyOf(holds)));

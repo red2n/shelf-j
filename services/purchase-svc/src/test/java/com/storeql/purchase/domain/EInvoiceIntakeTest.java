@@ -13,6 +13,7 @@ import com.storeql.einvoice.Invoice.Line;
 import com.storeql.einvoice.Invoice.Party;
 import com.storeql.einvoice.Invoice.Price;
 import com.storeql.einvoice.Invoice.Totals;
+import com.storeql.ids.Ids;
 import com.storeql.purchase.domain.EInvoiceIntake.Found;
 import com.storeql.purchase.domain.EInvoiceIntake.ItemCode;
 import com.storeql.purchase.domain.EInvoiceIntake.LineMatch;
@@ -31,13 +32,13 @@ import org.junit.jupiter.api.Test;
  */
 class EInvoiceIntakeTest {
 
-  private static final UUID ACME = UUID.fromString("0192f000-0000-7000-8000-000000000001");
-  private static final UUID OTHER = UUID.fromString("0192f000-0000-7000-8000-000000000002");
-  private static final UUID PO = UUID.fromString("0192f000-0000-7000-8000-0000000000a1");
-  private static final UUID LINE_1 = UUID.fromString("0192f000-0000-7000-8000-0000000000b1");
-  private static final UUID LINE_2 = UUID.fromString("0192f000-0000-7000-8000-0000000000b2");
-  private static final UUID APPLES = UUID.fromString("0192f000-0000-7000-8000-0000000000c1");
-  private static final UUID PEARS = UUID.fromString("0192f000-0000-7000-8000-0000000000c2");
+  private static final UUID ACME = Ids.parse("0192f000-0000-7000-8000-000000000001");
+  private static final UUID OTHER = Ids.parse("0192f000-0000-7000-8000-000000000002");
+  private static final UUID PO = Ids.parse("0192f000-0000-7000-8000-0000000000a1");
+  private static final UUID LINE_1 = Ids.parse("0192f000-0000-7000-8000-0000000000b1");
+  private static final UUID LINE_2 = Ids.parse("0192f000-0000-7000-8000-0000000000b2");
+  private static final UUID APPLES = Ids.parse("0192f000-0000-7000-8000-0000000000c1");
+  private static final UUID PEARS = Ids.parse("0192f000-0000-7000-8000-0000000000c2");
 
   @Test
   void theSupplierIsFoundByItsAddressBeforeItsVatNumber() {
@@ -137,7 +138,7 @@ class EInvoiceIntakeTest {
                 line(
                     "1", null, item("Apples", null, null, new Identifier("4000001123452", "0160"))),
                 line("2", null, item("Pears", null, PEARS.toString(), null)),
-                line("3", null, item("Plums", null, UUID.randomUUID().toString(), null))));
+                line("3", null, item("Plums", null, Ids.newId().toString(), null))));
     List<LineMatch> matches =
         EInvoiceIntake.lines(
             inv,
@@ -161,8 +162,8 @@ class EInvoiceIntakeTest {
 
   @Test
   void aCreditNoteClosesTheOnlyOpenReturnOrTheOneForItsAmount() {
-    UUID r1 = UUID.randomUUID();
-    UUID r2 = UUID.randomUUID();
+    UUID r1 = Ids.newId();
+    UUID r2 = Ids.newId();
     Invoice credit = withTotal(new BigDecimal("24.00"));
     assertEquals(
         r1,

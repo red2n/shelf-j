@@ -143,7 +143,7 @@ class OrderIT {
                 + "\",\"qty\":2,\"unitPrice\":10.00}],"
                 + "\"currency\":\"USD\"}",
             T,
-            "it-place-confirm-return");
+            Ids.newId().toString());
     assertThat(r1.getStatus(), is(201));
     String body1 = r1.readEntity(String.class);
     assertThat(body1, containsString("PENDING"));
@@ -183,13 +183,13 @@ class OrderIT {
                 + V
                 + "\",\"qty\":2,\"unitPrice\":10.00}]}",
             T,
-            "it-refund-status");
+            Ids.newId().toString());
     assertThat(placed.getStatus(), is(201));
     String orderId = extractId(placed.readEntity(String.class));
     assertThat(post("/orders/" + orderId + "/confirm", "{}", T).getStatus(), is(200));
 
-    UUID tenant = UUID.fromString(T);
-    UUID order = UUID.fromString(orderId);
+    UUID tenant = Ids.parse(T);
+    UUID order = Ids.parse(orderId);
 
     // A 12.00 refund on a 20.00 order → PARTIALLY_REFUNDED (as PaymentEventHandler would call it).
     UUID e1 = Ids.newId();
@@ -224,7 +224,8 @@ class OrderIT {
             + "\",\"qty\":1,\"unitPrice\":10.00}]}";
 
     // A: placed, left PENDING (client never paid).
-    String aId = extractId(post("/orders", orderJson, T, "it-sweep-a").readEntity(String.class));
+    String aId =
+        extractId(post("/orders", orderJson, T, Ids.newId().toString()).readEntity(String.class));
     // B: an online click-and-collect order, placed then confirmed — paid for and waiting to be
     // collected. It used to be a POS in-store order, but a confirmed till sale is now handed over
     // at once (SJ-D40), and this test exists to prove the sweeper spares a CONFIRMED order.
@@ -232,7 +233,8 @@ class OrderIT {
         orderJson.replace(
             "\"channel\":\"POS\",\"fulfilmentType\":\"INSTORE\"",
             "\"channel\":\"ONLINE\",\"fulfilmentType\":\"PICKUP\"");
-    String bId = extractId(post("/orders", collectJson, T, "it-sweep-b").readEntity(String.class));
+    String bId =
+        extractId(post("/orders", collectJson, T, Ids.newId().toString()).readEntity(String.class));
     assertThat(post("/orders/" + bId + "/confirm", "{}", T).getStatus(), is(200));
 
     // TTL of 0h → every still-PENDING order is expired. B is CONFIRMED so the status guard skips
@@ -265,10 +267,10 @@ class OrderIT {
                 + "\",\"qty\":1,\"unitPrice\":10.00}],"
                 + "\"currency\":\"USD\"}",
             T,
-            "it-split-tender");
+            Ids.newId().toString());
     assertThat(placed.getStatus(), is(201));
-    UUID orderId = UUID.fromString(extractId(placed.readEntity(String.class)));
-    UUID tenantId = UUID.fromString(T);
+    UUID orderId = Ids.parse(extractId(placed.readEntity(String.class)));
+    UUID tenantId = Ids.parse(T);
 
     // First tender (cash, $4) — covers less than the $10 total: still PENDING.
     orderService.handlePaymentCaptured(tenantId, orderId, Ids.newId(), new BigDecimal("4.00"));
@@ -304,10 +306,10 @@ class OrderIT {
                 + "\",\"qty\":1,\"unitPrice\":10.00}],"
                 + "\"currency\":\"USD\"}",
             T,
-            "it-redelivery");
+            Ids.newId().toString());
     assertThat(placed.getStatus(), is(201));
-    UUID orderId = UUID.fromString(extractId(placed.readEntity(String.class)));
-    UUID tenantId = UUID.fromString(T);
+    UUID orderId = Ids.parse(extractId(placed.readEntity(String.class)));
+    UUID tenantId = Ids.parse(T);
 
     UUID paymentId = Ids.newId();
     orderService.handlePaymentCaptured(tenantId, orderId, paymentId, new BigDecimal("6.00"));
@@ -368,10 +370,10 @@ class OrderIT {
                 + V
                 + "\",\"qty\":2,\"unitPrice\":10.00}],\"currency\":\"USD\"}",
             T,
-            "it-till-" + Ids.newId());
+            Ids.newId().toString());
     String body = placed.readEntity(String.class);
     assertThat(body, placed.getStatus(), is(201));
-    return UUID.fromString(extractId(body));
+    return Ids.parse(extractId(body));
   }
 
   private String statusOf(UUID orderId) {
@@ -388,8 +390,7 @@ class OrderIT {
   @Test
   void aTillSaleIsHandedOverTheMomentItIsPaidFor() {
     UUID orderId = placeAt("POS", "INSTORE");
-    orderService.handlePaymentCaptured(
-        UUID.fromString(T), orderId, Ids.newId(), new BigDecimal("20.00"));
+    orderService.handlePaymentCaptured(Ids.parse(T), orderId, Ids.newId(), new BigDecimal("20.00"));
 
     assertThat(statusOf(orderId), is("FULFILLED"));
     // The event inventory-svc deducts stock on. Before this fix a till sale never produced one.
@@ -403,10 +404,8 @@ class OrderIT {
   void aRedeliveredCaptureDoesNotSellTheStockTwice() {
     UUID orderId = placeAt("POS", "INSTORE");
     UUID paymentId = Ids.newId();
-    orderService.handlePaymentCaptured(
-        UUID.fromString(T), orderId, paymentId, new BigDecimal("20.00"));
-    orderService.handlePaymentCaptured(
-        UUID.fromString(T), orderId, paymentId, new BigDecimal("20.00"));
+    orderService.handlePaymentCaptured(Ids.parse(T), orderId, paymentId, new BigDecimal("20.00"));
+    orderService.handlePaymentCaptured(Ids.parse(T), orderId, paymentId, new BigDecimal("20.00"));
 
     // Two OrderFulfilled events would deduct the stock twice — inventory-svc dedupes per event,
     // and each OrderFulfilled carries a fresh event id, so this has to be stopped here.
@@ -419,8 +418,7 @@ class OrderIT {
     // The till sent PICKUP for every tendered sale until this fix, including the ones sitting in
     // offline queues on devices now, which replay with the request they were queued with.
     UUID orderId = placeAt("POS", "PICKUP");
-    orderService.handlePaymentCaptured(
-        UUID.fromString(T), orderId, Ids.newId(), new BigDecimal("20.00"));
+    orderService.handlePaymentCaptured(Ids.parse(T), orderId, Ids.newId(), new BigDecimal("20.00"));
 
     assertThat(statusOf(orderId), is("FULFILLED"));
     assertThat(outboxCount(orderId, "OrderFulfilled"), is(1L));
@@ -431,8 +429,7 @@ class OrderIT {
     // The other direction of the same rule: an online click-and-collect order is paid for now and
     // collected later. Fulfilling it at payment would deduct stock that is still on the shelf.
     UUID orderId = placeAt("ONLINE", "PICKUP");
-    orderService.handlePaymentCaptured(
-        UUID.fromString(T), orderId, Ids.newId(), new BigDecimal("20.00"));
+    orderService.handlePaymentCaptured(Ids.parse(T), orderId, Ids.newId(), new BigDecimal("20.00"));
 
     assertThat(statusOf(orderId), is("CONFIRMED"));
     assertThat(outboxCount(orderId, "OrderFulfilled"), is(0L));
@@ -452,8 +449,7 @@ class OrderIT {
   @Test
   void voidingATillSaleThatWasHandedOverPutsItsStockBack() {
     UUID orderId = placeAt("POS", "INSTORE");
-    orderService.handlePaymentCaptured(
-        UUID.fromString(T), orderId, Ids.newId(), new BigDecimal("20.00"));
+    orderService.handlePaymentCaptured(Ids.parse(T), orderId, Ids.newId(), new BigDecimal("20.00"));
     assertThat(
         post("/orders/" + orderId + "/void", "{\"reason\":\"wrong item scanned\"}", T).getStatus(),
         is(200));
@@ -485,23 +481,21 @@ class OrderIT {
     // Paid online but not yet collected: CONFIRMED, still on the shelf.
     UUID awaitingPickup = placeAt("ONLINE", "PICKUP");
     orderService.handlePaymentCaptured(
-        UUID.fromString(T), awaitingPickup, Ids.newId(), new BigDecimal("20.00"));
+        Ids.parse(T), awaitingPickup, Ids.newId(), new BigDecimal("20.00"));
     assertThat(statusOf(awaitingPickup), is("CONFIRMED"));
     assertThat(post("/orders/" + awaitingPickup + "/returns", oneBack, T).getStatus(), is(409));
     assertThat(outboxCount(awaitingPickup, "OrderReturned"), is(0L));
 
     // Handed over at the till the moment it was paid for: now it can come back.
     UUID sold = placeAt("POS", "INSTORE");
-    orderService.handlePaymentCaptured(
-        UUID.fromString(T), sold, Ids.newId(), new BigDecimal("20.00"));
+    orderService.handlePaymentCaptured(Ids.parse(T), sold, Ids.newId(), new BigDecimal("20.00"));
     assertThat(post("/orders/" + sold + "/returns", oneBack, T).getStatus(), is(201));
   }
 
   @Test
   void voidingASaleWithAReturnAgainstItPutsBackOnlyWhatIsLeft() {
     UUID orderId = placeAt("POS", "INSTORE");
-    orderService.handlePaymentCaptured(
-        UUID.fromString(T), orderId, Ids.newId(), new BigDecimal("20.00"));
+    orderService.handlePaymentCaptured(Ids.parse(T), orderId, Ids.newId(), new BigDecimal("20.00"));
     Response ret =
         post(
             "/orders/" + orderId + "/returns",
@@ -548,7 +542,9 @@ class OrderIT {
             + V
             + "\",\"qty\":1,\"unitPrice\":5.00}],"
             + "\"currency\":\"USD\","
-            + "\"idempotencyKey\":\"idem-replay-1\"}";
+            + "\"idempotencyKey\":\""
+            + Ids.newId()
+            + "\"}";
 
     Response first = post("/orders", orderJson, T);
     assertThat(first.getStatus(), is(201));
@@ -574,7 +570,7 @@ class OrderIT {
                 + "\",\"qty\":1,\"unitPrice\":10.00}],"
                 + "\"taxAmount\":-5.00,\"currency\":\"USD\"}",
             T,
-            "it-neg-tax");
+            Ids.newId().toString());
     assertThat(negTax.getStatus(), is(400));
 
     // discount larger than the subtotal must not drive the total negative
@@ -589,7 +585,7 @@ class OrderIT {
                 + "\",\"qty\":1,\"unitPrice\":10.00}],"
                 + "\"discountAmount\":50.00,\"currency\":\"USD\"}",
             T,
-            "it-big-disc");
+            Ids.newId().toString());
     assertThat(bigDisc.getStatus(), is(400));
     assertThat(bigDisc.readEntity(String.class), containsString("ORDER_DISCOUNT_EXCEEDS_SUBTOTAL"));
   }
@@ -613,7 +609,7 @@ class OrderIT {
                   + "\",\"qty\":1,\"unitPrice\":1.00}],"
                   + "\"currency\":\"USD\"}",
               tenant,
-              "it-paginate-" + i);
+              Ids.newId().toString());
       assertThat(r.getStatus(), is(201));
       allIds.add(extractId(r.readEntity(String.class)));
     }
@@ -722,7 +718,7 @@ class OrderIT {
                   + V
                   + "\",\"qty\":1,\"unitPrice\":1.00}],\"currency\":\"USD\"}",
               tenant,
-              "it-poslog-" + i);
+              Ids.newId().toString());
       assertThat(placed.getStatus(), is(201));
       String orderId = extractId(placed.readEntity(String.class));
       Response logged = post("/pos/log/orders/" + orderId, "", tenant);
@@ -765,12 +761,12 @@ class OrderIT {
                 + "\",\"qty\":2,\"unitPrice\":10.00}],"
                 + "\"currency\":\"USD\"}",
             T,
-            "it-return-qty");
+            Ids.newId().toString());
     assertThat(r1.getStatus(), is(201));
     String orderId = extractId(r1.readEntity(String.class));
     // Paid for at the till, which hands it over: only then can anything come back.
     orderService.handlePaymentCaptured(
-        UUID.fromString(T), UUID.fromString(orderId), Ids.newId(), new BigDecimal("20.00"));
+        Ids.parse(T), Ids.parse(orderId), Ids.newId(), new BigDecimal("20.00"));
 
     // returning 3 when only 2 were purchased must be rejected outright
     Response tooMany =
@@ -813,7 +809,7 @@ class OrderIT {
                 + "\",\"qty\":1,\"unitPrice\":5.00}],"
                 + "\"currency\":\"USD\"}",
             T,
-            "it-pos-void");
+            Ids.newId().toString());
     assertThat(r1.getStatus(), is(201));
     String orderId = extractId(r1.readEntity(String.class));
 
@@ -946,7 +942,7 @@ class OrderIT {
                         + V
                         + "\",\"qty\":1,\"unitPrice\":5.00}]}",
                     T,
-                    "it-gc-replay")
+                    Ids.newId().toString())
                 .readEntity(String.class));
 
     String redeem = "{\"amount\":30.00,\"orderId\":\"" + orderId + "\"}";
@@ -975,7 +971,7 @@ class OrderIT {
                         + V
                         + "\",\"qty\":1,\"unitPrice\":5.00}]}",
                     T,
-                    "it-gc-replay-2")
+                    Ids.newId().toString())
                 .readEntity(String.class));
     Response second =
         post(
@@ -1006,7 +1002,7 @@ class OrderIT {
         containsString("GIFT_CARD_PAID_BY_INVALID"));
 
     String issued = post("/gift-cards", body + ",\"paidBy\":\"card\"}", T).readEntity(String.class);
-    UUID cardId = UUID.fromString(extractId(issued));
+    UUID cardId = Ids.parse(extractId(issued));
     String code = extractCode(issued);
     assertThat(outboxCount(cardId, "GiftCardLoaded"), is(1L));
     String issue = outboxPayload(cardId, "GiftCardLoaded");
@@ -1051,7 +1047,7 @@ class OrderIT {
                 + "\",\"qty\":1,\"unitPrice\":5.00}],"
                 + "\"currency\":\"USD\"}",
             T,
-            "it-void-online");
+            Ids.newId().toString());
     String orderId = extractId(r1.readEntity(String.class));
     Response rv = post("/orders/" + orderId + "/void", "{\"reason\":\"test\"}", T);
     assertThat(rv.getStatus(), is(409));
@@ -1072,7 +1068,7 @@ class OrderIT {
             .header("X-Roles", "CUSTOMER")
             .header("X-User-Id", owningCustomer)
             .header("X-User-Email", "owner@example.com")
-            .header("Idempotency-Key", "it-idor-guard")
+            .header("Idempotency-Key", Ids.newId().toString())
             .post(
                 Entity.entity(
                     "{\"storeId\":\""
@@ -1130,7 +1126,7 @@ class OrderIT {
                 + V
                 + "\",\"qty\":1,\"unitPrice\":5.00}],\"currency\":\"USD\"}",
             T,
-            "it-idor-guard-pos");
+            Ids.newId().toString());
     assertThat(till.getStatus(), is(201));
     String tillOrder = extractId(till.readEntity(String.class));
     assertThat(getAs("/orders/" + tillOrder, T, owningCustomer, "CUSTOMER").getStatus(), is(404));
@@ -1151,7 +1147,7 @@ class OrderIT {
                 + V
                 + "\",\"qty\":0,\"unitPrice\":10.00}],\"currency\":\"USD\"}",
             T,
-            "it-reject-zero-qty");
+            Ids.newId().toString());
     assertThat(r.getStatus(), is(400));
   }
 
@@ -1167,7 +1163,7 @@ class OrderIT {
                 + V
                 + "\",\"qty\":1,\"unitPrice\":10.00}],\"currency\":\"USD\"}",
             T,
-            "it-cancel-validation");
+            Ids.newId().toString());
     assertThat(placed.getStatus(), is(201));
     String orderId = extractId(placed.readEntity(String.class));
 
@@ -1201,7 +1197,7 @@ class OrderIT {
                 + V
                 + "\",\"qty\":2,\"unitPrice\":15.00}]}",
             tenant,
-            "it-hour-1");
+            Ids.newId().toString());
     assertThat(placed.getStatus(), is(201));
     confirm(tenant, extractId(placed.readEntity(String.class)));
 
@@ -1253,7 +1249,7 @@ class OrderIT {
                 + V
                 + "\",\"qty\":1,\"unitPrice\":99.00}]}",
             tenant,
-            "it-hour-2");
+            Ids.newId().toString());
     assertThat(pending.getStatus(), is(201));
 
     assertThat(salesByHour(tenant, "UTC"), not(containsString("\"orders\"")));
@@ -1288,7 +1284,7 @@ class OrderIT {
                     tenant,
                     cashier,
                     "MANAGER",
-                    "it-staff-1")
+                    Ids.newId().toString())
                 .readEntity(String.class));
     assertThat(
         postAs("/pos/log/orders/" + orderId, "{}", tenant, cashier, "CASHIER", null).getStatus(),
@@ -1377,7 +1373,7 @@ class OrderIT {
                     T,
                     cashier,
                     "MANAGER",
-                    "it-exc-1")
+                    Ids.newId().toString())
                 .readEntity(String.class));
 
     // Two no-sales: one by the same cashier, one by somebody else who sold nothing at all.
@@ -1466,7 +1462,7 @@ class OrderIT {
                     T,
                     cashier,
                     "CASHIER",
-                    "it-poslog-1")
+                    Ids.newId().toString())
                 .readEntity(String.class));
 
     Response first = postAs("/pos/log/orders/" + orderId, "{}", T, cashier, "CASHIER", null);
@@ -1586,7 +1582,7 @@ class OrderIT {
     String tenant = Ids.newId().toString();
     boolean projected =
         tenantStatus.projectTenantCurrencyOnce(
-            Ids.newId(), "order-svc/tenant-created", UUID.fromString(tenant), "gbp");
+            Ids.newId(), "order-svc/tenant-created", Ids.parse(tenant), "gbp");
     assertThat(projected, is(true));
 
     // Omitting currency stamps the tenant's own, not "USD".
@@ -1600,7 +1596,7 @@ class OrderIT {
                 + V
                 + "\",\"qty\":1,\"unitPrice\":10.00}]}",
             tenant,
-            "it-currency-from-tenant");
+            Ids.newId().toString());
     assertThat(placed.getStatus(), is(201));
     assertThat(placed.readEntity(String.class), containsString("\"currency\":\"GBP\""));
 
@@ -1638,7 +1634,7 @@ class OrderIT {
                 + V
                 + "\",\"qty\":1,\"unitPrice\":10.00}],\"currency\":\"USD\"}",
             tenant,
-            "it-currency-mismatch");
+            Ids.newId().toString());
     assertThat(mismatch.getStatus(), is(400));
     assertThat(mismatch.readEntity(String.class), containsString("ORDER_CURRENCY_MISMATCH"));
 
@@ -1656,7 +1652,7 @@ class OrderIT {
                 + V
                 + "\",\"qty\":1,\"unitPrice\":1000}]}",
             unprojected,
-            "it-currency-from-profile");
+            Ids.newId().toString());
     String fromProfileBody = fromProfile.readEntity(String.class);
     assertThat(fromProfileBody, fromProfile.getStatus(), is(201));
     assertThat(fromProfileBody, containsString("\"currency\":\"JPY\""));
@@ -1672,7 +1668,7 @@ class OrderIT {
                 + V
                 + "\",\"qty\":1,\"unitPrice\":10.00}],\"currency\":\"GBP\"}",
             unprojected,
-            "it-currency-profile-mismatch");
+            Ids.newId().toString());
     assertThat(yenMismatch.getStatus(), is(400));
 
     // A tenant neither the projection nor tenant-svc can describe is refused, not guessed.
@@ -1687,7 +1683,7 @@ class OrderIT {
                 + V
                 + "\",\"qty\":1,\"unitPrice\":10.00}]}",
             undescribed,
-            "it-currency-undescribed");
+            Ids.newId().toString());
     String refusedBody = refused.readEntity(String.class);
     assertThat(refusedBody, refused.getStatus(), is(503));
     assertThat(refusedBody, containsString("TENANT_PROFILE_UNAVAILABLE"));
@@ -1723,10 +1719,10 @@ class OrderIT {
                 + qty
                 + ",\"unitPrice\":10.00}],\"currency\":\"USD\"}",
             T,
-            "it-partial-" + Ids.newId());
+            Ids.newId().toString());
     String body = placed.readEntity(String.class);
     assertThat(body, placed.getStatus(), is(201));
-    return UUID.fromString(extractId(body));
+    return Ids.parse(extractId(body));
   }
 
   private static String fulfilBody(String variantId, String qty) {
@@ -1893,11 +1889,11 @@ class OrderIT {
                 + V
                 + "\",\"qty\":3,\"unitPrice\":0}],\"currency\":\"USD\"}",
             T,
-            "it-catalog-" + Ids.newId());
+            Ids.newId().toString());
     String body = placed.readEntity(String.class);
     assertThat(body, placed.getStatus(), is(201));
     assertThat(body, containsString("\"status\":\"AWAITING_PRICE\""));
-    return UUID.fromString(extractId(body));
+    return Ids.parse(extractId(body));
   }
 
   private static String priceBody(String variantId, String unitPrice, String tax) {
@@ -1940,8 +1936,7 @@ class OrderIT {
         get("/orders/" + order + "/history", T).readEntity(String.class),
         containsString("priced: total 16.20"));
     // Priced, it is paid for like any other till order — and handed over when the payment lands.
-    orderService.handlePaymentCaptured(
-        UUID.fromString(T), order, Ids.newId(), new BigDecimal("16.20"));
+    orderService.handlePaymentCaptured(Ids.parse(T), order, Ids.newId(), new BigDecimal("16.20"));
     assertThat(statusOf(order), is("FULFILLED"));
     // And it cannot be priced twice.
     Response again =
@@ -1993,7 +1988,7 @@ class OrderIT {
                 + V
                 + "\",\"qty\":1,\"unitPrice\":0}],\"currency\":\"USD\"}",
             T,
-            "it-catalog-online-" + Ids.newId());
+            Ids.newId().toString());
     assertThat(online.getStatus(), is(400));
     assertThat(online.readEntity(String.class), containsString("ORDER_AWAITING_PRICE_POS_ONLY"));
     // A manager may also decide not to price it at all.
@@ -2012,8 +2007,7 @@ class OrderIT {
   @DisplayName("A completed till sale is voided from the back office by a manager, by nobody below")
   void backOfficeVoidIsAManagementActionAndIsCountedAgainstWhoMadeIt() {
     UUID orderId = placeAt("POS", "INSTORE");
-    orderService.handlePaymentCaptured(
-        UUID.fromString(T), orderId, Ids.newId(), new BigDecimal("20.00"));
+    orderService.handlePaymentCaptured(Ids.parse(T), orderId, Ids.newId(), new BigDecimal("20.00"));
     assertThat(statusOf(orderId), is("FULFILLED"));
 
     String cashier = Ids.newId().toString();
@@ -2069,8 +2063,7 @@ class OrderIT {
 
   private UUID paidTillSale() {
     UUID orderId = placeAt("POS", "INSTORE");
-    orderService.handlePaymentCaptured(
-        UUID.fromString(T), orderId, Ids.newId(), new BigDecimal("20.00"));
+    orderService.handlePaymentCaptured(Ids.parse(T), orderId, Ids.newId(), new BigDecimal("20.00"));
     assertThat(statusOf(orderId), is("FULFILLED"));
     return orderId;
   }

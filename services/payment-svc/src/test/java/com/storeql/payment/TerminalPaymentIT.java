@@ -81,7 +81,7 @@ class TerminalPaymentIT {
   void theSameKeyNeverReachesTheTerminalTwice() {
     Terminals.Terminal t = aTerminal("till");
     UUID order = Ids.newId();
-    String key = "press-" + Ids.newId();
+    String key = Ids.newId().toString();
 
     var first = svc.sale(tenant, t.id(), order, new BigDecimal("12.50"), "GBP", actor, key);
     var second = svc.sale(tenant, t.id(), order, new BigDecimal("12.50"), "GBP", actor, key);
@@ -104,8 +104,8 @@ class TerminalPaymentIT {
     // Two cards for one sale — a split tender — and the guard must not collapse them. It keys on
     // the
     // press, not on the order, which is why a customer may pay half on each of two cards.
-    svc.sale(tenant, t.id(), order, new BigDecimal("5.00"), "GBP", actor, "press-a-" + Ids.newId());
-    svc.sale(tenant, t.id(), order, new BigDecimal("5.00"), "GBP", actor, "press-b-" + Ids.newId());
+    svc.sale(tenant, t.id(), order, new BigDecimal("5.00"), "GBP", actor, Ids.newId().toString());
+    svc.sale(tenant, t.id(), order, new BigDecimal("5.00"), "GBP", actor, Ids.newId().toString());
     assertThat(svc.attemptsOf(tenant, order), hasSize(2));
   }
 
@@ -114,7 +114,7 @@ class TerminalPaymentIT {
   @Test
   @DisplayName("An approval keeps what a card receipt has to carry")
   void anApprovalKeepsTheReceipt() {
-    var approved = take(aTerminal("till"), "20.00", "k-" + Ids.newId());
+    var approved = take(aTerminal("till"), "20.00", Ids.newId().toString());
 
     assertThat(approved.state(), is(Terminals.APPROVED));
     assertThat(approved.scheme(), is(not(nullValue())));
@@ -131,7 +131,7 @@ class TerminalPaymentIT {
   @Test
   @DisplayName("A decline is settled, carries the terminal's reason, and took nothing")
   void aDecline() {
-    var declined = take(aTerminal("till"), "9.01", "k-" + Ids.newId());
+    var declined = take(aTerminal("till"), "9.01", Ids.newId().toString());
 
     assertThat(declined.state(), is(Terminals.DECLINED));
     assertThat(declined.settled(), is(true));
@@ -143,7 +143,7 @@ class TerminalPaymentIT {
   @Test
   @DisplayName("A timeout keeps its reference, because that is how the money is traced")
   void aTimeout() {
-    var timedOut = take(aTerminal("till"), "9.03", "k-" + Ids.newId());
+    var timedOut = take(aTerminal("till"), "9.03", Ids.newId().toString());
 
     assertThat(timedOut.state(), is(Terminals.TIMED_OUT));
     assertThat(
@@ -162,8 +162,9 @@ class TerminalPaymentIT {
   @DisplayName("A cancellation and a failure are settled too — nothing is left REQUESTED")
   void cancelledAndFailed() {
     assertThat(
-        take(aTerminal("till"), "9.02", "k-" + Ids.newId()).state(), is(Terminals.CANCELLED));
-    assertThat(take(aTerminal("till"), "9.04", "k-" + Ids.newId()).state(), is(Terminals.FAILED));
+        take(aTerminal("till"), "9.02", Ids.newId().toString()).state(), is(Terminals.CANCELLED));
+    assertThat(
+        take(aTerminal("till"), "9.04", Ids.newId().toString()).state(), is(Terminals.FAILED));
     // An attempt stuck in REQUESTED is indistinguishable from one where the card may have been
     // charged, which is the state this row exists to avoid producing by accident.
   }
@@ -174,9 +175,10 @@ class TerminalPaymentIT {
   @DisplayName("A refund goes back on the card that paid, and never more than it took")
   void aRefund() {
     Terminals.Terminal t = aTerminal("till");
-    var sale = take(t, "30.00", "k-" + Ids.newId());
+    var sale = take(t, "30.00", Ids.newId().toString());
 
-    var back = svc.refund(tenant, sale.id(), new BigDecimal("10.00"), actor, "r-" + Ids.newId());
+    var back =
+        svc.refund(tenant, sale.id(), new BigDecimal("10.00"), actor, Ids.newId().toString());
     assertThat(back.state(), is(Terminals.APPROVED));
     assertThat(back.kind(), is(Terminals.REFUND));
     assertThat("it names what it puts back", back.refundOf(), is(sale.id()));
@@ -191,7 +193,7 @@ class TerminalPaymentIT {
   @Test
   @DisplayName("Nothing is refunded against an attempt that took no money")
   void refundingADecline() {
-    var declined = take(aTerminal("till"), "9.01", "k-" + Ids.newId());
+    var declined = take(aTerminal("till"), "9.01", Ids.newId().toString());
     ApiException e =
         assertThrows(
             ApiException.class,
@@ -205,7 +207,7 @@ class TerminalPaymentIT {
     // The state moves once out of REQUESTED and never back, so a cancel arriving after the
     // cardholder
     // has tapped cannot turn a taking into a cancellation.
-    var approved = take(aTerminal("till"), "15.00", "k-" + Ids.newId());
+    var approved = take(aTerminal("till"), "15.00", Ids.newId().toString());
     var after = svc.cancel(tenant, approved.id());
     assertThat(after.state(), is(Terminals.APPROVED));
   }
@@ -221,7 +223,7 @@ class TerminalPaymentIT {
     assertThat(retired.retiredReason(), is("screen cracked"));
 
     ApiException e =
-        assertThrows(ApiException.class, () -> take(retired, "5.00", "k-" + Ids.newId()));
+        assertThrows(ApiException.class, () -> take(retired, "5.00", Ids.newId().toString()));
     assertThat(e.code(), is("TERMINAL_RETIRED"));
     // Kept, because payments point at it.
     assertThat(svc.list(tenant).stream().anyMatch(x -> x.id().equals(t.id())), is(true));
@@ -269,7 +271,8 @@ class TerminalPaymentIT {
   void oneBusinessNeverSeesAnothers() {
     Terminals.Terminal mine = aTerminal("till");
     UUID order = Ids.newId();
-    svc.sale(tenant, mine.id(), order, new BigDecimal("7.00"), "GBP", actor, "k-" + Ids.newId());
+    svc.sale(
+        tenant, mine.id(), order, new BigDecimal("7.00"), "GBP", actor, Ids.newId().toString());
 
     UUID rival = Ids.newId();
     assertThat(svc.list(rival), hasSize(0));
@@ -279,7 +282,14 @@ class TerminalPaymentIT {
         assertThrows(
             ApiException.class,
             () ->
-                svc.sale(rival, mine.id(), Ids.newId(), new BigDecimal("7.00"), "GBP", actor, "k"));
+                svc.sale(
+                    rival,
+                    mine.id(),
+                    Ids.newId(),
+                    new BigDecimal("7.00"),
+                    "GBP",
+                    actor,
+                    Ids.newId().toString()));
     assertThat(e.code(), is("TERMINAL_NOT_FOUND"));
   }
 

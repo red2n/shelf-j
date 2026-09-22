@@ -48,12 +48,12 @@ class LandedCostHandler {
     JsonArray lines;
     try (var reader = Json.createReader(new StringReader(json))) {
       JsonObject obj = reader.readObject();
-      eventId = UUID.fromString(obj.getString("eventId"));
+      eventId = Ids.parse(obj.getString("eventId"));
       eventType = obj.getString("eventType", "LandedCostApplied");
-      tenantId = UUID.fromString(obj.getString("tenantId"));
-      storeId = UUID.fromString(obj.getString("storeId"));
-      grId = UUID.fromString(obj.getString("refId"));
-      landedCostId = UUID.fromString(obj.getString("landedCostId"));
+      tenantId = Ids.parse(obj.getString("tenantId"));
+      storeId = Ids.parse(obj.getString("storeId"));
+      grId = Ids.parse(obj.getString("refId"));
+      landedCostId = Ids.parse(obj.getString("landedCostId"));
       lines = obj.getJsonArray("lines");
     } catch (RuntimeException e) {
       LOG.log(Level.WARNING, "Malformed LandedCost payload skipped: " + e.getMessage());
@@ -67,7 +67,7 @@ class LandedCostHandler {
     int applied = 0;
     for (int i = 0; i < lines.size(); i++) {
       JsonObject line = lines.getJsonObject(i);
-      UUID variantId = UUID.fromString(line.getString("variantId"));
+      UUID variantId = Ids.parse(line.getString("variantId"));
       BigDecimal perUnit = new BigDecimal(line.get("perUnit").toString());
       BigDecimal amount = new BigDecimal(line.get("amount").toString());
       if (reversal) {

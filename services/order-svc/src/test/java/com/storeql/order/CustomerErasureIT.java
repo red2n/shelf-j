@@ -99,12 +99,12 @@ class CustomerErasureIT {
                 + "\",\"qty\":1,\"unitPrice\":10.00}]}");
     String body = r.readEntity(String.class);
     assertThat(body, r.getStatus(), is(201));
-    return UUID.fromString(id(body));
+    return Ids.parse(id(body));
   }
 
   private void pay(UUID order) {
     orderService.handlePaymentCaptured(
-        UUID.fromString(T), order, Ids.newId(), new BigDecimal("10.00"), "CARD");
+        Ids.parse(T), order, Ids.newId(), new BigDecimal("10.00"), "CARD");
   }
 
   private static String column(String table, UUID id, String column) {
@@ -134,8 +134,7 @@ class CustomerErasureIT {
     pay(order); // a till sale: FULFILLED
     assertThat(column("orders", order, "contact_phone"), is("07700900999"));
 
-    orderService.handleCustomerErased(
-        UUID.fromString(T), UUID.fromString(customer), null, Ids.newId());
+    orderService.handleCustomerErased(Ids.parse(T), Ids.parse(customer), null, Ids.newId());
 
     assertThat(column("orders", order, "contact_phone"), nullValue());
     // The tax record stays.
@@ -150,8 +149,7 @@ class CustomerErasureIT {
     UUID order = place(customer, "ONLINE", "DELIVERY", DELIVERY);
     pay(order); // online: CONFIRMED, not yet delivered
 
-    orderService.handleCustomerErased(
-        UUID.fromString(T), UUID.fromString(customer), null, Ids.newId());
+    orderService.handleCustomerErased(Ids.parse(T), Ids.parse(customer), null, Ids.newId());
     // Still needed to deliver it.
     assertThat(column("orders", order, "delivery_line1"), is("12 High Street"));
     assertThat(column("orders", order, "delivery_recipient_phone"), is("07700900123"));
@@ -171,12 +169,10 @@ class CustomerErasureIT {
     String customer = Ids.newId().toString();
     UUID event = Ids.newId();
     assertThat(
-        orderService.handleCustomerErased(
-            UUID.fromString(T), UUID.fromString(customer), null, event),
+        orderService.handleCustomerErased(Ids.parse(T), Ids.parse(customer), null, event),
         is(true));
     assertThat(
-        orderService.handleCustomerErased(
-            UUID.fromString(T), UUID.fromString(customer), null, event),
+        orderService.handleCustomerErased(Ids.parse(T), Ids.parse(customer), null, event),
         is(false));
   }
 
@@ -188,8 +184,7 @@ class CustomerErasureIT {
     UUID theirs = place(kept, "POS", "INSTORE", "\"contactPhone\":\"07700900555\",");
     pay(theirs);
 
-    orderService.handleCustomerErased(
-        UUID.fromString(T), UUID.fromString(erased), null, Ids.newId());
+    orderService.handleCustomerErased(Ids.parse(T), Ids.parse(erased), null, Ids.newId());
     orderService.sweepErasures();
 
     assertThat(column("orders", theirs, "contact_phone"), is("07700900555"));
@@ -224,7 +219,7 @@ class CustomerErasureIT {
                     MediaType.APPLICATION_JSON));
     String body = r.readEntity(String.class);
     assertThat(body, r.getStatus(), is(201));
-    return UUID.fromString(id(body));
+    return Ids.parse(id(body));
   }
 
   @Test
@@ -249,7 +244,7 @@ class CustomerErasureIT {
 
     // The shop erases the customer record. Before SJ-D44 this named the customer id alone, and the
     // delivery address on this order — which carries no customer id at all — survived it.
-    orderService.handleCustomerErased(UUID.fromString(T), customer, login, Ids.newId());
+    orderService.handleCustomerErased(Ids.parse(T), customer, login, Ids.newId());
 
     assertThat(column("orders", order, "delivery_line1"), nullValue());
     assertThat(column("orders", order, "delivery_recipient_name"), nullValue());
@@ -265,7 +260,7 @@ class CustomerErasureIT {
     UUID order = placeAsShopper(login, "DELIVERY", DELIVERY);
     pay(order);
 
-    orderService.handleCustomerErased(UUID.fromString(T), Ids.newId(), login, Ids.newId());
+    orderService.handleCustomerErased(Ids.parse(T), Ids.newId(), login, Ids.newId());
     assertThat(column("orders", order, "delivery_line1"), is("12 High Street"));
 
     assertThat(post("/orders/" + order + "/fulfil", "{}").getStatus(), is(200));
@@ -396,7 +391,7 @@ class CustomerErasureIT {
                     + " (id, tenant_id, order_id, receipt_type, emailed_to, print_count)"
                     + " VALUES (?, ?, ?, 'EMAIL', 'chris@example.com', 1)")) {
       ps.setObject(1, receiptId);
-      ps.setObject(2, UUID.fromString(T));
+      ps.setObject(2, Ids.parse(T));
       ps.setObject(3, open);
       ps.executeUpdate();
     } catch (java.sql.SQLException e) {
@@ -414,10 +409,9 @@ class CustomerErasureIT {
                 + V
                 + "\",\"qty\":1,\"unitPrice\":10.00}]}");
     assertThat(parked.getStatus(), is(201));
-    UUID parkedId = UUID.fromString(id(parked.readEntity(String.class)));
+    UUID parkedId = Ids.parse(id(parked.readEntity(String.class)));
 
-    orderService.handleCustomerErased(
-        UUID.fromString(T), UUID.fromString(customer), null, Ids.newId());
+    orderService.handleCustomerErased(Ids.parse(T), Ids.parse(customer), null, Ids.newId());
 
     assertThat(column("order_receipts", receiptId, "emailed_to"), nullValue());
     assertThat(column("parked_sales", parkedId, "customer_name"), nullValue());

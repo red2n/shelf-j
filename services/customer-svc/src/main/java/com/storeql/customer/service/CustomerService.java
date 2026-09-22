@@ -733,7 +733,7 @@ public class CustomerService {
    */
   public LoyaltyAccount earnPoints(UUID tenantId, UUID customerId, EarnPointsRequest req) {
     get(tenantId, customerId);
-    UUID orderId = req.orderId() == null ? null : UUID.fromString(req.orderId());
+    UUID orderId = req.orderId() == null ? null : Ids.parse(req.orderId());
     var event =
         loyaltyEvent(
             LOYALTY_EARNED, TOPIC_EARNED, tenantId, customerId, req.points(), orderId, null, null);
@@ -834,7 +834,7 @@ public class CustomerService {
    */
   public LoyaltyAccount redeemPoints(UUID tenantId, UUID customerId, RedeemPointsRequest req) {
     get(tenantId, customerId);
-    UUID orderId = req.orderId() == null ? null : UUID.fromString(req.orderId());
+    UUID orderId = req.orderId() == null ? null : Ids.parse(req.orderId());
     var event =
         loyaltyEvent(
             "LoyaltyRedeemed",
@@ -987,7 +987,7 @@ public class CustomerService {
       UUID tenantId, UUID customerId, IssueStoreCreditRequest req) {
     get(tenantId, customerId);
     String cur = storeCreditCurrency(tenantId, req.currency());
-    UUID orderId = req.orderId() == null ? null : UUID.fromString(req.orderId());
+    UUID orderId = req.orderId() == null ? null : Ids.parse(req.orderId());
     String payload =
         Json.createObjectBuilder()
             .add("customerId", customerId.toString())
@@ -1025,7 +1025,7 @@ public class CustomerService {
       UUID tenantId, UUID customerId, RedeemStoreCreditRequest req) {
     get(tenantId, customerId);
     String cur = storeCreditCurrency(tenantId, req.currency());
-    UUID orderId = req.orderId() == null ? null : UUID.fromString(req.orderId());
+    UUID orderId = req.orderId() == null ? null : Ids.parse(req.orderId());
     String payload =
         Json.createObjectBuilder()
             .add("customerId", customerId.toString())

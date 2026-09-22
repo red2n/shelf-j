@@ -15,7 +15,6 @@ import jakarta.ws.rs.client.WebTarget;
 import jakarta.ws.rs.core.MediaType;
 import jakarta.ws.rs.core.Response;
 import java.sql.DriverManager;
-import java.util.UUID;
 import org.junit.jupiter.api.AfterAll;
 import org.junit.jupiter.api.DisplayName;
 import org.junit.jupiter.api.Test;
@@ -414,7 +413,7 @@ class WeighingInstrumentIT {
         var ps =
             c.prepareStatement(
                 "SELECT count(*) FROM tenant.weighing_instrument_verifications WHERE instrument_id = ?")) {
-      ps.setObject(1, UUID.fromString(id));
+      ps.setObject(1, Ids.parse(id));
       try (var rs = ps.executeQuery()) {
         rs.next();
         assertThat(rs.getInt(1), is(1));

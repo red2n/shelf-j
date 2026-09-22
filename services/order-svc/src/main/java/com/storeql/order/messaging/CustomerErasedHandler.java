@@ -1,5 +1,6 @@
 package com.storeql.order.messaging;
 
+import com.storeql.ids.Ids;
 import com.storeql.order.service.OrderService;
 import jakarta.enterprise.context.ApplicationScoped;
 import jakarta.inject.Inject;
@@ -30,13 +31,13 @@ class CustomerErasedHandler {
     UUID loginId;
     try (var reader = Json.createReader(new StringReader(payload))) {
       JsonObject obj = reader.readObject();
-      eventId = UUID.fromString(obj.getString("eventId"));
-      tenantId = UUID.fromString(obj.getString("tenantId"));
-      customerId = UUID.fromString(obj.getString("customerId"));
+      eventId = Ids.parse(obj.getString("eventId"));
+      tenantId = Ids.parse(obj.getString("tenantId"));
+      customerId = Ids.parse(obj.getString("customerId"));
       // Absent for a walk-in the till created, and on events published before the link existed.
       loginId =
           obj.containsKey("loginId") && !obj.isNull("loginId")
-              ? UUID.fromString(obj.getString("loginId"))
+              ? Ids.parse(obj.getString("loginId"))
               : null;
     } catch (RuntimeException e) {
       LOG.log(Level.WARNING, "Malformed CustomerErased payload skipped: " + e.getMessage());

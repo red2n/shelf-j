@@ -4,6 +4,7 @@ import static org.junit.jupiter.api.Assertions.assertEquals;
 import static org.junit.jupiter.api.Assertions.assertThrows;
 import static org.junit.jupiter.api.Assertions.assertTrue;
 
+import com.storeql.ids.Ids;
 import com.storeql.web.ApiException;
 import java.time.Clock;
 import java.time.Instant;
@@ -16,7 +17,7 @@ import org.junit.jupiter.api.Test;
 
 class TenantProfilesTest {
 
-  private static final UUID TENANT = UUID.fromString("01a090ae-611e-702c-a97b-d1b8025478e1");
+  private static final UUID TENANT = Ids.parse("01a090ae-611e-702c-a97b-d1b8025478e1");
 
   private static String body(String currency, String country) {
     return "{\"data\":{\"id\":\""
@@ -212,9 +213,9 @@ class TenantProfilesTest {
     }
   }
 
-  private static final UUID STORE_DE = UUID.fromString("01a090ae-611e-702c-a97b-d1b8025478f1");
-  private static final UUID STORE_NONE = UUID.fromString("01a090ae-611e-702c-a97b-d1b8025478f2");
-  private static final UUID STORE_NEW = UUID.fromString("01a090ae-611e-702c-a97b-d1b8025478f3");
+  private static final UUID STORE_DE = Ids.parse("01a090ae-611e-702c-a97b-d1b8025478f1");
+  private static final UUID STORE_NONE = Ids.parse("01a090ae-611e-702c-a97b-d1b8025478f2");
+  private static final UUID STORE_NEW = Ids.parse("01a090ae-611e-702c-a97b-d1b8025478f3");
 
   /** A clock the store tests move by hand. */
   private static final class Moving extends Clock {
