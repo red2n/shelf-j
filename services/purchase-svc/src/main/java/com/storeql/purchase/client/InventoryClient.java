@@ -3,8 +3,11 @@ package com.storeql.purchase.client;
 import com.storeql.discovery.ConsulClient;
 import com.storeql.discovery.ServiceInstance;
 import com.storeql.discovery.ServiceRegistry;
+import com.storeql.ids.Ids;
 import com.storeql.purchase.config.ServiceConfig;
+import com.storeql.purchase.domain.OrderProposal;
 import com.storeql.purchase.domain.PeriodControl;
+import com.storeql.service.ServiceReader;
 import com.storeql.web.HttpHeaders;
 import io.helidon.http.HeaderNames;
 import io.helidon.webclient.api.HttpClientResponse;
@@ -23,7 +26,9 @@ import java.math.BigDecimal;
 import java.time.Duration;
 import java.time.LocalDate;
 import java.util.ArrayList;
+import java.util.HashMap;
 import java.util.List;
+import java.util.Map;
 import java.util.Optional;
 import java.util.UUID;
 import org.eclipse.microprofile.faulttolerance.CircuitBreaker;
@@ -53,6 +58,12 @@ public class InventoryClient {
   private ServiceRegistry registry;
   private WebClient webClient;
 
+  /**
+   * The planning reads (06.x), through the shared reader so a test or a deployment without
+   * discovery can name the address.
+   */
+  private ServiceReader planning;
+
   @PostConstruct
   void init() {
     registry = new ConsulClient(config.consulHost(), config.consulPort());
@@ -61,6 +72,131 @@ public class InventoryClient {
             .connectTimeout(Duration.ofSeconds(2))
             .readTimeout(Duration.ofSeconds(5))
             .build();
+    planning =
+        new ServiceReader(
+            config,
+            INVENTORY_SERVICE,
+            INTERNAL_ROLE,
+            2,
+            ServiceReader.configuredUrl(INVENTORY_SERVICE));
+  }
+
+  // ── The stock position a proposal reads (06.x) ──────────────────────────────
+
+  /**
+   * The store's reorder plans as the proposal policy reads them.
+   *
+   * @return the plans (empty list when the store has none); empty when inventory-svc could not be
+   *     read, so the caller can refuse rather than propose on nothing
+   */
+  public Optional<List<OrderProposal.Plan>> reorderPlans(UUID tenantId, UUID storeId) {
+    ServiceReader.Reply reply =
+        planning.get(tenantId, "/admin/inventory/rop-plans", Map.of("store", storeId.toString()));
+    if (reply.status() == 404) {
+      return Optional.of(List.of());
+    }
+    if (!reply.ok()) {
+      return Optional.empty();
+    }
+    List<OrderProposal.Plan> plans = new ArrayList<>();
+    for (JsonObject p : dataArray(reply.body())) {
+      plans.add(
+          new OrderProposal.Plan(
+              Ids.parse(p.getString("variantId")),
+              number(p, "rop"),
+              number(p, "eoq"),
+              number(p, "minOrderQty"),
+              number(p, "maxOrderQty"),
+              number(p, "lotMultiplier"),
+              number(p, "avgDailyDemand"),
+              p.containsKey("leadTimeDays") && !p.isNull("leadTimeDays")
+                  ? p.getInt("leadTimeDays")
+                  : 7));
+    }
+    return Optional.of(plans);
+  }
+
+  /**
+   * What is available to sell per variant at the store, every page of it.
+   *
+   * @return variant → available; empty when inventory-svc could not be read
+   */
+  public Optional<Map<UUID, BigDecimal>> availableByVariant(UUID tenantId, UUID storeId) {
+    Map<UUID, BigDecimal> out = new HashMap<>();
+    String after = null;
+    for (int page = 0; page < 200; page++) {
+      Map<String, String> query = new HashMap<>();
+      query.put("store", storeId.toString());
+      query.put("limit", "100");
+      if (after != null) {
+        query.put("after", after);
+      }
+      ServiceReader.Reply reply = planning.get(tenantId, "/admin/inventory/levels", query);
+      if (!reply.ok()) {
+        return Optional.empty();
+      }
+      JsonObject envelope;
+      try (JsonReader reader = Json.createReader(new StringReader(reply.body()))) {
+        envelope = reader.readObject();
+      }
+      JsonArray data = envelope.getJsonArray("data");
+      if (data != null) {
+        for (JsonObject level : data.getValuesAs(JsonObject.class)) {
+          BigDecimal available = number(level, "available");
+          if (available != null) {
+            out.merge(Ids.parse(level.getString("variantId")), available, BigDecimal::add);
+          }
+        }
+      }
+      JsonObject meta =
+          envelope.containsKey("meta") && !envelope.isNull("meta")
+              ? envelope.getJsonObject("meta")
+              : null;
+      after =
+          meta != null && meta.containsKey("nextCursor") && !meta.isNull("nextCursor")
+              ? meta.getString("nextCursor")
+              : null;
+      if (after == null) {
+        break;
+      }
+    }
+    return Optional.of(out);
+  }
+
+  /**
+   * Each forecast variant's expected demand over the next twenty-eight days.
+   *
+   * @return variant → next28; empty when inventory-svc could not be read (the proposal then falls
+   *     back to the plan's average daily demand and says so)
+   */
+  public Optional<Map<UUID, BigDecimal>> forecastNext28(UUID tenantId, UUID storeId) {
+    ServiceReader.Reply reply =
+        planning.get(tenantId, "/admin/inventory/forecasts", Map.of("store", storeId.toString()));
+    if (reply.status() == 404) {
+      return Optional.of(Map.of());
+    }
+    if (!reply.ok()) {
+      return Optional.empty();
+    }
+    Map<UUID, BigDecimal> out = new HashMap<>();
+    for (JsonObject f : dataArray(reply.body())) {
+      BigDecimal next28 = number(f, "next28");
+      if (next28 != null) {
+        out.put(Ids.parse(f.getString("variantId")), next28);
+      }
+    }
+    return Optional.of(out);
+  }
+
+  private static List<JsonObject> dataArray(String body) {
+    try (JsonReader reader = Json.createReader(new StringReader(body))) {
+      JsonArray data = reader.readObject().getJsonArray("data");
+      return data == null ? List.of() : data.getValuesAs(JsonObject.class);
+    }
+  }
+
+  private static BigDecimal number(JsonObject o, String key) {
+    return o.containsKey(key) && !o.isNull(key) ? new BigDecimal(o.get(key).toString()) : null;
   }
 
   /**

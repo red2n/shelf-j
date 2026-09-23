@@ -252,8 +252,8 @@ public class PurchaseRepository extends BaseOutboxRepository {
               c.prepareStatement(
                   "INSERT INTO purchase_orders"
                       + " (id,tenant_id,supplier_id,store_id,status,currency,"
-                      + "  total_net,total_vat,total_gross,expected_delivery,created_by)"
-                      + " VALUES (?,?,?,?,?,?,?,?,?,?,?)")) {
+                      + "  total_net,total_vat,total_gross,expected_delivery,created_by,source)"
+                      + " VALUES (?,?,?,?,?,?,?,?,?,?,?,?)")) {
             ps.setObject(1, po.id());
             ps.setObject(2, po.tenantId());
             ps.setObject(3, po.supplierId());
@@ -265,6 +265,7 @@ public class PurchaseRepository extends BaseOutboxRepository {
             ps.setBigDecimal(9, po.totalGross());
             ps.setObject(10, po.expectedDelivery());
             ps.setObject(11, po.createdBy());
+            ps.setString(12, po.source() == null ? Domain.PO_SOURCE_MANUAL : po.source());
             ps.executeUpdate();
           }
           insertOutbox(c, event);
@@ -284,7 +285,7 @@ public class PurchaseRepository extends BaseOutboxRepository {
     return query(
         "SELECT id,tenant_id,supplier_id,store_id,status,currency,"
             + "total_net,total_vat,total_gross,expected_delivery,created_at,updated_at,cancelled_at,"
-            + "cancelled_reason,closed_at,closed_reason,created_by,approved_by,approved_at"
+            + "cancelled_reason,closed_at,closed_reason,created_by,approved_by,approved_at,source"
             + " FROM purchase_orders WHERE tenant_id=? ORDER BY created_at DESC LIMIT ?",
         ps -> {
           ps.setObject(1, tenantId);
@@ -306,7 +307,7 @@ public class PurchaseRepository extends BaseOutboxRepository {
         query(
             "SELECT id,tenant_id,supplier_id,store_id,status,currency,"
                 + "total_net,total_vat,total_gross,expected_delivery,created_at,updated_at,cancelled_at,"
-                + "cancelled_reason,closed_at,closed_reason,created_by,approved_by,approved_at"
+                + "cancelled_reason,closed_at,closed_reason,created_by,approved_by,approved_at,source"
                 + " FROM purchase_orders WHERE tenant_id=? AND id=?",
             ps -> {
               ps.setObject(1, tenantId);
@@ -529,7 +530,8 @@ public class PurchaseRepository extends BaseOutboxRepository {
         rs.getObject("approved_by", UUID.class),
         rs.getObject("approved_at", OffsetDateTime.class) == null
             ? null
-            : rs.getObject("approved_at", OffsetDateTime.class).toInstant());
+            : rs.getObject("approved_at", OffsetDateTime.class).toInstant(),
+        rs.getString("source"));
   }
 
   // ── PO Lines ──────────────────────────────────────────────────────────────────
@@ -562,8 +564,8 @@ public class PurchaseRepository extends BaseOutboxRepository {
           try (var ps =
               c.prepareStatement(
                   "INSERT INTO purchase_order_lines"
-                      + " (id,tenant_id,po_id,variant_id,qty,unit_price,vat_code)"
-                      + " VALUES (?,?,?,?,?,?,?)")) {
+                      + " (id,tenant_id,po_id,variant_id,qty,unit_price,vat_code,proposal_reason)"
+                      + " VALUES (?,?,?,?,?,?,?,?)")) {
             ps.setObject(1, line.id());
             ps.setObject(2, line.tenantId());
             ps.setObject(3, line.poId());
@@ -571,6 +573,7 @@ public class PurchaseRepository extends BaseOutboxRepository {
             ps.setBigDecimal(5, line.qty());
             ps.setBigDecimal(6, line.unitPrice());
             ps.setString(7, line.vatCode());
+            ps.setString(8, line.proposalReason());
             ps.executeUpdate();
           }
           restateTotals(c, line.tenantId(), line.poId(), currency, vatRates);
@@ -600,7 +603,7 @@ public class PurchaseRepository extends BaseOutboxRepository {
     List<PurchaseOrderLine> lines = new ArrayList<>();
     try (var ps =
         c.prepareStatement(
-            "SELECT id,tenant_id,po_id,variant_id,qty,unit_price,vat_code,created_at"
+            "SELECT id,tenant_id,po_id,variant_id,qty,unit_price,vat_code,created_at,proposal_reason"
                 + " FROM purchase_order_lines WHERE tenant_id=? AND po_id=?")) {
       ps.setObject(1, tenantId);
       ps.setObject(2, poId);
@@ -615,7 +618,8 @@ public class PurchaseRepository extends BaseOutboxRepository {
                   rs.getBigDecimal("qty"),
                   rs.getBigDecimal("unit_price"),
                   rs.getString("vat_code"),
-                  rs.getObject("created_at", OffsetDateTime.class).toInstant()));
+                  rs.getObject("created_at", OffsetDateTime.class).toInstant(),
+                  rs.getString("proposal_reason")));
         }
       }
     }
@@ -642,7 +646,7 @@ public class PurchaseRepository extends BaseOutboxRepository {
    */
   public List<PurchaseOrderLine> findPurchaseOrderLines(UUID tenantId, UUID poId) {
     return query(
-        "SELECT id,tenant_id,po_id,variant_id,qty,unit_price,vat_code,created_at"
+        "SELECT id,tenant_id,po_id,variant_id,qty,unit_price,vat_code,created_at,proposal_reason"
             + " FROM purchase_order_lines WHERE tenant_id=? AND po_id=?",
         ps -> {
           ps.setObject(1, tenantId);
@@ -657,7 +661,8 @@ public class PurchaseRepository extends BaseOutboxRepository {
                 rs.getBigDecimal("qty"),
                 rs.getBigDecimal("unit_price"),
                 rs.getString("vat_code"),
-                rs.getObject("created_at", OffsetDateTime.class).toInstant()),
+                rs.getObject("created_at", OffsetDateTime.class).toInstant(),
+                rs.getString("proposal_reason")),
         "find po lines");
   }
 

@@ -263,7 +263,34 @@ public final class Domain {
       String closedReason,
       UUID createdBy,
       UUID approvedBy,
-      Instant approvedAt) {}
+      Instant approvedAt,
+      /** MANUAL, or PROPOSAL when a proposal run raised it (06.x). */
+      String source) {}
+
+  public static final String PO_SOURCE_MANUAL = "MANUAL";
+  public static final String PO_SOURCE_PROPOSAL = "PROPOSAL";
+
+  /** An item a proposal run could not judge, and why. */
+  public record SkippedItem(UUID variantId, String reason) {}
+
+  /** One proposal run: what it looked at, what it raised, what it skipped (06.x). */
+  public record ProposalRun(
+      UUID id,
+      UUID tenantId,
+      UUID storeId,
+      UUID ranBy,
+      Instant ranAt,
+      int coverDays,
+      int considered,
+      int ordersRaised,
+      int linesRaised,
+      List<UUID> orderIds,
+      List<SkippedItem> skipped) {
+    public ProposalRun {
+      orderIds = List.copyOf(orderIds);
+      skipped = List.copyOf(skipped);
+    }
+  }
 
   // ── Purchase order approval (spend authority) ─────────────────────────────────
 
@@ -336,7 +363,11 @@ public final class Domain {
       BigDecimal qty,
       BigDecimal unitPrice,
       String vatCode,
-      Instant createdAt) {}
+      Instant createdAt,
+      /**
+       * The proposal's arithmetic for this line, in the buyer's words; null when a person typed it.
+       */
+      String proposalReason) {}
 
   // ── Goods Receipt (GRN) ───────────────────────────────────────────────────────
   public record GoodsReceipt(

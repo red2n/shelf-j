@@ -83,6 +83,8 @@ class PurchaseOrder {
   final double totalGross;
   final String? expectedDelivery;
   final String createdAt;
+  /// MANUAL, or PROPOSAL when a proposal run raised it (06.x).
+  final String source;
 
   const PurchaseOrder({
     required this.id,
@@ -95,6 +97,7 @@ class PurchaseOrder {
     required this.totalGross,
     this.expectedDelivery,
     required this.createdAt,
+    this.source = 'MANUAL',
   });
 
   factory PurchaseOrder.fromJson(Map<String, dynamic> j) => PurchaseOrder(
@@ -108,6 +111,7 @@ class PurchaseOrder {
     totalGross: (j['totalGross'] as num?)?.toDouble() ?? 0,
     expectedDelivery: j['expectedDelivery'] as String?,
     createdAt: j['createdAt'] as String? ?? '',
+    source: j['source'] as String? ?? 'MANUAL',
   );
 }
 
@@ -117,6 +121,8 @@ class PurchaseOrderLine {
   final double qty;
   final double unitPrice;
   final String? vatCode;
+  /// The proposal's arithmetic for this line; null on a line a person typed.
+  final String? proposalReason;
 
   const PurchaseOrderLine({
     required this.id,
@@ -124,6 +130,7 @@ class PurchaseOrderLine {
     required this.qty,
     required this.unitPrice,
     this.vatCode,
+    this.proposalReason,
   });
 
   factory PurchaseOrderLine.fromJson(Map<String, dynamic> j) =>
@@ -133,6 +140,7 @@ class PurchaseOrderLine {
         qty: (j['qty'] as num?)?.toDouble() ?? 0,
         unitPrice: (j['unitPrice'] as num?)?.toDouble() ?? 0,
         vatCode: j['vatCode'] as String?,
+        proposalReason: j['proposalReason'] as String?,
       );
 }
 

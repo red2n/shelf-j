@@ -972,6 +972,22 @@ class _PurchaseOrdersTab extends ConsumerWidget {
     final cs = Theme.of(context).colorScheme;
     return Column(
       children: [
+        Padding(
+          padding: const EdgeInsets.fromLTRB(16, 12, 16, 0),
+          child: Row(
+            children: [
+              OutlinedButton.icon(
+                key: const Key('propose-orders'),
+                onPressed: () => showDialog(
+                  context: context,
+                  builder: (_) => const _ProposeOrdersDialog(),
+                ),
+                icon: const Icon(Icons.auto_graph),
+                label: const Text('Propose orders'),
+              ),
+            ],
+          ),
+        ),
         const SizedBox(height: 12),
         Expanded(
           child: async.when(
@@ -1027,6 +1043,10 @@ class _PurchaseOrdersTab extends ConsumerWidget {
                           ),
                           const SizedBox(width: 8),
                           _PoStatusBadge(po.status),
+                          if (po.source == 'PROPOSAL') ...[
+                            const SizedBox(width: 6),
+                            const _ProposedBadge(),
+                          ],
                         ],
                       ),
                       subtitle: Text(
@@ -1339,7 +1359,9 @@ class _PoDetailDialogState extends ConsumerState<_PoDetailDialog> {
                                     'complete',
                                   if (p != null && p.qtyReturned > 0)
                                     '${p.qtyReturned.toStringAsFixed(0)} returned',
-                                ].join(' · '),
+                                ].join(' · ') +
+                                    // The proposal's arithmetic, so the buyer can check the line.
+                                    (l.proposalReason == null ? '' : '\n${l.proposalReason}'),
                                 style: TextStyle(
                                   color: owed > 0
                                       ? context.status.warning
@@ -2601,4 +2623,149 @@ String _trim(double v) {
   return s.contains('.')
       ? s.replaceFirst(RegExp(r'0+$'), '').replaceFirst(RegExp(r'\.$'), '')
       : s;
+}
+
+// ── The automatic order proposal (06.x) ─────────────────────────────────────
+
+/// Marks an order a proposal run raised, beside its status.
+class _ProposedBadge extends StatelessWidget {
+  const _ProposedBadge();
+
+  @override
+  Widget build(BuildContext context) {
+    final status = context.status;
+    return Container(
+      padding: const EdgeInsets.symmetric(horizontal: 6, vertical: 2),
+      decoration: BoxDecoration(
+        color: status.infoContainer,
+        borderRadius: AppRadius.badge,
+      ),
+      child: Row(
+        mainAxisSize: MainAxisSize.min,
+        children: [
+          Icon(Icons.auto_graph, size: 12, color: status.onInfoContainer),
+          const SizedBox(width: 4),
+          Text(
+            'Proposed',
+            style: TextStyle(
+              fontSize: 11,
+              fontWeight: FontWeight.w600,
+              color: status.onInfoContainer,
+            ),
+          ),
+        ],
+      ),
+    );
+  }
+}
+
+/// A store and a cover period; purchase-svc does the rest and says what it
+/// raised and what it skipped and why.
+class _ProposeOrdersDialog extends ConsumerStatefulWidget {
+  const _ProposeOrdersDialog();
+
+  @override
+  ConsumerState<_ProposeOrdersDialog> createState() => _ProposeOrdersDialogState();
+}
+
+class _ProposeOrdersDialogState extends ConsumerState<_ProposeOrdersDialog> {
+  String? _storeId;
+  final _coverCtrl = TextEditingController(text: '28');
+  bool _running = false;
+
+  @override
+  void dispose() {
+    _coverCtrl.dispose();
+    super.dispose();
+  }
+
+  Future<void> _run(String storeId) async {
+    setState(() => _running = true);
+    final messenger = ScaffoldMessenger.of(context);
+    final navigator = Navigator.of(context);
+    try {
+      final resp = await ref.read(apiClientProvider).dio.post(
+            '/${ApiConstants.purchase}/purchase-orders/proposals/run',
+            data: {
+              'storeId': storeId,
+              'coverDays': int.tryParse(_coverCtrl.text.trim()) ?? 28,
+            },
+          );
+      final d = (resp.data['data'] as Map<String, dynamic>?) ?? {};
+      final orders = (d['orders'] as List?) ?? [];
+      final skipped = (d['skipped'] as List?) ?? [];
+      final drafts = orders
+          .map((o) => o as Map<String, dynamic>)
+          .map((o) =>
+              '${o['supplierName'] ?? 'supplier'} (${o['lines']} line${o['lines'] == 1 ? '' : 's'}, '
+              '${AppFormat.money((o['totalNet'] as num?)?.toDouble() ?? 0, currencyCode: o['currency'] as String?)})')
+          .join(', ');
+      final text = orders.isEmpty
+          ? (skipped.isEmpty
+              ? 'Nothing to order: every item is above its reorder point.'
+              : 'Nothing to order; ${skipped.length} item${skipped.length == 1 ? '' : 's'} skipped — open the run to see why.')
+          : 'Proposed ${orders.length} draft${orders.length == 1 ? '' : 's'}: $drafts'
+              '${skipped.isEmpty ? '' : ' · ${skipped.length} skipped'}';
+      ref.invalidate(purchaseOrdersProvider);
+      navigator.pop();
+      messenger.showSnackBar(SnackBar(content: Text(text)));
+    } catch (e) {
+      messenger.showSnackBar(
+          SnackBar(content: Text(friendlyError(e, fallback: 'The proposal could not run.'))));
+    } finally {
+      if (mounted) setState(() => _running = false);
+    }
+  }
+
+  @override
+  Widget build(BuildContext context) {
+    final stores = ref.watch(storesProvider).value ?? const [];
+    final storeId = _storeId ?? (stores.isNotEmpty ? stores.first.id : null);
+    return AlertDialog(
+      title: const Text('Propose orders'),
+      content: SizedBox(
+        width: 420,
+        child: Column(
+          mainAxisSize: MainAxisSize.min,
+          children: [
+            DropdownButtonFormField<String>(
+              key: const Key('propose-store'),
+              initialValue: storeId,
+              decoration: const InputDecoration(labelText: 'Store'),
+              items: stores
+                  .map((s) => DropdownMenuItem(value: s.id, child: Text(s.name)))
+                  .toList(),
+              onChanged: (v) => setState(() => _storeId = v),
+            ),
+            const SizedBox(height: 12),
+            TextField(
+              key: const Key('propose-cover'),
+              controller: _coverCtrl,
+              keyboardType: TextInputType.number,
+              decoration: const InputDecoration(
+                labelText: 'Cover (days)',
+                helperText:
+                    'An item with no EOQ is ordered back to its reorder point plus this many days of forecast.',
+              ),
+            ),
+            const SizedBox(height: 8),
+            Text(
+              'Every item at or below its reorder point becomes a line on a draft order for the '
+              'supplier you last bought it from. You submit the drafts.',
+              style: Theme.of(context).textTheme.bodySmall,
+            ),
+          ],
+        ),
+      ),
+      actions: [
+        TextButton(onPressed: () => Navigator.of(context).pop(), child: const Text('Cancel')),
+        FilledButton.icon(
+          key: const Key('propose-run'),
+          onPressed: storeId == null || _running ? null : () => _run(storeId),
+          icon: const Icon(Icons.auto_graph),
+          label: const Text('Run'),
+        ),
+      ],
+    );
+  }
 }

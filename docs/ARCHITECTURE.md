@@ -41,7 +41,7 @@ Imagine a business that owns one or more shops. With StoreQL it can:
 - **buy stock from suppliers** and receive it against purchase orders (procurement),
 - **sell at the counter** with a full POS (cash register, till management, receipts, layaway, gift cards),
 - **sell the same catalog online** on a public storefront customers browse and check out on,
-- **plan replenishment** (a statistical demand forecast per item and store — smoothing with a weekday profile, or Croston with the Syntetos–Boylan correction for intermittent demand, each reporting its own hold-out accuracy — feeding reorder points, kanban, ABC analysis, safety stock),
+- **plan replenishment** (a statistical demand forecast per item and store — smoothing with a weekday profile, or Croston with the Syntetos–Boylan correction for intermittent demand, each reporting its own hold-out accuracy — feeding reorder points, kanban, ABC analysis, safety stock; purchase-svc's order proposal turns the reorder point into a draft order on the supplier last bought from),
 - handle **UK-style VAT**, promotions, and multi-price-list pricing,
 - run **loyalty** and **store credit** for repeat customers,
 - see **reports** across stores of what sold, what's low, and what's in transit.

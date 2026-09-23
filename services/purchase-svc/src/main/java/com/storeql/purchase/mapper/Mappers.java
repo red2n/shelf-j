@@ -17,10 +17,14 @@ import com.storeql.purchase.dto.Dtos.IntercompanyInvoiceResponse;
 import com.storeql.purchase.dto.Dtos.LandedCostLineResponse;
 import com.storeql.purchase.dto.Dtos.LandedCostResponse;
 import com.storeql.purchase.dto.Dtos.NominalLedgerEntryResponse;
+import com.storeql.purchase.dto.Dtos.ProposalRunResponse;
+import com.storeql.purchase.dto.Dtos.ProposedOrderResponse;
 import com.storeql.purchase.dto.Dtos.PurchaseOrderLineProgressResponse;
 import com.storeql.purchase.dto.Dtos.PurchaseOrderLineResponse;
 import com.storeql.purchase.dto.Dtos.PurchaseOrderResponse;
+import com.storeql.purchase.dto.Dtos.SkippedItemResponse;
 import com.storeql.purchase.dto.Dtos.SupplierResponse;
+import com.storeql.purchase.service.ProposalService;
 import java.util.List;
 
 /** Domain → DTO mappers. No business logic. */
@@ -84,7 +88,8 @@ public final class Mappers {
         po.closedReason(),
         po.createdBy(),
         po.approvedBy(),
-        po.approvedAt());
+        po.approvedAt(),
+        po.source());
   }
 
   /**
@@ -198,7 +203,8 @@ public final class Mappers {
         line.qty(),
         line.unitPrice(),
         line.vatCode(),
-        line.createdAt());
+        line.createdAt(),
+        line.proposalReason());
   }
 
   /**
@@ -522,5 +528,29 @@ public final class Mappers {
   public static LandedCostLineResponse toDto(LandedCost.Line l) {
     return new LandedCostLineResponse(
         l.id(), l.grLineId(), l.variantId(), l.qty(), l.lineValue(), l.amount(), l.perUnit());
+  }
+
+  /** A proposal run on the wire, its orders described (06.x). */
+  public static ProposalRunResponse toDto(ProposalService.RunResult r) {
+    return new ProposalRunResponse(
+        r.run().id(),
+        r.run().storeId(),
+        r.run().ranAt().toString(),
+        r.run().coverDays(),
+        r.run().considered(),
+        r.orders().stream()
+            .map(
+                o ->
+                    new ProposedOrderResponse(
+                        o.poId(),
+                        o.supplierId(),
+                        o.supplierName(),
+                        o.currency(),
+                        o.lines(),
+                        o.totalNet()))
+            .toList(),
+        r.run().skipped().stream()
+            .map(x -> new SkippedItemResponse(x.variantId(), x.reason()))
+            .toList());
   }
 }

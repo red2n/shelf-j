@@ -361,7 +361,8 @@ public class PurchaseService {
             // subject to golden rule #3 for the same reason tenant_id is.
             ctx.userId(),
             null,
-            null);
+            null,
+            Domain.PO_SOURCE_MANUAL);
     return repo.createPurchaseOrder(
         po, Events.purchaseOrderCreated(ctx.requireTenantId(), po.id()));
   }
@@ -424,7 +425,8 @@ public class PurchaseService {
             req.qty(),
             req.unitPrice(),
             req.vatCode() != null ? req.vatCode().toUpperCase(java.util.Locale.ROOT) : "T1",
-            Instant.now());
+            Instant.now(),
+            null);
     return repo.addPurchaseOrderLine(
         line, po.currency(), pricing.findVatRates(ctx.requireTenantId()));
   }

@@ -203,7 +203,9 @@ public final class Dtos {
                       + " SUBMITTED.")
           UUID approvedBy,
       @Schema(description = "When it was approved; null unless it needed and received approval.")
-          Instant approvedAt) {}
+          Instant approvedAt,
+      @Schema(description = "MANUAL, or PROPOSAL when a proposal run raised it (06.x).")
+          String source) {}
 
   @Schema(
       name = "PurchaseOrderLineProgressResponse",
@@ -229,7 +231,9 @@ public final class Dtos {
       BigDecimal qty,
       BigDecimal unitPrice,
       String vatCode,
-      Instant createdAt) {}
+      Instant createdAt,
+      @Schema(description = "Why a proposal put this line here; null on a line a person typed.")
+          String proposalReason) {}
 
   // ── Goods Receipt ─────────────────────────────────────────────────────────────
   @Schema(
@@ -901,4 +905,34 @@ public final class Dtos {
       UUID reversedBy,
       String reversedReason,
       List<LandedCostLineResponse> lines) {}
+
+  // ── Automatic order proposal (06.x) ──────────────────────────────────────────
+
+  @Schema(name = "ProposalRunRequest")
+  public record ProposalRunRequest(
+      @NotNull UUID storeId,
+      @Schema(description = "Days an order without an EOQ should cover, 1 to 365; 28 when omitted.")
+          Integer coverDays) {}
+
+  @Schema(name = "ProposedOrder")
+  public record ProposedOrderResponse(
+      UUID poId,
+      UUID supplierId,
+      String supplierName,
+      String currency,
+      int lines,
+      BigDecimal totalNet) {}
+
+  @Schema(name = "SkippedItem")
+  public record SkippedItemResponse(UUID variantId, String reason) {}
+
+  @Schema(name = "ProposalRun")
+  public record ProposalRunResponse(
+      UUID id,
+      UUID storeId,
+      String ranAt,
+      int coverDays,
+      @Schema(description = "Items with a reorder plan at the store.") int considered,
+      List<ProposedOrderResponse> orders,
+      List<SkippedItemResponse> skipped) {}
 }
