@@ -70,8 +70,10 @@ export default function ({ tenant, store, second, rival, manager, variant }) {
   const asKey = (method, path, body, extra = {}) => call(method, path, { token: key, body, ...extra });
   const received = asKey('POST', '/api/inventory-svc/admin/inventory/receive', { storeId: store, variantId: variant, qty: 5, batchNo: `K-${uniq()}`.slice(0, 32), costPrice: '4.00' }, { idem: true });
   expect(received, '[+] the key receives stock at its store, as a storekeeper may', 201);
-  // Store scope reaches the services as it does for a person: a route that holds a caller to their
-  // stores holds the key to the one it was given. (Stock receipts hold nobody — SJ-D74, a gap of its own.)
+  // Store scope reaches the services as it does for a person: every route that takes a store holds
+  // the caller to the stores they were given (SJ-D74 closed the stock routes that did not).
+  expect(asKey('POST', '/api/inventory-svc/admin/inventory/receive', { storeId: second, variantId: variant, qty: 5, batchNo: `K-${uniq()}`.slice(0, 32), costPrice: '4.00' }, { idem: true }), '[-] and not at another store: the key is held to the store it was given', 403, 'STORE_ACCESS_DENIED');
+  expect(asKey('GET', `/api/inventory-svc/admin/inventory/levels?store=${second}`), '[-] nor does it read another store\'s stock', 403, 'STORE_ACCESS_DENIED');
   const managerKey = must(mint(owner, { name: 'Store ops', role: 'MANAGER', storeIds: [store] }), 201, 'a manager key for one store').key;
   const day = new Date().toISOString().slice(0, 10);
   const tasks = (storeId) => call('GET', `/api/tenant-svc/admin/workforce/tasks/days?storeId=${storeId}&from=${day}&to=${day}`, { token: managerKey });
@@ -92,7 +94,7 @@ export default function ({ tenant, store, second, rival, manager, variant }) {
   const forged = key.slice(0, 43) + (key.endsWith('A') ? 'B' : 'A');
   expect(call('GET', `/api/inventory-svc/admin/inventory/levels?store=${store}`, { token: forged }), '[-] a key a character off opens nothing', 401);
   expect(call('GET', `/api/inventory-svc/admin/inventory/levels?store=${store}`, { token: 'sqk_short' }), '[-] nor one the wrong length', 401);
-  truthy('[-] nor another business\'s stock: the key sees only its own business', (data(call('GET', `/api/inventory-svc/admin/inventory/levels?store=${rival.stores[0].id}`, { token: key })) || []).length === 0, 'rival levels');
+  expect(call('GET', `/api/inventory-svc/admin/inventory/levels?store=${rival.stores[0].id}`, { token: key }), '[-] nor another business\'s stock: a store the key does not keep is refused before the business is even asked', 403, 'STORE_ACCESS_DENIED');
 
   // ── revoking ─────────────────────────────────────────────────────────────────────────────────
   expect(call('DELETE', `${KEYS}/${keyId}`, { token: manager.token }), '[-] a manager cannot revoke', 403);

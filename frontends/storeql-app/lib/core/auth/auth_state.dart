@@ -94,8 +94,9 @@ class AuthAuthenticated extends AuthState {
       'sales.void', 'sales.refund', 'till.no_sale', 'till.manage', 'stock.adjust',
       'purchasing.approve', 'purchasing.invoices.decide', 'finance.journal',
       'pricing.write', 'customers.privacy', 'staff.manage', 'finance.payments',
+      'stock.transfer',
     ],
-    'STOREKEEPER': ['stock.adjust', 'purchasing.approve'],
+    'STOREKEEPER': ['stock.adjust', 'stock.transfer', 'purchasing.approve'],
     'CASHIER': ['till.no_sale', 'purchasing.approve'],
   };
 

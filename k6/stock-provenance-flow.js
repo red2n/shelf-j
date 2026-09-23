@@ -19,6 +19,7 @@ import {
   poll,
   priceVariants,
   sellableVariant,
+  staffUser,
   truthy,
   uniq,
 } from './lib/storeql.js';
@@ -38,10 +39,11 @@ export function setup() {
   const { variantId } = sellableVariant(tenant, 'Chilled soup');
   priceVariants(tenant, [variantId], '12.00');
   const rival = onboardTenant(`provenance-rival-${uniq()}`);
-  return { tenant, variantId, rival };
+  const cashier = staffUser(tenant, 'CASHIER', [tenant.stores[0].id]);
+  return { tenant, variantId, rival, cashier };
 }
 
-export default function ({ tenant, variantId, rival }) {
+export default function ({ tenant, variantId, rival, cashier }) {
   const owner = tenant.owner.token;
   const [a, b] = tenant.stores;
   const soon = new Date(Date.now() + 10 * 86400e3).toISOString().slice(0, 10);
@@ -125,6 +127,7 @@ export default function ({ tenant, variantId, rival }) {
   // A cashier CAN create a transfer today: the admin filter opens the whole /admin/inventory subtree to any
   // staff role and the transfer resource adds no stricter gate. Recorded as SJ-D73, not pinned here.
   expect(call('POST', `${INV}/transfers`, { body: { fromStoreId: a.id, toStoreId: b.id, transferType: 'DIRECT', lines: [{ variantId, requestedQty: 1 }] } }), '[-] nobody without a token moves stock', 401);
+  expect(transfer('DIRECT', 1, cashier.token), '[-] a cashier does not move stock between stores (SJ-D73): stock.transfer is the storekeeper\'s', 403, 'PERMISSION_DENIED');
   expect(call('POST', `${INV}/move-orders/${move.id}/pick`, { token: owner }), '[-] a move already picked is not picked twice', [409, 422]);
   expect(call('POST', `${INV}/transfers/${direct.id}/receive`, { token: owner }), '[-] a direct transfer is not received twice', [409, 422]);
   truthy('[abuse] a rival business sees none of these batches', batches(b.id, rival.owner.token).length === 0, 'rival');

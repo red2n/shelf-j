@@ -6,6 +6,7 @@ import com.storeql.inventory.dto.Dtos.TransferOrderResponse;
 import com.storeql.inventory.mapper.Mappers;
 import com.storeql.inventory.service.InventoryService;
 import com.storeql.web.ApiResponse;
+import com.storeql.web.Permissions;
 import com.storeql.web.TenantContext;
 import com.storeql.web.Validations;
 import jakarta.enterprise.context.ApplicationScoped;
@@ -51,6 +52,9 @@ public class TransferOrderResource {
   @POST
   @Path("/transfers")
   public Response createTransfer(CreateTransferOrderRequest req) {
+    // SJ-D73: moving stock is the storekeeper's, never the till's. The sending store is held to the
+    // caller by StoreScopeFilter (fromStoreId); the receiving store's keeper is held at receipt.
+    ctx.requirePermission(Permissions.STOCK_TRANSFER);
     Validations.validate(req);
     UUID tenantId = ctx.requireTenantId();
     UUID fromStore = uuid(req.fromStoreId(), "fromStoreId");
@@ -94,7 +98,7 @@ public class TransferOrderResource {
       @QueryParam("status") String status,
       @QueryParam("limit") Integer limitParam) {
     UUID tenantId = ctx.requireTenantId();
-    UUID storeId = store == null || store.isBlank() ? null : uuid(store, "store");
+    UUID storeId = ctx.scopeStore(store == null || store.isBlank() ? null : uuid(store, "store"));
     int limit = limitParam == null || limitParam < 1 ? 20 : Math.min(limitParam, 100);
     return ApiResponse.ok(
         service.listTransferOrders(tenantId, storeId, status, limit).stream()
@@ -115,6 +119,7 @@ public class TransferOrderResource {
   @Path("/transfers/{id}")
   public ApiResponse<TransferOrderResponse> getTransfer(@PathParam("id") UUID id) {
     var wl = service.getTransferOrder(ctx.requireTenantId(), id);
+    ctx.requireAnyStoreAccess(wl.order().fromStoreId(), wl.order().toStoreId());
     return ApiResponse.ok(Mappers.toTransferOrder(wl.order(), wl.lines()));
   }
 
@@ -135,7 +140,10 @@ public class TransferOrderResource {
   @POST
   @Path("/transfers/{id}/ship")
   public ApiResponse<TransferOrderResponse> shipTransfer(@PathParam("id") UUID id) {
-    var wl = service.shipTransferOrder(ctx.requireTenantId(), id);
+    ctx.requirePermission(Permissions.STOCK_TRANSFER);
+    UUID tenantId = ctx.requireTenantId();
+    ctx.requireStoreAccess(service.getTransferOrder(tenantId, id).order().fromStoreId());
+    var wl = service.shipTransferOrder(tenantId, id);
     return ApiResponse.ok(Mappers.toTransferOrder(wl.order(), wl.lines()));
   }
 
@@ -156,7 +164,10 @@ public class TransferOrderResource {
   @POST
   @Path("/transfers/{id}/receive")
   public ApiResponse<TransferOrderResponse> receiveTransfer(@PathParam("id") UUID id) {
-    var wl = service.receiveTransferOrder(ctx.requireTenantId(), id);
+    ctx.requirePermission(Permissions.STOCK_TRANSFER);
+    UUID tenantId = ctx.requireTenantId();
+    ctx.requireStoreAccess(service.getTransferOrder(tenantId, id).order().toStoreId());
+    var wl = service.receiveTransferOrder(tenantId, id);
     return ApiResponse.ok(Mappers.toTransferOrder(wl.order(), wl.lines()));
   }
 
@@ -175,6 +186,9 @@ public class TransferOrderResource {
   @POST
   @Path("/transfers/{id}/cancel")
   public ApiResponse<TransferOrderResponse> cancelTransfer(@PathParam("id") UUID id) {
+    ctx.requirePermission(Permissions.STOCK_TRANSFER);
+    var open = service.getTransferOrder(ctx.requireTenantId(), id).order();
+    ctx.requireAnyStoreAccess(open.fromStoreId(), open.toStoreId());
     var cancelled = service.cancelTransferOrder(ctx.requireTenantId(), id);
     var wl = service.getTransferOrder(ctx.requireTenantId(), cancelled.id());
     return ApiResponse.ok(Mappers.toTransferOrder(wl.order(), wl.lines()));
