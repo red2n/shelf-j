@@ -672,7 +672,31 @@ public class CustomerResource {
   public ApiResponse<?> getLoyalty(@PathParam("id") UUID customerId) {
     UUID tenantId = ctx.requireTenantId();
     return ApiResponse.ok(
-        Mappers.toLoyalty(service.getLoyaltyAccount(tenantId, customerId, ctx)),
+        Mappers.toLoyalty(service.loyaltyView(tenantId, customerId, ctx)),
+        ApiResponse.Meta.of(ctx.requestId()));
+  }
+
+  /**
+   * The signed-in shopper's own points (13.x): balance, tier, the next tier, and the points about
+   * to expire — what a customer is owed a warning about.
+   *
+   * @return the shopper's loyalty
+   * @throws com.storeql.web.ApiException {@code 404 CUSTOMER_NOT_FOUND} before the shopper has a
+   *     record in this shop
+   */
+  @Operation(
+      summary = "My loyalty",
+      description =
+          "The signed-in shopper's points in this shop: balance, tier and since when, the next tier"
+              + " and how far, the earn multiplier, and any points dying within thirty days.")
+  @APIResponse(responseCode = "200", description = "The shopper's loyalty")
+  @APIResponse(responseCode = "404", description = "No record of the shopper in this shop yet")
+  @Tag(name = "Loyalty")
+  @GET
+  @Path("/me/loyalty")
+  public ApiResponse<?> myLoyalty() {
+    return ApiResponse.ok(
+        Mappers.toLoyalty(service.myLoyalty(ctx.requireTenantId(), ctx.requireUserId())),
         ApiResponse.Meta.of(ctx.requestId()));
   }
 

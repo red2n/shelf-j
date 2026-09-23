@@ -8,12 +8,15 @@ import com.storeql.customer.domain.Domain.MarketingConsentEntry;
 import com.storeql.customer.domain.Domain.MarketingPreference;
 import com.storeql.customer.domain.Domain.StoreCreditAccount;
 import com.storeql.customer.domain.Domain.StoreCreditLedgerEntry;
+import com.storeql.customer.domain.Domain.TierChange;
+import com.storeql.customer.domain.LoyaltyProgramme;
 import com.storeql.ids.Ids;
 import com.storeql.service.BaseOutboxRepository;
 import com.storeql.service.OutboxRow;
 import com.storeql.web.ApiException;
 import jakarta.enterprise.context.ApplicationScoped;
 import java.math.BigDecimal;
+import java.math.RoundingMode;
 import java.sql.Connection;
 import java.sql.PreparedStatement;
 import java.sql.ResultSet;
@@ -25,6 +28,7 @@ import java.time.ZoneOffset;
 import java.util.List;
 import java.util.Optional;
 import java.util.UUID;
+import java.util.function.Function;
 
 /**
  * Persistence for customers, addresses, loyalty, and store credit. Every query on tenant-owned data
@@ -919,34 +923,32 @@ public class CustomerRepository extends BaseOutboxRepository {
    * @param event the outbox row to commit alongside
    * @return the account with its new balance and tier
    */
+  /**
+   * Awards points by hand: a lot under the programme's expiry, the ledger entry, the tier the
+   * qualifying points now reach (announced when it moves), and the event.
+   */
   public LoyaltyAccount earnPoints(
       UUID tenantId,
       UUID customerId,
       BigDecimal points,
       UUID orderId,
       String reason,
-      OutboxRow event) {
+      LoyaltyProgramme programme,
+      OutboxRow event,
+      Function<TierChange, OutboxRow> tierEvent) {
     return inTx(
         conn -> {
           LoyaltyAccount account = getOrCreateLoyaltyAccount(conn, tenantId, customerId);
-          BigDecimal newBalance = account.pointsBalance().add(points);
-          BigDecimal newLifetime = account.lifetimePoints().add(points);
-          String newTier = LoyaltyAccount.tierFor(newLifetime);
           LoyaltyAccount updated =
-              updateLoyaltyAccount(conn, tenantId, customerId, newBalance, newLifetime, newTier);
-          UUID entryId = Ids.newId();
-          insertLedgerEntry(
-              conn,
-              new LoyaltyLedgerEntry(
-                  entryId,
-                  tenantId,
-                  customerId,
-                  LoyaltyLedgerEntry.TYPE_EARN,
+              credit(
+                  conn,
+                  account,
                   points,
-                  newBalance,
+                  LoyaltyLedgerEntry.TYPE_EARN,
                   orderId,
                   reason,
-                  Instant.now()));
+                  programme,
+                  tierEvent);
           insertOutbox(conn, event);
           return updated;
         },
@@ -954,11 +956,8 @@ public class CustomerRepository extends BaseOutboxRepository {
   }
 
   /**
-   * Accrue loyalty points from a confirmed order — idempotently. The processed_events mark and the
-   * accrual commit in one transaction (golden rule #7), so a redelivered OrderConfirmed accrues at
-   * most once. Returns {@code null} when the event was already processed, or when the order's
-   * customer is unknown to this service (e.g. since anonymized) — the dedupe mark still stands so
-   * the consumer does not loop; otherwise the updated account.
+   * Accrues a confirmed order's points once: the base points at the customer's tier multiplier,
+   * said so in the reason, with the event built for the points actually awarded.
    */
   public LoyaltyAccount accrueFromOrderOnce(
       UUID eventId,
@@ -966,9 +965,10 @@ public class CustomerRepository extends BaseOutboxRepository {
       UUID tenantId,
       UUID customerId,
       UUID orderId,
-      BigDecimal points,
-      String reason,
-      OutboxRow event) {
+      BigDecimal basePoints,
+      LoyaltyProgramme programme,
+      Function<BigDecimal, OutboxRow> eventFor,
+      Function<TierChange, OutboxRow> tierEvent) {
     return inTx(
         conn -> {
           if (!markProcessedIfNewTx(conn, eventId, consumerName)) {
@@ -978,24 +978,28 @@ public class CustomerRepository extends BaseOutboxRepository {
             return null; // order referenced a customer this service doesn't hold — skip, no loop
           }
           LoyaltyAccount account = getOrCreateLoyaltyAccount(conn, tenantId, customerId);
-          BigDecimal newBalance = account.pointsBalance().add(points);
-          BigDecimal newLifetime = account.lifetimePoints().add(points);
-          String newTier = LoyaltyAccount.tierFor(newLifetime);
+          BigDecimal multiplier = programme.multiplierFor(account.tier());
+          BigDecimal points = basePoints.multiply(multiplier).setScale(2, RoundingMode.DOWN);
+          String reason =
+              "Loyalty for order "
+                  + orderId
+                  + (multiplier.compareTo(BigDecimal.ONE) == 0
+                      ? ""
+                      : " · "
+                          + account.tier()
+                          + " ×"
+                          + multiplier.stripTrailingZeros().toPlainString());
           LoyaltyAccount updated =
-              updateLoyaltyAccount(conn, tenantId, customerId, newBalance, newLifetime, newTier);
-          insertLedgerEntry(
-              conn,
-              new LoyaltyLedgerEntry(
-                  Ids.newId(),
-                  tenantId,
-                  customerId,
-                  LoyaltyLedgerEntry.TYPE_EARN,
+              credit(
+                  conn,
+                  account,
                   points,
-                  newBalance,
+                  LoyaltyLedgerEntry.TYPE_EARN,
                   orderId,
                   reason,
-                  Instant.now()));
-          insertOutbox(conn, event);
+                  programme,
+                  tierEvent);
+          insertOutbox(conn, eventFor.apply(points));
           return updated;
         },
         "accrue loyalty from order");
@@ -1014,26 +1018,14 @@ public class CustomerRepository extends BaseOutboxRepository {
     }
   }
 
-  /**
-   * Debits points, appends the ledger entry and writes the event — atomically.
-   *
-   * <p>The balance check happens inside the transaction, so concurrent redemptions cannot together
-   * overdraw the account. Lifetime points are untouched, so the tier does not fall.
-   *
-   * @param tenantId owning tenant
-   * @param customerId the customer to debit
-   * @param points the points to spend
-   * @param orderId the order being paid towards, or {@code null}
-   * @param reason free-text reason recorded on the ledger entry
-   * @param event the outbox row to commit alongside
-   * @return the account with its new balance
-   */
+  /** Spends points from the lot that dies first; refused when the balance is short. */
   public LoyaltyAccount redeemPoints(
       UUID tenantId,
       UUID customerId,
       BigDecimal points,
       UUID orderId,
       String reason,
+      LoyaltyProgramme programme,
       OutboxRow event) {
     return inTx(
         conn -> {
@@ -1045,10 +1037,20 @@ public class CustomerRepository extends BaseOutboxRepository {
                 "Insufficient loyalty points",
                 java.util.List.of());
           }
+          Instant now = Instant.now();
+          LoyaltyLots.consume(
+              conn, tenantId, LoyaltyLots.openLots(conn, account, programme, now), points);
           BigDecimal newBalance = account.pointsBalance().subtract(points);
           LoyaltyAccount updated =
               updateLoyaltyAccount(
-                  conn, tenantId, customerId, newBalance, account.lifetimePoints(), account.tier());
+                  conn,
+                  tenantId,
+                  customerId,
+                  newBalance,
+                  account.lifetimePoints(),
+                  account.tier(),
+                  account.qualifyingPoints(),
+                  account.tierSince());
           insertLedgerEntry(
               conn,
               new LoyaltyLedgerEntry(
@@ -1060,7 +1062,7 @@ public class CustomerRepository extends BaseOutboxRepository {
                   newBalance,
                   orderId,
                   reason,
-                  Instant.now()));
+                  now));
           insertOutbox(conn, event);
           return updated;
         },
@@ -1068,41 +1070,61 @@ public class CustomerRepository extends BaseOutboxRepository {
   }
 
   /**
-   * Applies a signed manual correction to a points balance, atomically with its ledger entry and
-   * event.
-   *
-   * @param tenantId owning tenant
-   * @param customerId the customer whose balance to correct
-   * @param points the signed delta; negative removes points
-   * @param reason free-text reason recorded on the ledger entry
-   * @param event the outbox row to commit alongside
-   * @return the account with its new balance
+   * A correction: an award is a lot like any earning and may move the tier; a deduction comes out
+   * of the lots that die first, and never below zero.
    */
   public LoyaltyAccount adjustPoints(
-      UUID tenantId, UUID customerId, BigDecimal points, String reason, OutboxRow event) {
+      UUID tenantId,
+      UUID customerId,
+      BigDecimal points,
+      String reason,
+      LoyaltyProgramme programme,
+      OutboxRow event,
+      Function<TierChange, OutboxRow> tierEvent) {
     return inTx(
         conn -> {
           LoyaltyAccount account = getOrCreateLoyaltyAccount(conn, tenantId, customerId);
-          BigDecimal newBalance = account.pointsBalance().add(points).max(BigDecimal.ZERO);
-          BigDecimal newLifetime =
-              points.compareTo(BigDecimal.ZERO) > 0
-                  ? account.lifetimePoints().add(points)
-                  : account.lifetimePoints();
-          String newTier = LoyaltyAccount.tierFor(newLifetime);
-          LoyaltyAccount updated =
-              updateLoyaltyAccount(conn, tenantId, customerId, newBalance, newLifetime, newTier);
-          insertLedgerEntry(
-              conn,
-              new LoyaltyLedgerEntry(
-                  Ids.newId(),
-                  tenantId,
-                  customerId,
-                  LoyaltyLedgerEntry.TYPE_ADJUST,
-                  points,
-                  newBalance,
-                  null,
-                  reason,
-                  Instant.now()));
+          LoyaltyAccount updated;
+          if (points.signum() > 0) {
+            updated =
+                credit(
+                    conn,
+                    account,
+                    points,
+                    LoyaltyLedgerEntry.TYPE_ADJUST,
+                    null,
+                    reason,
+                    programme,
+                    tierEvent);
+          } else {
+            Instant now = Instant.now();
+            BigDecimal taken = points.negate().min(account.pointsBalance());
+            LoyaltyLots.consume(
+                conn, tenantId, LoyaltyLots.openLots(conn, account, programme, now), taken);
+            BigDecimal newBalance = account.pointsBalance().subtract(taken);
+            updated =
+                updateLoyaltyAccount(
+                    conn,
+                    tenantId,
+                    customerId,
+                    newBalance,
+                    account.lifetimePoints(),
+                    account.tier(),
+                    account.qualifyingPoints(),
+                    account.tierSince());
+            insertLedgerEntry(
+                conn,
+                new LoyaltyLedgerEntry(
+                    Ids.newId(),
+                    tenantId,
+                    customerId,
+                    LoyaltyLedgerEntry.TYPE_ADJUST,
+                    points,
+                    newBalance,
+                    null,
+                    reason,
+                    now));
+          }
           insertOutbox(conn, event);
           return updated;
         },
@@ -1110,16 +1132,66 @@ public class CustomerRepository extends BaseOutboxRepository {
   }
 
   /**
-   * Reads a customer's loyalty account.
-   *
-   * @param tenantId owning tenant; the first condition of the query
-   * @param customerId the customer whose account to read
-   * @return the account, or empty when the customer has never earned points
+   * Credits points: the lot, the ledger entry, the balances, and the tier the qualifying points now
+   * reach — announced through {@code tierEvent} when it moves.
    */
+  private LoyaltyAccount credit(
+      Connection conn,
+      LoyaltyAccount account,
+      BigDecimal points,
+      String type,
+      UUID orderId,
+      String reason,
+      LoyaltyProgramme programme,
+      Function<TierChange, OutboxRow> tierEvent)
+      throws SQLException {
+    Instant now = Instant.now();
+    UUID tenantId = account.tenantId();
+    UUID customerId = account.customerId();
+    if (points.signum() > 0) {
+      // A balance from before lots existed becomes an opening lot first, so spending order holds.
+      LoyaltyLots.openLots(conn, account, programme, now);
+    }
+    BigDecimal newBalance = account.pointsBalance().add(points);
+    BigDecimal newLifetime = account.lifetimePoints().add(points);
+    UUID entryId = Ids.newId();
+    insertLedgerEntry(
+        conn,
+        new LoyaltyLedgerEntry(
+            entryId, tenantId, customerId, type, points, newBalance, orderId, reason, now));
+    LoyaltyLots.insertLot(
+        conn, tenantId, customerId, entryId, points, now, programme.expiryFor(now));
+    LoyaltyAccount provisional =
+        new LoyaltyAccount(
+            account.id(),
+            tenantId,
+            customerId,
+            newBalance,
+            newLifetime,
+            account.tier(),
+            account.createdAt(),
+            now,
+            account.qualifyingPoints(),
+            account.tierSince());
+    BigDecimal qualifying = LoyaltyLots.qualifyingPoints(conn, provisional, programme, now);
+    String tier = programme.tierFor(qualifying).name();
+    Instant tierSince =
+        tier.equals(account.tier()) && account.tierSince() != null ? account.tierSince() : now;
+    LoyaltyAccount updated =
+        updateLoyaltyAccount(
+            conn, tenantId, customerId, newBalance, newLifetime, tier, qualifying, tierSince);
+    if (!tier.equals(account.tier()) && tierEvent != null) {
+      insertOutbox(
+          conn,
+          tierEvent.apply(new TierChange(tenantId, customerId, account.tier(), tier, qualifying)));
+    }
+    return updated;
+  }
+
   public Optional<LoyaltyAccount> findLoyaltyAccount(UUID tenantId, UUID customerId) {
     return query(
             "SELECT id, tenant_id, customer_id, points_balance, lifetime_points, tier,"
-                + " created_at, updated_at"
+                + " created_at, updated_at, qualifying_points, tier_since"
                 + " FROM loyalty_accounts WHERE tenant_id = ? AND customer_id = ?",
             ps -> {
               ps.setObject(1, tenantId);
@@ -1413,7 +1485,8 @@ public class CustomerRepository extends BaseOutboxRepository {
     try (PreparedStatement ps =
         c.prepareStatement(
             "INSERT INTO loyalty_accounts (id, tenant_id, customer_id, points_balance,"
-                + " lifetime_points, tier, created_at, updated_at) VALUES (?,?,?,?,?,?,?,?)"
+                + " lifetime_points, tier, created_at, updated_at, qualifying_points, tier_since)"
+                + " VALUES (?,?,?,?,?,?,?,?,?,?)"
                 + " ON CONFLICT (tenant_id, customer_id) DO NOTHING")) {
       ps.setObject(1, Ids.newId());
       ps.setObject(2, tenantId);
@@ -1423,6 +1496,8 @@ public class CustomerRepository extends BaseOutboxRepository {
       ps.setString(6, LoyaltyAccount.TIER_BRONZE);
       ps.setObject(7, now.atOffset(ZoneOffset.UTC));
       ps.setObject(8, now.atOffset(ZoneOffset.UTC));
+      ps.setBigDecimal(9, BigDecimal.ZERO);
+      ps.setObject(10, now.atOffset(ZoneOffset.UTC));
       ps.executeUpdate();
     }
     // FOR UPDATE: this row is read-modify-written by earn/redeem/adjust. Locking it for the
@@ -1432,7 +1507,7 @@ public class CustomerRepository extends BaseOutboxRepository {
     try (PreparedStatement ps =
         c.prepareStatement(
             "SELECT id, tenant_id, customer_id, points_balance, lifetime_points, tier,"
-                + " created_at, updated_at"
+                + " created_at, updated_at, qualifying_points, tier_since"
                 + " FROM loyalty_accounts WHERE tenant_id = ? AND customer_id = ? FOR UPDATE")) {
       ps.setObject(1, tenantId);
       ps.setObject(2, customerId);
@@ -1450,25 +1525,30 @@ public class CustomerRepository extends BaseOutboxRepository {
       UUID customerId,
       BigDecimal balance,
       BigDecimal lifetime,
-      String tier)
+      String tier,
+      BigDecimal qualifying,
+      Instant tierSince)
       throws SQLException {
     Instant now = Instant.now();
     try (PreparedStatement ps =
         c.prepareStatement(
-            "UPDATE loyalty_accounts SET points_balance=?, lifetime_points=?, tier=?, updated_at=?"
+            "UPDATE loyalty_accounts SET points_balance=?, lifetime_points=?, tier=?, updated_at=?,"
+                + " qualifying_points=?, tier_since=?"
                 + " WHERE tenant_id=? AND customer_id=?")) {
       ps.setBigDecimal(1, balance);
       ps.setBigDecimal(2, lifetime);
       ps.setString(3, tier);
       ps.setObject(4, now.atOffset(ZoneOffset.UTC));
-      ps.setObject(5, tenantId);
-      ps.setObject(6, customerId);
+      ps.setBigDecimal(5, qualifying);
+      ps.setObject(6, tierSince == null ? null : tierSince.atOffset(ZoneOffset.UTC));
+      ps.setObject(7, tenantId);
+      ps.setObject(8, customerId);
       ps.executeUpdate();
     }
     try (PreparedStatement ps =
         c.prepareStatement(
             "SELECT id, tenant_id, customer_id, points_balance, lifetime_points, tier,"
-                + " created_at, updated_at"
+                + " created_at, updated_at, qualifying_points, tier_since"
                 + " FROM loyalty_accounts WHERE tenant_id = ? AND customer_id = ?")) {
       ps.setObject(1, tenantId);
       ps.setObject(2, customerId);
@@ -1626,7 +1706,8 @@ public class CustomerRepository extends BaseOutboxRepository {
         rs.getObject("created_at", OffsetDateTime.class).toInstant());
   }
 
-  private static LoyaltyAccount mapLoyaltyAccount(ResultSet rs) throws SQLException {
+  static LoyaltyAccount mapLoyaltyAccount(ResultSet rs) throws SQLException {
+    OffsetDateTime tierSince = rs.getObject("tier_since", OffsetDateTime.class);
     return new LoyaltyAccount(
         rs.getObject("id", UUID.class),
         rs.getObject("tenant_id", UUID.class),
@@ -1635,7 +1716,9 @@ public class CustomerRepository extends BaseOutboxRepository {
         rs.getBigDecimal("lifetime_points"),
         rs.getString("tier"),
         rs.getObject("created_at", OffsetDateTime.class).toInstant(),
-        rs.getObject("updated_at", OffsetDateTime.class).toInstant());
+        rs.getObject("updated_at", OffsetDateTime.class).toInstant(),
+        rs.getBigDecimal("qualifying_points"),
+        tierSince == null ? null : tierSince.toInstant());
   }
 
   private static LoyaltyLedgerEntry mapLedgerEntry(ResultSet rs) throws SQLException {

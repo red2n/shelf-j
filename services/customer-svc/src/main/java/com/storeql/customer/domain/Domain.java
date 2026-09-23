@@ -109,6 +109,11 @@ public final class Domain {
     public static final String TYPE_SHIPPING = "SHIPPING";
   }
 
+  /**
+   * A customer's points (13.x): the balance they can spend, everything they ever earned, what
+   * counts towards their tier under the business's programme (lifetime, or the qualifying window),
+   * the tier that reaches, and since when they have held it.
+   */
   public record LoyaltyAccount(
       UUID id,
       UUID tenantId,
@@ -117,25 +122,39 @@ public final class Domain {
       BigDecimal lifetimePoints,
       String tier,
       Instant createdAt,
-      Instant updatedAt) {
+      Instant updatedAt,
+      BigDecimal qualifyingPoints,
+      Instant tierSince) {
 
     public static final String TIER_BRONZE = "BRONZE";
     public static final String TIER_SILVER = "SILVER";
     public static final String TIER_GOLD = "GOLD";
     public static final String TIER_PLATINUM = "PLATINUM";
-
-    /**
-     * Recalculate tier from lifetime points. Thresholds: Bronze < 1000, Silver < 5000, Gold <
-     * 20000.
-     */
-    public static String tierFor(BigDecimal lifetimePoints) {
-      int lp = lifetimePoints.intValue();
-      if (lp >= 20_000) return TIER_PLATINUM;
-      if (lp >= 5_000) return TIER_GOLD;
-      if (lp >= 1_000) return TIER_SILVER;
-      return TIER_BRONZE;
-    }
   }
+
+  /** Points that will die soon: how many, and on what day. */
+  public record ExpiringSoon(BigDecimal points, Instant on) {}
+
+  /**
+   * A customer's loyalty as the API answers it: the account, the programme it sits under (for the
+   * next tier and the multiplier), and the points about to expire, if any.
+   */
+  public record LoyaltyView(
+      LoyaltyAccount account, LoyaltyProgramme programme, ExpiringSoon expiringSoon) {}
+
+  /** A tier a customer moved to, and from where. */
+  public record TierChange(
+      UUID tenantId,
+      UUID customerId,
+      String fromTier,
+      String toTier,
+      BigDecimal qualifyingPoints) {}
+
+  /** What an expiry sweep did. */
+  public record ExpiryRun(int customers, BigDecimal points, int retiered) {}
+
+  /** Points that died for one customer. */
+  public record Expired(UUID tenantId, UUID customerId, BigDecimal points, Instant expiredAt) {}
 
   public record LoyaltyLedgerEntry(
       UUID id,

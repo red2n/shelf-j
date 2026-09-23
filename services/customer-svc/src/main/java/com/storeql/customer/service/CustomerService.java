@@ -2,11 +2,15 @@ package com.storeql.customer.service;
 
 import com.storeql.customer.domain.Domain.Customer;
 import com.storeql.customer.domain.Domain.CustomerAddress;
+import com.storeql.customer.domain.Domain.Expired;
 import com.storeql.customer.domain.Domain.LoyaltyAccount;
 import com.storeql.customer.domain.Domain.LoyaltyLedgerEntry;
+import com.storeql.customer.domain.Domain.LoyaltyView;
 import com.storeql.customer.domain.Domain.MarketingConsentEntry;
 import com.storeql.customer.domain.Domain.MarketingPreference;
 import com.storeql.customer.domain.Domain.StoreCreditAccount;
+import com.storeql.customer.domain.Domain.TierChange;
+import com.storeql.customer.domain.LoyaltyProgramme;
 import com.storeql.customer.dto.Dtos.AddAddressRequest;
 import com.storeql.customer.dto.Dtos.AddressResponse;
 import com.storeql.customer.dto.Dtos.AdjustPointsRequest;
@@ -26,6 +30,7 @@ import com.storeql.customer.dto.Dtos.StoreCreditLedgerEntryResponse;
 import com.storeql.customer.dto.Dtos.UpdateCustomerRequest;
 import com.storeql.customer.mapper.Mappers;
 import com.storeql.customer.repo.CustomerRepository;
+import com.storeql.customer.repo.LoyaltyProgrammeRepository;
 import com.storeql.ids.Ids;
 import com.storeql.service.OutboxRow;
 import com.storeql.web.ApiException;
@@ -53,6 +58,7 @@ public class CustomerService {
   public static final String ORDER_CONFIRMED_CONSUMER = "customer-svc/order-confirmed";
 
   @Inject CustomerRepository repo;
+  @Inject LoyaltyProgrammeRepository programmes;
   @Inject com.storeql.service.TenantProfiles profiles;
   @Inject com.storeql.customer.client.OrderClient orders;
   @Inject MarketingConsentService marketing;
@@ -698,62 +704,65 @@ public class CustomerService {
                     customerId,
                     BigDecimal.ZERO,
                     BigDecimal.ZERO,
-                    LoyaltyAccount.TIER_BRONZE,
+                    programmeOf(tenantId).tiers().get(0).name(),
                     Instant.now(),
-                    Instant.now()));
+                    Instant.now(),
+                    BigDecimal.ZERO,
+                    null));
   }
 
-  /**
-   * Reads a loyalty account for the API: tenant scope plus object-level authorization.
-   *
-   * @param tenantId owning tenant
-   * @param customerId the customer whose account to read
-   * @param ctx caller context; staff may read anyone in the tenant, a customer only themselves
-   * @return the loyalty account, real or a zero-balance stand-in
-   * @throws ApiException {@code CUSTOMER_NOT_FOUND} (404) when no such customer exists or the
-   *     caller may not read it
-   */
   public LoyaltyAccount getLoyaltyAccount(UUID tenantId, UUID customerId, TenantContext ctx) {
     requireReadAccess(customerId, ctx);
     return getLoyaltyAccount(tenantId, customerId);
   }
 
+  /** Points that die within this many days are worth telling the customer about. */
+  public static final int EXPIRING_SOON_DAYS = 30;
+
   /**
-   * Awards loyalty points manually and publishes {@code LoyaltyEarned}.
-   *
-   * <p>The staff-initiated counterpart to {@link #accrueLoyaltyFromOrder}, and <strong>not</strong>
-   * idempotent — calling it twice awards twice.
-   *
-   * @param tenantId owning tenant
-   * @param customerId the customer to credit
-   * @param req the points, an optional originating order and a reason for the ledger
-   * @return the account with its new balance
-   * @throws ApiException {@code CUSTOMER_NOT_FOUND} (404) when no such customer exists in this
-   *     tenant
+   * A customer's loyalty as the API answers it: the account under the business's programme, with
+   * the next tier, the multiplier and the points about to expire.
    */
+  public LoyaltyView loyaltyView(UUID tenantId, UUID customerId, TenantContext ctx) {
+    requireReadAccess(customerId, ctx);
+    return loyaltyView(tenantId, customerId);
+  }
+
+  public LoyaltyView loyaltyView(UUID tenantId, UUID customerId) {
+    LoyaltyAccount account = getLoyaltyAccount(tenantId, customerId);
+    Instant within = Instant.now().plusSeconds(EXPIRING_SOON_DAYS * 86_400L);
+    return new LoyaltyView(
+        account,
+        programmeOf(tenantId),
+        programmes.expiringSoon(tenantId, customerId, within).orElse(null));
+  }
+
+  /** The signed-in shopper's own loyalty (13.x). */
+  public LoyaltyView myLoyalty(UUID tenantId, UUID loginId) {
+    return loyaltyView(tenantId, getByLogin(tenantId, loginId).id());
+  }
+
+  private LoyaltyProgramme programmeOf(UUID tenantId) {
+    return programmes.programme(tenantId);
+  }
+
   public LoyaltyAccount earnPoints(UUID tenantId, UUID customerId, EarnPointsRequest req) {
     get(tenantId, customerId);
     UUID orderId = req.orderId() == null ? null : Ids.parse(req.orderId());
     var event =
         loyaltyEvent(
             LOYALTY_EARNED, TOPIC_EARNED, tenantId, customerId, req.points(), orderId, null, null);
-    return repo.earnPoints(tenantId, customerId, req.points(), orderId, req.reason(), event);
+    return repo.earnPoints(
+        tenantId,
+        customerId,
+        req.points(),
+        orderId,
+        req.reason(),
+        programmeOf(tenantId),
+        event,
+        CustomerService::tierChangedEvent);
   }
 
-  /**
-   * Accrue loyalty points for a confirmed order, driven by the {@code OrderConfirmed} event and
-   * idempotent on its {@code eventId}. Points = order total × {@code
-   * storeql.customer.loyalty.points-per-unit}, rounded down so we never over-award. Zero/negative
-   * awards are a no-op; guest orders (no customerId) are filtered out before this is called.
-   *
-   * @param eventId the {@code OrderConfirmed} event id, the dedupe key for this accrual
-   * @param tenantId owning tenant
-   * @param customerId the customer to credit
-   * @param orderId the order the points are earned against
-   * @param total the order total the award is derived from
-   * @param taxAmount the VAT inside that total, carried on so the ledger can defer the points'
-   *     share of the sale's net revenue (17.11)
-   */
   public void accrueLoyaltyFromOrder(
       UUID eventId,
       UUID tenantId,
@@ -765,9 +774,6 @@ public class CustomerService {
     if (points.signum() <= 0) {
       return; // nothing to award
     }
-    var event =
-        loyaltyEvent(
-            LOYALTY_EARNED, TOPIC_EARNED, tenantId, customerId, points, orderId, total, taxAmount);
     repo.accrueFromOrderOnce(
         eventId,
         ORDER_CONFIRMED_CONSUMER,
@@ -775,17 +781,28 @@ public class CustomerService {
         customerId,
         orderId,
         points,
-        "Loyalty for order " + orderId,
-        event);
+        programmeOf(tenantId),
+        awarded ->
+            loyaltyEvent(
+                LOYALTY_EARNED,
+                TOPIC_EARNED,
+                tenantId,
+                customerId,
+                awarded,
+                orderId,
+                total,
+                taxAmount),
+        CustomerService::tierChangedEvent);
   }
 
   private static final String LOYALTY_EARNED = "LoyaltyEarned";
   private static final String TOPIC_EARNED = "storeql.customer.loyalty-earned";
+  static final String TOPIC_TIER_CHANGED = "storeql.customer.loyalty-tier-changed";
+  static final String TOPIC_EXPIRED = "storeql.customer.loyalty-expired";
 
   /**
    * A loyalty event. Each carries its own id, so the ledger that consumes them (purchase-svc,
-   * 17.11) posts each once; an accrual carries the sale's total and the VAT inside it, from which
-   * the points' share of the revenue is worked out.
+   * 17.11) can post each once however the topics interleave.
    */
   private static OutboxRow loyaltyEvent(
       String eventType,
@@ -811,6 +828,45 @@ public class CustomerService {
     return new OutboxRow(eventType, topic, tenantId, customerId, b.build().toString());
   }
 
+  /**
+   * {@code LoyaltyTierChanged}: a customer moved tier, up or down, and on what qualifying points.
+   */
+  static OutboxRow tierChangedEvent(TierChange change) {
+    var b =
+        Json.createObjectBuilder()
+            .add("eventId", Ids.newId().toString())
+            .add("eventType", "LoyaltyTierChanged")
+            .add("tenantId", change.tenantId().toString())
+            .add("customerId", change.customerId().toString())
+            .add("fromTier", change.fromTier())
+            .add("toTier", change.toTier())
+            .add("qualifyingPoints", change.qualifyingPoints());
+    return new OutboxRow(
+        "LoyaltyTierChanged",
+        TOPIC_TIER_CHANGED,
+        change.tenantId(),
+        change.customerId(),
+        b.build().toString());
+  }
+
+  /** {@code LoyaltyExpired}: points that died, for the deferred revenue they carried (17.11). */
+  static OutboxRow expiredEvent(Expired expired) {
+    var b =
+        Json.createObjectBuilder()
+            .add("eventId", Ids.newId().toString())
+            .add("eventType", "LoyaltyExpired")
+            .add("tenantId", expired.tenantId().toString())
+            .add("customerId", expired.customerId().toString())
+            .add("points", expired.points())
+            .add("expiredAt", expired.expiredAt().toString());
+    return new OutboxRow(
+        "LoyaltyExpired",
+        TOPIC_EXPIRED,
+        expired.tenantId(),
+        expired.customerId(),
+        b.build().toString());
+  }
+
   private BigDecimal pointsPerUnit() {
     try {
       return new BigDecimal(pointsPerUnitRaw.trim());
@@ -819,19 +875,6 @@ public class CustomerService {
     }
   }
 
-  /**
-   * Spends loyalty points and publishes {@code LoyaltyRedeemed}.
-   *
-   * <p>The balance check happens in the repository, inside the same transaction as the ledger
-   * write, so concurrent redemptions cannot together overdraw the account.
-   *
-   * @param tenantId owning tenant
-   * @param customerId the customer to debit
-   * @param req the points, an optional order being paid towards and a reason for the ledger
-   * @return the account with its new balance
-   * @throws ApiException {@code CUSTOMER_NOT_FOUND} (404) when no such customer exists; a conflict
-   *     when the balance is insufficient
-   */
   public LoyaltyAccount redeemPoints(UUID tenantId, UUID customerId, RedeemPointsRequest req) {
     get(tenantId, customerId);
     UUID orderId = req.orderId() == null ? null : Ids.parse(req.orderId());
@@ -845,22 +888,10 @@ public class CustomerService {
             orderId,
             null,
             null);
-    return repo.redeemPoints(tenantId, customerId, req.points(), orderId, req.reason(), event);
+    return repo.redeemPoints(
+        tenantId, customerId, req.points(), orderId, req.reason(), programmeOf(tenantId), event);
   }
 
-  /**
-   * Applies a manual correction to a points balance and publishes {@code LoyaltyAdjusted}.
-   *
-   * <p>Signed: a negative value removes points. This is the goodwill/correction path, distinct from
-   * the earn and redeem ledgers.
-   *
-   * @param tenantId owning tenant
-   * @param customerId the customer whose balance to correct
-   * @param req the signed point delta and a reason for the ledger
-   * @return the account with its new balance
-   * @throws ApiException {@code CUSTOMER_NOT_FOUND} (404) when no such customer exists in this
-   *     tenant
-   */
   public LoyaltyAccount adjustPoints(UUID tenantId, UUID customerId, AdjustPointsRequest req) {
     get(tenantId, customerId);
     var event =
@@ -873,20 +904,16 @@ public class CustomerService {
             null,
             null,
             null);
-    return repo.adjustPoints(tenantId, customerId, req.points(), req.reason(), event);
+    return repo.adjustPoints(
+        tenantId,
+        customerId,
+        req.points(),
+        req.reason(),
+        programmeOf(tenantId),
+        event,
+        CustomerService::tierChangedEvent);
   }
 
-  /**
-   * Reads the append-only loyalty ledger, with tenant scoping but <strong>no</strong> object-level
-   * authorization.
-   *
-   * @param tenantId owning tenant
-   * @param customerId the customer whose ledger to read
-   * @param limit page size; silently capped at 100
-   * @return the ledger entries, newest first
-   * @throws ApiException {@code CUSTOMER_NOT_FOUND} (404) when no such customer exists in this
-   *     tenant
-   */
   public List<LoyaltyLedgerEntry> getLedger(UUID tenantId, UUID customerId, int limit) {
     get(tenantId, customerId);
     return repo.listLedger(tenantId, customerId, Math.min(limit, 100));

@@ -8,6 +8,7 @@ import '../../core/network/api_error.dart';
 import 'storefront_providers.dart';
 import 'storefront_shell.dart' show StorefrontAuthDialog;
 import '../../core/spacing.dart';
+import '../../core/theme.dart';
 
 // The shopper's own account at this shop (12.10): the profile the shop holds
 // for them and the addresses they keep here. Everything is keyed on the login
@@ -125,6 +126,68 @@ final myCustomerProvider = FutureProvider.autoDispose<MyCustomer?>((ref) async {
 
 /// The shopper's address book at this shop; empty when signed out or when the
 /// shop holds no record yet.
+/// The shopper's points under this shop's programme (13.x): balance, tier, the
+/// way up, the multiplier, and the warning they are owed about points dying.
+class MyLoyalty {
+  final double pointsBalance;
+  final String tier;
+  final double multiplier;
+  final String? nextTierName;
+  final double? pointsToGo;
+  final double? expiringPoints;
+  final String? expiringOn;
+  final int? expiryMonths;
+
+  const MyLoyalty({
+    required this.pointsBalance,
+    required this.tier,
+    this.multiplier = 1,
+    this.nextTierName,
+    this.pointsToGo,
+    this.expiringPoints,
+    this.expiringOn,
+    this.expiryMonths,
+  });
+
+  factory MyLoyalty.fromJson(Map<String, dynamic> j) {
+    final next = j['nextTier'] is Map<String, dynamic> ? j['nextTier'] as Map<String, dynamic> : null;
+    final soon =
+        j['expiringSoon'] is Map<String, dynamic> ? j['expiringSoon'] as Map<String, dynamic> : null;
+    return MyLoyalty(
+      pointsBalance: (j['pointsBalance'] as num?)?.toDouble() ?? 0,
+      tier: j['tier'] as String? ?? '',
+      multiplier: (j['multiplier'] as num?)?.toDouble() ?? 1,
+      nextTierName: next?['name'] as String?,
+      pointsToGo: (next?['pointsToGo'] as num?)?.toDouble(),
+      expiringPoints: (soon?['points'] as num?)?.toDouble(),
+      expiringOn: (soon?['on'] as String?)?.substring(0, 10),
+      expiryMonths: (j['expiryMonths'] as num?)?.toInt(),
+    );
+  }
+
+  static String pts(double v) => '${trim(v)} pts';
+
+  /// `1.5`, `2`, `1.25` — never a trailing zero.
+  static String trim(double v) => v == v.roundToDouble()
+      ? v.toStringAsFixed(0)
+      : v.toStringAsFixed(2).replaceFirst(RegExp(r'0+$'), '');
+}
+
+/// The shopper's own loyalty; null before the shop holds a record of them.
+final myLoyaltyProvider = FutureProvider.autoDispose<MyLoyalty?>((ref) async {
+  final auth = ref.watch(storefrontAuthProvider);
+  if (!auth.isSignedIn) return null;
+  final dio = ref.watch(storefrontDioProvider);
+  try {
+    final resp = await dio.get('/${ApiConstants.customer}/customers/me/loyalty');
+    final data = resp.data is Map ? resp.data['data'] : null;
+    return data is Map<String, dynamic> ? MyLoyalty.fromJson(data) : null;
+  } on DioException catch (e) {
+    if (e.response?.statusCode == 404) return null;
+    rethrow;
+  }
+});
+
 final myAddressesProvider = FutureProvider.autoDispose<List<SavedAddress>>((ref) async {
   final auth = ref.watch(storefrontAuthProvider);
   if (!auth.isSignedIn) return const [];
@@ -155,6 +218,7 @@ class _StorefrontAccountScreenState extends ConsumerState<StorefrontAccountScree
   void _refresh() {
     ref.invalidate(myCustomerProvider);
     ref.invalidate(myAddressesProvider);
+    ref.invalidate(myLoyaltyProvider);
   }
 
   void _say(String text) {
@@ -257,6 +321,7 @@ class _StorefrontAccountScreenState extends ConsumerState<StorefrontAccountScree
     if (!auth.isSignedIn) return const _SignInFirst();
     final customer = ref.watch(myCustomerProvider);
     final addresses = ref.watch(myAddressesProvider);
+    final loyalty = ref.watch(myLoyaltyProvider);
     final theme = Theme.of(context);
 
     return RefreshIndicator(
@@ -293,6 +358,16 @@ class _StorefrontAccountScreenState extends ConsumerState<StorefrontAccountScree
                           customer: c,
                           busy: _busy,
                           onSave: _saveProfile,
+                        ),
+                        // My points (13.x): shown once the shop holds a record of the shopper.
+                        loyalty.maybeWhen(
+                          data: (l) => l == null
+                              ? const SizedBox.shrink()
+                              : Padding(
+                                  padding: const EdgeInsets.only(top: 24),
+                                  child: LoyaltyCard(loyalty: l),
+                                ),
+                          orElse: () => const SizedBox.shrink(),
                         ),
                         const SizedBox(height: 24),
                         Row(
@@ -372,6 +447,73 @@ class _StorefrontAccountScreenState extends ConsumerState<StorefrontAccountScree
                       ],
                     ),
             ),
+          ],
+        ),
+      ),
+    );
+  }
+}
+
+/// My points: the balance and tier under this shop's programme, the way up, the
+/// benefit, and the warning a customer is owed about points that will die.
+class LoyaltyCard extends StatelessWidget {
+  const LoyaltyCard({super.key, required this.loyalty});
+  final MyLoyalty loyalty;
+
+  @override
+  Widget build(BuildContext context) {
+    final theme = Theme.of(context);
+    final cs = theme.colorScheme;
+    final l = loyalty;
+    return Card(
+      key: const Key('my-loyalty'),
+      child: Padding(
+        padding: const EdgeInsets.all(16),
+        child: Column(
+          crossAxisAlignment: CrossAxisAlignment.start,
+          children: [
+            Row(children: [
+              Icon(Icons.stars_outlined, color: cs.onSurfaceVariant),
+              const SizedBox(width: 8),
+              Text('My points', style: theme.textTheme.titleLarge),
+              const Spacer(),
+              Container(
+                padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 3),
+                decoration: BoxDecoration(
+                    color: cs.secondaryContainer, borderRadius: AppRadius.badge),
+                child: Text(l.tier,
+                    key: const Key('my-loyalty-tier'),
+                    style: TextStyle(
+                        fontWeight: FontWeight.w600, color: cs.onSecondaryContainer)),
+              ),
+            ]),
+            const SizedBox(height: 8),
+            Text(MyLoyalty.pts(l.pointsBalance),
+                key: const Key('my-loyalty-balance'),
+                style: theme.textTheme.headlineSmall?.copyWith(fontWeight: FontWeight.w700)),
+            const SizedBox(height: 4),
+            Text(
+              [
+                if (l.multiplier != 1)
+                  'Your tier earns ×${MyLoyalty.trim(l.multiplier)} on every purchase.',
+                if (l.nextTierName != null && l.pointsToGo != null)
+                  '${l.nextTierName} is ${MyLoyalty.pts(l.pointsToGo!)} away.',
+                if (l.nextTierName == null) 'You are at the top of the ladder.',
+                if (l.expiryMonths != null)
+                  'Points live ${l.expiryMonths} months from the day you earn them.',
+              ].join(' '),
+              style: theme.textTheme.bodyMedium?.copyWith(color: cs.onSurfaceVariant),
+            ),
+            if (l.expiringPoints != null && l.expiringOn != null) ...[
+              const SizedBox(height: 8),
+              Row(children: [
+                Icon(Icons.hourglass_bottom_outlined, size: 16, color: context.status.warning),
+                const SizedBox(width: 6),
+                Text('${MyLoyalty.pts(l.expiringPoints!)} expire on ${l.expiringOn}.',
+                    key: const Key('my-loyalty-expiring'),
+                    style: TextStyle(color: context.status.warning, fontWeight: FontWeight.w600)),
+              ]),
+            ],
           ],
         ),
       ),

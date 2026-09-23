@@ -324,6 +324,8 @@ public class AdminAuthorizationFilter implements ContainerRequestFilter {
         // asymmetry with /customers/{id} above is deliberate — this shape cannot name a subject.
         || "/customers/me".equals(path)
         || "/customers/me/export".equals(path)
+        // The shopper's own points, tier and what is about to expire (13.x): the leaf only.
+        || "/customers/me/loyalty".equals(path)
         || "/customers/me/marketing".equals(path)
         // The shopper's own privacy (13.12), and the notice anyone may read before signing up.
         || "/customers/me/privacy".equals(path)

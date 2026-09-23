@@ -592,6 +592,9 @@ public final class Domain {
     public static final String EARNED = "EARNED";
     public static final String REDEEMED = "REDEEMED";
     public static final String ADJUSTED = "ADJUSTED";
+
+    /** Points that died under the programme's expiry rule (13.x): a lapse, announced. */
+    public static final String EXPIRED = "EXPIRED";
   }
 
   /** A gift card issued or reloaded, as order-svc announced it (17.11). */

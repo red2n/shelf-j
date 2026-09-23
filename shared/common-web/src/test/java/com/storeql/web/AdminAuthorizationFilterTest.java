@@ -50,6 +50,10 @@ class AdminAuthorizationFilterTest {
   void ownProfileAndAddressBookAreOpenToASignedInShopper() throws Exception {
     ctx.set(null, null, Set.of("CUSTOMER"), null, null);
     assertNotAborted(invoke("PUT", "/customers/me"));
+    // The shopper's own loyalty (13.x): the leaf, read only.
+    assertNotAborted(invoke("GET", "/customers/me/loyalty"));
+    assertAborted(invoke("POST", "/customers/me/loyalty"), 403);
+    assertAborted(invoke("GET", "/customers/me/loyalty/ledger"), 403);
     assertNotAborted(invoke("GET", "/customers/me/addresses"));
     assertNotAborted(invoke("POST", "/customers/me/addresses"));
     assertNotAborted(invoke("PUT", "/customers/me/addresses/01a090ae-611e-7011-ae7d-1bd68c966ff6"));

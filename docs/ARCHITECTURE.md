@@ -359,7 +359,8 @@ Suppliers, purchase orders, goods receipts, and finance-adjacent intercompany in
 Customer profiles, addresses, and two append-only ledgers.
 - **API:** `/customers` CRUD (+anonymize-on-delete), addresses CRUD; `/{id}/loyalty` earn/redeem/adjust/ledger; `/{id}/store-credit` issue/redeem.
 - **Tables:** `customers`, `customer_addresses`, `loyalty_accounts`, `loyalty_ledger` (append-only), `store_credit_accounts`, `store_credit_ledger` (append-only), `marketing_preferences`, `marketing_consent_log` (append-only), `privacy_settings`, `privacy_notices` (versioned per language), `purpose_consents`, `purpose_consent_log` (append-only), `guardian_consents`, `privacy_requests`, `breach_intimations` (13.12: a person's privacy under India's DPDP Act).
-- **Events:** publishes `CustomerRegistered`, `LoyaltyEarned/Redeemed/Adjusted` (each with its own `eventId`; an accrual carries the sale's `orderTotal` and `orderTaxAmount`, which purchase-svc defers the points' share of, 17.11), `StoreCreditIssued/Redeemed`; consumes `OrderConfirmed` (auto-accrues loyalty points, deduped by event id).
+- **Events:** publishes `CustomerRegistered`, `LoyaltyEarned/Redeemed/Adjusted` (each with its own `eventId`; an accrual carries the sale's `orderTotal` and `orderTaxAmount`, which purchase-svc defers the points' share of, 17.11), `LoyaltyExpired` and `LoyaltyTierChanged` (13.x: points that died under the programme's rule, a tier reached or lost), `StoreCreditIssued/Redeemed`; consumes `OrderConfirmed` (auto-accrues loyalty points at the customer's tier multiplier, deduped by event id).
+- **Loyalty programme (13.x):** `loyalty_programmes` + `loyalty_tiers` (a business's ladder, expiry and qualifying window; the platform default when absent), `loyalty_point_lots` (every earning a lot with its own expiry; spending takes the lot that dies first; the ledger stays append-only — only a lot's remainder moves), `LoyaltyExpirySweeper` (hourly: dead lots written off as `EXPIRE`, tiers re-checked).
 - **Notable:** GDPR-style anonymize-on-delete; both ledgers are auditable balances, never mutable counters.
 
 ### notification-svc — Alerting
@@ -409,6 +410,8 @@ tenant-svc   ──REST──►  iam-svc         (verify user on staff assignme
 | `StockBelowThreshold` | inventory-svc | notification-svc |
 | `OrderPlaced` / `OrderConfirmed` | order-svc | inventory-svc, customer-svc, cart-svc, reporting-svc (`OrderConfirmed` carries `lines`: variant, qty, unitPrice, lineTotal — sales by category), notification-svc; tenant-svc meters `OrderPlaced` (21.10) |
 | `ProductCategorised` / `VariantCreated` | product-svc | pricing-svc (category-scoped promotions), reporting-svc (sales by category) |
+| `LoyaltyExpired` | customer-svc | purchase-svc (the deferred income the points carried, released as breakage once nothing is outstanding; 17.11) |
+| `LoyaltyTierChanged` | customer-svc | nobody yet (a customer's tier reached or lost, up or down, on qualifying points; the notice to the shopper is not built) |
 | `SmsSent` | notification-svc | tenant-svc (the text meter, in the parts the carrier bills; 21.10) |
 | `OrderCancelled` / `OrderReturned` | order-svc | inventory-svc, payment-svc, reporting-svc |
 | `PaymentCaptured` / `PaymentFailed` / `PaymentRefunded` | payment-svc | order-svc, reporting-svc (refunds net against sales) |

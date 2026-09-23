@@ -112,6 +112,29 @@ void main() {
     expect(find.text('Your account at this shop is set up.'), findsOneWidget);
   });
 
+  testWidgets('the shopper sees their points, tier, the way up and what is about to expire', (tester) async {
+    final recorder = _Recorder(responses: {
+      'GET /customer-svc/customers/me': _me,
+      'GET /customer-svc/customers/me/addresses': <dynamic>[],
+      'GET /customer-svc/customers/me/loyalty': {
+        'pointsBalance': 27,
+        'tier': 'SILVER',
+        'multiplier': 1.5,
+        'nextTier': {'name': 'GOLD', 'threshold': 50, 'pointsToGo': 23},
+        'expiringSoon': {'points': 20, 'on': '2026-10-23T11:00:00Z'},
+        'expiryMonths': 12,
+      },
+    });
+    await _pump(tester, recorder);
+    expect(find.byKey(const Key('my-loyalty')), findsOneWidget);
+    expect(find.text('SILVER'), findsOneWidget);
+    expect(find.text('27 pts'), findsOneWidget);
+    expect(find.textContaining('GOLD is 23 pts away'), findsOneWidget);
+    expect(find.textContaining('earns ×1.5'), findsOneWidget);
+    expect(find.text('20 pts expire on 2026-10-23.'), findsOneWidget);
+    expect(_last(recorder, 'GET').path, contains('/customers/me/'));
+  });
+
   testWidgets('the profile is shown and saved trimmed, with the email left alone', (tester) async {
     final recorder = _Recorder(responses: {
       'GET /customer-svc/customers/me': _me,

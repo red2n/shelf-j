@@ -15,6 +15,9 @@ import 'sales_invoices_dialog.dart';
 import 'send_text_dialog.dart';
 import 'providers/customers_pagination.dart';
 import 'guardian_consent_section.dart';
+import 'loyalty_programme_dialog.dart';
+import '../../core/auth/auth_notifier.dart';
+import '../../core/auth/auth_state.dart';
 
 class CustomersScreen extends ConsumerStatefulWidget {
   const CustomersScreen({super.key});
@@ -49,6 +52,11 @@ class _CustomersScreenState extends ConsumerState<CustomersScreen> {
   @override
   Widget build(BuildContext context) {
     final page = ref.watch(customersPaginationProvider);
+    final auth = ref.watch(authNotifierProvider).value;
+    final management = auth is AuthAuthenticated &&
+        (auth.roles.contains('OWNER') ||
+            auth.roles.contains('MANAGER') ||
+            auth.roles.contains('PLATFORM_ADMIN'));
     final cs = Theme.of(context).colorScheme;
     return Column(
       crossAxisAlignment: CrossAxisAlignment.start,
@@ -73,6 +81,15 @@ class _CustomersScreenState extends ConsumerState<CustomersScreen> {
                 onPressed: () =>
                     ref.read(customersPaginationProvider.notifier).refresh(),
               ),
+              // The programme is management's: the ladder, the expiry rule, the qualifying window.
+              if (management)
+                IconButton(
+                  key: const Key('loyalty-programme'),
+                  icon: const Icon(Icons.stairs_outlined),
+                  tooltip: 'Loyalty programme',
+                  onPressed: () => showDialog<void>(
+                      context: context, builder: (_) => const LoyaltyProgrammeDialog()),
+                ),
             ],
           ),
         ),
@@ -343,7 +360,7 @@ class _CustomerDetailDialog extends ConsumerWidget {
                         orElse: () => '…',
                       ),
                       sub: loyaltyAsync.maybeWhen(
-                        data: (l) => l.tier ?? '',
+                        data: (l) => l.tierLine,
                         orElse: () => '',
                       ),
                       color: cs.primaryContainer,
@@ -366,6 +383,23 @@ class _CustomerDetailDialog extends ConsumerWidget {
                     ),
                   ),
                 ],
+              ),
+              // The warning a customer is owed: points about to die (13.x).
+              loyaltyAsync.maybeWhen(
+                data: (l) => l.expiringSoon == null
+                    ? const SizedBox.shrink()
+                    : Padding(
+                        padding: const EdgeInsets.only(top: 8),
+                        child: Row(children: [
+                          Icon(Icons.hourglass_bottom_outlined,
+                              size: 16, color: context.status.warning),
+                          const SizedBox(width: 6),
+                          Text(l.expiringLine,
+                              key: const Key('loyalty-expiring'),
+                              style: TextStyle(color: context.status.warning)),
+                        ]),
+                      ),
+                orElse: () => const SizedBox.shrink(),
               ),
               const SizedBox(height: 16),
               Wrap(

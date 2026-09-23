@@ -227,6 +227,21 @@ public final class DeferredRevenue {
   }
 
   /** Posts a release, and sweeps what is left to breakage when no points remain outstanding. */
+  /**
+   * Points that died under the programme's expiry rule (13.x): they leave the pool as a lapse, and
+   * once nothing is outstanding whatever deferred income is left is breakage — the point the
+   * estimate was made for.
+   */
+  public static PointsOutcome expired(Source src, Settings s, PointsPool pool, BigDecimal points) {
+    if (points == null || points.signum() <= 0) return new PointsOutcome(pool, List.of());
+    BigDecimal matched = points.min(pool.outstanding());
+    return close(
+        src,
+        new PointsPool(pool.outstanding().subtract(matched), pool.deferred(), pool.unmatched()),
+        BigDecimal.ZERO,
+        "Loyalty points expired, ");
+  }
+
   private static PointsOutcome close(
       Source src, PointsPool after, BigDecimal release, String description) {
     BigDecimal breakage = after.outstanding().signum() == 0 ? after.deferred() : BigDecimal.ZERO;
