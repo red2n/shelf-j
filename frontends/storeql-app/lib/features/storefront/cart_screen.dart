@@ -16,6 +16,7 @@ import 'survey_widgets.dart';
 import '../../shared/util/short_ref.dart';
 import 'package:storeql_app/core/ids.dart';
 import '../../core/theme.dart';
+import '../../core/spacing.dart';
 
 class StorefrontCartScreen extends ConsumerStatefulWidget {
   const StorefrontCartScreen({super.key});
@@ -211,298 +212,300 @@ class _StorefrontCartScreenState extends ConsumerState<StorefrontCartScreen> {
       );
     }
 
-    return Column(
-      children: [
-        Expanded(
-          child: ListView.separated(
-            padding: const EdgeInsets.all(16),
-            itemCount: cart.length,
-            separatorBuilder: (_, _) => const Divider(height: 1),
-            itemBuilder: (_, i) {
-              final l = cart[i];
-              return ListTile(
-                title: Text(l.productName),
-                subtitle: showPrices
-                    ? Column(
-                        crossAxisAlignment: CrossAxisAlignment.start,
-                        mainAxisSize: MainAxisSize.min,
-                        children: [
-                          Text('${l.sku}  ·  ${l.currency} ${l.unitPrice.toStringAsFixed(2)}'),
-                          CartLineUnitPrice(variantId: l.variantId),
-                        ],
-                      )
-                    : Text(l.sku),
-                trailing: Row(
-                  mainAxisSize: MainAxisSize.min,
+    return ContentBounds(
+      child: Column(
+        children: [
+          Expanded(
+            child: ListView.separated(
+              padding: context.pagePadding,
+              itemCount: cart.length,
+              separatorBuilder: (_, _) => const Divider(height: 1),
+              itemBuilder: (_, i) {
+                final l = cart[i];
+                return ListTile(
+                  title: Text(l.productName),
+                  subtitle: showPrices
+                      ? Column(
+                          crossAxisAlignment: CrossAxisAlignment.start,
+                          mainAxisSize: MainAxisSize.min,
+                          children: [
+                            Text('${l.sku}  ·  ${l.currency} ${l.unitPrice.toStringAsFixed(2)}'),
+                            CartLineUnitPrice(variantId: l.variantId),
+                          ],
+                        )
+                      : Text(l.sku),
+                  trailing: Row(
+                    mainAxisSize: MainAxisSize.min,
+                    children: [
+                      IconButton(
+                        icon: const Icon(Icons.remove_circle_outline),
+                        tooltip: 'Decrease quantity',
+                        onPressed: () =>
+                            notifier.setQty(l.variantId, l.qty - 1),
+                      ),
+                      Text('${l.qty}',
+                          style: const TextStyle(fontWeight: FontWeight.bold)),
+                      IconButton(
+                        icon: const Icon(Icons.add_circle_outline),
+                        tooltip: 'Increase quantity',
+                        onPressed: () =>
+                            notifier.setQty(l.variantId, l.qty + 1),
+                      ),
+                      if (showPrices) ...[
+                        const SizedBox(width: 8),
+                        SizedBox(
+                          width: 72,
+                          child: Text(
+                            '${l.currency} ${l.lineTotal.toStringAsFixed(2)}',
+                            textAlign: TextAlign.right,
+                            style: const TextStyle(fontWeight: FontWeight.bold),
+                          ),
+                        ),
+                      ],
+                    ],
+                  ),
+                );
+              },
+            ),
+          ),
+          SafeArea(
+            child: ConstrainedBox(
+              constraints: BoxConstraints(
+                  maxHeight: MediaQuery.of(context).size.height * 0.7),
+              child: SingleChildScrollView(
+                padding: const EdgeInsets.all(16),
+                child: Column(
                   children: [
-                    IconButton(
-                      icon: const Icon(Icons.remove_circle_outline),
-                      tooltip: 'Decrease quantity',
-                      onPressed: () =>
-                          notifier.setQty(l.variantId, l.qty - 1),
+                    if (showPrices)
+                      Row(
+                        children: [
+                          Text('Total (incl. VAT)',
+                              style: Theme.of(context).textTheme.titleMedium),
+                          const Spacer(),
+                          Text('$currency ${total.toStringAsFixed(2)}',
+                              style: Theme.of(context)
+                                  .textTheme
+                                  .titleLarge
+                                  ?.copyWith(fontWeight: FontWeight.bold)),
+                        ],
+                      ),
+                    if (showPrices && scheme != null) ...[
+                      const SizedBox(height: 6),
+                      Text(
+                        key: const Key('deposit-note'),
+                        'Drinks in ${scheme.inWords} carry a refundable deposit of '
+                        '${scheme.currency} ${scheme.depositEach.toStringAsFixed(2)} '
+                        'each, added to the order as its own line. It is paid back '
+                        'when the empty container is returned.',
+                        style: Theme.of(context).textTheme.bodySmall,
+                      ),
+                    ],
+                    if (showPrices) const SizedBox(height: 12),
+                    SegmentedButton<String>(
+                      segments: const [
+                        ButtonSegment(
+                            value: 'PICKUP',
+                            label: Text('Collect from store'),
+                            icon: Icon(Icons.storefront_outlined)),
+                        ButtonSegment(
+                            value: 'DELIVERY',
+                            label: Text('Deliver to home'),
+                            icon: Icon(Icons.local_shipping_outlined)),
+                      ],
+                      selected: {_fulfilment},
+                      onSelectionChanged: (s) =>
+                          setState(() => _fulfilment = s.first),
                     ),
-                    Text('${l.qty}',
-                        style: const TextStyle(fontWeight: FontWeight.bold)),
-                    IconButton(
-                      icon: const Icon(Icons.add_circle_outline),
-                      tooltip: 'Increase quantity',
-                      onPressed: () =>
-                          notifier.setQty(l.variantId, l.qty + 1),
-                    ),
-                    if (showPrices) ...[
-                      const SizedBox(width: 8),
-                      SizedBox(
-                        width: 72,
-                        child: Text(
-                          '${l.currency} ${l.lineTotal.toStringAsFixed(2)}',
-                          textAlign: TextAlign.right,
-                          style: const TextStyle(fontWeight: FontWeight.bold),
+                    if (_fulfilment == 'DELIVERY') ...[
+                      const SizedBox(height: 12),
+                      // The shopper's address book at this shop, when they keep one (12.10).
+                      // Picking one fills the form; the form stays editable afterwards.
+                      if (savedAddresses.isNotEmpty) ...[
+                        DropdownButtonFormField<String?>(
+                          key: const Key('cart-saved-address'),
+                          isExpanded: true,
+                          initialValue: _savedAddressId,
+                          decoration: const InputDecoration(
+                              labelText: 'Use a saved address', isDense: true),
+                          items: [
+                            const DropdownMenuItem<String?>(
+                                value: null, child: Text('Type an address')),
+                            for (final a in savedAddresses)
+                              DropdownMenuItem<String?>(
+                                  value: a.id,
+                                  child: Text(
+                                      '${a.oneLine}${a.isDefault ? ' (default)' : ''}',
+                                      overflow: TextOverflow.ellipsis)),
+                          ],
+                          onChanged: (id) {
+                            if (id == null) {
+                              setState(() => _savedAddressId = null);
+                              return;
+                            }
+                            _useSavedAddress(savedAddresses.firstWhere((a) => a.id == id), me);
+                          },
+                        ),
+                        const SizedBox(height: 12),
+                      ],
+                      Form(
+                        key: _addressFormKey,
+                        child: Column(
+                          children: [
+                            TextFormField(
+                              controller: _line1Ctrl,
+                              decoration: const InputDecoration(
+                                  labelText: 'Address line 1',
+                                  isDense: true),
+                              validator: _requiredField,
+                            ),
+                            const SizedBox(height: 8),
+                            TextFormField(
+                              controller: _line2Ctrl,
+                              decoration: const InputDecoration(
+                                  labelText: 'Address line 2 (optional)',
+                                  isDense: true),
+                            ),
+                            const SizedBox(height: 8),
+                            Row(
+                              crossAxisAlignment: CrossAxisAlignment.start,
+                              children: [
+                                Expanded(
+                                  child: TextFormField(
+                                    controller: _cityCtrl,
+                                    decoration: const InputDecoration(
+                                        labelText: 'City', isDense: true),
+                                    validator: _requiredField,
+                                  ),
+                                ),
+                                const SizedBox(width: 8),
+                                Expanded(
+                                  child: TextFormField(
+                                    controller: _postalCtrl,
+                                    decoration: const InputDecoration(
+                                        labelText: 'Postal code', isDense: true),
+                                    validator: _requiredField,
+                                  ),
+                                ),
+                              ],
+                            ),
+                            const SizedBox(height: 8),
+                            TextFormField(
+                              controller: _recipientNameCtrl,
+                              decoration: const InputDecoration(
+                                  labelText: 'Recipient name', isDense: true),
+                              validator: _requiredField,
+                            ),
+                            const SizedBox(height: 8),
+                            TextFormField(
+                              controller: _recipientPhoneCtrl,
+                              decoration: const InputDecoration(
+                                  labelText: 'Recipient phone', isDense: true),
+                              keyboardType: TextInputType.phone,
+                              validator: _requiredField,
+                            ),
+                          ],
                         ),
                       ),
                     ],
+                    if (_fulfilment == 'PICKUP') ...[
+                      const SizedBox(height: 12),
+                      TextField(
+                        controller: _contactPhoneCtrl,
+                        keyboardType: TextInputType.phone,
+                        decoration: const InputDecoration(
+                          labelText: 'Contact phone *',
+                          hintText: 'We\'ll notify you when your order is ready',
+                          isDense: true,
+                          prefixIcon: Icon(Icons.phone_outlined),
+                        ),
+                      ),
+                    ],
+                    const SizedBox(height: 12),
+                    Align(
+                      alignment: Alignment.centerLeft,
+                      child: Text('Payment',
+                          style: Theme.of(context).textTheme.titleSmall),
+                    ),
+                    const SizedBox(height: 6),
+                    Align(
+                      alignment: Alignment.centerLeft,
+                      child: Wrap(
+                        spacing: 8,
+                        runSpacing: 4,
+                        children: [
+                          for (final o in payOptions)
+                            ChoiceChip(
+                              avatar: Icon(o.icon,
+                                  size: 16,
+                                  color: selectedPay.method == o.method
+                                      ? cs.onSecondaryContainer
+                                      : cs.onSurfaceVariant),
+                              label: Text(
+                                  o.payNow ? '${o.label} · pay now' : o.label),
+                              selected: selectedPay.method == o.method,
+                              onSelected: (_) =>
+                                  setState(() => _payMethod = o.method),
+                            ),
+                        ],
+                      ),
+                    ),
+                    const SizedBox(height: 12),
+                    Container(
+                      width: double.infinity,
+                      padding:
+                          const EdgeInsets.symmetric(horizontal: 12, vertical: 8),
+                      margin: const EdgeInsets.only(bottom: 12),
+                      decoration: BoxDecoration(
+                        color: cs.secondaryContainer,
+                        borderRadius: AppRadius.chip,
+                      ),
+                      child: Row(
+                        children: [
+                          Icon(
+                              _fulfilment == 'DELIVERY'
+                                  ? Icons.local_shipping_outlined
+                                  : Icons.storefront_outlined,
+                              size: 18,
+                              color: cs.onSecondaryContainer),
+                          const SizedBox(width: 8),
+                          Expanded(
+                            child: Text(
+                              _fulfilmentBannerText(
+                                  showPrices, storeName, currency, total, selectedPay),
+                              style: TextStyle(
+                                  color: cs.onSecondaryContainer, fontSize: 12),
+                            ),
+                          ),
+                        ],
+                      ),
+                    ),
+                    SizedBox(
+                      width: double.infinity,
+                      child: FilledButton.icon(
+                        onPressed: _placing ? null : _checkout,
+                        icon: _placing
+                            ?  SizedBox(
+                                height: 18,
+                                width: 18,
+                                child: CircularProgressIndicator(
+                                    strokeWidth: 2, color: Theme.of(context).colorScheme.onPrimary))
+                            : Icon(selectedPay.payNow
+                                ? Icons.lock_outline
+                                : Icons.receipt_long),
+                        label: Text(_placing
+                            ? (selectedPay.payNow
+                                ? 'Processing payment…'
+                                : 'Placing order…')
+                            : 'Review order'),
+                      ),
+                    ),
                   ],
                 ),
-              );
-            },
-          ),
-        ),
-        SafeArea(
-          child: ConstrainedBox(
-            constraints: BoxConstraints(
-                maxHeight: MediaQuery.of(context).size.height * 0.7),
-            child: SingleChildScrollView(
-              padding: const EdgeInsets.all(16),
-              child: Column(
-                children: [
-                  if (showPrices)
-                    Row(
-                      children: [
-                        Text('Total (incl. VAT)',
-                            style: Theme.of(context).textTheme.titleMedium),
-                        const Spacer(),
-                        Text('$currency ${total.toStringAsFixed(2)}',
-                            style: Theme.of(context)
-                                .textTheme
-                                .titleLarge
-                                ?.copyWith(fontWeight: FontWeight.bold)),
-                      ],
-                    ),
-                  if (showPrices && scheme != null) ...[
-                    const SizedBox(height: 6),
-                    Text(
-                      key: const Key('deposit-note'),
-                      'Drinks in ${scheme.inWords} carry a refundable deposit of '
-                      '${scheme.currency} ${scheme.depositEach.toStringAsFixed(2)} '
-                      'each, added to the order as its own line. It is paid back '
-                      'when the empty container is returned.',
-                      style: Theme.of(context).textTheme.bodySmall,
-                    ),
-                  ],
-                  if (showPrices) const SizedBox(height: 12),
-                  SegmentedButton<String>(
-                    segments: const [
-                      ButtonSegment(
-                          value: 'PICKUP',
-                          label: Text('Collect from store'),
-                          icon: Icon(Icons.storefront_outlined)),
-                      ButtonSegment(
-                          value: 'DELIVERY',
-                          label: Text('Deliver to home'),
-                          icon: Icon(Icons.local_shipping_outlined)),
-                    ],
-                    selected: {_fulfilment},
-                    onSelectionChanged: (s) =>
-                        setState(() => _fulfilment = s.first),
-                  ),
-                  if (_fulfilment == 'DELIVERY') ...[
-                    const SizedBox(height: 12),
-                    // The shopper's address book at this shop, when they keep one (12.10).
-                    // Picking one fills the form; the form stays editable afterwards.
-                    if (savedAddresses.isNotEmpty) ...[
-                      DropdownButtonFormField<String?>(
-                        key: const Key('cart-saved-address'),
-                        isExpanded: true,
-                        initialValue: _savedAddressId,
-                        decoration: const InputDecoration(
-                            labelText: 'Use a saved address', isDense: true),
-                        items: [
-                          const DropdownMenuItem<String?>(
-                              value: null, child: Text('Type an address')),
-                          for (final a in savedAddresses)
-                            DropdownMenuItem<String?>(
-                                value: a.id,
-                                child: Text(
-                                    '${a.oneLine}${a.isDefault ? ' (default)' : ''}',
-                                    overflow: TextOverflow.ellipsis)),
-                        ],
-                        onChanged: (id) {
-                          if (id == null) {
-                            setState(() => _savedAddressId = null);
-                            return;
-                          }
-                          _useSavedAddress(savedAddresses.firstWhere((a) => a.id == id), me);
-                        },
-                      ),
-                      const SizedBox(height: 12),
-                    ],
-                    Form(
-                      key: _addressFormKey,
-                      child: Column(
-                        children: [
-                          TextFormField(
-                            controller: _line1Ctrl,
-                            decoration: const InputDecoration(
-                                labelText: 'Address line 1',
-                                isDense: true),
-                            validator: _requiredField,
-                          ),
-                          const SizedBox(height: 8),
-                          TextFormField(
-                            controller: _line2Ctrl,
-                            decoration: const InputDecoration(
-                                labelText: 'Address line 2 (optional)',
-                                isDense: true),
-                          ),
-                          const SizedBox(height: 8),
-                          Row(
-                            crossAxisAlignment: CrossAxisAlignment.start,
-                            children: [
-                              Expanded(
-                                child: TextFormField(
-                                  controller: _cityCtrl,
-                                  decoration: const InputDecoration(
-                                      labelText: 'City', isDense: true),
-                                  validator: _requiredField,
-                                ),
-                              ),
-                              const SizedBox(width: 8),
-                              Expanded(
-                                child: TextFormField(
-                                  controller: _postalCtrl,
-                                  decoration: const InputDecoration(
-                                      labelText: 'Postal code', isDense: true),
-                                  validator: _requiredField,
-                                ),
-                              ),
-                            ],
-                          ),
-                          const SizedBox(height: 8),
-                          TextFormField(
-                            controller: _recipientNameCtrl,
-                            decoration: const InputDecoration(
-                                labelText: 'Recipient name', isDense: true),
-                            validator: _requiredField,
-                          ),
-                          const SizedBox(height: 8),
-                          TextFormField(
-                            controller: _recipientPhoneCtrl,
-                            decoration: const InputDecoration(
-                                labelText: 'Recipient phone', isDense: true),
-                            keyboardType: TextInputType.phone,
-                            validator: _requiredField,
-                          ),
-                        ],
-                      ),
-                    ),
-                  ],
-                  if (_fulfilment == 'PICKUP') ...[
-                    const SizedBox(height: 12),
-                    TextField(
-                      controller: _contactPhoneCtrl,
-                      keyboardType: TextInputType.phone,
-                      decoration: const InputDecoration(
-                        labelText: 'Contact phone *',
-                        hintText: 'We\'ll notify you when your order is ready',
-                        isDense: true,
-                        prefixIcon: Icon(Icons.phone_outlined),
-                      ),
-                    ),
-                  ],
-                  const SizedBox(height: 12),
-                  Align(
-                    alignment: Alignment.centerLeft,
-                    child: Text('Payment',
-                        style: Theme.of(context).textTheme.titleSmall),
-                  ),
-                  const SizedBox(height: 6),
-                  Align(
-                    alignment: Alignment.centerLeft,
-                    child: Wrap(
-                      spacing: 8,
-                      runSpacing: 4,
-                      children: [
-                        for (final o in payOptions)
-                          ChoiceChip(
-                            avatar: Icon(o.icon,
-                                size: 16,
-                                color: selectedPay.method == o.method
-                                    ? cs.onSecondaryContainer
-                                    : cs.onSurfaceVariant),
-                            label: Text(
-                                o.payNow ? '${o.label} · pay now' : o.label),
-                            selected: selectedPay.method == o.method,
-                            onSelected: (_) =>
-                                setState(() => _payMethod = o.method),
-                          ),
-                      ],
-                    ),
-                  ),
-                  const SizedBox(height: 12),
-                  Container(
-                    width: double.infinity,
-                    padding:
-                        const EdgeInsets.symmetric(horizontal: 12, vertical: 8),
-                    margin: const EdgeInsets.only(bottom: 12),
-                    decoration: BoxDecoration(
-                      color: cs.secondaryContainer,
-                      borderRadius: AppRadius.chip,
-                    ),
-                    child: Row(
-                      children: [
-                        Icon(
-                            _fulfilment == 'DELIVERY'
-                                ? Icons.local_shipping_outlined
-                                : Icons.storefront_outlined,
-                            size: 18,
-                            color: cs.onSecondaryContainer),
-                        const SizedBox(width: 8),
-                        Expanded(
-                          child: Text(
-                            _fulfilmentBannerText(
-                                showPrices, storeName, currency, total, selectedPay),
-                            style: TextStyle(
-                                color: cs.onSecondaryContainer, fontSize: 12),
-                          ),
-                        ),
-                      ],
-                    ),
-                  ),
-                  SizedBox(
-                    width: double.infinity,
-                    child: FilledButton.icon(
-                      onPressed: _placing ? null : _checkout,
-                      icon: _placing
-                          ?  SizedBox(
-                              height: 18,
-                              width: 18,
-                              child: CircularProgressIndicator(
-                                  strokeWidth: 2, color: Theme.of(context).colorScheme.onPrimary))
-                          : Icon(selectedPay.payNow
-                              ? Icons.lock_outline
-                              : Icons.receipt_long),
-                      label: Text(_placing
-                          ? (selectedPay.payNow
-                              ? 'Processing payment…'
-                              : 'Placing order…')
-                          : 'Review order'),
-                    ),
-                  ),
-                ],
               ),
             ),
           ),
-        ),
-      ],
+        ],
+      ),
     );
   }
 

@@ -6,6 +6,7 @@ import 'storefront_providers.dart';
 import 'storefront_shell.dart' show StorefrontAuthDialog;
 import '../../shared/util/short_ref.dart';
 import '../../core/theme.dart';
+import '../../core/spacing.dart';
 
 class StorefrontOrdersScreen extends ConsumerWidget {
   const StorefrontOrdersScreen({super.key});
@@ -38,26 +39,28 @@ class StorefrontOrdersScreen extends ConsumerWidget {
             final list = orders ?? const [];
             // A product safety recall on something they bought comes before
             // the orders themselves (05.10).
-            return ListView.separated(
-              padding: const EdgeInsets.only(bottom: 16),
-              itemCount: list.length + 2,
-              separatorBuilder: (_, _) => const SizedBox(height: 4),
-              itemBuilder: (_, i) {
-                if (i == 0) return const RecallNoticesSection();
-                if (i == 1) {
-                  return list.isEmpty
-                      ? const _EmptyState()
-                      : const SizedBox(height: 12);
-                }
-                final order = list[i - 2];
-                return Padding(
-                  padding: const EdgeInsets.symmetric(horizontal: 16),
-                  child: _ServerOrderTile(
-                      order: order,
-                      storeName: storeNames[order.storeId] ?? order.storeId,
-                      showPrices: showPrices),
-                );
-              },
+            return ContentBounds(
+              child: ListView.separated(
+                padding: const EdgeInsets.only(bottom: 16),
+                itemCount: list.length + 2,
+                separatorBuilder: (_, _) => const SizedBox(height: 4),
+                itemBuilder: (_, i) {
+                  if (i == 0) return const RecallNoticesSection();
+                  if (i == 1) {
+                    return list.isEmpty
+                        ? const _EmptyState()
+                        : const SizedBox(height: 12);
+                  }
+                  final order = list[i - 2];
+                  return Padding(
+                    padding: const EdgeInsets.symmetric(horizontal: 16),
+                    child: _ServerOrderTile(
+                        order: order,
+                        storeName: storeNames[order.storeId] ?? order.storeId,
+                        showPrices: showPrices),
+                  );
+                },
+              ),
             );
           },
         ),
@@ -66,21 +69,23 @@ class StorefrontOrdersScreen extends ConsumerWidget {
 
     // Guest: device-local fallback + a nudge to sign in for synced history.
     final orders = ref.watch(storefrontOrdersProvider);
-    return Column(
-      children: [
-        const _SignInBanner(),
-        Expanded(
-          child: orders.isEmpty
-              ? const _EmptyState()
-              : ListView.separated(
-                  padding: const EdgeInsets.all(16),
-                  itemCount: orders.length,
-                  separatorBuilder: (_, _) => const SizedBox(height: 4),
-                  itemBuilder: (_, i) =>
-                      _LocalOrderTile(order: orders[i], showPrices: showPrices),
-                ),
-        ),
-      ],
+    return ContentBounds(
+      child: Column(
+        children: [
+          const _SignInBanner(),
+          Expanded(
+            child: orders.isEmpty
+                ? const _EmptyState()
+                : ListView.separated(
+                    padding: context.pagePadding,
+                    itemCount: orders.length,
+                    separatorBuilder: (_, _) => const SizedBox(height: 4),
+                    itemBuilder: (_, i) =>
+                        _LocalOrderTile(order: orders[i], showPrices: showPrices),
+                  ),
+          ),
+        ],
+      ),
     );
   }
 }

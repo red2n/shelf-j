@@ -10,6 +10,7 @@ import 'unit_price.dart';
 import 'allergen_summary.dart';
 import 'product_safety_section.dart';
 import '../../core/theme.dart';
+import '../../core/spacing.dart';
 
 class ProductDetailScreen extends ConsumerWidget {
   final String productId;
@@ -37,56 +38,58 @@ class ProductDetailScreen extends ConsumerWidget {
           message: friendlyError(e, fallback: 'Could not load product.'),
           onRetry: () => ref.invalidate(storefrontProductProvider(productId)),
         ),
-        data: (product) => ListView(
-          padding: const EdgeInsets.all(24),
-          children: [
-            SizedBox(
-              height: 220,
-              child: ProductImageThumb(
-                productId: product.id,
-                label: product.name,
-                fontSize: 72,
-                borderRadius: AppRadius.input,
+        data: (product) => ContentBounds(
+          child: ListView(
+            padding: context.pagePadding,
+            children: [
+              SizedBox(
+                height: 220,
+                child: ProductImageThumb(
+                  productId: product.id,
+                  label: product.name,
+                  fontSize: 72,
+                  borderRadius: AppRadius.input,
+                ),
               ),
-            ),
-            const SizedBox(height: 20),
-            Text(product.name,
-                style: Theme.of(context).textTheme.headlineSmall),
-            if (product.description != null) ...[
+              const SizedBox(height: 20),
+              Text(product.name,
+                  style: Theme.of(context).textTheme.headlineSmall),
+              if (product.description != null) ...[
+                const SizedBox(height: 8),
+                Text(product.description!,
+                    style: TextStyle(color: cs.onSurfaceVariant)),
+              ],
+              // Shown with the offer, before anyone signs in (GPSR art.19).
+              ProductSafetySection(productId: product.id),
+              const SizedBox(height: 24),
+              Text('Options',
+                  style: Theme.of(context)
+                      .textTheme
+                      .titleMedium
+                      ?.copyWith(fontWeight: FontWeight.bold)),
               const SizedBox(height: 8),
-              Text(product.description!,
-                  style: TextStyle(color: cs.onSurfaceVariant)),
-            ],
-            // Shown with the offer, before anyone signs in (GPSR art.19).
-            ProductSafetySection(productId: product.id),
-            const SizedBox(height: 24),
-            Text('Options',
-                style: Theme.of(context)
-                    .textTheme
-                    .titleMedium
-                    ?.copyWith(fontWeight: FontWeight.bold)),
-            const SizedBox(height: 8),
-            variantsAsync.when(
-              loading: () => const Padding(
-                padding: EdgeInsets.all(16),
-                child: Center(child: CircularProgressIndicator()),
+              variantsAsync.when(
+                loading: () => const Padding(
+                  padding: EdgeInsets.all(16),
+                  child: Center(child: CircularProgressIndicator()),
+                ),
+                error: (e, _) => Text(
+                    friendlyError(e, fallback: 'Could not load options.'),
+                    style: TextStyle(color: cs.error)),
+                data: (variants) {
+                  if (variants.isEmpty) {
+                    return Text('No purchasable options.',
+                        style: TextStyle(color: cs.outline));
+                  }
+                  return Column(
+                    children: variants
+                        .map((v) => _VariantRow(product: product, variant: v))
+                        .toList(),
+                  );
+                },
               ),
-              error: (e, _) => Text(
-                  friendlyError(e, fallback: 'Could not load options.'),
-                  style: TextStyle(color: cs.error)),
-              data: (variants) {
-                if (variants.isEmpty) {
-                  return Text('No purchasable options.',
-                      style: TextStyle(color: cs.outline));
-                }
-                return Column(
-                  children: variants
-                      .map((v) => _VariantRow(product: product, variant: v))
-                      .toList(),
-                );
-              },
-            ),
-          ],
+            ],
+          ),
         ),
       ),
     );

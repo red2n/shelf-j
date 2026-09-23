@@ -291,7 +291,7 @@ class _LevelsTabState extends ConsumerState<_LevelsTab> {
                   Expanded(
                     child: LayoutBuilder(
                       builder: (context, bc) {
-                        final wide = bc.maxWidth >= 600;
+                        final wide = bc.maxWidth >= AppBreakpoints.medium;
                         if (wide) {
                           return _WideTable(
                             levels: filtered,

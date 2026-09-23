@@ -211,7 +211,7 @@ class _VariantComplianceDialogState extends ConsumerState<VariantComplianceDialo
                       Text(_error!, style: TextStyle(color: cs.error)),
                       const SizedBox(height: 8),
                     ],
-                    SwitchListTile(
+                    SwitchListTile.adaptive(
                       contentPadding: EdgeInsets.zero,
                       title: const Text('Food product'),
                       subtitle: const Text(
@@ -332,7 +332,7 @@ class _VariantComplianceDialogState extends ConsumerState<VariantComplianceDialo
                       onSelectionChanged: (s) => setState(() => _soldBy = s.first),
                     ),
                     if (_soldBy != 'EACH')
-                      SwitchListTile(
+                      SwitchListTile.adaptive(
                         contentPadding: EdgeInsets.zero,
                         title: const Text('Catch weight'),
                         subtitle: const Text('Each item has its own weight and is priced on the scale'),

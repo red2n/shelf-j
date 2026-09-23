@@ -490,7 +490,7 @@ class _ConsentsSectionState extends ConsumerState<ConsentsSection> {
                       title: Text('${mine.guardianName} has consented for you'),
                     ),
                   for (final c in mine.consents)
-                    SwitchListTile(
+                    SwitchListTile.adaptive(
                       key: Key('consent-${c.purpose}'),
                       value: c.granted,
                       onChanged: _busy || (c.tracking && !mine.canTrack)

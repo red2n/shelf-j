@@ -1245,7 +1245,7 @@ class _PromotionDialogState extends ConsumerState<_PromotionDialog> {
                 ],
               ),
               const SizedBox(height: 4),
-              SwitchListTile(
+              SwitchListTile.adaptive(
                 contentPadding: EdgeInsets.zero,
                 value: _exclusive,
                 onChanged: (v) => setState(() => _exclusive = v),
@@ -1468,7 +1468,7 @@ class _VatRateDialogState extends ConsumerState<_VatRateDialog> {
               decoration: const InputDecoration(labelText: 'Rate %'),
             ),
             const SizedBox(height: 4),
-            SwitchListTile(
+            SwitchListTile.adaptive(
               contentPadding: EdgeInsets.zero,
               value: _exempt,
               onChanged: (v) => setState(() => _exempt = v),

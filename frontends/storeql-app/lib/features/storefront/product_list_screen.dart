@@ -13,6 +13,7 @@ import 'storefront_providers.dart';
 import 'storefront_widgets.dart';
 import 'survey_widgets.dart';
 import '../../core/theme.dart';
+import '../../core/spacing.dart';
 
 // Sentinel placed in the mixed display list to mark where the ad renders.
 class _AdSlot {
@@ -73,7 +74,7 @@ class _ProductListScreenState extends ConsumerState<ProductListScreen> {
       storefrontProductsProvider((query: _query, categoryId: selectedCategory)),
     );
     final width = MediaQuery.sizeOf(context).width;
-    final cols = width < 600
+    final cols = width < AppBreakpoints.medium
         ? 1
         : width < 900
             ? 2
@@ -386,7 +387,7 @@ class _OffersCarouselState extends ConsumerState<_OffersCarousel> {
     final textScale =
         (MediaQuery.textScalerOf(context).scale(20) / 20).clamp(1.0, 2.0);
     final height =
-        (width < 600 ? 150.0 : (width < 1024 ? 170.0 : 190.0)) * textScale;
+        (width < AppBreakpoints.medium ? 150.0 : (width < 1024 ? 170.0 : 190.0)) * textScale;
     return Column(
       children: [
         const SizedBox(height: 12),

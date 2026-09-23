@@ -7,6 +7,7 @@ import '../../core/l10n/message_languages.dart';
 import '../../core/network/api_error.dart';
 import 'storefront_providers.dart';
 import 'storefront_shell.dart' show StorefrontAuthDialog;
+import '../../core/spacing.dart';
 
 // The shopper's own account at this shop (12.10): the profile the shop holds
 // for them and the addresses they keep here. Everything is keyed on the login
@@ -260,117 +261,119 @@ class _StorefrontAccountScreenState extends ConsumerState<StorefrontAccountScree
 
     return RefreshIndicator(
       onRefresh: () async => _refresh(),
-      child: ListView(
-        padding: const EdgeInsets.all(16),
-        children: [
-          Text('My account', style: theme.textTheme.titleLarge),
-          const SizedBox(height: 4),
-          Text(
-            'What this shop holds about you, and the addresses you keep here. '
-            'Each shop keeps its own record of you.',
-            style: theme.textTheme.bodyMedium
-                ?.copyWith(color: theme.colorScheme.onSurfaceVariant),
-          ),
-          const SizedBox(height: 12),
-          customer.when(
-            loading: () => const Padding(
-              padding: EdgeInsets.symmetric(vertical: 24),
-              child: Center(child: CircularProgressIndicator()),
+      child: ContentBounds(
+        child: ListView(
+          padding: context.pagePadding,
+          children: [
+            Text('My account', style: theme.textTheme.titleLarge),
+            const SizedBox(height: 4),
+            Text(
+              'What this shop holds about you, and the addresses you keep here. '
+              'Each shop keeps its own record of you.',
+              style: theme.textTheme.bodyMedium
+                  ?.copyWith(color: theme.colorScheme.onSurfaceVariant),
             ),
-            error: (e, _) => _InlineError(
-              message: friendlyError(e, fallback: 'Could not load your account.'),
-              onRetry: _refresh,
-            ),
-            data: (c) => c == null
-                ? _NoRecordCard(busy: _busy, onClaim: _claim)
-                : Column(
-                    crossAxisAlignment: CrossAxisAlignment.stretch,
-                    children: [
-                      ProfileCard(
-                        key: ValueKey('profile-${c.id}'),
-                        customer: c,
-                        busy: _busy,
-                        onSave: _saveProfile,
-                      ),
-                      const SizedBox(height: 24),
-                      Row(
-                        children: [
-                          Expanded(
-                              child: Text('My addresses', style: theme.textTheme.titleLarge)),
-                          FilledButton.tonalIcon(
-                            key: const Key('account-add-address'),
-                            onPressed: _busy ? null : _addAddress,
-                            icon: const Icon(Icons.add_location_alt_outlined),
-                            label: const Text('Add address'),
+            const SizedBox(height: 12),
+            customer.when(
+              loading: () => const Padding(
+                padding: EdgeInsets.symmetric(vertical: 24),
+                child: Center(child: CircularProgressIndicator()),
+              ),
+              error: (e, _) => _InlineError(
+                message: friendlyError(e, fallback: 'Could not load your account.'),
+                onRetry: _refresh,
+              ),
+              data: (c) => c == null
+                  ? _NoRecordCard(busy: _busy, onClaim: _claim)
+                  : Column(
+                      crossAxisAlignment: CrossAxisAlignment.stretch,
+                      children: [
+                        ProfileCard(
+                          key: ValueKey('profile-${c.id}'),
+                          customer: c,
+                          busy: _busy,
+                          onSave: _saveProfile,
+                        ),
+                        const SizedBox(height: 24),
+                        Row(
+                          children: [
+                            Expanded(
+                                child: Text('My addresses', style: theme.textTheme.titleLarge)),
+                            FilledButton.tonalIcon(
+                              key: const Key('account-add-address'),
+                              onPressed: _busy ? null : _addAddress,
+                              icon: const Icon(Icons.add_location_alt_outlined),
+                              label: const Text('Add address'),
+                            ),
+                          ],
+                        ),
+                        const SizedBox(height: 8),
+                        addresses.when(
+                          loading: () => const Padding(
+                            padding: EdgeInsets.symmetric(vertical: 24),
+                            child: Center(child: CircularProgressIndicator()),
                           ),
-                        ],
-                      ),
-                      const SizedBox(height: 8),
-                      addresses.when(
-                        loading: () => const Padding(
-                          padding: EdgeInsets.symmetric(vertical: 24),
-                          child: Center(child: CircularProgressIndicator()),
-                        ),
-                        error: (e, _) => _InlineError(
-                          message: friendlyError(e, fallback: 'Could not load your addresses.'),
-                          onRetry: _refresh,
-                        ),
-                        data: (rows) => rows.isEmpty
-                            ? Padding(
-                                padding: const EdgeInsets.symmetric(vertical: 16),
-                                child: Text(
-                                  'No addresses yet. Save one here and checkout will offer it.',
-                                  style: theme.textTheme.bodyMedium?.copyWith(
-                                      color: theme.colorScheme.onSurfaceVariant),
-                                ),
-                              )
-                            : Card(
-                                child: Column(
-                                  children: [
-                                    for (final a in rows)
-                                      ListTile(
-                                        leading: Icon(a.type == 'WORK'
-                                            ? Icons.work_outline
-                                            : Icons.home_outlined),
-                                        title: Text(a.oneLine),
-                                        subtitle: Text(addressTypes[a.type] ?? a.type),
-                                        trailing: Row(
-                                          mainAxisSize: MainAxisSize.min,
-                                          children: [
-                                            if (a.isDefault)
-                                              const Chip(
-                                                  label: Text('Default'),
-                                                  visualDensity: VisualDensity.compact),
-                                            PopupMenuButton<String>(
-                                              key: Key('address-menu-${a.id}'),
-                                              tooltip: 'Address actions',
-                                              onSelected: (v) => switch (v) {
-                                                'edit' => _editAddress(a),
-                                                'default' => _makeDefault(a),
-                                                _ => _removeAddress(a),
-                                              },
-                                              itemBuilder: (_) => [
-                                                const PopupMenuItem(
-                                                    value: 'edit', child: Text('Edit')),
-                                                if (!a.isDefault)
+                          error: (e, _) => _InlineError(
+                            message: friendlyError(e, fallback: 'Could not load your addresses.'),
+                            onRetry: _refresh,
+                          ),
+                          data: (rows) => rows.isEmpty
+                              ? Padding(
+                                  padding: const EdgeInsets.symmetric(vertical: 16),
+                                  child: Text(
+                                    'No addresses yet. Save one here and checkout will offer it.',
+                                    style: theme.textTheme.bodyMedium?.copyWith(
+                                        color: theme.colorScheme.onSurfaceVariant),
+                                  ),
+                                )
+                              : Card(
+                                  child: Column(
+                                    children: [
+                                      for (final a in rows)
+                                        ListTile(
+                                          leading: Icon(a.type == 'WORK'
+                                              ? Icons.work_outline
+                                              : Icons.home_outlined),
+                                          title: Text(a.oneLine),
+                                          subtitle: Text(addressTypes[a.type] ?? a.type),
+                                          trailing: Row(
+                                            mainAxisSize: MainAxisSize.min,
+                                            children: [
+                                              if (a.isDefault)
+                                                const Chip(
+                                                    label: Text('Default'),
+                                                    visualDensity: VisualDensity.compact),
+                                              PopupMenuButton<String>(
+                                                key: Key('address-menu-${a.id}'),
+                                                tooltip: 'Address actions',
+                                                onSelected: (v) => switch (v) {
+                                                  'edit' => _editAddress(a),
+                                                  'default' => _makeDefault(a),
+                                                  _ => _removeAddress(a),
+                                                },
+                                                itemBuilder: (_) => [
                                                   const PopupMenuItem(
-                                                      value: 'default',
-                                                      child: Text('Make default')),
-                                                const PopupMenuItem(
-                                                    value: 'remove', child: Text('Remove')),
-                                              ],
-                                            ),
-                                          ],
+                                                      value: 'edit', child: Text('Edit')),
+                                                  if (!a.isDefault)
+                                                    const PopupMenuItem(
+                                                        value: 'default',
+                                                        child: Text('Make default')),
+                                                  const PopupMenuItem(
+                                                      value: 'remove', child: Text('Remove')),
+                                                ],
+                                              ),
+                                            ],
+                                          ),
                                         ),
-                                      ),
-                                  ],
+                                    ],
+                                  ),
                                 ),
-                              ),
-                      ),
-                    ],
-                  ),
-          ),
-        ],
+                        ),
+                      ],
+                    ),
+            ),
+          ],
+        ),
       ),
     );
   }
@@ -618,7 +621,7 @@ class _AddressDialogState extends State<AddressDialog> {
                     ),
                   ),
                 ]),
-                SwitchListTile(
+                SwitchListTile.adaptive(
                   key: const Key('address-default'),
                   contentPadding: EdgeInsets.zero,
                   value: _default,

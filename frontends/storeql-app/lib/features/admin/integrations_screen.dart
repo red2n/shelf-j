@@ -339,7 +339,7 @@ class _MintKeyDialogState extends ConsumerState<MintKeyDialog> {
                   ),
                 ] else if (sandbox != null && sandbox.active) ...[
                   const SizedBox(height: 8),
-                  SwitchListTile(
+                  SwitchListTile.adaptive(
                     key: const Key('key-sandbox'),
                     contentPadding: EdgeInsets.zero,
                     title: const Text('Sandbox key'),

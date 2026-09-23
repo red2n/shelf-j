@@ -939,7 +939,7 @@ class _EditStoreDialogState extends ConsumerState<_EditStoreDialog> {
                 ),
                 const SizedBox(height: 8),
                 const Divider(),
-                SwitchListTile(
+                SwitchListTile.adaptive(
                   contentPadding: EdgeInsets.zero,
                   value: _showPrices,
                   onChanged: (v) => setState(() => _showPrices = v),
@@ -1266,7 +1266,7 @@ class _AddStoreDialogState extends ConsumerState<_AddStoreDialog> {
                 ),
                 const SizedBox(height: 8),
                 const Divider(),
-                SwitchListTile(
+                SwitchListTile.adaptive(
                   contentPadding: EdgeInsets.zero,
                   value: _showPrices,
                   onChanged: (v) => setState(() => _showPrices = v),

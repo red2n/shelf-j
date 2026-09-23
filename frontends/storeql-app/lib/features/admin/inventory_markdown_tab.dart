@@ -876,7 +876,7 @@ class _LadderDialogState extends ConsumerState<_LadderDialog> {
                   label: const Text('Add step'),
                 ),
                 if (widget.storeId != null)
-                  SwitchListTile(
+                  SwitchListTile.adaptive(
                     key: const Key('ladder-for-store'),
                     contentPadding: EdgeInsets.zero,
                     title: const Text('For this store only'),

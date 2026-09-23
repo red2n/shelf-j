@@ -1446,7 +1446,7 @@ class _AssortmentDialogState extends ConsumerState<_AssortmentDialog> {
                     ),
                     const SizedBox(height: 12),
                   ],
-                  SwitchListTile(
+                  SwitchListTile.adaptive(
                     contentPadding: EdgeInsets.zero,
                     value: _allStores,
                     onChanged: (v) => setState(() => _allStores = v),

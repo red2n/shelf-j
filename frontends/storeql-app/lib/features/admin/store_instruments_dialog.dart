@@ -412,7 +412,7 @@ class _VerificationFormState extends ConsumerState<_VerificationForm> {
                   controller: _by,
                   decoration: const InputDecoration(labelText: 'Done by (verifier or inspector)')),
               if (!repair) ...[
-                SwitchListTile(
+                SwitchListTile.adaptive(
                   value: _passed,
                   onChanged: (v) => setState(() => _passed = v),
                   title: const Text('Passed as fit for trade'),

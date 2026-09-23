@@ -1,3 +1,4 @@
+import 'package:flutter/foundation.dart' show defaultTargetPlatform, TargetPlatform;
 import 'package:flutter/material.dart';
 
 import 'spacing.dart';
@@ -278,6 +279,22 @@ class AppTheme {
   static const Color posAccent = Color(0xFFFCE7A6);
   static const Color posAccentForeground = Color(0xFF3A3833);
 
+  // ── Platform ──────────────────────────────────────────────────────────────
+  // defaultTargetPlatform is the OS on native builds and the browser's OS on the
+  // web, so "desktop" below also covers a desktop browser (mouse + keyboard),
+  // while a phone browser gets the touch values.
+
+  static bool get _isApple =>
+      defaultTargetPlatform == TargetPlatform.iOS || defaultTargetPlatform == TargetPlatform.macOS;
+
+  static bool get _isDesktop =>
+      defaultTargetPlatform == TargetPlatform.macOS ||
+      defaultTargetPlatform == TargetPlatform.windows ||
+      defaultTargetPlatform == TargetPlatform.linux;
+
+  /// 48dp on touch (Android, iOS, phone browsers); 40dp with a mouse.
+  static double get _minTarget => _isDesktop ? 40 : 48;
+
   static const ColorScheme lightScheme = ColorScheme(
     brightness: Brightness.light,
     primary: _Light.primary,
@@ -387,19 +404,35 @@ class AppTheme {
     final text = _textTheme(base.textTheme);
     const stadium = StadiumBorder();
     const buttonPadding = EdgeInsets.symmetric(horizontal: AppSpacing.xl, vertical: AppSpacing.md);
-    const buttonMinSize = Size(64, 48); // 48dp touch target
+    final buttonMinSize = Size(64, _minTarget);
 
     return base.copyWith(
       scaffoldBackgroundColor: cs.surface,
       canvasColor: cs.surface,
       textTheme: text,
-      visualDensity: VisualDensity.standard,
+      // Standard on phones and tablets; compact with a mouse (desktop web, admin).
+      visualDensity: _isDesktop ? VisualDensity.compact : VisualDensity.standard,
+      // Visible keyboard focus on the web and desktop.
+      focusColor: cs.primary.withValues(alpha: 0.12),
+      hoverColor: cs.onSurface.withValues(alpha: 0.06),
+      textSelectionTheme: TextSelectionThemeData(
+        cursorColor: cs.primary,
+        selectionColor: cs.primary.withValues(alpha: 0.24),
+        selectionHandleColor: cs.primary,
+      ),
+      // Desktop browsers get a slim, warm scrollbar instead of the grey default.
+      scrollbarTheme: ScrollbarThemeData(
+        thickness: const WidgetStatePropertyAll(8),
+        radius: const Radius.circular(AppRadius.full),
+        thumbColor: WidgetStatePropertyAll(cs.outline.withValues(alpha: 0.5)),
+      ),
 
       // Surface-coloured app bar — calm, content-first. It picks up a faint tint
       // once content scrolls under it. The POS shell overrides it with the amber
       // channel accent (see applyPosAccent).
       appBarTheme: AppBarTheme(
-        centerTitle: false,
+        // Centred on iOS/macOS (native convention), start-aligned on Android and Windows/Linux.
+        centerTitle: _isApple,
         elevation: 0,
         scrolledUnderElevation: 2,
         backgroundColor: cs.surface,
@@ -451,13 +484,13 @@ class AppTheme {
         style: TextButton.styleFrom(
           shape: stadium,
           padding: const EdgeInsets.symmetric(horizontal: AppSpacing.lg, vertical: AppSpacing.md),
-          minimumSize: const Size(48, 48),
+          minimumSize: Size(48, _minTarget),
           textStyle: text.labelLarge,
         ),
       ),
       segmentedButtonTheme: SegmentedButtonThemeData(
         style: SegmentedButton.styleFrom(
-          minimumSize: const Size(48, 44),
+          minimumSize: Size(48, _minTarget - 4),
           textStyle: text.labelLarge,
         ),
       ),
@@ -602,7 +635,10 @@ class AppTheme {
         contentTextStyle: text.bodyMedium?.copyWith(color: cs.onInverseSurface),
         actionTextColor: cs.inversePrimary,
         shape: const RoundedRectangleBorder(borderRadius: AppRadius.input),
-        insetPadding: const EdgeInsets.all(AppSpacing.lg),
+        // Phones: full width minus a 16dp inset. Desktop browsers: a 440dp toast,
+        // not a bar stretched across a 1920px window.
+        insetPadding: _isDesktop ? null : const EdgeInsets.all(AppSpacing.lg),
+        width: _isDesktop ? 440 : null,
       ),
       bannerTheme: MaterialBannerThemeData(
         backgroundColor: cs.surfaceContainerLow,

@@ -453,7 +453,7 @@ class _VatRegistrationDialogState extends ConsumerState<VatRegistrationDialog> {
               mainAxisSize: MainAxisSize.min,
               crossAxisAlignment: CrossAxisAlignment.stretch,
               children: [
-                SwitchListTile(
+                SwitchListTile.adaptive(
                   key: const Key('customer-vat-registered'),
                   contentPadding: EdgeInsets.zero,
                   title: const Text('VAT-registered business'),
@@ -520,7 +520,7 @@ class _VatRegistrationDialogState extends ConsumerState<VatRegistrationDialog> {
                     ),
                   ],
                 ),
-                SwitchListTile(
+                SwitchListTile.adaptive(
                   key: const Key('customer-vat-reverse-charge'),
                   contentPadding: EdgeInsets.zero,
                   title: const Text('Reverse charge'),

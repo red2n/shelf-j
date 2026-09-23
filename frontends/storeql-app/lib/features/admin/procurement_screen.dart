@@ -827,7 +827,7 @@ class _SupplierDialogState extends ConsumerState<_SupplierDialog> {
                   ),
                 ),
                 const SizedBox(height: 8),
-                SwitchListTile(
+                SwitchListTile.adaptive(
                   contentPadding: EdgeInsets.zero,
                   value: _vatRegistered,
                   onChanged: (v) => setState(() => _vatRegistered = v),

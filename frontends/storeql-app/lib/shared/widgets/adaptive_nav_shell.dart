@@ -1,5 +1,7 @@
 import 'package:flutter/material.dart';
 
+import '../../core/spacing.dart';
+
 class AdaptiveNavDestination {
   final String label;
   final IconData icon;
@@ -78,13 +80,15 @@ class AdaptiveNavShell extends StatefulWidget {
 
 /// Below this width the shell collapses to a drawer (phones); at or above it a
 /// persistent [NavigationRail] is shown (tablets / desktop / web), per Material 3.
-const double _railBreakpoint = 800;
+const double _railBreakpoint = AppBreakpoints.rail;
 
 class _AdaptiveNavShellState extends State<AdaptiveNavShell> {
   final _scaffoldKey = GlobalKey<ScaffoldState>();
 
   /// On wide layouts the rail is always visible; this toggles icon-only ⇄ labelled.
-  bool _railExtended = false;
+  /// Null until the person toggles it: then the rail starts labelled in a desktop-
+  /// width window ([AppBreakpoints.large]) and icon-only on tablets.
+  bool? _railExtended;
 
   void _toggleDrawer() {
     final state = _scaffoldKey.currentState;
@@ -120,7 +124,7 @@ class _AdaptiveNavShellState extends State<AdaptiveNavShell> {
   Widget build(BuildContext context) {
     return LayoutBuilder(builder: (context, constraints) {
       if (constraints.maxWidth >= _railBreakpoint) {
-        return _buildWide(context);
+        return _buildWide(context, constraints.maxWidth);
       }
       return widget.compactStyle == CompactNavStyle.bottomBar
           ? _buildBottomBar(context)
@@ -160,10 +164,11 @@ class _AdaptiveNavShellState extends State<AdaptiveNavShell> {
 
   // Tablet / desktop / web: a persistent rail beside the content. The app-bar
   // icon expands/collapses it (labels beside icons vs. under them).
-  Widget _buildWide(BuildContext context) {
+  Widget _buildWide(BuildContext context, double width) {
+    final extended = _railExtended ?? width >= AppBreakpoints.large;
     return Scaffold(
       appBar: _appBar(
-        onLeading: () => setState(() => _railExtended = !_railExtended),
+        onLeading: () => setState(() => _railExtended = !extended),
       ),
       body: Row(
         children: [
@@ -173,10 +178,10 @@ class _AdaptiveNavShellState extends State<AdaptiveNavShell> {
                 constraints: BoxConstraints(minHeight: c.maxHeight),
                 child: IntrinsicHeight(
                   child: NavigationRail(
-                    extended: _railExtended,
+                    extended: extended,
                     selectedIndex: widget.selectedIndex,
                     onDestinationSelected: widget.onDestinationSelected,
-                    labelType: _railExtended
+                    labelType: extended
                         ? NavigationRailLabelType.none
                         : NavigationRailLabelType.all,
                     destinations: widget.destinations

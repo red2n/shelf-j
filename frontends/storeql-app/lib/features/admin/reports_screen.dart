@@ -14,6 +14,7 @@ import '../../core/network/api_client.dart';
 import '../../shared/util/short_ref.dart';
 import '../../core/theme.dart';
 import '../../shared/widgets/empty_state.dart';
+import '../../core/spacing.dart';
 
 enum _ReportType {
   sales,
@@ -50,7 +51,7 @@ class _ReportsScreenState extends ConsumerState<ReportsScreen> {
   @override
   Widget build(BuildContext context) {
     return LayoutBuilder(builder: (context, bc) {
-      final wide = bc.maxWidth >= 800;
+      final wide = bc.maxWidth >= AppBreakpoints.rail;
 
       if (wide) {
         // Side-by-side: report list on left, content on right

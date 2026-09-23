@@ -10,6 +10,7 @@ import '../../core/network/api_error.dart';
 import 'privacy_rights.dart';
 import 'storefront_providers.dart';
 import 'storefront_shell.dart' show StorefrontAuthDialog;
+import '../../core/spacing.dart';
 
 /// One marketing channel as the shop currently has it recorded.
 class MarketingPreference {
@@ -164,88 +165,90 @@ class _StorefrontPrivacyScreenState
 
     return RefreshIndicator(
       onRefresh: () async => ref.invalidate(marketingPreferencesProvider),
-      child: ListView(
-        padding: const EdgeInsets.all(16),
-        children: [
-          const PrivacyNoticeSection(),
-          const SizedBox(height: 28),
-          const ConsentsSection(),
-          const SizedBox(height: 28),
-          Text('Marketing', style: theme.textTheme.titleLarge),
-          const SizedBox(height: 4),
-          Text(
-            'You decide what this shop may send you. Nothing is on unless you '
-            'turn it on, and you can turn it off again at any time — here, or '
-            'from the link in any message we send.',
-            style: theme.textTheme.bodyMedium
-                ?.copyWith(color: theme.colorScheme.onSurfaceVariant),
-          ),
-          const SizedBox(height: 12),
-          async.when(
-            loading: () => const Padding(
-              padding: EdgeInsets.symmetric(vertical: 24),
-              child: Center(child: CircularProgressIndicator()),
+      child: ContentBounds(
+        child: ListView(
+          padding: context.pagePadding,
+          children: [
+            const PrivacyNoticeSection(),
+            const SizedBox(height: 28),
+            const ConsentsSection(),
+            const SizedBox(height: 28),
+            Text('Marketing', style: theme.textTheme.titleLarge),
+            const SizedBox(height: 4),
+            Text(
+              'You decide what this shop may send you. Nothing is on unless you '
+              'turn it on, and you can turn it off again at any time — here, or '
+              'from the link in any message we send.',
+              style: theme.textTheme.bodyMedium
+                  ?.copyWith(color: theme.colorScheme.onSurfaceVariant),
             ),
-            error: (e, _) => _InlineError(
-              message: friendlyError(e,
-                  fallback: 'Could not load your preferences.'),
-              onRetry: () => ref.invalidate(marketingPreferencesProvider),
+            const SizedBox(height: 12),
+            async.when(
+              loading: () => const Padding(
+                padding: EdgeInsets.symmetric(vertical: 24),
+                child: Center(child: CircularProgressIndicator()),
+              ),
+              error: (e, _) => _InlineError(
+                message: friendlyError(e,
+                    fallback: 'Could not load your preferences.'),
+                onRetry: () => ref.invalidate(marketingPreferencesProvider),
+              ),
+              data: (prefs) {
+                final byChannel = {
+                  for (final p in prefs ?? const <MarketingPreference>[])
+                    p.channel: p,
+                };
+                return Card(
+                  child: Column(
+                    children: [
+                      for (final entry in _channels.entries)
+                        SwitchListTile.adaptive(
+                          value: byChannel[entry.key]?.granted ?? false,
+                          onChanged: _saving
+                              ? null
+                              : (v) => _setChannel(entry.key, v),
+                          title: Text(entry.value.label),
+                          subtitle: Text(entry.value.detail),
+                        ),
+                    ],
+                  ),
+                );
+              },
             ),
-            data: (prefs) {
-              final byChannel = {
-                for (final p in prefs ?? const <MarketingPreference>[])
-                  p.channel: p,
-              };
-              return Card(
-                child: Column(
-                  children: [
-                    for (final entry in _channels.entries)
-                      SwitchListTile(
-                        value: byChannel[entry.key]?.granted ?? false,
-                        onChanged: _saving
-                            ? null
-                            : (v) => _setChannel(entry.key, v),
-                        title: Text(entry.value.label),
-                        subtitle: Text(entry.value.detail),
-                      ),
-                  ],
-                ),
-              );
-            },
-          ),
-          const SizedBox(height: 8),
-          Text(
-            _notice,
-            style: theme.textTheme.bodySmall
-                ?.copyWith(color: theme.colorScheme.onSurfaceVariant),
-          ),
-          const SizedBox(height: 28),
-          Text('Your data', style: theme.textTheme.titleLarge),
-          const SizedBox(height: 4),
-          Text(
-            'You can have a copy of everything this shop holds about you: your '
-            'details, your addresses, your loyalty and store credit with their '
-            'full history, what you have agreed to be sent, and every order you '
-            'have placed here.',
-            style: theme.textTheme.bodyMedium
-                ?.copyWith(color: theme.colorScheme.onSurfaceVariant),
-          ),
-          const SizedBox(height: 12),
-          FilledButton.icon(
-            onPressed: _exporting == null ? _download : null,
-            icon: _exporting == null
-                ? const Icon(Icons.download_outlined)
-                : const SizedBox(
-                    width: 16,
-                    height: 16,
-                    child: CircularProgressIndicator(strokeWidth: 2)),
-            label: Text(_exporting == null
-                ? 'Download my data'
-                : 'Gathering your data…'),
-          ),
-          const SizedBox(height: 28),
-          const RequestsSection(),
-        ],
+            const SizedBox(height: 8),
+            Text(
+              _notice,
+              style: theme.textTheme.bodySmall
+                  ?.copyWith(color: theme.colorScheme.onSurfaceVariant),
+            ),
+            const SizedBox(height: 28),
+            Text('Your data', style: theme.textTheme.titleLarge),
+            const SizedBox(height: 4),
+            Text(
+              'You can have a copy of everything this shop holds about you: your '
+              'details, your addresses, your loyalty and store credit with their '
+              'full history, what you have agreed to be sent, and every order you '
+              'have placed here.',
+              style: theme.textTheme.bodyMedium
+                  ?.copyWith(color: theme.colorScheme.onSurfaceVariant),
+            ),
+            const SizedBox(height: 12),
+            FilledButton.icon(
+              onPressed: _exporting == null ? _download : null,
+              icon: _exporting == null
+                  ? const Icon(Icons.download_outlined)
+                  : const SizedBox(
+                      width: 16,
+                      height: 16,
+                      child: CircularProgressIndicator(strokeWidth: 2)),
+              label: Text(_exporting == null
+                  ? 'Download my data'
+                  : 'Gathering your data…'),
+            ),
+            const SizedBox(height: 28),
+            const RequestsSection(),
+          ],
+        ),
       ),
     );
   }

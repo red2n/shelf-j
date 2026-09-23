@@ -583,7 +583,7 @@ class _WritePlanDialogState extends ConsumerState<WritePlanDialog> {
                 keyboardType: TextInputType.number,
                 decoration: const InputDecoration(labelText: 'Days free before the first bill'),
               ),
-              SwitchListTile(
+              SwitchListTile.adaptive(
                 key: const Key('plan-public'),
                 contentPadding: EdgeInsets.zero,
                 title: const Text('Show it on the price list'),
@@ -824,7 +824,7 @@ class _SetIncludesDialogState extends ConsumerState<SetIncludesDialog> {
                         ),
                       )
                     else
-                      SwitchListTile(
+                      SwitchListTile.adaptive(
                         key: Key('include-${k.key}'),
                         contentPadding: EdgeInsets.zero,
                         title: Text(k.label),
@@ -963,7 +963,7 @@ class _SetMetersDialogState extends ConsumerState<SetMetersDialog> {
                       decoration: InputDecoration(labelText: '${k.label} (${k.unit}s)', helperText: 'counted by ${k.countedBy}'),
                     ),
                     if (k.refusable)
-                      SwitchListTile(
+                      SwitchListTile.adaptive(
                         key: Key('meter-hard-${k.key}'),
                         contentPadding: EdgeInsets.zero,
                         title: const Text('Stop marketing beyond it, rather than charge'),

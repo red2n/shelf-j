@@ -1131,7 +1131,7 @@ class _AddressFormDialogState extends ConsumerState<_AddressFormDialog> {
                   controller: _pincode,
                   decoration: const InputDecoration(labelText: 'Postcode / PIN'),
                 ),
-                SwitchListTile(
+                SwitchListTile.adaptive(
                   contentPadding: EdgeInsets.zero,
                   title: const Text('Default address'),
                   value: _isDefault,
