@@ -3,6 +3,7 @@ package com.storeql.reporting.api;
 import com.storeql.ids.Ids;
 import com.storeql.reporting.mapper.Mappers;
 import com.storeql.reporting.service.ReportingService;
+import com.storeql.web.ApiException;
 import com.storeql.web.ApiResponse;
 import com.storeql.web.Parsing;
 import com.storeql.web.TenantContext;
@@ -15,6 +16,7 @@ import jakarta.ws.rs.QueryParam;
 import jakarta.ws.rs.core.MediaType;
 import java.time.Instant;
 import java.time.ZoneOffset;
+import java.util.Locale;
 import java.util.UUID;
 import org.eclipse.microprofile.openapi.annotations.Operation;
 import org.eclipse.microprofile.openapi.annotations.responses.APIResponse;
@@ -105,6 +107,46 @@ public class SalesReportResource {
   }
 
   /** Labour against sales, day by day. */
+  @Operation(
+      summary = "Sales by category",
+      description =
+          "What each category took over the inclusive date range, from the sale lines and the"
+              + " catalogue's own word on where each variant sits: one row per category and"
+              + " currency, largest first, each with its share of the currency's total. `level=leaf`"
+              + " (default) groups by the product's own category; `level=top` rolls each up to its"
+              + " top-level ancestor. A row with no `categoryId` is the lines the report cannot"
+              + " place — a product with no category, or a variant the catalogue has not announced"
+              + " (product-svc's re-announce fills that) — shown rather than dropped, because takings"
+              + " that cannot be placed are still takings. Gross is before refunds: a refund is known"
+              + " by order, not by line. Names are the catalogue's; this report answers in ids.")
+  @APIResponse(responseCode = "200", description = "One row per category and currency")
+  @APIResponse(
+      responseCode = "400",
+      description =
+          "from/to is not a yyyy-MM-dd date, storeId is not a UUID, or level is not leaf or top")
+  @GET
+  @Path("/by-category")
+  public ApiResponse<Object> byCategory(
+      @QueryParam("from") String from,
+      @QueryParam("to") String to,
+      @QueryParam("storeId") String storeId,
+      @QueryParam("channel") String channel,
+      @QueryParam("level") String level) {
+    String chosen = level == null || level.isBlank() ? "leaf" : level.toLowerCase(Locale.ROOT);
+    if (!"leaf".equals(chosen) && !"top".equals(chosen)) {
+      throw ApiException.badRequest("REPORT_LEVEL_INVALID", "level must be leaf or top");
+    }
+    var rows =
+        service.salesByCategory(
+            ctx.tenantId(),
+            fromDay(from),
+            toDay(to),
+            optUuid(storeId),
+            blankToNull(channel),
+            "top".equals(chosen));
+    return ApiResponse.ok(Mappers.toSalesByCategoryReport(chosen, rows));
+  }
+
   @Operation(
       summary = "What each day took, and what its hours cost",
       description =

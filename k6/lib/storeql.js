@@ -336,13 +336,13 @@ export const SAFETY_INFORMATION = {
   noWarnings: true,
 };
 
-export function sellableVariant(tenant, name) {
+export function sellableVariant(tenant, name, extra = {}) {
   const t = tenant.owner.token;
   const run = uniq();
   const product = must(
     call('POST', '/api/product-svc/admin/products', {
       token: t,
-      body: { name: `${name} ${run}`, sellableOnline: true, sellablePos: true, safetyInformation: SAFETY_INFORMATION },
+      body: { name: `${name} ${run}`, sellableOnline: true, sellablePos: true, safetyInformation: SAFETY_INFORMATION, ...extra },
     }),
     201,
     `create product ${name}`

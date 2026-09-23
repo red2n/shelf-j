@@ -5,11 +5,14 @@ import com.storeql.reporting.domain.Domain.InventoryProjection;
 import com.storeql.reporting.domain.Domain.LabourDayStat;
 import com.storeql.reporting.domain.Domain.MovementStat;
 import com.storeql.reporting.domain.Domain.OpenSupplyLine;
+import com.storeql.reporting.domain.Domain.SaleLine;
+import com.storeql.reporting.domain.Domain.SalesCategoryStat;
 import com.storeql.reporting.domain.Domain.SalesDayStat;
 import com.storeql.reporting.domain.Domain.SalesSummary;
 import com.storeql.service.BaseJdbcRepository;
 import jakarta.enterprise.context.ApplicationScoped;
 import java.math.BigDecimal;
+import java.sql.Connection;
 import java.sql.PreparedStatement;
 import java.sql.ResultSet;
 import java.sql.SQLException;
@@ -17,6 +20,7 @@ import java.time.Instant;
 import java.time.LocalDate;
 import java.time.OffsetDateTime;
 import java.time.ZoneOffset;
+import java.util.ArrayList;
 import java.util.List;
 import java.util.UUID;
 
@@ -226,7 +230,8 @@ public class ReportingRepository extends BaseJdbcRepository {
       String channel,
       UUID customerId,
       BigDecimal gross,
-      String currency) {
+      String currency,
+      List<SaleLine> lines) {
     return inTx(
         c -> {
           try (var ps =
@@ -243,10 +248,165 @@ public class ReportingRepository extends BaseJdbcRepository {
             ps.setObject(5, customerId);
             ps.setBigDecimal(6, gross);
             ps.setString(7, currency);
-            return ps.executeUpdate() > 0;
+            if (ps.executeUpdate() == 0) {
+              return false; // seen before: its lines are already here
+            }
           }
+          // The lines land with the sale, in the same transaction and at the same instant (now()
+          // is the transaction's), so a report by day and a report by category agree.
+          if (!lines.isEmpty()) {
+            try (var ps =
+                c.prepareStatement(
+                    "INSERT INTO sales_line_facts"
+                        + " (tenant_id, order_id, line_no, variant_id, store_id, channel, qty,"
+                        + "  unit_price, line_total, currency, confirmed_at)"
+                        + " VALUES (?,?,?,?,?,?,?,?,?,?,now())")) {
+              int lineNo = 0;
+              for (SaleLine line : lines) {
+                ps.setObject(1, tenantId);
+                ps.setObject(2, orderId);
+                ps.setInt(3, ++lineNo);
+                ps.setObject(4, line.variantId());
+                ps.setObject(5, storeId);
+                ps.setString(6, channel);
+                ps.setBigDecimal(7, line.qty());
+                ps.setBigDecimal(8, line.unitPrice());
+                ps.setBigDecimal(9, line.lineTotal());
+                ps.setString(10, currency);
+                ps.addBatch();
+              }
+              ps.executeBatch();
+            }
+          }
+          return true;
         },
         "record sale");
+  }
+
+  // ── The catalogue projection: where each variant sits ─────────────────────
+
+  /**
+   * The catalogue's word on a product: its category path (leaf first, root last) and the variants
+   * it named. A later word replaces an earlier one; an earlier word redelivered late changes
+   * nothing, so the order events arrive in cannot move a product back.
+   */
+  public void upsertProductCategory(
+      UUID tenantId,
+      UUID productId,
+      List<UUID> categoryPath,
+      List<UUID> variantIds,
+      Instant announcedAt) {
+    inTx(
+        c -> {
+          try (var ps =
+              c.prepareStatement(
+                  "INSERT INTO catalogue_products"
+                      + " (tenant_id, product_id, category_path, announced_at)"
+                      + " VALUES (?,?,?,?)"
+                      + " ON CONFLICT (tenant_id, product_id) DO UPDATE SET"
+                      + " category_path = EXCLUDED.category_path,"
+                      + " announced_at = EXCLUDED.announced_at"
+                      + " WHERE catalogue_products.announced_at <= EXCLUDED.announced_at")) {
+            ps.setObject(1, tenantId);
+            ps.setObject(2, productId);
+            ps.setArray(3, c.createArrayOf("uuid", categoryPath.toArray(new UUID[0])));
+            ps.setObject(4, OffsetDateTime.ofInstant(announcedAt, ZoneOffset.UTC));
+            ps.executeUpdate();
+          }
+          upsertVariants(c, tenantId, productId, variantIds);
+          return null;
+        },
+        "project product category");
+  }
+
+  /** A variant created after its product was announced: tied to the product it belongs to. */
+  public void upsertVariantProduct(UUID tenantId, UUID variantId, UUID productId) {
+    inTx(
+        c -> {
+          upsertVariants(c, tenantId, productId, List.of(variantId));
+          return null;
+        },
+        "project variant");
+  }
+
+  private static void upsertVariants(
+      Connection c, UUID tenantId, UUID productId, List<UUID> variantIds) throws SQLException {
+    if (variantIds.isEmpty()) {
+      return;
+    }
+    try (var ps =
+        c.prepareStatement(
+            "INSERT INTO catalogue_variants (tenant_id, variant_id, product_id) VALUES (?,?,?)"
+                + " ON CONFLICT (tenant_id, variant_id) DO UPDATE SET product_id = EXCLUDED.product_id")) {
+      for (UUID variantId : variantIds) {
+        ps.setObject(1, tenantId);
+        ps.setObject(2, variantId);
+        ps.setObject(3, productId);
+        ps.addBatch();
+      }
+      ps.executeBatch();
+    }
+  }
+
+  /**
+   * What each category took, from the sale lines and the catalogue projection: the leaf category,
+   * or its top-level ancestor when {@code top}. Lines whose variant is unknown to the projection,
+   * or whose product has no category, group under a null category rather than vanish — takings the
+   * report cannot place are still takings.
+   */
+  public List<SalesCategoryStat> salesByCategory(
+      UUID tenantId, Instant from, Instant to, UUID storeId, String channel, boolean top) {
+    StringBuilder sb =
+        new StringBuilder(
+            "SELECT CASE WHEN ? THEN cp.category_path[array_length(cp.category_path, 1)]"
+                + " ELSE cp.category_path[1] END AS category_id,"
+                + " l.currency, COUNT(DISTINCT l.order_id) AS orders,"
+                + " COALESCE(SUM(l.qty), 0) AS units, COALESCE(SUM(l.line_total), 0) AS gross"
+                + " FROM sales_line_facts l"
+                + " LEFT JOIN catalogue_variants cv"
+                + " ON cv.tenant_id = l.tenant_id AND cv.variant_id = l.variant_id"
+                + " LEFT JOIN catalogue_products cp"
+                + " ON cp.tenant_id = cv.tenant_id AND cp.product_id = cv.product_id"
+                + " WHERE l.tenant_id = ?");
+    List<Object> params = new ArrayList<>();
+    params.add(top);
+    params.add(tenantId);
+    if (from != null) {
+      sb.append(" AND l.confirmed_at >= ?");
+      params.add(OffsetDateTime.ofInstant(from, ZoneOffset.UTC));
+    }
+    if (to != null) {
+      sb.append(" AND l.confirmed_at < ?");
+      params.add(OffsetDateTime.ofInstant(to, ZoneOffset.UTC));
+    }
+    if (storeId != null) {
+      sb.append(" AND l.store_id = ?");
+      params.add(storeId);
+    }
+    if (channel != null) {
+      sb.append(" AND l.channel = ?");
+      params.add(channel);
+    }
+    sb.append(" GROUP BY 1, l.currency ORDER BY gross DESC, l.currency, category_id LIMIT ?");
+    params.add(REPORTING_SAFETY_CAP);
+    return query(
+        sb.toString(),
+        ps -> {
+          for (int i = 0; i < params.size(); i++) {
+            ps.setObject(i + 1, params.get(i));
+          }
+        },
+        ReportingRepository::mapSalesCategory,
+        "sales by category");
+  }
+
+  private static SalesCategoryStat mapSalesCategory(ResultSet rs) throws SQLException {
+    return new SalesCategoryStat(
+        rs.getObject("category_id", UUID.class),
+        rs.getString("currency"),
+        rs.getLong("orders"),
+        rs.getBigDecimal("units"),
+        rs.getBigDecimal("gross"));
   }
 
   /**

@@ -347,6 +347,38 @@ void main() {
       expect(find.text('8.0'), findsOneWidget, reason: '4 exceptions per 50 sales');
     });
 
+    testWidgets('sales by category names each category from the catalogue and shows what it cannot place',
+        (tester) async {
+      final adapter = _RecordingAdapter()
+        ..bodyFor['by-category'] = '{"data":{"level":"leaf","rows":['
+            '{"categoryId":"c-1","currency":"GBP","orders":2,"units":5.000,"gross":10.00,"share":47.62},'
+            '{"currency":"GBP","orders":1,"units":1,"gross":11.00,"share":52.38}]}}'
+        ..bodyFor['categories'] =
+            '{"data":[{"id":"c-1","name":"Soft drinks","status":"ACTIVE","createdAt":"2026-01-01T00:00:00Z"}]}';
+      await pump(tester, adapter);
+      await tester.tap(find.text('Sales by Category').last);
+      await tester.pumpAndSettle();
+      expect(find.text('Soft drinks'), findsOneWidget);
+      expect(find.text('Uncategorised'), findsOneWidget);
+      expect(find.text('47.62'), findsOneWidget);
+      expect(find.textContaining('has not announced yet'), findsOneWidget);
+      expect(find.text('Export CSV'), findsOneWidget);
+      expect(adapter.callTo('by-category').query['level'], 'leaf');
+      await tester.tap(find.text('Top level'));
+      await tester.pumpAndSettle();
+      expect(
+          adapter.calls.where((c) => c.path.contains('by-category')).last.query['level'], 'top');
+    });
+
+    testWidgets('sales by category with no lines says so', (tester) async {
+      final adapter = _RecordingAdapter()
+        ..bodyFor['by-category'] = '{"data":{"level":"leaf","rows":[]}}';
+      await pump(tester, adapter);
+      await tester.tap(find.text('Sales by Category').last);
+      await tester.pumpAndSettle();
+      expect(find.text('No sale lines in this range.'), findsOneWidget);
+    });
+
     testWidgets('a report with rows offers the CSV export', (tester) async {
       final adapter = _RecordingAdapter()
         ..bodyFor['low-stock'] = '{"data":[{"storeId":"s-1","variantId":"v-1",'

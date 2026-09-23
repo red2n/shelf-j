@@ -244,6 +244,7 @@ A sidebar (wide) / chip selector (narrow) between sixteen tables, each with a re
 1. **On-Hand Inventory** — total units on hand per store/variant.
 2. **Sales Revenue** — orders, gross, refunded, and net revenue by currency. Date range.
 3. **Sales by Day** — daily revenue buckets. Date range.
+3a. **Sales by Category** — what each category took: orders, units, gross and share, by the product's own category or rolled up to the top of the tree (a segmented toggle). Names come from the catalogue; lines the catalogue cannot place are shown as *Uncategorised*. Date range, CSV export.
 4. **Supply / Demand Netting** — on-hand + in-transit → net available, per store/variant.
 5. **Movement Statistics** — stock in / out / net per period, per store/variant.
 
@@ -441,7 +442,7 @@ Navigation: **Shop · Cart** (with a live item-count badge). A sticky cart bar (
 | `/admin/orders` | Orders (all channels) + Return/Refund + Collect Payment |
 | `/admin/procurement` | Procurement (Purchase Orders / Suppliers tabs) |
 | `/admin/pricing` | Pricing (Price Lists / Promotions / VAT Rates / VAT Return / Shelf Labels / Unit Pricing / Reductions tabs) |
-| `/admin/reports` | Reports (On-Hand / Sales / Sales by Day / Supply-Demand / Movements / Low Stock / Valuation / Shrinkage / Staff Exceptions / Tax Summary / Sales by Hour / Sales by Staff / Tender Mix / Stock Turn / Gross Margin / Dead Stock / Trial Balance) |
+| `/admin/reports` | Reports (On-Hand / Sales / Sales by Day / Sales by Category / Supply-Demand / Movements / Low Stock / Valuation / Shrinkage / Staff Exceptions / Tax Summary / Sales by Hour / Sales by Staff / Tender Mix / Stock Turn / Gross Margin / Dead Stock / Trial Balance) |
 | `/admin/customers` | Customers + loyalty/credit + addresses |
 | `/admin/sales` | Sales tools (Gift Cards / Layaways / Special Orders / Receipts tabs) |
 | `/admin/staff` | Staff |

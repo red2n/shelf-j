@@ -876,6 +876,7 @@ Every route needs a management role **and** `finance.payments`; a storekeeper or
 ### Sales Analytics (`/admin/reports/sales`)
 - `GET /admin/reports/sales/summary` — gross/refunded/net revenue and order count for a date range, grouped by currency.
 - `GET /admin/reports/sales/by-day` — daily revenue buckets per currency, newest day first.
+- `GET /admin/reports/sales/by-category?from=&to=&storeId=&channel=&level=leaf|top` — **what each category took (19.x)**, from the sale lines `OrderConfirmed` now carries and the catalogue's own word on where each variant sits (`ProductCategorised`, `VariantCreated`, projected into `catalogue_products`/`catalogue_variants`): one row per category and currency, largest first, with `orders`, `units`, `gross` (before refunds — a refund is known by order, not by line) and `share` of the currency's total. `level=top` rolls each category up to its top-level ancestor. A row with no `categoryId` is the lines the report cannot place — a product with no category, or a variant the catalogue has not announced (`POST /admin/products/republish-catalogue` on product-svc fills that) — shown rather than dropped. Names are the catalogue's: the report answers in ids and the app reads names from `GET /admin/categories`. `level` outside leaf/top is `400 REPORT_LEVEL_INVALID`.
 
 **Business rules**
 - Entirely read-only: every endpoint serves from projections built by consuming events, never a live call into order/payment/inventory-svc.

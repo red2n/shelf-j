@@ -16,6 +16,7 @@ import '../../shared/util/short_ref.dart';
 enum _ReportType {
   sales,
   salesByDay,
+  salesByCategory,
   onHand,
   supplyDemand,
   movements,
@@ -172,6 +173,8 @@ class _ReportContent extends ConsumerWidget {
         return _SalesReport();
       case _ReportType.salesByDay:
         return _SalesByDayReport();
+      case _ReportType.salesByCategory:
+        return _SalesByCategoryReport();
       case _ReportType.onHand:
         return _OnHandReport();
       case _ReportType.supplyDemand:
@@ -577,6 +580,142 @@ class _SalesByDayReport extends ConsumerWidget {
   }
 }
 
+/// What each category took (19.x). The server groups; the catalogue names.
+class _SalesByCategoryReport extends ConsumerWidget {
+  @override
+  Widget build(BuildContext context, WidgetRef ref) {
+    final cs = Theme.of(context).colorScheme;
+    final range = ref.watch(reportDateRangeProvider);
+    final level = ref.watch(salesByCategoryLevelProvider);
+    final async = ref.watch(salesByCategoryReportProvider);
+    final names = ref.watch(categoriesProvider).maybeWhen(
+          data: (cats) => {for (final c in cats) c.id: c.name},
+          orElse: () => const <String, String>{},
+        );
+    String nameOf(SalesCategoryRow r) => r.categoryId == null
+        ? 'Uncategorised'
+        : (names[r.categoryId] ?? shortRef(r.categoryId!));
+    return async.when(
+      loading: () => const LoadingView(label: 'Loading sales by category…'),
+      error: (e, _) => ErrorView(
+        message:
+            friendlyError(e, fallback: 'Could not load sales by category.'),
+        onRetry: () => ref.invalidate(salesByCategoryReportProvider),
+      ),
+      data: (rows) {
+        final unplaced = rows.any((r) => r.categoryId == null);
+        return Column(
+          crossAxisAlignment: CrossAxisAlignment.start,
+          children: [
+            _ReportHeader(
+              title: 'Sales by Category',
+              subtitle:
+                  '${level == 'top' ? 'Rolled up to the top of the tree' : "By the product's own category"}'
+                  '${range.from != null ? ' · ${range.from} → ${range.to}' : ''}',
+              onRefresh: () => ref.invalidate(salesByCategoryReportProvider),
+              onExportCsv: rows.isEmpty
+                  ? null
+                  : () {
+                      final buf = StringBuffer(
+                          'category,categoryId,currency,orders,units,gross,share\n');
+                      for (final r in rows) {
+                        buf.writeln([
+                          _csvEscape(nameOf(r)),
+                          _csvEscape(r.categoryId ?? ''),
+                          _csvEscape(r.currency),
+                          r.orders,
+                          r.units,
+                          r.gross,
+                          r.share,
+                        ].join(','));
+                      }
+                      _downloadCsv('sales-by-category-$level.csv', buf.toString());
+                    },
+            ),
+            const _DateRangeBar(),
+            Padding(
+              padding: const EdgeInsets.fromLTRB(16, 4, 16, 0),
+              child: SegmentedButton<String>(
+                segments: const [
+                  ButtonSegment(value: 'leaf', label: Text('Own category')),
+                  ButtonSegment(value: 'top', label: Text('Top level')),
+                ],
+                selected: {level},
+                onSelectionChanged: (s) => ref
+                    .read(salesByCategoryLevelProvider.notifier)
+                    .state = s.first,
+              ),
+            ),
+            const SizedBox(height: 12),
+            if (rows.isEmpty)
+              const Expanded(
+                  child: Center(child: Text('No sale lines in this range.')))
+            else
+              Expanded(
+                child: SingleChildScrollView(
+                  padding: const EdgeInsets.symmetric(horizontal: 16),
+                  child: Column(
+                    crossAxisAlignment: CrossAxisAlignment.start,
+                    children: [
+                      if (unplaced)
+                        Padding(
+                          padding: const EdgeInsets.only(bottom: 8),
+                          child: Text(
+                            'Uncategorised is lines the catalogue cannot place: a product with no '
+                            'category, or a variant the catalogue has not announced yet. '
+                            'Re-announcing the catalogue from Products places them.',
+                            style: Theme.of(context)
+                                .textTheme
+                                .bodySmall
+                                ?.copyWith(color: cs.onSurfaceVariant),
+                          ),
+                        ),
+                      Card(
+                        child: DataTable(
+                          headingRowColor:
+                              WidgetStatePropertyAll(cs.surfaceContainerHigh),
+                          columnSpacing: 24,
+                          columns: const [
+                            DataColumn(label: Text('Category')),
+                            DataColumn(label: Text('Currency')),
+                            DataColumn(label: Text('Orders'), numeric: true),
+                            DataColumn(label: Text('Units'), numeric: true),
+                            DataColumn(label: Text('Gross'), numeric: true),
+                            DataColumn(label: Text('Share %'), numeric: true),
+                          ],
+                          rows: rows
+                              .map((r) => DataRow(cells: [
+                                    DataCell(Text(nameOf(r),
+                                        style: r.categoryId == null
+                                            ? TextStyle(
+                                                fontStyle: FontStyle.italic,
+                                                color: cs.onSurfaceVariant)
+                                            : null)),
+                                    DataCell(Text(r.currency)),
+                                    DataCell(Text('${r.orders}')),
+                                    DataCell(Text(r.units.toStringAsFixed(
+                                        r.units == r.units.roundToDouble()
+                                            ? 0
+                                            : 3))),
+                                    DataCell(Text(r.gross.toStringAsFixed(2),
+                                        style: const TextStyle(
+                                            fontWeight: FontWeight.bold))),
+                                    DataCell(Text(r.share.toStringAsFixed(2))),
+                                  ]))
+                              .toList(),
+                        ),
+                      ),
+                    ],
+                  ),
+                ),
+              ),
+          ],
+        );
+      },
+    );
+  }
+}
+
 class _MovementStatsReport extends ConsumerWidget {
   @override
   Widget build(BuildContext context, WidgetRef ref) {
@@ -761,6 +900,8 @@ String _reportLabel(_ReportType r) {
       return 'Sales Revenue';
     case _ReportType.salesByDay:
       return 'Sales by Day';
+    case _ReportType.salesByCategory:
+      return 'Sales by Category';
     case _ReportType.onHand:
       return 'On-Hand Inventory';
     case _ReportType.supplyDemand:
@@ -802,6 +943,8 @@ IconData _reportIcon(_ReportType r) {
       return Icons.payments_outlined;
     case _ReportType.salesByDay:
       return Icons.calendar_view_day_outlined;
+    case _ReportType.salesByCategory:
+      return Icons.category_outlined;
     case _ReportType.onHand:
       return Icons.inventory_2_outlined;
     case _ReportType.supplyDemand:

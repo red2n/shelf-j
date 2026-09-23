@@ -1317,6 +1317,58 @@ final salesByDayReportProvider =
   return rows.map((e) => SalesDayRow.fromJson(e as Map<String, dynamic>)).toList();
 });
 
+/// What one category took, from the sale lines (19.x). [categoryId] is null for
+/// lines the catalogue cannot place: a product with no category, or a variant
+/// it has not announced yet.
+class SalesCategoryRow {
+  final String? categoryId;
+  final String currency;
+  final int orders;
+  final double units;
+  final double gross;
+  final double share;
+
+  const SalesCategoryRow({
+    required this.categoryId,
+    required this.currency,
+    required this.orders,
+    required this.units,
+    required this.gross,
+    required this.share,
+  });
+
+  factory SalesCategoryRow.fromJson(Map<String, dynamic> j) => SalesCategoryRow(
+        categoryId: j['categoryId'] as String?,
+        currency: j['currency'] as String? ?? '-',
+        orders: (j['orders'] as num?)?.toInt() ?? 0,
+        units: (j['units'] as num?)?.toDouble() ?? 0,
+        gross: (j['gross'] as num?)?.toDouble() ?? 0,
+        share: (j['share'] as num?)?.toDouble() ?? 0,
+      );
+}
+
+/// 'leaf' groups by the product's own category; 'top' rolls each up to the
+/// top of the tree. The server does the grouping, so the choice is a request.
+final salesByCategoryLevelProvider = StateProvider<String>((ref) => 'leaf');
+
+/// Sales by category over the report date range, largest first.
+final salesByCategoryReportProvider =
+    FutureProvider.autoDispose<List<SalesCategoryRow>>((ref) async {
+  final range = ref.watch(reportDateRangeProvider);
+  final level = ref.watch(salesByCategoryLevelProvider);
+  final params = <String, dynamic>{'level': level};
+  if (range.from != null && range.from!.isNotEmpty) params['from'] = range.from;
+  if (range.to != null && range.to!.isNotEmpty) params['to'] = range.to;
+  final resp = await ref.read(apiClientProvider).dio.get(
+        '/${ApiConstants.reporting}/admin/reports/sales/by-category',
+        queryParameters: params,
+      );
+  final rows = (resp.data['data']?['rows'] as List?) ?? [];
+  return rows
+      .map((e) => SalesCategoryRow.fromJson(e as Map<String, dynamic>))
+      .toList();
+});
+
 /// Delivery area (pincode coverage) for a store.
 class DeliveryArea {
   final String id;

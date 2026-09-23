@@ -374,7 +374,7 @@ Thin fan-in service: consumes events, records notifications, and exposes read fe
 Pure projection service built by consuming inventory and sales events.
 - **API:** inventory — `/admin/reports/inventory/on-hand`, `/supply-demand` (nets against open in-transit supply), `/movement-stats` (bucketed daily/weekly/monthly); sales — `/admin/reports/sales/labour` (what each day took against what its hours cost), `/admin/reports/sales/summary` (gross/refunded/net revenue + order count per currency), `/admin/reports/sales/by-day` (daily revenue buckets).
 - **Tables:** `inventory_projection`, `movement_events`, `open_supply_lines`, `sales_facts`, `labour_facts` (what a store's hours cost, per time entry, projected from tenant-svc — with no person on the row, so pay stays where it is kept), `outbox` (21.14: the evidence of a departed business's erasure).
-- **Events:** consumes `StockReceived`, `StockDeducted`, `StockAdjusted`, `TransferOrderShipped/Received` (stock projections) and `OrderConfirmed`, `PaymentRefunded` (sales projection, net of refunds); publishes nothing.
+- **Events:** consumes `StockReceived`, `StockDeducted`, `StockAdjusted`, `TransferOrderShipped/Received` (stock projections), `OrderConfirmed` (the sale, and since 19.x its `lines`), `PaymentRefunded` (sales projection, net of refunds) and `ProductCategorised`, `VariantCreated` (the catalogue projection sales by category is read against); publishes nothing.
 - **Notable:** no writes of its own beyond reacting to other services' Kafka streams.
 
 ---
@@ -406,7 +406,8 @@ tenant-svc   ──REST──►  iam-svc         (verify user on staff assignme
 | `SupplierInvoiceCaptured` | purchase-svc | pricing-svc (input VAT → VAT return boxes 4 and 7) |
 | `StockReceived` / `StockDeducted` / `StockAdjusted` | inventory-svc | reporting-svc, order-svc (POS stock-position projection) |
 | `StockBelowThreshold` | inventory-svc | notification-svc |
-| `OrderPlaced` / `OrderConfirmed` | order-svc | inventory-svc, customer-svc, cart-svc, reporting-svc, notification-svc; tenant-svc meters `OrderPlaced` (21.10) |
+| `OrderPlaced` / `OrderConfirmed` | order-svc | inventory-svc, customer-svc, cart-svc, reporting-svc (`OrderConfirmed` carries `lines`: variant, qty, unitPrice, lineTotal — sales by category), notification-svc; tenant-svc meters `OrderPlaced` (21.10) |
+| `ProductCategorised` / `VariantCreated` | product-svc | pricing-svc (category-scoped promotions), reporting-svc (sales by category) |
 | `SmsSent` | notification-svc | tenant-svc (the text meter, in the parts the carrier bills; 21.10) |
 | `OrderCancelled` / `OrderReturned` | order-svc | inventory-svc, payment-svc, reporting-svc |
 | `PaymentCaptured` / `PaymentFailed` / `PaymentRefunded` | payment-svc | order-svc, reporting-svc (refunds net against sales) |

@@ -818,7 +818,8 @@ public class OrderService {
    *     the order is not awaiting confirmation
    */
   public Order confirmOrder(UUID tenantId, UUID orderId, UUID userId) {
-    // Load the order so OrderConfirmed can carry the buyer + settled amount (loyalty accrual).
+    // Load the order so OrderConfirmed can carry the buyer + settled amount (loyalty accrual)
+    // and its lines (sales by category).
     Order order = getOrder(tenantId, orderId);
     var confirmEvent =
         Events.orderConfirmed(
@@ -829,7 +830,8 @@ public class OrderService {
             order.customerId(),
             order.total(),
             order.taxAmount(),
-            order.currency());
+            order.currency(),
+            repo.findOrderItems(tenantId, orderId));
     Order confirmed =
         isTillSale(order.channel(), order.fulfilmentType())
             ? repo.confirmAndFulfil(
@@ -1849,12 +1851,14 @@ public class OrderService {
           orderId);
       return;
     }
+    // The lines once, for the fulfilment event and for OrderConfirmed (sales by category).
+    List<OrderItem> items = repo.findOrderItems(tenantId, orderId);
     // A till sale is handed over the moment it is paid for, so the capture that completes it also
     // fulfils it, in the same transaction (SJ-D40). The event is built for every tender but only
     // written by the one that completes the sale; a partial tender or a redelivery writes nothing.
     var fulfilEvent =
         isTillSale(order.channel(), order.fulfilmentType())
-            ? fulfilledWithRevenue(tenantId, order, repo.findOrderItems(tenantId, orderId))
+            ? fulfilledWithRevenue(tenantId, order, items)
             : null;
     boolean completed =
         repo.applyPaymentCaptured(
@@ -1871,7 +1875,8 @@ public class OrderService {
                 order.customerId(),
                 order.total(),
                 order.taxAmount(),
-                order.currency()),
+                order.currency(),
+                items),
             fulfilEvent);
 
     // Till sales are confirmed here, not in confirmOrder, so this is where most receipts are

@@ -8,6 +8,9 @@
 # writes — build/web, .dart_tool, pubspec.lock, the caches — is the host user's from the start.
 # Sourced by scripts/redeploy.sh; proved by scripts/flutter-docker-selftest.sh.
 #
+# The build writes the app's .dart_tool/package_config.json with the container's paths; a machine
+# that also has Flutter installed runs `flutter pub get` once afterwards to point it back home.
+#
 #   flutter_in_docker <app dir> <pub cache dir> <shell command>
 
 _FID_ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/../.." && pwd)"

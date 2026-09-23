@@ -85,4 +85,78 @@ class EventsTest {
     assertEquals("ORIGINAL", json.getString("refundMethod"));
     assertEquals(0, BigDecimal.TEN.compareTo(json.getJsonNumber("refundAmount").bigDecimalValue()));
   }
+
+  /**
+   * Sales by category (19.x) is read line by line in reporting-svc, and OrderConfirmed is the event
+   * that says a sale happened: it carries each line's variant, quantity and money.
+   */
+  @Test
+  void orderConfirmedCarriesItsLines() {
+    UUID other = Ids.newId();
+    var cola =
+        new OrderItem(
+            Ids.newId(),
+            TENANT,
+            ORDER,
+            VARIANT,
+            new BigDecimal("2"),
+            new BigDecimal("2.00"),
+            new BigDecimal("4.00"),
+            null,
+            null);
+    var crisps =
+        new OrderItem(
+            Ids.newId(),
+            TENANT,
+            ORDER,
+            other,
+            new BigDecimal("1.500"),
+            new BigDecimal("1.00"),
+            new BigDecimal("1.50"),
+            null,
+            null);
+    var row =
+        Events.orderConfirmed(
+            TENANT,
+            ORDER,
+            STORE,
+            "POS",
+            null,
+            new BigDecimal("5.50"),
+            new BigDecimal("0.92"),
+            "GBP",
+            List.of(cola, crisps));
+
+    JsonObject json = Json.createReader(new StringReader(row.payload())).readObject();
+    assertEquals("OrderConfirmed", json.getString("eventType"));
+    assertEquals(
+        0, new BigDecimal("5.50").compareTo(json.getJsonNumber("total").bigDecimalValue()));
+    var lines = json.getJsonArray("lines");
+    assertEquals(2, lines.size());
+    var first = lines.getJsonObject(0);
+    assertEquals(VARIANT.toString(), first.getString("variantId"));
+    assertEquals(0, new BigDecimal("2").compareTo(first.getJsonNumber("qty").bigDecimalValue()));
+    assertEquals(
+        0, new BigDecimal("2.00").compareTo(first.getJsonNumber("unitPrice").bigDecimalValue()));
+    assertEquals(
+        0, new BigDecimal("4.00").compareTo(first.getJsonNumber("lineTotal").bigDecimalValue()));
+    assertEquals(other.toString(), lines.getJsonObject(1).getString("variantId"));
+  }
+
+  @Test
+  void orderConfirmedWithNoLinesStillSaysSo() {
+    var row =
+        Events.orderConfirmed(
+            TENANT,
+            ORDER,
+            STORE,
+            "ONLINE",
+            null,
+            BigDecimal.TEN,
+            BigDecimal.ZERO,
+            "GBP",
+            List.of());
+    JsonObject json = Json.createReader(new StringReader(row.payload())).readObject();
+    assertEquals(0, json.getJsonArray("lines").size());
+  }
 }

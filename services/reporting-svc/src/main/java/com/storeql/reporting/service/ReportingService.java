@@ -4,6 +4,8 @@ import com.storeql.ids.Ids;
 import com.storeql.reporting.domain.Domain.InventoryProjection;
 import com.storeql.reporting.domain.Domain.MovementStat;
 import com.storeql.reporting.domain.Domain.OpenSupplyLine;
+import com.storeql.reporting.domain.Domain.SaleLine;
+import com.storeql.reporting.domain.Domain.SalesCategoryStat;
 import com.storeql.reporting.domain.Domain.SalesDayStat;
 import com.storeql.reporting.domain.Domain.SalesSummary;
 import com.storeql.reporting.repo.ReportingRepository;
@@ -157,7 +159,69 @@ public class ReportingService {
       UUID customerId,
       BigDecimal gross,
       String currency) {
-    repo.recordSaleOnce(tenantId, orderId, storeId, channel, customerId, gross, currency);
+    recordSale(tenantId, orderId, storeId, channel, customerId, gross, currency, List.of());
+  }
+
+  /**
+   * Record a sale with its lines (sales by category, 19.x). Idempotent on the order: a redelivered
+   * OrderConfirmed leaves the sale and its lines as they were.
+   *
+   * @param lines the sale line by line, empty for an event minted before lines were carried
+   */
+  public void recordSale(
+      UUID tenantId,
+      UUID orderId,
+      UUID storeId,
+      String channel,
+      UUID customerId,
+      BigDecimal gross,
+      String currency,
+      List<SaleLine> lines) {
+    repo.recordSaleOnce(
+        tenantId,
+        orderId,
+        storeId,
+        channel,
+        customerId,
+        gross,
+        currency,
+        lines == null ? List.of() : List.copyOf(lines));
+  }
+
+  /**
+   * Project the catalogue's word on a product: where it sits and which variants are its. Later
+   * words win; an earlier one redelivered late changes nothing.
+   *
+   * @param categoryPath leaf first, root last; empty for a product with no category
+   * @param occurredAt when product-svc said it, or null to take the word as of now
+   */
+  public void applyProductCategorised(
+      UUID tenantId,
+      UUID productId,
+      List<UUID> categoryPath,
+      List<UUID> variantIds,
+      Instant occurredAt) {
+    repo.upsertProductCategory(
+        tenantId,
+        productId,
+        List.copyOf(categoryPath),
+        List.copyOf(variantIds),
+        occurredAt == null ? Instant.now() : occurredAt);
+  }
+
+  /** A variant created after its product was announced belongs to that product. */
+  public void applyVariantCreated(UUID tenantId, UUID variantId, UUID productId) {
+    repo.upsertVariantProduct(tenantId, variantId, productId);
+  }
+
+  /**
+   * What each category took over a range, by leaf category or rolled up to the top of the tree.
+   *
+   * @param top true to group by each category's top-level ancestor
+   */
+  public List<SalesCategoryStat> salesByCategory(
+      UUID tenantId, Instant from, Instant to, UUID storeId, String channel, boolean top) {
+    return repo.salesByCategory(tenantId, from, to, storeId, channel, top);
   }
 
   /**

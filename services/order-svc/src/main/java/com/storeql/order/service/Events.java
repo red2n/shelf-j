@@ -171,8 +171,9 @@ public final class Events {
    * so downstream consumers can react to the sale without a callback to order-svc — customer-svc
    * accrues loyalty from {@code customerId}/{@code total} (guest orders send {@code
    * customerId:null} and earn nothing), and purchase-svc posts the sale to the ledger from {@code
-   * total} and {@code taxAmount} (17.7). Emitted exactly once, at full payment (see
-   * OrderRepository.applyPaymentCaptured).
+   * total} and {@code taxAmount} (17.7), and reporting-svc records the sale line by line from
+   * {@code lines} — each line's variant, quantity, unit price and money — for sales by category
+   * (19.x). Emitted exactly once, at full payment (see OrderRepository.applyPaymentCaptured).
    */
   static OutboxRow orderConfirmed(
       UUID tenantId,
@@ -182,7 +183,8 @@ public final class Events {
       UUID customerId,
       BigDecimal total,
       BigDecimal taxAmount,
-      String currency) {
+      String currency,
+      List<OrderItem> lines) {
     String customerPart = customerId != null ? "\"" + customerId + "\"" : "null";
     String amount = total != null ? total.toPlainString() : "0";
     // The VAT inside the total, so the ledger can post revenue net of it (17.7).
@@ -211,7 +213,32 @@ public final class Events {
             + tax
             + ",\"currency\":\""
             + esc(cur)
-            + "\"}");
+            + "\",\"lines\":"
+            + confirmedLines(lines)
+            + "}");
+  }
+
+  /**
+   * The sale line by line: what reporting-svc groups by category. Unit price is omitted when
+   * unknown.
+   */
+  private static String confirmedLines(List<OrderItem> lines) {
+    StringBuilder sb = new StringBuilder("[");
+    for (int i = 0; i < lines.size(); i++) {
+      OrderItem line = lines.get(i);
+      if (i > 0) sb.append(',');
+      sb.append("{\"variantId\":\"")
+          .append(line.variantId())
+          .append("\",\"qty\":")
+          .append(line.qty().toPlainString());
+      if (line.unitPrice() != null) {
+        sb.append(",\"unitPrice\":").append(line.unitPrice().toPlainString());
+      }
+      sb.append(",\"lineTotal\":")
+          .append(line.lineTotal() != null ? line.lineTotal().toPlainString() : "0")
+          .append('}');
+    }
+    return sb.append(']').toString();
   }
 
   static OutboxRow orderCancelled(UUID tenantId, UUID orderId, String reason) {
