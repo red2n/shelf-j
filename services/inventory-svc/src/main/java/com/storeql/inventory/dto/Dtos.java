@@ -7,6 +7,7 @@ import jakarta.validation.constraints.Positive;
 import jakarta.validation.constraints.PositiveOrZero;
 import java.math.BigDecimal;
 import java.util.List;
+import java.util.Map;
 import org.eclipse.microprofile.openapi.annotations.media.Schema;
 
 /** Request/response DTOs for inventory-svc. No tenant_id in requests — it comes from context. */
@@ -1073,4 +1074,67 @@ public final class Dtos {
       @Schema(description = "False when archived movements make the average holding a floor.")
           boolean historyComplete,
       int windowDays) {}
+
+  // ── Demand forecast (06.x) ───────────────────────────────────────────────────
+
+  @Schema(name = "ForecastRunRequest")
+  public record ForecastRunRequest(
+      @NotBlank String storeId,
+      @Schema(description = "One variant, or omitted for every variant with history at the store.")
+          String variantId,
+      @Schema(description = "Days to forecast, 1 to 365; 28 when omitted.") Integer horizonDays) {}
+
+  @Schema(name = "ForecastRunResponse")
+  public record ForecastRunResponse(
+      String storeId,
+      @Schema(description = "Variants forecast in this run.") int variants,
+      @Schema(description = "How many took each method: MEAN, SES, CROSTON_SBA.")
+          Map<String, Integer> byMethod,
+      @Schema(description = "Mean MAPE over the forecasts that could compute one; null when none.")
+          BigDecimal meanMape,
+      int horizonDays,
+      String computedAt) {}
+
+  @Schema(name = "ForecastPoint")
+  public record ForecastPointResponse(String day, BigDecimal qty) {}
+
+  @Schema(name = "Forecast")
+  public record ForecastResponse(
+      String id,
+      String storeId,
+      String variantId,
+      @Schema(description = "MEAN, SES (smoothing with a weekday profile) or CROSTON_SBA.")
+          String method,
+      @Schema(description = "Demand on fewer than three days in four: Croston's case.")
+          boolean intermittent,
+      @Schema(description = "The smoothing constant the hold-out chose; null for MEAN.")
+          BigDecimal alpha,
+      @Schema(description = "Expected demand per day before the weekday profile.") BigDecimal level,
+      @Schema(description = "Seven multipliers, Monday first; empty when none.")
+          List<BigDecimal> weekdayProfile,
+      String historyFrom,
+      String historyTo,
+      int historyDays,
+      int horizonDays,
+      @Schema(description = "The first forecast day.") String fromDay,
+      @Schema(description = "Expected demand over the next seven days.") BigDecimal next7,
+      @Schema(description = "Expected demand over the next twenty-eight days.") BigDecimal next28,
+      @Schema(description = "Days of history the forecast was tested against.") int holdoutDays,
+      @Schema(
+              description =
+                  "Mean absolute percentage error over hold-out days with demand; null when none had any.")
+          BigDecimal mape,
+      @Schema(
+              description =
+                  "Forecast minus actual over the hold-out, as a percentage of actual; negative means under-forecast.")
+          BigDecimal bias,
+      @Schema(
+              description =
+                  "Mean absolute scaled error against a naive one-day-back forecast; under 1 beats it.")
+          BigDecimal mase,
+      @Schema(
+              description =
+                  "One expected quantity per day from fromDay; only on the single forecast.")
+          List<ForecastPointResponse> points,
+      String computedAt) {}
 }

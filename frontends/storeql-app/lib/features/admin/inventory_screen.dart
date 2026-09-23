@@ -12,6 +12,7 @@ import '../../shared/widgets/error_view.dart';
 import '../../shared/widgets/loading_view.dart';
 import 'providers/admin_providers.dart';
 import 'providers/inventory_levels_pagination.dart';
+import 'inventory_forecast_tab.dart';
 import 'inventory_markdown_tab.dart';
 import 'inventory_warehouse_tabs.dart';
 import '../../shared/util/short_ref.dart';
@@ -62,6 +63,7 @@ class _InventoryScreenState extends ConsumerState<InventoryScreen> {
               Tab(text: 'Transfers'),
               Tab(text: 'Movements'),
               Tab(text: 'Thresholds'),
+              Tab(text: 'Forecast'),
               Tab(text: 'Reduce to clear'),
             ],
           ),
@@ -73,6 +75,7 @@ class _InventoryScreenState extends ConsumerState<InventoryScreen> {
                 InventoryTransfersTab(),
                 InventoryMovementsTab(),
                 _ThresholdsTab(),
+                InventoryForecastTab(),
                 InventoryMarkdownTab(),
               ],
             ),

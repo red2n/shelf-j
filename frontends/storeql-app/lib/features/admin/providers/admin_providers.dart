@@ -1369,6 +1369,105 @@ final salesByCategoryReportProvider =
       .toList();
 });
 
+/// One item's demand forecast at a store (06.x): what it expects, how it was
+/// made, and what it says about its own accuracy. Accuracy figures are null
+/// when the server could not honestly compute them, and the UI shows a dash.
+class DemandForecastRow {
+  final String id;
+  final String storeId;
+  final String variantId;
+  final String method;
+  final bool intermittent;
+  final double? alpha;
+  final double level;
+  final List<double> weekdayProfile;
+  final int historyDays;
+  final int horizonDays;
+  final String fromDay;
+  final double next7;
+  final double next28;
+  final int holdoutDays;
+  final double? mape;
+  final double? bias;
+  final double? mase;
+  final List<({String day, double qty})> points;
+  final String computedAt;
+
+  const DemandForecastRow({
+    required this.id,
+    required this.storeId,
+    required this.variantId,
+    required this.method,
+    required this.intermittent,
+    required this.alpha,
+    required this.level,
+    required this.weekdayProfile,
+    required this.historyDays,
+    required this.horizonDays,
+    required this.fromDay,
+    required this.next7,
+    required this.next28,
+    required this.holdoutDays,
+    required this.mape,
+    required this.bias,
+    required this.mase,
+    required this.points,
+    required this.computedAt,
+  });
+
+  factory DemandForecastRow.fromJson(Map<String, dynamic> j) => DemandForecastRow(
+        id: j['id'] as String? ?? '',
+        storeId: j['storeId'] as String? ?? '',
+        variantId: j['variantId'] as String? ?? '',
+        method: j['method'] as String? ?? '-',
+        intermittent: j['intermittent'] as bool? ?? false,
+        alpha: (j['alpha'] as num?)?.toDouble(),
+        level: (j['level'] as num?)?.toDouble() ?? 0,
+        weekdayProfile: ((j['weekdayProfile'] as List?) ?? [])
+            .map((e) => (e as num).toDouble())
+            .toList(),
+        historyDays: (j['historyDays'] as num?)?.toInt() ?? 0,
+        horizonDays: (j['horizonDays'] as num?)?.toInt() ?? 0,
+        fromDay: j['fromDay'] as String? ?? '-',
+        next7: (j['next7'] as num?)?.toDouble() ?? 0,
+        next28: (j['next28'] as num?)?.toDouble() ?? 0,
+        holdoutDays: (j['holdoutDays'] as num?)?.toInt() ?? 0,
+        mape: (j['mape'] as num?)?.toDouble(),
+        bias: (j['bias'] as num?)?.toDouble(),
+        mase: (j['mase'] as num?)?.toDouble(),
+        points: ((j['points'] as List?) ?? [])
+            .map((e) => e as Map<String, dynamic>)
+            .map((e) => (
+                  day: e['day'] as String? ?? '-',
+                  qty: (e['qty'] as num?)?.toDouble() ?? 0,
+                ))
+            .toList(),
+        computedAt: j['computedAt'] as String? ?? '',
+      );
+}
+
+/// The forecasts at a store, newest run first.
+final forecastsProvider = FutureProvider.autoDispose
+    .family<List<DemandForecastRow>, String>((ref, storeId) async {
+  final resp = await ref.read(apiClientProvider).dio.get(
+        '/${ApiConstants.inventory}/admin/inventory/forecasts',
+        queryParameters: {'store': storeId},
+      );
+  final data = (resp.data['data'] as List?) ?? [];
+  return data
+      .map((e) => DemandForecastRow.fromJson(e as Map<String, dynamic>))
+      .toList();
+});
+
+/// One forecast with its daily points; the key is `storeId/variantId`.
+final forecastDetailProvider = FutureProvider.autoDispose
+    .family<DemandForecastRow, String>((ref, key) async {
+  final resp = await ref.read(apiClientProvider).dio.get(
+        '/${ApiConstants.inventory}/admin/inventory/forecasts/$key',
+      );
+  return DemandForecastRow.fromJson(resp.data['data'] as Map<String, dynamic>);
+});
+
 /// Delivery area (pincode coverage) for a store.
 class DeliveryArea {
   final String id;

@@ -9,6 +9,7 @@ import com.storeql.inventory.domain.Domain.CycleCountHeader;
 import com.storeql.inventory.domain.Domain.CycleCountLine;
 import com.storeql.inventory.domain.Domain.DeadStockRow;
 import com.storeql.inventory.domain.Domain.DemandBucket;
+import com.storeql.inventory.domain.Domain.DemandForecast;
 import com.storeql.inventory.domain.Domain.KanbanCard;
 import com.storeql.inventory.domain.Domain.Level;
 import com.storeql.inventory.domain.Domain.LevelSummary;
@@ -41,6 +42,7 @@ import com.storeql.inventory.domain.Domain.TransferOrder;
 import com.storeql.inventory.domain.Domain.TransferOrderLine;
 import com.storeql.inventory.domain.Domain.ValuationRow;
 import com.storeql.inventory.domain.Domain.ZoneGlMapping;
+import com.storeql.inventory.domain.Forecasting;
 import com.storeql.inventory.dto.Dtos.AbcAssignmentResponse;
 import com.storeql.inventory.dto.Dtos.AbcCompileRunResponse;
 import com.storeql.inventory.dto.Dtos.AccountingPeriodResponse;
@@ -51,6 +53,9 @@ import com.storeql.inventory.dto.Dtos.CycleCountLineResponse;
 import com.storeql.inventory.dto.Dtos.DeadStockRowResponse;
 import com.storeql.inventory.dto.Dtos.DemandBucketResponse;
 import com.storeql.inventory.dto.Dtos.ExpiringBatchResponse;
+import com.storeql.inventory.dto.Dtos.ForecastPointResponse;
+import com.storeql.inventory.dto.Dtos.ForecastResponse;
+import com.storeql.inventory.dto.Dtos.ForecastRunResponse;
 import com.storeql.inventory.dto.Dtos.KanbanCardResponse;
 import com.storeql.inventory.dto.Dtos.LevelResponse;
 import com.storeql.inventory.dto.Dtos.LevelSummaryResponse;
@@ -83,6 +88,7 @@ import com.storeql.inventory.dto.Dtos.TransferOrderLineResponse;
 import com.storeql.inventory.dto.Dtos.TransferOrderResponse;
 import com.storeql.inventory.dto.Dtos.ValuationRowResponse;
 import com.storeql.inventory.dto.Dtos.ZoneGlMappingResponse;
+import com.storeql.inventory.service.ForecastService;
 import java.time.Instant;
 import java.time.LocalDate;
 import java.time.temporal.ChronoUnit;
@@ -852,5 +858,55 @@ public final class Mappers {
             .toList(),
         report.historyComplete(),
         report.windowDays());
+  }
+
+  // ── Demand forecast (06.x) ───────────────────────────────────────────────────
+
+  public static ForecastRunResponse toForecastRun(ForecastService.RunResult r) {
+    return new ForecastRunResponse(
+        r.storeId().toString(),
+        r.variants(),
+        r.byMethod(),
+        r.meanMape(),
+        r.horizonDays(),
+        r.computedAt().toString());
+  }
+
+  /**
+   * A stored forecast on the wire; the daily points only when asked, since a list of a store's
+   * forecasts would otherwise carry a month of numbers per row.
+   */
+  public static ForecastResponse toForecast(DemandForecast d, boolean withPoints) {
+    Forecasting.Forecast f = d.forecast();
+    List<ForecastPointResponse> points = List.of();
+    if (withPoints) {
+      List<ForecastPointResponse> out = new java.util.ArrayList<>(f.points().size());
+      for (int i = 0; i < f.points().size(); i++) {
+        out.add(new ForecastPointResponse(f.fromDay().plusDays(i).toString(), f.points().get(i)));
+      }
+      points = out;
+    }
+    return new ForecastResponse(
+        d.id().toString(),
+        d.storeId().toString(),
+        d.variantId().toString(),
+        f.method(),
+        f.intermittent(),
+        f.alpha(),
+        f.level(),
+        f.weekdayProfile(),
+        d.historyFrom().toString(),
+        d.historyTo().toString(),
+        f.historyDays(),
+        d.horizonDays(),
+        f.fromDay().toString(),
+        f.expectedOver(7),
+        f.expectedOver(28),
+        f.accuracy().holdoutDays(),
+        f.accuracy().mape(),
+        f.accuracy().bias(),
+        f.accuracy().mase(),
+        points,
+        d.computedAt().toString());
   }
 }

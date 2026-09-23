@@ -126,6 +126,7 @@ Left-hand navigation: **Dashboard · Catalog · Inventory · Stores · Orders ·
 | **Transfers** | Inter-store transfer orders: create (from/to store + variant + qty), list, **Ship** / **Receive** / **Cancel** by status. |
 | **Movements** | Append-only stock movement ledger (receipts, sales, adjustments, transfers), filterable by store. |
 | **Thresholds** | List reorder levels per store/variant; create or edit threshold (+ optional max qty). |
+| **Forecast** | The statistical demand forecast (06.x) for a store: **Run forecast** reads the store's daily sales history and forecasts every item over the next four weeks; the table shows each item's method (SES with a weekday profile; Croston/SBA, marked, for items that sell on fewer than three days in four; a mean under fourteen days of history), expected demand over the next 7 and 28 days, MAPE and bias from a hold-out of the history (a dash, never a zero, where they cannot be computed) and the days of history read. A row opens the forecast day by day with its weekday profile. The reorder-point computation takes its expected demand from here. |
 | **Receive Stock** *(top-level action)* | Pick a store (and zone within it), then either scan a barcode with the camera or enter a variant manually; enter quantity, optional batch number, cost price, and expiry date. |
 
 ### 4.2a Food safety (2 tabs for a storekeeper, 4 for a manager)

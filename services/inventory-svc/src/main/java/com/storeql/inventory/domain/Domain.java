@@ -744,4 +744,20 @@ public final class Domain {
     public static final String COUNTED = "COUNTED";
     public static final String ADJUSTED = "ADJUSTED";
   }
+
+  /**
+   * One item's demand forecast at one store as stored (06.x): the history it was read from and the
+   * {@link Forecasting.Forecast} it produced. One row per (tenant, store, variant), replaced on
+   * each run.
+   */
+  public record DemandForecast(
+      UUID id,
+      UUID tenantId,
+      UUID storeId,
+      UUID variantId,
+      LocalDate historyFrom,
+      LocalDate historyTo,
+      int horizonDays,
+      Forecasting.Forecast forecast,
+      Instant computedAt) {}
 }
