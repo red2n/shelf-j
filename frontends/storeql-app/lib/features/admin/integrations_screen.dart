@@ -8,6 +8,7 @@ import '../../core/format.dart';
 import '../../core/network/api_error.dart';
 import '../../shared/widgets/error_view.dart';
 import '../../shared/widgets/loading_view.dart';
+import 'accounting_section.dart';
 import 'api_keys_api.dart';
 import 'providers/admin_providers.dart';
 import 'sandbox_api.dart';
@@ -81,6 +82,8 @@ class IntegrationsScreen extends ConsumerWidget {
           ),
           const SizedBox(height: 32),
           _WebhooksSection(owner: owner),
+          const SizedBox(height: 32),
+          AccountingSection(owner: owner),
         ],
       ),
     );

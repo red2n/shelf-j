@@ -809,6 +809,9 @@ services:
       # A real access point contract gets its own value; the dev default only lets order-svc's
       # simulated network deliver between the businesses on this stack.
       storeql.einvoice.inbound.key: ${STOREQL_EINVOICE_INBOUND_KEY:-dev-einvoice-inbound-key}
+      # Accounting connectors (17.9): the tokens a business's package issued are sealed under
+      # this key (16, 24 or 32 bytes, base64) — see .env.example.
+      storeql.accounting.secrets-key: ${STOREQL_ACCOUNTING_SECRETS_KEY:-vyZCf8bWkchYrFCuJiHWqwh5mTSEykU+wRPHbL7nkok=}
       JAVA_TOOL_OPTIONS: "${PURCHASE_JAVA_OPTS:--Xms128m -Xmx384m -XX:+UseG1GC}"
       STOREQL_ADVERTISE_HOST: purchase-svc
     mem_limit: ${PURCHASE_MEM_LIMIT:-512m}
