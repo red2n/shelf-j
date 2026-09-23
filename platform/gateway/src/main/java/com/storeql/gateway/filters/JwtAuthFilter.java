@@ -49,6 +49,8 @@ public class JwtAuthFilter implements ContainerRequestFilter {
   private static final Set<String> PUBLIC_PATHS =
       Set.of(
           "api/iam-svc/auth/register",
+          // The price list a prospect reads before signing up (21.13): plans on sale, no identity.
+          "api/tenant-svc/plans",
           "api/iam-svc/auth/login",
           // The token signing keys' public halves (20.15): public by nature.
           "api/iam-svc/auth/.well-known/jwks.json",

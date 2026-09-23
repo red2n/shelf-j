@@ -3,6 +3,7 @@ import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:go_router/go_router.dart';
 import '../../shared/widgets/reference_fields.dart';
 import 'onboarding_notifier.dart';
+import 'public_plans.dart';
 
 class OnboardingWizard extends ConsumerStatefulWidget {
   const OnboardingWizard({super.key});
@@ -21,6 +22,9 @@ class _OnboardingWizardState extends ConsumerState<OnboardingWizard> {
   // currency; choosing a country suggests the currency it trades in.
   String? _country;
   String? _currency;
+  // The plan chosen from the price list (21.13); until the business chooses,
+  // the platform's default is shown and sent.
+  String? _planId;
   final _step1Key = GlobalKey<FormState>();
 
 
@@ -54,6 +58,7 @@ class _OnboardingWizardState extends ConsumerState<OnboardingWizard> {
   @override
   Widget build(BuildContext context) {
     final ob = ref.watch(onboardingNotifierProvider);
+    final plans = ref.watch(publicPlansProvider);
 
     // When step 2 is done, router redirect will pick it up via auth state change
     ref.listen<OnboardingState>(onboardingNotifierProvider, (_, next) {
@@ -118,6 +123,9 @@ class _OnboardingWizardState extends ConsumerState<OnboardingWizard> {
                           _currency = currencyOfCountry(v) ?? _currency;
                         }),
                         onCurrencyChanged: (v) => setState(() => _currency = v!),
+                        plans: plans,
+                        planId: _planId,
+                        onPlanChanged: (v) => setState(() => _planId = v),
                         loading: ob.loading,
                         onNext: () {
                           if (!_step1Key.currentState!.validate()) return;
@@ -126,6 +134,8 @@ class _OnboardingWizardState extends ConsumerState<OnboardingWizard> {
                                 legalName: _legalNameCtrl.text.trim(),
                                 country: _country!,
                                 currency: _currency!,
+                                planId: _planId ??
+                                    PublicPlan.defaultId(plans.value ?? const []),
                               );
                         },
                       ),
@@ -180,6 +190,9 @@ class _Step1TenantForm extends StatelessWidget {
   final String? currency;
   final ValueChanged<String?> onCountryChanged;
   final ValueChanged<String?> onCurrencyChanged;
+  final AsyncValue<List<PublicPlan>> plans;
+  final String? planId;
+  final ValueChanged<String?> onPlanChanged;
   final bool loading;
   final VoidCallback onNext;
 
@@ -191,6 +204,9 @@ class _Step1TenantForm extends StatelessWidget {
     required this.currency,
     required this.onCountryChanged,
     required this.onCurrencyChanged,
+    required this.plans,
+    required this.planId,
+    required this.onPlanChanged,
     required this.loading,
     required this.onNext,
   });
@@ -241,6 +257,25 @@ class _Step1TenantForm extends StatelessWidget {
               value: currency,
               onChanged: onCurrencyChanged,
             ),
+            const SizedBox(height: 16),
+            // The price list (21.13). When it cannot be read the business still
+            // signs up: the platform starts it on the default plan.
+            plans.when(
+              loading: () => const Text('Loading plans…'),
+              error: (_, _) => Text(
+                'Plans could not be loaded; you will start on the standard plan '
+                'and can change it later from Billing.',
+                style: Theme.of(context).textTheme.bodySmall,
+              ),
+              data: (list) => list.isEmpty
+                  ? const SizedBox.shrink()
+                  : _PlanField(
+                      plans: list,
+                      value: planId ?? PublicPlan.defaultId(list)!,
+                      currency: currency,
+                      onChanged: onPlanChanged,
+                    ),
+            ),
             const SizedBox(height: 32),
             FilledButton(
               onPressed: loading ? null : onNext,
@@ -253,6 +288,47 @@ class _Step1TenantForm extends StatelessWidget {
           ],
         ),
       ),
+    );
+  }
+}
+
+/// The plans on sale, one line each — the price in the business's own currency
+/// where the plan is priced in it, and the trial — with what the chosen one is.
+class _PlanField extends StatelessWidget {
+  final List<PublicPlan> plans;
+  final String value;
+  final String? currency;
+  final ValueChanged<String?> onChanged;
+
+  const _PlanField({
+    required this.plans,
+    required this.value,
+    required this.currency,
+    required this.onChanged,
+  });
+
+  @override
+  Widget build(BuildContext context) {
+    final chosen = plans.firstWhere((p) => p.id == value, orElse: () => plans.first);
+    final about = [
+      if (chosen.description != null && chosen.description!.isNotEmpty) chosen.description!,
+      if (chosen.includes.isNotEmpty) 'Includes ${chosen.includes.join(', ')}.',
+    ].join(' ');
+    return DropdownButtonFormField<String>(
+      key: ValueKey('plan-$value-$currency'),
+      initialValue: value,
+      isExpanded: true,
+      decoration: InputDecoration(
+        labelText: 'Plan *',
+        prefixIcon: const Icon(Icons.workspace_premium_outlined),
+        helperText: about.isEmpty ? null : about,
+        helperMaxLines: 3,
+      ),
+      items: [
+        for (final p in plans)
+          DropdownMenuItem(value: p.id, child: Text(p.label(currency), overflow: TextOverflow.ellipsis)),
+      ],
+      onChanged: onChanged,
     );
   }
 }

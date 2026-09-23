@@ -19,7 +19,6 @@ import java.time.LocalDate;
 import java.util.ArrayList;
 import java.util.List;
 import java.util.UUID;
-import org.eclipse.microprofile.config.inject.ConfigProperty;
 
 /**
  * Chasing an overdue invoice, and taking the platform away when chasing does not work (21.12).
@@ -64,10 +63,8 @@ public class DunningService {
 
   @Inject TenantService tenants;
 
-  /** Where the pay link in a notice opens: the web app, as the business's owner reaches it. */
-  @Inject
-  @ConfigProperty(name = "storeql.platform.web-url", defaultValue = "http://localhost:8088")
-  String webUrl;
+  /** The link a notice carries, shared with the trial's first invoice (21.13). */
+  @Inject PayLinks payLinks;
 
   /** What one run did. */
   public record Run(List<Step> taken, List<Skipped> skipped) {
@@ -235,7 +232,7 @@ public class DunningService {
             step,
             overdue.daysOverdue(),
             recipient,
-            payUrl(token),
+            payLinks.url(token),
             billing.profile().legalName(),
             suspendOn);
     return repo.claimNotice(
@@ -247,12 +244,6 @@ public class DunningService {
         CapabilityTokens.hash(token),
         new OutboxRow(
             NOTICE_EVENT, NOTICE_TOPIC, overdue.tenantId(), overdue.invoiceId(), payload));
-  }
-
-  /** The link a notice carries: the web app's pay page, which needs no sign-in. */
-  private String payUrl(String token) {
-    String base = webUrl.endsWith("/") ? webUrl.substring(0, webUrl.length() - 1) : webUrl;
-    return base + "/#/pay/" + token;
   }
 
   /**
@@ -357,12 +348,7 @@ public class DunningService {
    *     link to it would be a dead end
    */
   public String issuePayToken(UUID invoiceId) {
-    String token = CapabilityTokens.mint();
-    if (!repo.storePayToken(invoiceId, CapabilityTokens.hash(token))) {
-      throw ApiException.conflict(
-          "INVOICE_NOT_OPEN", "This invoice cannot be paid, so a link to it would lead nowhere");
-    }
-    return token;
+    return payLinks.mint(invoiceId);
   }
 
   /** What has been done about one overdue invoice, oldest first. */

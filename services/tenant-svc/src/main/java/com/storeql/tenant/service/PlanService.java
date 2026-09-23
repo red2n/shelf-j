@@ -412,6 +412,32 @@ public class PlanService {
    *
    * @return the plan it was put on, or empty
    */
+  /**
+   * Puts a business that is signing up on the plan it chose (21.13): one on sale, to the public.
+   *
+   * @throws ApiException 404 {@code PLAN_NOT_FOUND}; 409 {@code PLAN_NOT_SOLD} for a draft or a
+   *     retired plan; 409 {@code PLAN_NOT_PUBLIC} for one the platform sells only by hand
+   */
+  public void putOnPlan(UUID tenantId, UUID planId) {
+    Plan plan = requireChoosable(planId);
+    repo.changeTenantPlan(tenantId, Optional.empty(), planId, null, "signed up on " + plan.code());
+  }
+
+  /** The plan a business may choose at signup: on sale, and to the public. */
+  public Plan requireChoosable(UUID planId) {
+    Plan plan =
+        repo.find(planId)
+            .orElseThrow(() -> ApiException.notFound("PLAN_NOT_FOUND", "No such plan"));
+    if (!plan.sold()) {
+      throw ApiException.conflict("PLAN_NOT_SOLD", "This plan is " + plan.status());
+    }
+    if (!plan.isPublic()) {
+      throw ApiException.conflict(
+          "PLAN_NOT_PUBLIC", "This plan is sold by the platform directly, not chosen at signup");
+    }
+    return plan;
+  }
+
   public Optional<UUID> putOnDefaultPlan(UUID tenantId) {
     try {
       Optional<UUID> planId = defaultPlanId();

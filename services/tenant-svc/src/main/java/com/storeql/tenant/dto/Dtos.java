@@ -24,7 +24,12 @@ public final class Dtos {
       @Schema(description = "ISO 3166-1 alpha-2 country code.") @NotBlank @Size(min = 2, max = 2)
           String country,
       @Schema(description = "ISO 4217 currency code.") @NotBlank @Size(min = 3, max = 3)
-          String currency) {}
+          String currency,
+      @Schema(
+              description =
+                  "The plan chosen at signup (21.13): one on sale to the public, else the platform's"
+                      + " default. 409 PLAN_NOT_SOLD or PLAN_NOT_PUBLIC otherwise.")
+          String planId) {}
 
   @Schema(name = "UpdateTenantRequest")
   public record UpdateTenantRequest(
@@ -272,7 +277,12 @@ public final class Dtos {
       @Schema(
               description =
                   "Required: the IANA zone the first store trades in, such as Europe/London.")
-          String storeTimezone) {}
+          String storeTimezone,
+      @Schema(
+              description =
+                  "The plan chosen at signup (21.13): one on sale to the public, else the platform's"
+                      + " default. 409 PLAN_NOT_SOLD or PLAN_NOT_PUBLIC otherwise.")
+          String planId) {}
 
   @Schema(name = "OnboardResponse")
   public record OnboardResponse(TenantResponse tenant, StoreResponse store) {}

@@ -283,6 +283,12 @@ public class AdminAuthorizationFilter implements ContainerRequestFilter {
         // The public halves of the token signing keys (20.15): every verifier reads them, and a
         // key set that needed a token to read could never verify the first one.
         || "/auth/.well-known/jwks.json".equals(path)
+        // The price list (21.13): the plans on sale to the public, read by a prospect deciding
+        // whether to sign up, so before there is any login to carry a role. It says only what the
+        // platform chose to advertise; a draft or a plan sold by hand is not on it, and the
+        // platform's own list stays under /platform. The gateway's PUBLIC_PATHS carries the
+        // matching entry.
+        || "/plans".equals(path)
         // Per-store storefront configuration and the list of stores a shopper may buy from,
         // plus the transact-or-not flow guard. Also read service-to-service by payment-svc.
         || pathEqualsOrUnder(path, "/storefront")

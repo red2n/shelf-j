@@ -31,6 +31,7 @@ import com.storeql.tenant.mapper.Mappers;
 import com.storeql.tenant.repo.TenantRepository;
 import com.storeql.web.ApiException;
 import com.storeql.web.Cursor;
+import com.storeql.web.Parsing;
 import com.storeql.web.Permissions;
 import com.storeql.web.TenantContext;
 import jakarta.enterprise.context.ApplicationScoped;
@@ -76,6 +77,22 @@ public class TenantService {
    *     where the business's billing notices go until it names another (21.12)
    */
   public Tenant createTenant(UUID ownerUserId, String ownerEmail, CreateTenantRequest req) {
+    // One login, one business (21.13): a token carries one tenant, and a second signup on the same
+    // login would be a second trial as much as a second shop. A second site is a store of the one.
+    repo.findByOwner(ownerUserId)
+        .ifPresent(
+            owned -> {
+              throw ApiException.conflict(
+                  "TENANT_ALREADY_OWNED",
+                  "This login already owns "
+                      + owned.name()
+                      + "; add a store to it, or sign up with another login");
+            });
+    if (req.planId() != null && !req.planId().isBlank()) {
+      // Checked before the business exists: a plan that cannot be chosen must not leave a business
+      // behind on no plan.
+      plans.requireChoosable(Parsing.uuid(req.planId(), "planId"));
+    }
     UUID tenantId = Ids.newId();
     Instant nowTenant = Instant.now();
     var tenant =
@@ -106,7 +123,11 @@ public class TenantService {
 
     // A business signs up on whatever the platform sells by default (21.8). Best effort: one on no
     // plan is unrestricted, so failing to place it is safe where failing to create it is not.
-    plans.putOnDefaultPlan(tenantId);
+    if (req.planId() != null && !req.planId().isBlank()) {
+      plans.putOnPlan(tenantId, Parsing.uuid(req.planId(), "planId"));
+    } else {
+      plans.putOnDefaultPlan(tenantId);
+    }
 
     // And signing up is subscribing (21.9): the plan it landed on decides what it owes and when.
     // Best effort for the same reason, and with one more: a business that exists and is not billed
@@ -145,7 +166,8 @@ public class TenantService {
     requireTimezone(req.storeTimezone());
     // 1. create tenant (generates tenantId internally)
     CreateTenantRequest tenantReq =
-        new CreateTenantRequest(req.businessName(), req.legalName(), req.country(), req.currency());
+        new CreateTenantRequest(
+            req.businessName(), req.legalName(), req.country(), req.currency(), req.planId());
     Tenant tenant = createTenant(ownerUserId, ownerEmail, tenantReq);
 
     // 2. create the first store using the freshly generated tenantId — no JWT needed

@@ -134,6 +134,16 @@ public class TenantRepository extends BaseOutboxRepository {
    * @param tenantId the tenant to fetch
    * @return the tenant, or empty when no such tenant exists
    */
+  /** The business a login owns, if any (21.13: one login, one business). */
+  public Optional<Tenant> findByOwner(UUID ownerUserId) {
+    return one(
+        "SELECT id, name, legal_name, status, plan_id, owner_user_id, country, currency,"
+            + " created_at, updated_at, vat_number, einvoice_scheme, einvoice_id, deactivated_reason"
+            + " FROM tenants WHERE owner_user_id = ? ORDER BY created_at LIMIT 1",
+        ownerUserId,
+        TenantRepository::mapTenant);
+  }
+
   public Optional<Tenant> findTenant(UUID tenantId) {
     return one(
         "SELECT id, name, legal_name, status, plan_id, owner_user_id, country, currency,"

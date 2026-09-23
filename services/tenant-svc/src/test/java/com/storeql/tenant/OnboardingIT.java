@@ -6,6 +6,7 @@ import static org.hamcrest.Matchers.hasSize;
 import static org.hamcrest.Matchers.is;
 import static org.hamcrest.Matchers.not;
 
+import com.storeql.ids.Ids;
 import com.storeql.test.PostgresSupport;
 import io.helidon.microprofile.testing.junit5.HelidonTest;
 import jakarta.inject.Inject;
@@ -17,6 +18,7 @@ import java.sql.DriverManager;
 import java.util.ArrayList;
 import java.util.List;
 import org.junit.jupiter.api.AfterAll;
+import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.Test;
 
 /**
@@ -42,7 +44,14 @@ class OnboardingIT {
     System.setProperty("storeql.kafka.enabled", "false");
   }
 
-  private static final String OWNER = "01a090ae-611e-702c-a97b-d1b8025478e1";
+  // A login owns one business (21.13): every test signs up a fresh owner.
+  private String owner;
+
+  @BeforeEach
+  void freshOwner() {
+    owner = Ids.newId().toString();
+  }
+
   private static final String TENANT_B = "01a090ae-611e-7037-a4b7-c854f0266ace";
 
   @Inject WebTarget target;
@@ -68,11 +77,11 @@ class OnboardingIT {
             "/onboarding/tenants",
             "{\"businessName\":\"Acme\",\"country\":\"in\",\"currency\":\"inr\"}",
             "X-User-Id",
-            OWNER);
+            owner);
     assertThat(tenantResp.getStatus(), is(201));
     String tenantId = field(tenantResp.readEntity(String.class), "id");
 
-    // create first store → default + auto DEFAULT zone (caller has OWNER by now — see RBAC filter)
+    // create first store → default + auto DEFAULT zone (caller has owner by now — see RBAC filter)
     Response storeResp =
         post(
             "/onboarding/stores",
@@ -80,7 +89,7 @@ class OnboardingIT {
             "X-Tenant-Id",
             tenantId,
             "X-User-Id",
-            OWNER,
+            owner,
             "X-Roles",
             "OWNER");
     assertThat(storeResp.getStatus(), is(201));
@@ -106,7 +115,7 @@ class OnboardingIT {
             "X-Tenant-Id",
             tenantId,
             "X-User-Id",
-            OWNER,
+            owner,
             "X-Roles",
             "OWNER");
     assertThat(dup.getStatus(), is(409));
@@ -117,7 +126,7 @@ class OnboardingIT {
             .path("/onboarding/status")
             .request()
             .header("X-Tenant-Id", tenantId)
-            .header("X-User-Id", OWNER)
+            .header("X-User-Id", owner)
             .header("X-Roles", "OWNER")
             .get(String.class);
     assertThat(status, containsString("\"hasDefaultStore\":true"));
@@ -136,7 +145,7 @@ class OnboardingIT {
             "/onboarding/tenants",
             "{\"businessName\":\"Announce Ltd\",\"country\":\"gb\",\"currency\":\"gbp\"}",
             "X-User-Id",
-            OWNER);
+            owner);
     String tenantId = field(t.readEntity(String.class), "id");
     Response first =
         post(
@@ -145,7 +154,7 @@ class OnboardingIT {
             "X-Tenant-Id",
             tenantId,
             "X-User-Id",
-            OWNER,
+            owner,
             "X-Roles",
             "OWNER");
     Response second =
@@ -184,7 +193,7 @@ class OnboardingIT {
             "/onboarding/tenants",
             "{\"businessName\":\"VictimCo\",\"country\":\"in\",\"currency\":\"inr\"}",
             "X-User-Id",
-            OWNER);
+            owner);
     String tenantId = field(t.readEntity(String.class), "id");
 
     String attacker = "01a090ae-611e-7056-8f30-ecdbb48160eb";
@@ -220,7 +229,7 @@ class OnboardingIT {
             "X-Tenant-Id",
             tenantId,
             "X-User-Id",
-            OWNER,
+            owner,
             "X-Roles",
             "OWNER");
     assertThat(ownerStore.getStatus(), is(201));
@@ -246,7 +255,7 @@ class OnboardingIT {
             "/onboarding/tenants",
             "{\"businessName\":\"IsoCo\",\"country\":\"in\",\"currency\":\"inr\"}",
             "X-User-Id",
-            OWNER);
+            owner);
     String tenantA = field(t.readEntity(String.class), "id");
     post(
         "/onboarding/stores",
@@ -254,7 +263,7 @@ class OnboardingIT {
         "X-Tenant-Id",
         tenantA,
         "X-User-Id",
-        OWNER,
+        owner,
         "X-Roles",
         "OWNER");
 
@@ -280,7 +289,7 @@ class OnboardingIT {
             "storeName":"London HQ","storeCode":"LDN","storeCity":"London","storeCountry":"gb",\
             "storeTimezone":"Europe/London"}""",
             "X-User-Id",
-            OWNER);
+            owner);
     assertThat(resp.getStatus(), is(201));
     String body = resp.readEntity(String.class);
     assertThat(body, containsString("\"name\":\"OneShot Co\""));
@@ -296,7 +305,7 @@ class OnboardingIT {
             "/onboarding/tenants",
             "{\"businessName\":\"StaffCo\",\"country\":\"in\",\"currency\":\"inr\"}",
             "X-User-Id",
-            OWNER);
+            owner);
     String tenantId = field(tr.readEntity(String.class), "id");
 
     Response sr =
@@ -306,7 +315,7 @@ class OnboardingIT {
             "X-Tenant-Id",
             tenantId,
             "X-User-Id",
-            OWNER,
+            owner,
             "X-Roles",
             "OWNER");
     String storeId = field(sr.readEntity(String.class), "id");
@@ -357,7 +366,7 @@ class OnboardingIT {
             "/onboarding/tenants",
             "{\"businessName\":\"PageCo\",\"country\":\"in\",\"currency\":\"inr\"}",
             "X-User-Id",
-            OWNER);
+            owner);
     String tenantId = field(tr.readEntity(String.class), "id");
 
     // 5 stores: the first via onboarding (default), the rest via the admin endpoint.
@@ -367,7 +376,7 @@ class OnboardingIT {
         "X-Tenant-Id",
         tenantId,
         "X-User-Id",
-        OWNER,
+        owner,
         "X-Roles",
         "OWNER");
     for (int i = 2; i <= 5; i++) {
@@ -436,7 +445,7 @@ class OnboardingIT {
             "/onboarding/tenants",
             "{\"businessName\":\"Replay Ltd\",\"country\":\"gb\",\"currency\":\"gbp\"}",
             "X-User-Id",
-            OWNER);
+            owner);
     assertThat(created.getStatus(), is(201));
     String tenantId = field(created.readEntity(String.class), "id");
 
@@ -467,7 +476,7 @@ class OnboardingIT {
     assertThat(lastCurrencyEvent(tenantId), containsString("\"currency\":\"GBP\""));
   }
 
-  /** Cross-tenant reach, so it is PLATFORM_ADMIN only — an OWNER must not be able to run it. */
+  /** Cross-tenant reach, so it is PLATFORM_ADMIN only — an owner must not be able to run it. */
   @Test
   void republishCurrencyIsPlatformAdminOnly() {
     Response asOwner =

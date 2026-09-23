@@ -591,6 +591,82 @@ public final class Catalogue {
                   BILLING_PARTS)),
           Catalogue::billingSample);
 
+  // ── the trial (21.13), from the platform
+  // ─────────────────────────────────────────────────────────────────────────────────────
+
+  private static final List<Variable> TRIAL_VARIABLES =
+      List.of(
+          v("plan", "TEXT", "The plan the trial is of"),
+          v("trial_end", "DAY", "The day the trial ends"),
+          v("price", "MONEY", "What the plan costs from then, each period"),
+          v("interval", "TEXT", "How often it is billed: MONTH or YEAR"),
+          PLATFORM);
+
+  private static final List<Variable> TRIAL_ENDED_VARIABLES =
+      List.of(
+          v("plan", "TEXT", "The plan the trial was of"),
+          v("trial_end", "DAY", "The day the trial ended"),
+          v("price", "MONEY", "What the plan costs, each period"),
+          v("interval", "TEXT", "How often it is billed: MONTH or YEAR"),
+          v("invoice", "TEXT", "The first invoice's number"),
+          v("amount_due", "MONEY", "What the first invoice comes to"),
+          v("due_date", "DAY", "The day it is due"),
+          v("pay_link", "TEXT", "A link that pays it with no sign-in"),
+          PLATFORM);
+
+  static final MessageType TRIAL_ENDING =
+      new MessageType(
+          "TRIAL_ENDING",
+          "Trial ending",
+          Audience.STAFF,
+          "From the platform to the business's billing address a few days before its free trial"
+              + " ends: the day, and what the plan costs from then.",
+          TRIAL_VARIABLES,
+          List.of(
+              new FormSpec(
+                  Form.EMAIL,
+                  "Your trial of {{plan}} ends on {{trial_end}}",
+                  "Your free trial of {{plan}} ends on {{trial_end}}. From then it is {{price}} a"
+                      + " {{interval}}, billed in advance; the first invoice comes on that day.\n\nIf"
+                      + " you would rather not continue, cancel before then from Billing and nothing"
+                      + " is owed.\n\n— {{shop}}",
+                  List.of(Set.of("plan"), Set.of("trial_end"), Set.of("price")))),
+          () ->
+              Values.of()
+                  .text("plan", "Starter")
+                  .day("trial_end", LocalDate.of(2026, 10, 6))
+                  .money("price", new BigDecimal("49.00"), "EUR")
+                  .text("interval", "MONTH")
+                  .text("shop", "StoreQL Platform Ltd"));
+
+  static final MessageType TRIAL_ENDED =
+      new MessageType(
+          "TRIAL_ENDED",
+          "Trial ended",
+          Audience.STAFF,
+          "From the platform to the business's billing address the day its trial ends: the first"
+              + " invoice, and the link that pays it.",
+          TRIAL_ENDED_VARIABLES,
+          List.of(
+              new FormSpec(
+                  Form.EMAIL,
+                  "Your trial has ended: invoice {{invoice}} for {{amount_due}}",
+                  "Your free trial of {{plan}} has ended, and your first invoice, {{invoice}} for"
+                      + " {{amount_due}}, is due on {{due_date}}.\n\nPay it here, no sign-in"
+                      + " needed:\n{{pay_link}}\n\nThank you for staying with us.\n\n— {{shop}}",
+                  List.of(Set.of("invoice"), Set.of("amount_due"), Set.of("pay_link")))),
+          () ->
+              Values.of()
+                  .text("plan", "Starter")
+                  .day("trial_end", LocalDate.of(2026, 10, 6))
+                  .money("price", new BigDecimal("49.00"), "EUR")
+                  .text("interval", "MONTH")
+                  .text("invoice", "INV-2026-000042")
+                  .money("amount_due", new BigDecimal("60.27"), "EUR")
+                  .day("due_date", LocalDate.of(2026, 10, 13))
+                  .text("pay_link", "https://app.example/#/pay/9m2xKq1vT8sHc4bYw7Lp3Q")
+                  .text("shop", "StoreQL Platform Ltd"));
+
   private static final Map<String, MessageType> ALL = new LinkedHashMap<>();
 
   static {
@@ -607,7 +683,9 @@ public final class Catalogue {
             RECALL_OPENED,
             PAYMENT_DISPUTE_OPENED,
             INVOICE_OVERDUE,
-            SERVICE_SUSPENDED)) {
+            SERVICE_SUSPENDED,
+            TRIAL_ENDING,
+            TRIAL_ENDED)) {
       ALL.put(t.key(), t);
     }
   }

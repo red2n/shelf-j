@@ -4,6 +4,7 @@ import static com.storeql.events.EventPayload.esc;
 
 import com.storeql.ids.Ids;
 import com.storeql.tenant.domain.Subscriptions.Invoice;
+import com.storeql.tenant.domain.Subscriptions.Subscription;
 import java.time.Instant;
 import java.time.LocalDate;
 import java.util.UUID;
@@ -259,6 +260,50 @@ final class Events {
             esc(priority),
             requiresAck,
             wake);
+  }
+
+  /**
+   * A word to a business about its trial (21.13): that it ends on a day and what the plan will then
+   * cost, or that it has ended and here is the first invoice with the link that pays it.
+   *
+   * @param stage {@code ENDING} or {@code ENDED}
+   * @param invoice the first invoice, on {@code ENDED}; null before
+   * @param payUrl the link that pays it, on {@code ENDED}; null before
+   */
+  static String trialNoticeIssued(
+      Subscription s,
+      String stage,
+      String planName,
+      String recipient,
+      String platformName,
+      Invoice invoice,
+      String payUrl) {
+    return """
+                {"eventId":"%s","eventType":"TrialNoticeIssued","tenantId":"%s","aggregateId":"%s","occurredAt":"%s",\
+                "subscriptionId":"%s","stage":"%s","plan":"%s","trialEnd":%s,"price":%s,"currency":"%s",\
+                "interval":"%s","recipient":"%s","platform":"%s","invoiceId":%s,"invoiceNumber":%s,\
+                "amountDue":%s,"dueDate":%s,"payUrl":%s}"""
+        .formatted(
+            Ids.newId(),
+            s.tenantId(),
+            s.id(),
+            Instant.now(),
+            s.id(),
+            esc(stage),
+            esc(planName),
+            s.trialEnd() == null ? "null" : "\"" + s.trialEnd() + "\"",
+            s.priceAmount().toPlainString(),
+            esc(s.currency()),
+            esc(s.billingInterval()),
+            esc(recipient),
+            esc(platformName),
+            invoice == null ? "null" : "\"" + invoice.id() + "\"",
+            invoice == null ? "null" : "\"" + esc(invoice.number()) + "\"",
+            invoice == null
+                ? "null"
+                : invoice.totalAmount().subtract(invoice.amountPaid()).toPlainString(),
+            invoice == null ? "null" : "\"" + invoice.dueDate() + "\"",
+            payUrl == null ? "null" : "\"" + esc(payUrl) + "\"");
   }
 
   /**

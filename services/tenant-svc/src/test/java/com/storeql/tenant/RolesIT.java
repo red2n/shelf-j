@@ -56,7 +56,8 @@ class RolesIT {
             "/onboarding/tenants",
             "{\"businessName\":\"" + name + "\",\"country\":\"GB\",\"currency\":\"GBP\"}",
             null,
-            OWNER,
+            // A login owns one business (21.13), so each business here has its own owner.
+            Ids.newId().toString(),
             null);
     assertThat(t.getStatus(), is(201));
     String tenantId = data(t.readEntity(String.class)).getString("id");
