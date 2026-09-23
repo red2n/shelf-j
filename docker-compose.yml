@@ -393,6 +393,21 @@ services:
     mem_limit: ${MOCK_IDP_MEM_LIMIT:-256m}
     networks: [storeql_network]
 
+  # A receiver for the webhooks k6 drives (22.6): answers every request with what it received —
+  # method, headers, body — so the delivery log, which keeps the first kilobytes of an answer, shows
+  # the signature and the body as they arrived and a test can verify them. notification-svc reaches
+  # it as webhook-sink over plain HTTP (storeql.webhooks.insecure-hosts); it opens no host port and
+  # is never deployed.
+  webhook-sink:
+    image: mendhak/http-https-echo:37
+    container_name: storeql-webhook-sink
+    restart: unless-stopped
+    environment:
+      HTTP_PORT: "8080"
+      DISABLE_REQUEST_LOGS: "true"
+    mem_limit: ${WEBHOOK_SINK_MEM_LIMIT:-128m}
+    networks: [storeql_network]
+
   # MQTT broker for notification-svc's device-facing push channel (POS terminals, kiosk/back-store
   # displays, platform console). Only exercised when storeql.notification.channel=mqtt — the default
   # (app) never talks to it, so it's deliberately not in x-svc-depends.
@@ -934,6 +949,11 @@ services:
       storeql.notification.channel: ${NOTIFICATION_CHANNEL:-app}
       storeql.notification.mqtt.host: mqtt
       storeql.notification.mqtt.publisher-password: ${MQTT_PUBLISHER_PASSWORD:?MQTT_PUBLISHER_PASSWORD must be set - see .env.example}
+      # Webhooks to a business's own systems (22.6): each endpoint's signing secret is sealed under
+      # this key (16, 24 or 32 bytes, base64) — see .env.example. webhook-sink is the stand-in
+      # receiver k6 drives; it is reached over plain HTTP on the compose network and nowhere else.
+      storeql.webhooks.secrets-key: ${STOREQL_WEBHOOKS_SECRETS_KEY:-vyZCf8bWkchYrFCuJiHWqwh5mTSEykU+wRPHbL7nkok=}
+      storeql.webhooks.insecure-hosts: webhook-sink
     mem_limit: ${NOTIFICATION_MEM_LIMIT:-512m}
     networks: [storeql_network]
     depends_on: *svc-depends

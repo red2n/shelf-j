@@ -10,6 +10,7 @@ import '../../shared/widgets/error_view.dart';
 import '../../shared/widgets/loading_view.dart';
 import 'api_keys_api.dart';
 import 'providers/admin_providers.dart';
+import 'webhooks_api.dart';
 
 // ---------------------------------------------------------------------------
 // Integrations (22.7): the keys a business's own systems present instead of a
@@ -74,6 +75,8 @@ class IntegrationsScreen extends ConsumerWidget {
                     ],
                   ),
           ),
+          const SizedBox(height: 32),
+          _WebhooksSection(owner: owner),
         ],
       ),
     );
@@ -89,7 +92,13 @@ class IntegrationsScreen extends ConsumerWidget {
     await showDialog<void>(
       context: context,
       barrierDismissible: false,
-      builder: (_) => _KeyShownOnceDialog(minted: minted),
+      builder: (_) => SecretShownOnceDialog(
+        title: '${minted.key.name} is ready',
+        intro: 'Copy the key into the system that will use it. It is shown once and cannot be '
+            'shown again; if it is lost, revoke it and mint another.',
+        secret: minted.secret,
+        hint: 'Send it as  Authorization: Bearer ${minted.key.prefix}…',
+      ),
     );
   }
 
@@ -322,32 +331,43 @@ class _MintKeyDialogState extends ConsumerState<MintKeyDialog> {
   }
 }
 
-/// The key, the one time it is seen.
-class _KeyShownOnceDialog extends StatelessWidget {
-  final MintedApiKey minted;
-  const _KeyShownOnceDialog({required this.minted});
+/// A secret, the one time it is seen: an API key, or a webhook's signing secret.
+class SecretShownOnceDialog extends StatelessWidget {
+  final String title;
+  final String intro;
+  final String secret;
+  final String? hint;
+  const SecretShownOnceDialog({
+    super.key,
+    required this.title,
+    required this.intro,
+    required this.secret,
+    this.hint,
+  });
 
   @override
   Widget build(BuildContext context) {
     final cs = Theme.of(context).colorScheme;
     return AlertDialog(
-      title: Text('${minted.key.name} is ready'),
+      title: Text(title),
       content: SizedBox(
         width: 460,
         child: Column(
           mainAxisSize: MainAxisSize.min,
           crossAxisAlignment: CrossAxisAlignment.stretch,
           children: [
-            const Text('Copy the key into the system that will use it. It is shown once and cannot be shown again; if it is lost, revoke it and mint another.'),
+            Text(intro),
             const SizedBox(height: 12),
             Container(
               key: const Key('key-secret'),
               padding: const EdgeInsets.all(12),
               decoration: BoxDecoration(color: cs.surfaceContainerHighest, borderRadius: BorderRadius.circular(8)),
-              child: SelectableText(minted.secret, style: const TextStyle(fontFamily: 'monospace')),
+              child: SelectableText(secret, style: const TextStyle(fontFamily: 'monospace')),
             ),
-            const SizedBox(height: 8),
-            Text('Send it as  Authorization: Bearer ${minted.key.prefix}…', style: Theme.of(context).textTheme.bodySmall),
+            if (hint != null) ...[
+              const SizedBox(height: 8),
+              Text(hint!, style: Theme.of(context).textTheme.bodySmall),
+            ],
           ],
         ),
       ),
@@ -355,9 +375,9 @@ class _KeyShownOnceDialog extends StatelessWidget {
         TextButton.icon(
           key: const Key('key-copy'),
           onPressed: () async {
-            await Clipboard.setData(ClipboardData(text: minted.secret));
+            await Clipboard.setData(ClipboardData(text: secret));
             if (context.mounted) {
-              ScaffoldMessenger.of(context).showSnackBar(const SnackBar(content: Text('Key copied')));
+              ScaffoldMessenger.of(context).showSnackBar(const SnackBar(content: Text('Copied')));
             }
           },
           icon: const Icon(Icons.copy),
@@ -365,6 +385,432 @@ class _KeyShownOnceDialog extends StatelessWidget {
         ),
         FilledButton(key: const Key('key-done'), onPressed: () => Navigator.pop(context), child: const Text('I have copied it')),
       ],
+    );
+  }
+}
+
+// ── Webhooks (22.6) ────────────────────────────────────────────────────────────
+
+/// The endpoints a business's own systems are told at: registered by the
+/// owner for the events it wants, each with a secret shown once; pinged,
+/// switched off and on, rotated, removed; and the log of what was sent.
+class _WebhooksSection extends ConsumerWidget {
+  final bool owner;
+  const _WebhooksSection({required this.owner});
+
+  @override
+  Widget build(BuildContext context, WidgetRef ref) {
+    final theme = Theme.of(context);
+    final endpoints = ref.watch(webhookEndpointsProvider);
+    return Column(
+      crossAxisAlignment: CrossAxisAlignment.stretch,
+      children: [
+        Row(
+          children: [
+            Text('Webhooks', style: theme.textTheme.titleLarge?.copyWith(fontWeight: FontWeight.bold)),
+            const Spacer(),
+            if (owner)
+              FilledButton.icon(
+                key: const Key('add-webhook'),
+                onPressed: () => _add(context, ref),
+                icon: const Icon(Icons.webhook_outlined),
+                label: const Text('Add endpoint'),
+              ),
+          ],
+        ),
+        const SizedBox(height: 4),
+        Text(
+          'Your systems are told the moment something happens — an order placed, stock booked in, a price changed — '
+          'by a signed request to an address you give. HTTPS on a public address, answering 2xx within ten seconds.',
+          style: theme.textTheme.bodyMedium,
+        ),
+        const SizedBox(height: 12),
+        endpoints.when(
+          loading: () => const LoadingView(label: 'Loading endpoints…'),
+          error: (e, _) => ErrorView(
+            message: friendlyError(e, fallback: 'Could not load the endpoints.'),
+            onRetry: () => ref.invalidate(webhookEndpointsProvider),
+          ),
+          data: (list) => list.isEmpty
+              ? const Padding(
+                  key: Key('webhooks-none'),
+                  padding: EdgeInsets.symmetric(vertical: 24),
+                  child: Text('No endpoints yet. Add one for each system that should hear from the shop.'),
+                )
+              : Column(children: [for (final e in list) _EndpointTile(e: e, owner: owner)]),
+        ),
+      ],
+    );
+  }
+
+  Future<void> _add(BuildContext context, WidgetRef ref) async {
+    final made = await showDialog<RegisteredWebhook>(
+      context: context,
+      builder: (_) => const AddWebhookDialog(),
+    );
+    if (made == null || !context.mounted) return;
+    ref.invalidate(webhookEndpointsProvider);
+    await showDialog<void>(
+      context: context,
+      barrierDismissible: false,
+      builder: (_) => SecretShownOnceDialog(
+        title: '${made.endpoint.description} is registered',
+        intro: 'Put this signing secret in the system that receives the requests. It is shown once and '
+            'cannot be shown again; if it is lost, rotate it.',
+        secret: made.secret,
+        hint: 'Signed to the Standard Webhooks spec: webhook-id, webhook-timestamp and webhook-signature (v1, HMAC-SHA256 over "id.timestamp.body").',
+      ),
+    );
+  }
+}
+
+class _EndpointTile extends ConsumerWidget {
+  final WebhookEndpoint e;
+  final bool owner;
+  const _EndpointTile({required this.e, required this.owner});
+
+  @override
+  Widget build(BuildContext context, WidgetRef ref) {
+    final cs = Theme.of(context).colorScheme;
+    final api = ref.read(webhooksApiProvider);
+    final last = e.lastDeliveredAt == null ? 'never delivered' : 'last delivered ${AppFormat.date(e.lastDeliveredAt)}';
+    return Card(
+      key: Key('webhook-${e.id}'),
+      margin: const EdgeInsets.only(bottom: 8),
+      child: Padding(
+        padding: const EdgeInsets.fromLTRB(16, 12, 8, 8),
+        child: Column(
+          crossAxisAlignment: CrossAxisAlignment.start,
+          children: [
+            Row(
+              children: [
+                Icon(Icons.webhook_outlined, color: e.enabled ? cs.primary : cs.outline),
+                const SizedBox(width: 12),
+                Expanded(
+                  child: Column(
+                    crossAxisAlignment: CrossAxisAlignment.start,
+                    children: [
+                      Text(e.description, style: Theme.of(context).textTheme.titleMedium),
+                      Text(e.url, style: Theme.of(context).textTheme.bodySmall, overflow: TextOverflow.ellipsis),
+                      Text('${e.events.join(', ')} · $last', style: Theme.of(context).textTheme.bodySmall),
+                      if (!e.enabled && e.disabledReason != null)
+                        Text('Switched off: ${e.disabledReason}', style: TextStyle(color: cs.error, fontSize: 12)),
+                    ],
+                  ),
+                ),
+                Chip(
+                  label: Text(e.enabled ? 'Active' : 'Off'),
+                  backgroundColor: e.enabled ? cs.primaryContainer : cs.surfaceContainerHighest,
+                ),
+              ],
+            ),
+            Wrap(
+              spacing: 4,
+              children: [
+                TextButton.icon(
+                  key: Key('ping-${e.id}'),
+                  onPressed: () => _run(context, ref, () async {
+                    await api.ping(e.id);
+                    return 'Test delivery queued';
+                  }),
+                  icon: const Icon(Icons.send_outlined, size: 18),
+                  label: const Text('Ping'),
+                ),
+                TextButton.icon(
+                  key: Key('deliveries-${e.id}'),
+                  onPressed: () => showDialog<void>(
+                    context: context,
+                    builder: (_) => _DeliveriesDialog(endpoint: e),
+                  ),
+                  icon: const Icon(Icons.receipt_long_outlined, size: 18),
+                  label: const Text('Deliveries'),
+                ),
+                if (owner) ...[
+                  TextButton.icon(
+                    key: Key('toggle-${e.id}'),
+                    onPressed: () => _run(context, ref, () async {
+                      await api.setEnabled(e.id, !e.enabled);
+                      return e.enabled ? 'Switched off' : 'Switched on';
+                    }),
+                    icon: Icon(e.enabled ? Icons.pause_circle_outline : Icons.play_circle_outline, size: 18),
+                    label: Text(e.enabled ? 'Switch off' : 'Switch on'),
+                  ),
+                  TextButton.icon(
+                    key: Key('rotate-${e.id}'),
+                    onPressed: () => _rotate(context, ref),
+                    icon: const Icon(Icons.key_outlined, size: 18),
+                    label: const Text('Rotate secret'),
+                  ),
+                  TextButton.icon(
+                    key: Key('remove-${e.id}'),
+                    onPressed: () => _remove(context, ref),
+                    icon: const Icon(Icons.delete_outline, size: 18),
+                    label: const Text('Remove'),
+                  ),
+                ],
+              ],
+            ),
+          ],
+        ),
+      ),
+    );
+  }
+
+  Future<void> _run(BuildContext context, WidgetRef ref, Future<String> Function() action) async {
+    try {
+      final said = await action();
+      ref.invalidate(webhookEndpointsProvider);
+      if (context.mounted) ScaffoldMessenger.of(context).showSnackBar(SnackBar(content: Text(said)));
+    } catch (err) {
+      if (context.mounted) {
+        ScaffoldMessenger.of(context).showSnackBar(SnackBar(content: Text(friendlyError(err, fallback: 'That did not work.'))));
+      }
+    }
+  }
+
+  Future<void> _rotate(BuildContext context, WidgetRef ref) async {
+    final sure = await showDialog<bool>(
+      context: context,
+      builder: (ctx) => AlertDialog(
+        title: Text('Rotate the secret for ${e.description}?'),
+        content: const Text('The old secret stops signing at once; the receiving system must be given the new one.'),
+        actions: [
+          TextButton(onPressed: () => Navigator.pop(ctx, false), child: const Text('Keep it')),
+          FilledButton(key: const Key('rotate-confirm'), onPressed: () => Navigator.pop(ctx, true), child: const Text('Rotate')),
+        ],
+      ),
+    );
+    if (sure != true || !context.mounted) return;
+    try {
+      final secret = await ref.read(webhooksApiProvider).rotateSecret(e.id);
+      if (!context.mounted) return;
+      await showDialog<void>(
+        context: context,
+        barrierDismissible: false,
+        builder: (_) => SecretShownOnceDialog(
+          title: 'New secret for ${e.description}',
+          intro: 'Put this signing secret in the receiving system. It is shown once.',
+          secret: secret,
+        ),
+      );
+    } catch (err) {
+      if (context.mounted) {
+        ScaffoldMessenger.of(context).showSnackBar(SnackBar(content: Text(friendlyError(err, fallback: 'The secret could not be rotated.'))));
+      }
+    }
+  }
+
+  Future<void> _remove(BuildContext context, WidgetRef ref) async {
+    final sure = await showDialog<bool>(
+      context: context,
+      builder: (ctx) => AlertDialog(
+        title: Text('Remove ${e.description}?'),
+        content: const Text('Nothing more is sent to it, and its delivery log goes with it.'),
+        actions: [
+          TextButton(onPressed: () => Navigator.pop(ctx, false), child: const Text('Keep it')),
+          FilledButton(key: const Key('remove-confirm'), onPressed: () => Navigator.pop(ctx, true), child: const Text('Remove')),
+        ],
+      ),
+    );
+    if (sure != true || !context.mounted) return;
+    await _run(context, ref, () async {
+      await ref.read(webhooksApiProvider).remove(e.id);
+      return '${e.description} removed';
+    });
+  }
+}
+
+/// The form that registers an endpoint: an address, what it is, the events it wants.
+class AddWebhookDialog extends ConsumerStatefulWidget {
+  const AddWebhookDialog({super.key});
+
+  @override
+  ConsumerState<AddWebhookDialog> createState() => _AddWebhookDialogState();
+}
+
+class _AddWebhookDialogState extends ConsumerState<AddWebhookDialog> {
+  final _formKey = GlobalKey<FormState>();
+  final _url = TextEditingController();
+  final _description = TextEditingController();
+  final Set<String> _events = {};
+  bool _busy = false;
+  String? _error;
+
+  @override
+  void dispose() {
+    _url.dispose();
+    _description.dispose();
+    super.dispose();
+  }
+
+  Future<void> _submit() async {
+    if (!_formKey.currentState!.validate()) return;
+    if (_events.isEmpty) {
+      setState(() => _error = 'Choose at least one event.');
+      return;
+    }
+    setState(() {
+      _busy = true;
+      _error = null;
+    });
+    try {
+      final made = await ref.read(webhooksApiProvider).register(
+            url: _url.text.trim(),
+            description: _description.text.trim(),
+            events: _events.toList(),
+          );
+      if (mounted) Navigator.pop(context, made);
+    } catch (e) {
+      setState(() {
+        _busy = false;
+        _error = friendlyError(e, fallback: 'The endpoint could not be registered.');
+      });
+    }
+  }
+
+  @override
+  Widget build(BuildContext context) {
+    final events = ref.watch(webhookEventsProvider);
+    return AlertDialog(
+      title: const Text('Add a webhook endpoint'),
+      content: SizedBox(
+        width: 480,
+        child: Form(
+          key: _formKey,
+          child: SingleChildScrollView(
+            child: Column(
+              mainAxisSize: MainAxisSize.min,
+              crossAxisAlignment: CrossAxisAlignment.stretch,
+              children: [
+                TextFormField(
+                  key: const Key('webhook-url'),
+                  controller: _url,
+                  decoration: const InputDecoration(labelText: 'Address *', hintText: 'https://erp.example.com/storeql'),
+                  validator: (v) => v == null || !v.trim().startsWith('https://') ? 'An https:// address' : null,
+                ),
+                const SizedBox(height: 8),
+                TextFormField(
+                  key: const Key('webhook-description'),
+                  controller: _description,
+                  decoration: const InputDecoration(labelText: 'What it is *', hintText: 'e.g. Warehouse ERP'),
+                  maxLength: 120,
+                  validator: (v) => v == null || v.trim().isEmpty ? 'Required' : null,
+                ),
+                const SizedBox(height: 8),
+                Text('Tell it about', style: Theme.of(context).textTheme.labelLarge),
+                events.when(
+                  loading: () => const Text('Loading events…'),
+                  error: (_, _) => const Text('The event list could not be loaded.'),
+                  data: (list) => Column(
+                    children: [
+                      for (final t in list)
+                        CheckboxListTile(
+                          key: Key('event-${t.type}'),
+                          dense: true,
+                          controlAffinity: ListTileControlAffinity.leading,
+                          title: Text(t.type),
+                          subtitle: Text(t.description),
+                          value: _events.contains(t.type),
+                          onChanged: (on) => setState(() => on == true ? _events.add(t.type) : _events.remove(t.type)),
+                        ),
+                    ],
+                  ),
+                ),
+                if (_error != null) ...[
+                  const SizedBox(height: 8),
+                  Text(_error!, key: const Key('webhook-error'), style: TextStyle(color: Theme.of(context).colorScheme.error)),
+                ],
+              ],
+            ),
+          ),
+        ),
+      ),
+      actions: [
+        TextButton(onPressed: _busy ? null : () => Navigator.pop(context), child: const Text('Cancel')),
+        FilledButton(
+          key: const Key('webhook-submit'),
+          onPressed: _busy ? null : _submit,
+          child: _busy
+              ? const SizedBox(height: 18, width: 18, child: CircularProgressIndicator(strokeWidth: 2))
+              : const Text('Register'),
+        ),
+      ],
+    );
+  }
+}
+
+/// The recent deliveries to one endpoint, each with how it went, and a way to send one again.
+class _DeliveriesDialog extends ConsumerStatefulWidget {
+  final WebhookEndpoint endpoint;
+  const _DeliveriesDialog({required this.endpoint});
+
+  @override
+  ConsumerState<_DeliveriesDialog> createState() => _DeliveriesDialogState();
+}
+
+class _DeliveriesDialogState extends ConsumerState<_DeliveriesDialog> {
+  late Future<List<WebhookDelivery>> _rows = ref.read(webhooksApiProvider).deliveries(widget.endpoint.id);
+
+  Future<void> _resend(String id) async {
+    // The messenger is found before the wait: the rows rebuild once the call returns, and a
+    // context taken from inside them would be gone by then.
+    final messenger = ScaffoldMessenger.of(context);
+    try {
+      await ref.read(webhooksApiProvider).redeliver(id);
+      if (!mounted) return;
+      setState(() {
+        _rows = ref.read(webhooksApiProvider).deliveries(widget.endpoint.id);
+      });
+      messenger.showSnackBar(const SnackBar(content: Text('Queued to send again')));
+    } catch (err) {
+      messenger.showSnackBar(SnackBar(content: Text(friendlyError(err, fallback: 'Could not resend.'))));
+    }
+  }
+
+  @override
+  Widget build(BuildContext context) {
+    final cs = Theme.of(context).colorScheme;
+    return AlertDialog(
+      title: Text('Deliveries to ${widget.endpoint.description}'),
+      content: SizedBox(
+        width: 560,
+        height: 400,
+        child: FutureBuilder<List<WebhookDelivery>>(
+          future: _rows,
+          builder: (context, snap) {
+            if (snap.connectionState != ConnectionState.done) return const LoadingView(label: 'Loading deliveries…');
+            if (snap.hasError) return Text(friendlyError(snap.error!, fallback: 'Could not load the deliveries.'));
+            final rows = snap.data ?? const [];
+            if (rows.isEmpty) return const Center(child: Text('Nothing sent yet. Ping the endpoint to try it.'));
+            return ListView(
+              children: [
+                for (final d in rows)
+                  ListTile(
+                    key: Key('delivery-${d.id}'),
+                    dense: true,
+                    leading: Icon(
+                      d.status == 'DELIVERED' ? Icons.check_circle_outline : (d.status == 'DEAD' ? Icons.error_outline : Icons.schedule),
+                      color: d.status == 'DELIVERED' ? cs.primary : (d.status == 'DEAD' ? cs.error : cs.outline),
+                    ),
+                    title: Text('${d.eventType} · ${d.status.toLowerCase()}'),
+                    subtitle: Text(
+                      '${d.attempts} ${d.attempts == 1 ? 'try' : 'tries'}'
+                      '${d.lastStatus != null ? ' · last answer ${d.lastStatus}' : ''}'
+                      '${d.lastError != null ? ' · ${d.lastError}' : ''}'
+                      ' · ${AppFormat.date(d.createdAt)}',
+                    ),
+                    trailing: TextButton(
+                      key: Key('redeliver-${d.id}'),
+                      onPressed: () => _resend(d.id),
+                      child: const Text('Send again'),
+                    ),
+                  ),
+              ],
+            );
+          },
+        ),
+      ),
+      actions: [TextButton(onPressed: () => Navigator.pop(context), child: const Text('Close'))],
     );
   }
 }

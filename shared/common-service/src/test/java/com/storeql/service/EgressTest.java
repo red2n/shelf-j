@@ -1,7 +1,6 @@
-package com.storeql.iam.sso;
+package com.storeql.service;
 
-import static org.hamcrest.MatcherAssert.assertThat;
-import static org.hamcrest.Matchers.is;
+import static org.junit.jupiter.api.Assertions.assertEquals;
 import static org.junit.jupiter.api.Assertions.assertThrows;
 
 import java.net.InetAddress;
@@ -12,8 +11,8 @@ import org.junit.jupiter.api.DisplayName;
 import org.junit.jupiter.api.Test;
 
 /**
- * The issuer is typed by a business and iam-svc sits inside the cluster: what a provider address
- * may be, and what it may resolve to.
+ * An address typed by a business, called from inside the cluster: what it may be, and what it may
+ * resolve to.
  */
 class EgressTest {
 
@@ -36,27 +35,27 @@ class EgressTest {
         });
   }
 
-  private static String refusal(Egress e, String url) {
-    return assertThrows(SsoRefused.class, () -> e.check(url)).code();
+  private static Egress.Kind refusal(Egress e, String url) {
+    return assertThrows(Egress.Refused.class, () -> e.check(url)).kind();
   }
 
   @Test
   @DisplayName("A provider on a public address over HTTPS is called")
   void aPublicHttpsProviderIsCalled() {
     Egress e = egress(Set.of(), Map.of("login.example.com", "93.184.216.34"));
-    assertThat(e.check("https://login.example.com/tenant/v2.0").getHost(), is("login.example.com"));
+    assertEquals("login.example.com", e.check("https://login.example.com/tenant/v2.0").getHost());
   }
 
   @Test
   @DisplayName("Plain HTTP, credentials in the URL, a fragment, or no host: refused")
   void theShapeIsHeldFirst() {
     Egress e = egress(Set.of(), Map.of("login.example.com", "93.184.216.34"));
-    assertThat(refusal(e, "http://login.example.com"), is(SsoRefused.ADDRESS_REFUSED));
-    assertThat(refusal(e, "https://user:pw@login.example.com"), is(SsoRefused.ADDRESS_REFUSED));
-    assertThat(refusal(e, "https://login.example.com/#x"), is(SsoRefused.ADDRESS_REFUSED));
-    assertThat(refusal(e, "file:///etc/passwd"), is(SsoRefused.ADDRESS_REFUSED));
-    assertThat(refusal(e, "not a url at all"), is(SsoRefused.ADDRESS_REFUSED));
-    assertThat(refusal(e, null), is(SsoRefused.ADDRESS_REFUSED));
+    assertEquals(Egress.Kind.ADDRESS, refusal(e, "http://login.example.com"));
+    assertEquals(Egress.Kind.ADDRESS, refusal(e, "https://user:pw@login.example.com"));
+    assertEquals(Egress.Kind.ADDRESS, refusal(e, "https://login.example.com/#x"));
+    assertEquals(Egress.Kind.ADDRESS, refusal(e, "file:///etc/passwd"));
+    assertEquals(Egress.Kind.ADDRESS, refusal(e, "not a url at all"));
+    assertEquals(Egress.Kind.ADDRESS, refusal(e, null));
   }
 
   @Test
@@ -87,30 +86,29 @@ class EgressTest {
           "cgnat.example.com",
           "zero.example.com"
         }) {
-      assertThat(host, refusal(e, "https://" + host + "/"), is(SsoRefused.ADDRESS_REFUSED));
+      assertEquals(Egress.Kind.ADDRESS, refusal(e, "https://" + host + "/"), host);
     }
-    assertThat(
-        "an address typed as a literal is judged the same",
+    assertEquals(
+        Egress.Kind.ADDRESS,
         refusal(
             egress(Set.of(), Map.of("169.254.169.254", "169.254.169.254")),
             "https://169.254.169.254/"),
-        is(SsoRefused.ADDRESS_REFUSED));
+        "an address typed as a literal is judged the same");
   }
 
   @Test
   @DisplayName("A name that does not resolve is unreachable, not refused")
   void anUnknownNameIsUnreachable() {
-    assertThat(
-        refusal(egress(Set.of(), Map.of()), "https://nowhere.example.com"),
-        is(SsoRefused.UNREACHABLE));
+    assertEquals(
+        Egress.Kind.UNRESOLVED, refusal(egress(Set.of(), Map.of()), "https://nowhere.example.com"));
   }
 
   @Test
   @DisplayName("A host the deployment names as its own is reached over HTTP, and only that host")
   void theDeploymentsOwnProviderIsReached() {
     Egress e = egress(Set.of("mock-idp"), Map.of("other", "10.0.0.9"));
-    assertThat(e.check("http://mock-idp:8080/storeql").getPort(), is(8080));
-    assertThat(refusal(e, "http://other:8080/"), is(SsoRefused.ADDRESS_REFUSED));
-    assertThat(refusal(e, "https://other/"), is(SsoRefused.ADDRESS_REFUSED));
+    assertEquals(8080, e.check("http://mock-idp:8080/storeql").getPort());
+    assertEquals(Egress.Kind.ADDRESS, refusal(e, "http://other:8080/"));
+    assertEquals(Egress.Kind.ADDRESS, refusal(e, "https://other/"));
   }
 }
