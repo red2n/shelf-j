@@ -570,7 +570,7 @@ curl http://localhost:8090/api/inventory-svc/health/ready
 
 Internal-only (not published to the host): `otel-collector`, `loki`, `tempo`, node/postgres/redis exporters, `pgbouncer`, and each service's own port 8080 (reached only via the gateway or the Docker network).
 
-`docker compose down` to stop. Rebuild-and-redeploy in one shot: `scripts/redeploy.sh`. Run the Flutter web app against the dockerized gateway: `scripts/run-web.sh` (port 40015).
+`docker compose down` to stop. Rebuild-and-redeploy in one shot: `scripts/redeploy.sh` (with no Flutter SDK on the machine it builds the web bundle in a throwaway SDK container as the host user — `scripts/lib/flutter-in-docker.sh`, proved by `scripts/flutter-docker-selftest.sh`). Run the Flutter web app against the dockerized gateway: `scripts/run-web.sh` (port 40015).
 
 ---
 
