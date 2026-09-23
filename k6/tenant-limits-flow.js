@@ -61,6 +61,9 @@ export default function ({ admin }) {
     { key: 'documents.mb.max', limitValue: 0 },
     { key: 'feature.storefront', enabled: true },
   ]);
+  // The default plan is the platform's, not this suite's: remembered here and put back at the end,
+  // so a business onboarded by a later suite does not land on sixty requests a minute.
+  const before = (data(call('GET', PLANS, { token: root })) || []).find((p) => p.isDefault);
   must(plan('POST', `/${tight}/default`), 200, 'the default plan');
   const shop = onboardTenant(`limits-${tag}`, { country: 'GB', currency: 'GBP' });
   const owner = shop.owner.token;
@@ -106,6 +109,7 @@ export default function ({ admin }) {
   expect(ping(rival.owner.token), '[+] the neighbour\'s minute is its own', 200);
   expect(call('GET', `${PLANS}/entitlement-keys`, { token: root }), '[+] the platform\'s administrator is nobody\'s tenant and is not counted', 200);
   expect(ping(owner), '[-] a second try inside the minute is still told to wait', 429, 'PLAN_RATE_LIMIT_REACHED');
+  must(plan('POST', `/${before ? before.id : roomy}/default`), 200, 'the default plan put back');
 
   completed.add(1);
 }

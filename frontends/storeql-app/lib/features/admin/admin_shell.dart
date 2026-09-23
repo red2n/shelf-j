@@ -141,6 +141,15 @@ const _navItems = [
   ),
   _AdminNavItem(
     destination: AdaptiveNavDestination(
+      label: 'Integrations',
+      icon: Icons.vpn_key_outlined,
+      selectedIcon: Icons.vpn_key,
+    ),
+    route: '/admin/integrations',
+    storekeeperVisible: false,
+  ),
+  _AdminNavItem(
+    destination: AdaptiveNavDestination(
       label: 'Billing',
       icon: Icons.receipt_long_outlined,
       selectedIcon: Icons.receipt_long,

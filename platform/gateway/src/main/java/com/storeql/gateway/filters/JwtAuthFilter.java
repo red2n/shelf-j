@@ -104,6 +104,9 @@ public class JwtAuthFilter implements ContainerRequestFilter {
   @Inject GatewayConfig config;
   @Inject TenantStatusGate tenantStatusGate;
 
+  /** What a business's API key may do (22.7), as iam-svc says. */
+  @Inject ApiKeyIntrospector apiKeys;
+
   @Inject SigningKeySet signingKeys;
 
   /** A verifier per signing key, built once the key is known. */
@@ -254,6 +257,11 @@ public class JwtAuthFilter implements ContainerRequestFilter {
     }
 
     String token = authHeader.substring(7).trim();
+    // A business's API key as the bearer (22.7): a key, not a token, and judged by iam-svc.
+    if (token.startsWith(ApiKeyIntrospector.KEY_PREFIX)) {
+      authenticateApiKey(ctx, token, normalize(path));
+      return;
+    }
     DecodedJWT jwt;
     try {
       jwt = verify(token);
@@ -671,6 +679,83 @@ public class JwtAuthFilter implements ContainerRequestFilter {
     // onboarding whitelists as the unversioned /api/... alias (golden rule #2 stays exact-match).
     p = p.replaceFirst("^api/v\\d+/", "api/");
     return p;
+  }
+
+  /**
+   * A business's API key at the door (22.7). The key is what one of the business's systems presents
+   * instead of a person's sign-in, so it acts as the business in the tier the key was given, for
+   * the stores it was given, and is stamped like a token would be — with the key as the actor, so
+   * every audit trail says which key did what. Three things a key is not: a person who can sign in,
+   * set up a second factor or trade a ticket (everything under iam-svc); a person who can start a
+   * business or add a store to one (onboarding); the platform (anything under a service's {@code
+   * /platform}). Those routes are refused before iam-svc is even asked. A key iam-svc does not
+   * know, has revoked, or that has expired is "invalid" and nothing more — which it was is not the
+   * caller's to act on differently; a key of a business that was switched off is refused the way
+   * the business is; and when iam-svc cannot be asked the caller is told to try again, because a
+   * 401 would tell an integrator its key is bad when it is not.
+   */
+  private void authenticateApiKey(ContainerRequestContext ctx, String key, String target) {
+    if (isNoRouteForAKey(target)) {
+      ctx.abortWith(keyRouteForbidden());
+      return;
+    }
+    ApiKeyIntrospector.Verdict verdict = apiKeys.introspect(key);
+    switch (verdict) {
+      case ApiKeyIntrospector.Unavailable unavailable -> ctx.abortWith(keyCheckUnavailable());
+      case ApiKeyIntrospector.Refused refused -> {
+        if ("tenant suspended".equals(refused.reason())) {
+          ctx.abortWith(tenantSuspended());
+          return;
+        }
+        LOG.log(
+            System.Logger.Level.INFO,
+            "API key {0}… refused on {1}: {2}",
+            key.substring(0, Math.min(key.length(), 12)),
+            target,
+            refused.reason());
+        ctx.abortWith(unauthorized("Invalid, expired or revoked API key"));
+      }
+      case ApiKeyIntrospector.Active active -> {
+        ctx.getHeaders().putSingle(HttpHeaders.USER_ID, active.keyId());
+        ctx.getHeaders().putSingle(HttpHeaders.TENANT_ID, active.tenantId());
+        ctx.getHeaders().putSingle(HttpHeaders.ROLES, active.role());
+        if (!active.storeIds().isEmpty()) {
+          ctx.getHeaders().putSingle(HttpHeaders.STORE_IDS, String.join(",", active.storeIds()));
+        }
+        ctx.getHeaders().putSingle(HttpHeaders.AUTH_METHODS, "api-key");
+      }
+    }
+  }
+
+  /** The routes a key never reaches, whatever tier it holds: see {@link #authenticateApiKey}. */
+  static boolean isNoRouteForAKey(String target) {
+    return target.startsWith("api/iam-svc/")
+        || target.matches("api/[a-z0-9-]+/onboarding(/.*)?")
+        || target.matches("api/[a-z0-9-]+/platform(/.*)?");
+  }
+
+  private static Response keyRouteForbidden() {
+    return Response.status(Response.Status.FORBIDDEN)
+        .type(MediaType.APPLICATION_JSON)
+        .entity(
+            com.storeql.web.ApiResponse.error(
+                com.storeql.web.ErrorBody.of(
+                    "API_KEY_ROUTE_FORBIDDEN",
+                    "An API key cannot sign in, manage logins, start a business or act for the"
+                        + " platform; use a person's sign-in for that")))
+        .build();
+  }
+
+  private static Response keyCheckUnavailable() {
+    return Response.status(Response.Status.SERVICE_UNAVAILABLE)
+        .header("Retry-After", "5")
+        .type(MediaType.APPLICATION_JSON)
+        .entity(
+            com.storeql.web.ApiResponse.error(
+                com.storeql.web.ErrorBody.of(
+                    "API_KEY_CHECK_UNAVAILABLE",
+                    "the API key cannot be checked right now; try again shortly")))
+        .build();
   }
 
   private static Response tenantSuspended() {
