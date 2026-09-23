@@ -1080,6 +1080,65 @@ public class PricingRepository extends BaseOutboxRepository {
   }
 
   /**
+   * The promotions that touch a store on or after {@code from}: the store's own and the
+   * business-wide ones, on or off, whose end date had not passed by then. A promotion switched off
+   * before {@code from} still appears here; the service reads the switch and drops it.
+   *
+   * @param tenantId owning tenant; the first condition of the query
+   * @param storeId the store
+   * @param from the first moment of interest
+   * @return the promotions, earliest start first
+   */
+  public List<Promotion> findPromotionsTouching(UUID tenantId, UUID storeId, Instant from) {
+    return query(
+        "SELECT id,tenant_id,store_id,name,type,value,min_order_amount,"
+            + "  channel,active,starts_at,ends_at,created_at,priority,exclusive,coupon_code,"
+            + "  max_redemptions,max_per_customer,buy_qty,get_qty,get_discount_pct"
+            + " FROM promotions WHERE tenant_id=? AND (store_id IS NULL OR store_id=?)"
+            + " AND (ends_at IS NULL OR ends_at >= ?)"
+            + " ORDER BY starts_at ASC, id ASC",
+        ps -> {
+          ps.setObject(1, tenantId);
+          ps.setObject(2, storeId);
+          ps.setObject(3, toOdt(from));
+        },
+        this::mapPromotion,
+        "find promotions touching a store");
+  }
+
+  /**
+   * When each of these promotions was last switched off, for those that ever were.
+   *
+   * @param tenantId owning tenant; the first condition of the query
+   * @param promotionIds the promotions to ask about
+   * @return promotion id to the moment of its latest switch-off
+   */
+  public Map<UUID, Instant> findLastSwitchOff(UUID tenantId, List<UUID> promotionIds) {
+    if (promotionIds.isEmpty()) return Map.of();
+    String placeholders = String.join(",", java.util.Collections.nCopies(promotionIds.size(), "?"));
+    Map<UUID, Instant> out = new java.util.HashMap<>();
+    query(
+        "SELECT subject_id, MAX(changed_at) AS changed_at FROM promotion_status_changes"
+            + " WHERE tenant_id = ? AND subject_type = 'PROMOTION' AND active = FALSE"
+            + " AND subject_id IN ("
+            + placeholders
+            + ") GROUP BY subject_id",
+        ps -> {
+          int i = 1;
+          ps.setObject(i++, tenantId);
+          for (UUID id : promotionIds) ps.setObject(i++, id);
+        },
+        rs -> {
+          out.put(
+              rs.getObject("subject_id", UUID.class),
+              rs.getObject("changed_at", OffsetDateTime.class).toInstant());
+          return null;
+        },
+        "find last switch-off");
+    return out;
+  }
+
+  /**
    * Records what a promotion applies to.
    *
    * @param pi the scope row to persist; its {@code id} must already be a UUIDv7

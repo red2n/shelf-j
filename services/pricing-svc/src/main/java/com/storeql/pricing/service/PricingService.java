@@ -10,6 +10,7 @@ import com.storeql.pricing.domain.Domain.PriceOverride;
 import com.storeql.pricing.domain.Domain.ProductVatCategory;
 import com.storeql.pricing.domain.Domain.Promotion;
 import com.storeql.pricing.domain.Domain.PromotionItem;
+import com.storeql.pricing.domain.Domain.PromotionWindow;
 import com.storeql.pricing.domain.Domain.ResolvedPrice;
 import com.storeql.pricing.domain.Domain.TaxGrouping;
 import com.storeql.pricing.domain.Domain.TaxSummary;
@@ -46,8 +47,10 @@ import jakarta.inject.Inject;
 import java.math.BigDecimal;
 import java.math.RoundingMode;
 import java.time.Instant;
+import java.util.ArrayList;
 import java.util.List;
 import java.util.Map;
+import java.util.Set;
 import java.util.UUID;
 
 /** Business logic for pricing-svc. Controllers call this; no HTTP types here. */
@@ -1344,6 +1347,52 @@ public class PricingService {
    */
   public List<Promotion> listActivePromotions(TenantContext ctx) {
     return repo.findAllActivePromotions(ctx.tenantId());
+  }
+
+  /**
+   * The promotions that touch a store since {@code from}, as windows in time for the demand
+   * forecast in inventory-svc (06.x): each with its scope resolved to variants, and a promotion
+   * that is off now ending when it was switched off rather than on its end date. A promotion whose
+   * window closed before {@code from} is left out.
+   *
+   * @param ctx caller context; supplies the tenant
+   * @param storeId the store
+   * @param from the first moment of interest
+   * @return the windows, earliest start first
+   */
+  public List<PromotionWindow> promotionWindows(TenantContext ctx, UUID storeId, Instant from) {
+    UUID tenantId = ctx.tenantId();
+    List<Promotion> promotions = repo.findPromotionsTouching(tenantId, storeId, from);
+    List<UUID> ids = promotions.stream().map(Promotion::id).toList();
+    Map<UUID, Set<UUID>> scopes = repo.findPromotionVariantScopes(tenantId, ids);
+    Map<UUID, Instant> switchedOff = repo.findLastSwitchOff(tenantId, ids);
+    List<PromotionWindow> out = new ArrayList<>();
+    for (Promotion p : promotions) {
+      Instant endsAt = p.endsAt();
+      Instant off = p.active() ? null : switchedOff.get(p.id());
+      if (off != null && (endsAt == null || off.isBefore(endsAt))) {
+        endsAt = off;
+      }
+      if (endsAt != null && endsAt.isBefore(from)) {
+        continue;
+      }
+      // Absent from the scopes means unscoped, which the engine reads as everything.
+      Set<UUID> variants = scopes.get(p.id());
+      out.add(
+          new PromotionWindow(
+              p.id(),
+              p.storeId(),
+              p.name(),
+              p.type(),
+              p.value(),
+              p.channel(),
+              p.active(),
+              p.startsAt(),
+              endsAt,
+              variants == null ? Set.of() : variants,
+              variants == null));
+    }
+    return out;
   }
 
   /**

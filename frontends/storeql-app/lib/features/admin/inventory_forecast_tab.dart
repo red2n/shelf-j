@@ -191,6 +191,42 @@ class _ForecastTable extends ConsumerWidget {
                               ),
                             ),
                           ),
+                        if (r.promotedAheadDays > 0)
+                          Padding(
+                            padding: const EdgeInsets.only(left: 6),
+                            child: Tooltip(
+                              message: r.uplift == null
+                                  ? 'A promotion runs on ${r.promotedAheadDays} of the next '
+                                      '${r.horizonDays} days; no lift could be measured from its history'
+                                  : 'A promotion runs on ${r.promotedAheadDays} of the next '
+                                      '${r.horizonDays} days, each forecast at ×${r.uplift!.toStringAsFixed(1)} — '
+                                      '${r.upliftSource == 'STORE' ? "what the store's promotions sold" : 'what its last ones sold'}',
+                              child: Container(
+                                padding: const EdgeInsets.symmetric(horizontal: 6, vertical: 2),
+                                decoration: BoxDecoration(
+                                  color: cs.tertiaryContainer,
+                                  borderRadius: AppRadius.badge,
+                                ),
+                                child: Text(
+                                    r.uplift == null
+                                        ? 'Promo · ${r.promotedAheadDays} d'
+                                        : 'Promo ×${r.uplift!.toStringAsFixed(1)} · ${r.promotedAheadDays} d',
+                                    style: TextStyle(
+                                        fontSize: 11,
+                                        fontWeight: FontWeight.w600,
+                                        color: cs.onTertiaryContainer)),
+                              ),
+                            ),
+                          ),
+                        if (r.seasonalIndices.length == 12)
+                          Padding(
+                            padding: const EdgeInsets.only(left: 6),
+                            child: Tooltip(
+                              message: "The year's shape, from thirteen months or more: ${r.seasonLine}",
+                              child: Icon(Icons.calendar_month_outlined,
+                                  size: 16, color: cs.onSurfaceVariant),
+                            ),
+                          ),
                         if (r.intermittent)
                           Padding(
                             padding: const EdgeInsets.only(left: 6),
@@ -254,6 +290,18 @@ class _ForecastDetail extends ConsumerWidget {
               '${f.fresh ? ' Fresh: lives ${f.shelfLifeDays} days, so an order covers no more' : ''}'
               '${f.wasteRatePct == null ? '' : '; ${f.wasteRatePct!.toStringAsFixed(1)}% of what was received went out of date unsold'}'
               '${f.fresh || f.wasteRatePct != null ? '.' : ''}'),
+          if (f.promotedAheadDays > 0 || f.promotedHistoryDays > 0) ...[
+            const SizedBox(height: 8),
+            Text(
+              '${f.promotedHistoryDays > 0 ? 'A promotion ran on ${f.promotedHistoryDays} of the ${f.historyDays} days of history. ' : ''}'
+              '${f.promotedAheadDays > 0 ? 'One runs on ${f.promotedAheadDays} of the next ${f.horizonDays} days' : ''}'
+              '${f.promotedAheadDays > 0 && f.uplift != null ? ', each forecast at ×${f.uplift!.toStringAsFixed(2)} — ${f.upliftSource == 'STORE' ? "what the store's promotions sold over ordinary days" : 'what its last promotions sold over ordinary days'}.' : f.promotedAheadDays > 0 ? '; no lift could be measured, so those days are forecast as ordinary ones.' : ''}',
+            ),
+          ],
+          if (f.seasonalIndices.length == 12) ...[
+            const SizedBox(height: 8),
+            Text("The year's shape (January first, 1.00 is an ordinary month): ${f.seasonLine}"),
+          ],
           if (f.weekdayProfile.length == 7) ...[
             const SizedBox(height: 8),
             Text('Weekday profile: ${[

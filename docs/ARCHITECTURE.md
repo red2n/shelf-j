@@ -388,6 +388,7 @@ Pure projection service built by consuming inventory and sales events.
 order-svc    ──REST──►  pricing-svc, inventory-svc, payment-svc
 cart-svc     ──REST──►  pricing-svc, inventory-svc, product-svc
 pricing-svc  ──REST──►  inventory-svc (expiring batches, for the markdown plan)
+inventory-svc ──REST──► pricing-svc   (promotion windows, for the forecast's uplift — 06.x)
 product-svc  ──REST──►  inventory-svc   (stock flag on product page)
 purchase-svc ──REST──►  product-svc     (validate variant)
 tenant-svc   ──REST──►  iam-svc         (verify user on staff assignment)

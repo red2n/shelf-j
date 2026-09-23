@@ -8,6 +8,7 @@ import com.storeql.pricing.domain.Domain.PriceOverride;
 import com.storeql.pricing.domain.Domain.ProductVatCategory;
 import com.storeql.pricing.domain.Domain.Promotion;
 import com.storeql.pricing.domain.Domain.PromotionItem;
+import com.storeql.pricing.domain.Domain.PromotionWindow;
 import com.storeql.pricing.domain.Domain.ResolvedPrice;
 import com.storeql.pricing.domain.Domain.TaxSummary;
 import com.storeql.pricing.domain.Domain.TaxSummaryRow;
@@ -22,6 +23,7 @@ import com.storeql.pricing.dto.Dtos.PriceOverrideResponse;
 import com.storeql.pricing.dto.Dtos.ProductVatCategoryResponse;
 import com.storeql.pricing.dto.Dtos.PromotionItemResponse;
 import com.storeql.pricing.dto.Dtos.PromotionResponse;
+import com.storeql.pricing.dto.Dtos.PromotionWindowResponse;
 import com.storeql.pricing.dto.Dtos.ResolvedPriceResponse;
 import com.storeql.pricing.dto.Dtos.TaxSummaryResponse;
 import com.storeql.pricing.dto.Dtos.TaxSummaryRowResponse;
@@ -255,6 +257,22 @@ public final class Mappers {
    */
   public static PromotionResponse toDto(Promotion p) {
     return toDto(p, null);
+  }
+
+  /** A promotion window for the forecast (06.x); the variant ids in a stable order. */
+  public static PromotionWindowResponse toDto(PromotionWindow w) {
+    return new PromotionWindowResponse(
+        w.promotionId(),
+        w.storeId(),
+        w.name(),
+        w.type(),
+        w.value(),
+        w.channel(),
+        w.active(),
+        w.startsAt().toString(),
+        w.endsAt() == null ? null : w.endsAt().toString(),
+        w.variantIds().stream().sorted().toList(),
+        w.allVariants());
   }
 
   /**

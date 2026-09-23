@@ -575,6 +575,30 @@ public final class Dtos {
   public record PromotionItemResponse(
       UUID id, UUID tenantId, UUID promotionId, String scopeType, UUID scopeId, String createdAt) {}
 
+  @Schema(
+      name = "PromotionWindowResponse",
+      description =
+          "A promotion as a window in time over some items at a store, read by inventory-svc for"
+              + " the demand forecast (06.x).")
+  public record PromotionWindowResponse(
+      UUID promotionId,
+      @Schema(description = "The store it is scoped to; null for every store of the business.")
+          UUID storeId,
+      String name,
+      String type,
+      BigDecimal value,
+      String channel,
+      @Schema(description = "Whether it is switched on now.") boolean active,
+      String startsAt,
+      @Schema(
+              description =
+                  "Its end date, or the moment it was switched off if that came first; null when"
+                      + " open-ended.")
+          String endsAt,
+      @Schema(description = "The variants it applies to; empty when it applies to everything.")
+          List<UUID> variantIds,
+      boolean allVariants) {}
+
   // ── Tax Transactions (POSLog) ─────────────────────────────────────────────
 
   @Schema(

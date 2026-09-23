@@ -873,7 +873,9 @@ public final class Mappers {
         r.meanMape(),
         r.horizonDays(),
         r.computedAt().toString(),
-        r.fresh());
+        r.fresh(),
+        r.seasonal(),
+        r.promoted());
   }
 
   /**
@@ -918,6 +920,11 @@ public final class Mappers {
         fresh.wasteRate() == null
             ? null
             : fresh.wasteRate().multiply(BigDecimal.valueOf(100)).setScale(2, RoundingMode.HALF_UP),
-        fresh.maxCoverDays());
+        fresh.maxCoverDays(),
+        f.seasonalIndices(),
+        f.uplift(),
+        f.uplift() == null ? null : f.upliftSource(),
+        f.promotedHistoryDays(),
+        f.promotedAheadDays());
   }
 }

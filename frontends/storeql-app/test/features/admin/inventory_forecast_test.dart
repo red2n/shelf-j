@@ -32,7 +32,7 @@ class _Server implements HttpClientAdapter {
 
   static String _row(String variant, String method, bool intermittent, String mape) =>
       '{"id":"f-$variant","storeId":"st-1","variantId":"$variant","method":"$method","intermittent":$intermittent,'
-      '${intermittent ? '"fresh":true,"shelfLifeDays":5,"wasteRatePct":1.10,"maxCoverDays":5,' : '"fresh":false,'}'
+      '${intermittent ? '"fresh":true,"shelfLifeDays":5,"wasteRatePct":1.10,"maxCoverDays":5,"uplift":2.5,"upliftSource":"ITEM","promotedHistoryDays":14,"promotedAheadDays":7,' : '"fresh":false,"seasonalIndices":[0.92,0.92,0.92,0.92,0.92,0.92,0.92,0.92,0.92,0.92,0.92,1.85],'}'
       '"alpha":0.2,"level":7.0,"weekdayProfile":[0.9,0.9,0.9,0.9,1.0,1.3,1.1],"historyFrom":"2026-07-25","historyTo":"2026-09-22",'
       '"historyDays":60,"horizonDays":28,"fromDay":"2026-09-23","next7":49.0,"next28":196.0,"holdoutDays":15,'
       '"mape":$mape,"bias":-2.5,"mase":0.8,"points":[],"computedAt":"2026-09-23T06:00:00Z"}';
@@ -96,6 +96,10 @@ void main() {
     expect(find.text('—'), findsOneWidget, reason: 'the intermittent row cannot compute a MAPE: a dash, never a zero');
     expect(find.byIcon(Icons.scatter_plot_outlined), findsOneWidget, reason: 'the intermittent item is marked');
     expect(find.text('Fresh · 5 d'), findsOneWidget, reason: 'the fresh item wears its shelf life');
+    expect(find.text('Promo ×2.5 · 7 d'), findsOneWidget,
+        reason: 'the promoted item wears the uplift and the days a promotion will run');
+    expect(find.byIcon(Icons.calendar_month_outlined), findsOneWidget,
+        reason: "the item with thirteen months of history wears the year's shape");
     expect(find.text('60 d'), findsNWidgets(2));
   });
 

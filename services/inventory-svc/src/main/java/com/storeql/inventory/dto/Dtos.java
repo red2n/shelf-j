@@ -1095,7 +1095,10 @@ public final class Dtos {
       int horizonDays,
       String computedAt,
       @Schema(description = "Variants that live fourteen days or fewer, by their batches.")
-          int fresh) {}
+          int fresh,
+      @Schema(description = "Variants with a year's shape: thirteen months seen, twelve indices.")
+          int seasonal,
+      @Schema(description = "Variants a promotion will run on within the horizon.") int promoted) {}
 
   @Schema(name = "ForecastPoint")
   public record ForecastPointResponse(String day, BigDecimal qty) {}
@@ -1152,6 +1155,23 @@ public final class Dtos {
           BigDecimal wasteRatePct,
       @Schema(
               description =
-                  "The longest cover an order should be given: the shelf life; null when the item keeps.")
-          Integer maxCoverDays) {}
+                  "The shelf life, the longest cover an order should be given; null when the item keeps.")
+          Integer maxCoverDays,
+      @Schema(
+              description =
+                  "Twelve monthly indices, January first, from the days no promotion ran; empty under"
+                      + " thirteen months of history.")
+          List<BigDecimal> seasonalIndices,
+      @Schema(
+              description =
+                  "What a promotion does to the item: promoted-day demand over ordinary, 1 to 10;"
+                      + " null when none could be measured.")
+          BigDecimal uplift,
+      @Schema(
+              description =
+                  "ITEM from its own promotions, STORE pooled across the store's; null with no uplift.")
+          String upliftSource,
+      @Schema(description = "History days a promotion ran on.") int promotedHistoryDays,
+      @Schema(description = "Horizon days a promotion will run on, each forecast at the uplift.")
+          int promotedAheadDays) {}
 }

@@ -713,6 +713,23 @@ class AdminAuthorizationFilterTest {
   // ── 21.10: whether one more metered thing may be done, read service-to-service ──
 
   @Test
+  void promotionWindowsAreStaffReadableAndTheRestOfPromotionsIsManagement() throws Exception {
+    // inventory-svc reads the windows for its forecast (06.x) as STOREKEEPER, the identity one
+    // service uses for another's staff-operable reads. The leaf only: creating, scoping and
+    // switching a promotion stay management's, and so does its switch history.
+    ctx.set(null, null, Set.of("STOREKEEPER"), null, null);
+    assertNotAborted(invoke("GET", "/admin/promotions/windows"));
+    assertAborted(invoke("GET", "/admin/promotions"), 403);
+    assertAborted(invoke("GET", "/admin/promotions/windows/extra"), 403);
+    assertAborted(invoke("POST", "/admin/promotions/windows"), 403);
+    assertAborted(invoke("POST", "/admin/promotions"), 403);
+    ctx.set(null, null, Set.of("CUSTOMER"), null, null);
+    assertAborted(invoke("GET", "/admin/promotions/windows"), 403);
+    ctx.set(null, null, Set.of("MANAGER"), null, null);
+    assertNotAborted(invoke("GET", "/admin/promotions/windows"));
+  }
+
+  @Test
   void aUsageAllowanceIsStaffReadableAndWhatWasUsedIsManagement() throws Exception {
     // notification-svc asks this before a marketing text, as STOREKEEPER. Left off the staff
     // tier, the call would be refused, Quotas would fail open, and a hard quota would never refuse

@@ -2,6 +2,7 @@ package com.storeql.inventory.domain;
 
 import static org.hamcrest.MatcherAssert.assertThat;
 import static org.hamcrest.Matchers.closeTo;
+import static org.hamcrest.Matchers.empty;
 import static org.hamcrest.Matchers.everyItem;
 import static org.hamcrest.Matchers.greaterThan;
 import static org.hamcrest.Matchers.greaterThanOrEqualTo;
@@ -10,10 +11,14 @@ import static org.hamcrest.Matchers.lessThan;
 import static org.hamcrest.Matchers.lessThanOrEqualTo;
 import static org.hamcrest.Matchers.nullValue;
 
+import com.storeql.inventory.domain.Forecasting.Calendar;
 import com.storeql.inventory.domain.Forecasting.Forecast;
+import com.storeql.inventory.domain.Forecasting.Shape;
+import com.storeql.inventory.domain.Forecasting.UpliftFacts;
 import java.math.BigDecimal;
 import java.time.DayOfWeek;
 import java.time.LocalDate;
+import java.time.Month;
 import java.util.ArrayList;
 import java.util.Collections;
 import java.util.List;
@@ -150,5 +155,102 @@ class ForecastingTest {
       assertThat(p.scale(), is(4));
     }
     assertThat(f.expectedOver(3).scale(), is(4));
+  }
+
+  // ── the shape of a year, and what a promotion does ─────────────────────────
+
+  /** Fourteen months to {@code SUNDAY}: ten a day, twenty a day through December. */
+  private static List<BigDecimal> aYearWithADecember() {
+    List<BigDecimal> daily = new ArrayList<>();
+    for (int i = 0; i < 420; i++) {
+      LocalDate day = SUNDAY.minusDays(419 - i);
+      daily.add(BigDecimal.valueOf(day.getMonth() == Month.DECEMBER ? 20 : 10));
+    }
+    return daily;
+  }
+
+  @Test
+  @DisplayName(
+      "Thirteen months of history give the year its shape: December sells double, and a forecast into December says so")
+  void aYearsShapeCarriesIntoTheForecast() {
+    List<BigDecimal> daily = aYearWithADecember();
+    List<BigDecimal> indices = Forecasting.seasonalIndices(daily, SUNDAY, new boolean[420]);
+    assertThat(indices.size(), is(12));
+    assertThat(d(indices.get(Month.DECEMBER.getValue() - 1)), greaterThan(1.7));
+    assertThat(d(indices.get(Month.JUNE.getValue() - 1)), lessThan(1.0));
+
+    Forecast f =
+        Forecasting.forecast(
+            daily, SUNDAY, 120, new Shape(indices, null, null), Calendar.none(420, 120));
+    assertThat(f.seasonalIndices().size(), is(12));
+    // The level is the deseasonalised day; October forecasts ten, December twenty.
+    int october = (int) (LocalDate.of(2026, 10, 1).toEpochDay() - f.fromDay().toEpochDay());
+    int december = (int) (LocalDate.of(2026, 12, 1).toEpochDay() - f.fromDay().toEpochDay());
+    assertThat(d(f.points().get(october)), closeTo(10.0, 0.6));
+    assertThat(d(f.points().get(december)), closeTo(20.0, 1.2));
+    assertThat(d(f.accuracy().mape()), lessThan(10.0));
+  }
+
+  @Test
+  @DisplayName(
+      "A fortnight's promotion at two and a half times sells shows as the uplift, and only the days a promotion will run are lifted")
+  void aPromotionLiftsTheDaysItRuns() {
+    List<BigDecimal> daily = new ArrayList<>();
+    boolean[] promoted = new boolean[120];
+    for (int i = 0; i < 120; i++) {
+      boolean promo = i >= 60 && i < 74;
+      promoted[i] = promo;
+      daily.add(BigDecimal.valueOf(promo ? 25 : 10));
+    }
+    UpliftFacts facts = Forecasting.upliftFacts(daily, SUNDAY, promoted, List.of());
+    assertThat(facts.promotedDays(), is(14));
+    assertThat(facts.baselineDays(), is(106));
+    BigDecimal uplift = Forecasting.upliftOf(facts);
+    assertThat(d(uplift), closeTo(2.5, 0.01));
+
+    boolean[] ahead = new boolean[14];
+    for (int i = 0; i < 7; i++) ahead[i] = true;
+    Forecast f =
+        Forecasting.forecast(
+            daily,
+            SUNDAY,
+            14,
+            new Shape(List.of(), uplift, Shape.UPLIFT_ITEM),
+            new Calendar(promoted, ahead));
+    assertThat(f.method(), is(Forecasting.METHOD_SES));
+    assertThat(d(f.level()), closeTo(10.0, 0.3));
+    assertThat(d(f.uplift()), closeTo(2.5, 0.01));
+    assertThat(f.upliftSource(), is(Shape.UPLIFT_ITEM));
+    assertThat(f.promotedHistoryDays(), is(14));
+    assertThat(f.promotedAheadDays(), is(7));
+    for (int i = 0; i < 7; i++) assertThat(d(f.points().get(i)), closeTo(25.0, 0.8));
+    for (int i = 7; i < 14; i++) assertThat(d(f.points().get(i)), closeTo(10.0, 0.4));
+    assertThat(d(f.expectedOver(14)), closeTo(245.0, 6.0));
+  }
+
+  @Test
+  @DisplayName(
+      "Under thirteen months there is no season, under a week of promotion no lift, and the forecast is the plain one")
+  void tooLittleHistoryHasNoSeasonAndNoLift() {
+    List<BigDecimal> daily = constant(60, 5);
+    assertThat(Forecasting.seasonalIndices(daily, SUNDAY, new boolean[60]), is(empty()));
+    boolean[] threeDays = new boolean[60];
+    for (int i = 10; i < 13; i++) threeDays[i] = true;
+    assertThat(
+        Forecasting.upliftOf(Forecasting.upliftFacts(daily, SUNDAY, threeDays, List.of())),
+        is(nullValue()));
+    // A promotion that did not lift anything is no uplift either.
+    boolean[] aFlatFortnight = new boolean[60];
+    for (int i = 20; i < 34; i++) aFlatFortnight[i] = true;
+    assertThat(
+        Forecasting.upliftOf(Forecasting.upliftFacts(daily, SUNDAY, aFlatFortnight, List.of())),
+        is(nullValue()));
+
+    Forecast plain = Forecasting.forecast(daily, SUNDAY, 28);
+    Forecast shaped = Forecasting.forecast(daily, SUNDAY, 28, Shape.FLAT, Calendar.none(60, 28));
+    assertThat(shaped.points(), is(plain.points()));
+    assertThat(plain.seasonalIndices(), is(empty()));
+    assertThat(plain.uplift(), is(nullValue()));
+    assertThat(plain.promotedAheadDays(), is(0));
   }
 }

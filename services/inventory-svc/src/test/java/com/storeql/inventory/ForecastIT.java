@@ -7,6 +7,7 @@ import static org.hamcrest.Matchers.greaterThan;
 import static org.hamcrest.Matchers.is;
 
 import com.storeql.ids.Ids;
+import com.storeql.test.JsonStub;
 import com.storeql.test.PostgresSupport;
 import com.storeql.test.WebTargets;
 import io.helidon.microprofile.testing.junit5.HelidonTest;
@@ -23,6 +24,7 @@ import java.io.StringReader;
 import java.math.BigDecimal;
 import java.sql.SQLException;
 import java.time.LocalDate;
+import java.time.Month;
 import java.time.ZoneOffset;
 import java.util.UUID;
 import org.junit.jupiter.api.AfterAll;
@@ -40,6 +42,12 @@ class ForecastIT {
 
   private static final PostgresSupport PG = PostgresSupport.start().wire("inventory");
 
+  private static final String NO_WINDOWS = "{\"data\":[]}";
+
+  /** pricing-svc, standing in: no promotion windows unless a test says otherwise. */
+  private static final JsonStub PRICING =
+      JsonStub.start("pricing-svc").on("GET", "/admin/promotions/windows", 200, NO_WINDOWS);
+
   private static final String KEEPER = "01a090ae-7f1e-7f05-bde4-50df0324c37c";
 
   @Inject WebTarget target;
@@ -51,9 +59,12 @@ class ForecastIT {
   private final UUID occasional = Ids.newId();
   private final UUID monthlyOnly = Ids.newId();
   private final UUID yoghurt = Ids.newId();
+  private final UUID crackers = Ids.newId();
+  private final UUID cola = Ids.newId();
 
   @AfterAll
   static void stopDb() {
+    PRICING.close();
     PG.stop();
   }
 
@@ -62,6 +73,23 @@ class ForecastIT {
     tenant = Ids.newId();
     store = Ids.newId();
     otherStore = Ids.newId();
+    PRICING.on("GET", "/admin/promotions/windows", 200, NO_WINDOWS);
+  }
+
+  /** A promotion window over one variant at the store, from {@code from} until {@code until}. */
+  private String window(UUID variant, LocalDate from, LocalDate until) {
+    return "{\"promotionId\":\""
+        + Ids.newId()
+        + "\",\"storeId\":\""
+        + store
+        + "\",\"name\":\"Week of it\",\"type\":\"PERCENT\",\"value\":20,\"channel\":\"ALL\","
+        + "\"active\":true,\"startsAt\":\""
+        + from
+        + "T00:00:00Z\",\"endsAt\":\""
+        + until
+        + "T00:00:00Z\",\"variantIds\":[\""
+        + variant
+        + "\"],\"allVariants\":false}";
   }
 
   // ── the history a forecast reads ────────────────────────────────────────────
@@ -329,5 +357,57 @@ class ForecastIT {
         data(as("/admin/inventory/forecasts/" + store + "/" + steady, "OWNER", null).get());
     assertThat(keeps.getBoolean("fresh"), is(false));
     assertThat(!keeps.containsKey("shelfLifeDays") || keeps.isNull("shelfLifeDays"), is(true));
+  }
+
+  @Test
+  @DisplayName(
+      "Thirteen months give the year its shape, and a promotion's days are lifted by what its last one sold")
+  void promotionsAndSeasonsShapeTheForecast() throws SQLException {
+    LocalDate yesterday = LocalDate.now(ZoneOffset.UTC).minusDays(1);
+    // Crackers: fourteen months, twenty a day through December, ten a day otherwise.
+    for (int i = 0; i < 420; i++) {
+      LocalDate day = yesterday.minusDays(i);
+      bucket(store, crackers, day, "DAY", day.getMonth() == Month.DECEMBER ? "20" : "10");
+    }
+    // Cola: four months at ten a day, twenty-five through the fortnight a promotion ran.
+    for (int i = 0; i < 120; i++) {
+      bucket(store, cola, yesterday.minusDays(i), "DAY", i >= 60 && i < 74 ? "25" : "10");
+    }
+    String ran = window(cola, yesterday.minusDays(73), yesterday.minusDays(59));
+    String coming = window(cola, yesterday.plusDays(1), yesterday.plusDays(8));
+    PRICING.on("GET", "/admin/promotions/windows", 200, "{\"data\":[" + ran + "," + coming + "]}");
+
+    JsonObject result = data(run("OWNER", null, runBody(store, 28)));
+    assertThat(result.toString(), result.getInt("variants"), is(2));
+    assertThat(result.getInt("seasonal"), is(1));
+    assertThat(result.getInt("promoted"), is(1));
+    JsonStub.Call asked = PRICING.calls().get(PRICING.calls().size() - 1);
+    assertThat(asked.tenantId(), is(tenant.toString()));
+    assertThat(asked.query(), containsString("store=" + store));
+
+    JsonObject c =
+        data(as("/admin/inventory/forecasts/" + store + "/" + crackers, "OWNER", null).get());
+    JsonArray indices = c.getJsonArray("seasonalIndices");
+    assertThat(indices.size(), is(12));
+    assertThat(
+        indices.getJsonNumber(Month.DECEMBER.getValue() - 1).doubleValue(), greaterThan(1.6));
+    assertThat(c.getInt("historyDays"), is(182));
+    assertThat(!c.containsKey("uplift") || c.isNull("uplift"), is(true));
+    for (JsonObject point : c.getJsonArray("points").getValuesAs(JsonObject.class)) {
+      boolean december = LocalDate.parse(point.getString("day")).getMonth() == Month.DECEMBER;
+      assertThat(point.toString(), num(point, "qty"), closeTo(december ? 20.0 : 10.0, 1.2));
+    }
+
+    JsonObject k =
+        data(as("/admin/inventory/forecasts/" + store + "/" + cola, "OWNER", null).get());
+    assertThat(k.getJsonArray("seasonalIndices").size(), is(0));
+    assertThat(num(k, "uplift"), closeTo(2.5, 0.05));
+    assertThat(k.getString("upliftSource"), is("ITEM"));
+    assertThat(k.getInt("promotedHistoryDays"), is(14));
+    assertThat(k.getInt("promotedAheadDays"), is(7));
+    assertThat(num(k, "level"), closeTo(10.0, 0.3));
+    assertThat(num(k, "next7"), closeTo(175.0, 6.0));
+    assertThat(num(k, "next28"), closeTo(385.0, 12.0));
+    assertThat(num(k, "mape"), closeTo(0.0, 1.0));
   }
 }

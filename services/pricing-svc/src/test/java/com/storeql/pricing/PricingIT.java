@@ -5,6 +5,7 @@ import static org.hamcrest.Matchers.comparesEqualTo;
 import static org.hamcrest.Matchers.containsString;
 import static org.hamcrest.Matchers.is;
 import static org.hamcrest.Matchers.not;
+import static org.hamcrest.Matchers.nullValue;
 
 import com.storeql.ids.Ids;
 import com.storeql.test.PostgresSupport;
@@ -717,6 +718,98 @@ class PricingIT {
     assertThat(
         quote("{\"lines\":[{\"variantId\":\"" + V + "\",\"qty\":1}]}"),
         containsString("\"totalDiscount\":50.00"));
+  }
+
+  /**
+   * The promotion windows inventory-svc reads for its forecast (06.x): every promotion that touches
+   * the store since {@code from}, its scope resolved to variants, a switched-off one ending the
+   * moment it was switched off, and a promotion of another store left out. Staff may read it — it
+   * is one service's read of another — and a shopper may not.
+   */
+  @Test
+  void promotionWindowsForTheForecast() {
+    // createPromotion scopes to ALL; the beans and the other store's promotion are made bare.
+    String everything =
+        createPromotion(
+            "{\"name\":\"Everything\",\"type\":\"PERCENT\",\"value\":10,"
+                + "\"startsAt\":\"2026-01-01T00:00:00Z\"}");
+    Response beansR =
+        post(
+            "/admin/promotions",
+            "{\"name\":\"Beans\",\"type\":\"PERCENT\",\"value\":20,\"storeId\":\""
+                + S
+                + "\",\"startsAt\":\"2026-02-01T00:00:00Z\",\"endsAt\":\"2027-02-01T00:00:00Z\"}",
+            T);
+    assertThat(beansR.getStatus(), is(201));
+    String beans = extractId(beansR.readEntity(String.class));
+    assertThat(
+        post(
+                "/admin/promotions/" + beans + "/items",
+                "{\"scopeType\":\"VARIANT\",\"scopeId\":\"" + V + "\"}",
+                T)
+            .getStatus(),
+        is(201));
+    assertThat(
+        post("/admin/promotions/" + beans + "/deactivate", "{\"reason\":\"stopped\"}", T)
+            .getStatus(),
+        is(200));
+    Response elsewhereR =
+        post(
+            "/admin/promotions",
+            "{\"name\":\"Elsewhere\",\"type\":\"PERCENT\",\"value\":5,\"storeId\":\""
+                + YEN
+                + "\",\"startsAt\":\"2026-01-01T00:00:00Z\"}",
+            T);
+    assertThat(elsewhereR.getStatus(), is(201));
+
+    Response r =
+        getAs("/admin/promotions/windows?store=" + S + "&from=2026-01-01", T, "STOREKEEPER");
+    String body = r.readEntity(String.class);
+    assertThat(body, r.getStatus(), is(200));
+    jakarta.json.JsonArray windows =
+        jakarta.json.Json.createReader(new java.io.StringReader(body))
+            .readObject()
+            .getJsonArray("data");
+    assertThat(body, windows.size(), is(2));
+    jakarta.json.JsonObject all = null;
+    jakarta.json.JsonObject stopped = null;
+    for (jakarta.json.JsonObject w : windows.getValuesAs(jakarta.json.JsonObject.class)) {
+      if (w.getString("promotionId").equals(everything)) all = w;
+      if (w.getString("promotionId").equals(beans)) stopped = w;
+    }
+    assertThat(body, all, not(nullValue()));
+    assertThat(body, stopped, not(nullValue()));
+    assertThat(all.getBoolean("allVariants"), is(true));
+    assertThat(all.containsKey("storeId") && !all.isNull("storeId"), is(false));
+    assertThat(all.containsKey("endsAt") && !all.isNull("endsAt"), is(false));
+    assertThat(all.getBoolean("active"), is(true));
+    assertThat(stopped.getBoolean("allVariants"), is(false));
+    assertThat(stopped.getJsonArray("variantIds").getString(0), is(V));
+    assertThat(stopped.getString("storeId"), is(S));
+    assertThat(stopped.getBoolean("active"), is(false));
+    // Switched off today, so its window ends today rather than next February.
+    assertThat(
+        stopped.getString("endsAt"),
+        containsString(java.time.LocalDate.now(java.time.ZoneOffset.UTC).toString()));
+
+    // From tomorrow, the stopped one is over; the open-ended one is still a window.
+    Response later =
+        getAs(
+            "/admin/promotions/windows?store="
+                + S
+                + "&from="
+                + java.time.LocalDate.now(java.time.ZoneOffset.UTC).plusDays(1),
+            T,
+            "OWNER");
+    String laterBody = later.readEntity(String.class);
+    assertThat(laterBody, later.getStatus(), is(200));
+    assertThat(laterBody, containsString(everything));
+    assertThat(laterBody, not(containsString(beans)));
+
+    assertThat(getAs("/admin/promotions/windows?store=" + S, T, "CUSTOMER").getStatus(), is(403));
+    assertThat(
+        getAs("/admin/promotions/windows?store=" + S + "&from=yesterday", T, "OWNER").getStatus(),
+        is(400));
   }
 
   /** Both directions need a reason, and the trail keeps every switch. */

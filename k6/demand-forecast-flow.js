@@ -1,7 +1,9 @@
 // The statistical demand forecast (06.x) through the gateway: the run for a store, what it says
 // about a shop that opened today (nothing yet, and it says so), the forecasts read back, the
-// reorder-point computation with the forecast seam in place, and the refusals — a horizon outside a
-// day to a year, a store that is not an id, a keeper held to their own store, a rival, no token.
+// reorder-point computation with the forecast seam in place, the promotion windows pricing-svc
+// answers for the store (what the forecast reads for its uplift), and the refusals — a horizon
+// outside a day to a year, a store that is not an id, a keeper held to their own store, a rival, no
+// token.
 // The arithmetic itself is proved in inventory-svc's ForecastingTest and ForecastIT over months of
 // seeded history; a stack that came up today has one day of sales, and they land in the buckets
 // tomorrow.
@@ -56,10 +58,29 @@ export default function ({ tenant, variantId, keeper, rival }) {
     [200, 201]
   );
 
+  // ── a week of the beans on promotion, which the forecast reads as a window ──
+  const PR = '/api/pricing-svc';
+  const promo = call('POST', `${PR}/admin/promotions`, {
+    token: owner,
+    body: { name: `Beans week ${uniq()}`, type: 'PERCENT', value: 20, channel: 'ALL', storeId: a.id, startsAt: new Date(Date.now() - 86400000).toISOString(), endsAt: new Date(Date.now() + 6 * 86400000).toISOString(), priority: 1 },
+  });
+  expect(promo, '[+] a week of twenty percent off at A', 201);
+  expect(call('POST', `${PR}/admin/promotions/${data(promo).id}/items`, { token: owner, body: { scopeType: 'VARIANT', scopeId: variantId } }), '[+] ...scoped to the beans', [200, 201]);
+  const windows = call('GET', `${PR}/admin/promotions/windows?store=${a.id}`, { token: keeper.token });
+  expect(windows, "[+] the store's promotion windows read as staff — the read inventory-svc makes for its forecast", 200);
+  truthy(
+    '[+] ...the beans week among them: scoped to the beans, at A, ending in six days',
+    (data(windows) || []).some((w) => w.promotionId === data(promo).id && !w.allVariants && (w.variantIds || []).includes(variantId) && w.storeId === a.id && !!w.endsAt),
+    data(windows)
+  );
+  expect(call('GET', `${PR}/admin/promotions/windows`, { token: owner }), '[-] the windows are of a store', 400, 'STORE_REQUIRED');
+  expect(call('GET', `${PR}/admin/promotions/windows?store=${a.id}&from=next-week`, { token: owner }), '[-] from is a date', 400, 'PRICING_INVALID_DATE');
+
   // ── the run ─────────────────────────────────────────────────────────────────
   const run = call('POST', `${INV}/forecasts/run`, { token: owner, body: { storeId: a.id, horizonDays: 28 } });
-  expect(run, '[+] the forecast runs for the store', 200);
+  expect(run, '[+] the forecast runs for the store, the promotion windows read', 200);
   truthy('[+] ...and says honestly that a shop that opened today has no history to forecast from yet', data(run).variants === 0 && data(run).horizonDays === 28 && data(run).storeId === a.id, data(run));
+  truthy('[+] ...so nothing is seasonal or promoted yet either, and it says so', data(run).seasonal === 0 && data(run).promoted === 0, data(run));
   const defaulted = call('POST', `${INV}/forecasts/run`, { token: owner, body: { storeId: a.id } });
   expect(defaulted, '[+] the horizon defaults to four weeks', 200);
   truthy('[+] ...twenty-eight days', data(defaulted).horizonDays === 28, data(defaulted));

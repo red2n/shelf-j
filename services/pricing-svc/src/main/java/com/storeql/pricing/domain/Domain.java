@@ -5,6 +5,7 @@ import java.time.Instant;
 import java.time.LocalDate;
 import java.util.List;
 import java.util.Map;
+import java.util.Set;
 import java.util.UUID;
 
 /** Pure domain records — no HTTP, no persistence annotations. */
@@ -225,6 +226,30 @@ public final class Domain {
     public static final String SCOPE_VARIANT = "VARIANT";
     public static final String SCOPE_CATEGORY = "CATEGORY";
     public static final String SCOPE_ALL = "ALL";
+  }
+
+  /**
+   * A promotion as a window in time over some items at some store, as inventory-svc reads it for
+   * the demand forecast (06.x): {@code endsAt} is the promotion's end date, or the moment it was
+   * switched off when that came first and it is off now; {@code variantIds} is its scope resolved
+   * to variants, empty with {@code allVariants} when it applies to everything.
+   */
+  public record PromotionWindow(
+      UUID promotionId,
+      UUID storeId,
+      String name,
+      String type,
+      BigDecimal value,
+      String channel,
+      boolean active,
+      Instant startsAt,
+      Instant endsAt,
+      Set<UUID> variantIds,
+      boolean allVariants) {
+
+    public PromotionWindow {
+      variantIds = Set.copyOf(variantIds);
+    }
   }
 
   /**

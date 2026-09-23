@@ -1397,6 +1397,17 @@ class DemandForecastRow {
   final int? shelfLifeDays;
   final double? wasteRatePct;
 
+  /// Twelve monthly indices, January first; empty under thirteen months of history.
+  final List<double> seasonalIndices;
+
+  /// What a promotion does to the item (promoted-day demand over ordinary); null when unmeasured.
+  final double? uplift;
+
+  /// ITEM from its own promotions, STORE pooled across the store's; null with no uplift.
+  final String? upliftSource;
+  final int promotedHistoryDays;
+  final int promotedAheadDays;
+
   const DemandForecastRow({
     required this.id,
     required this.storeId,
@@ -1420,7 +1431,21 @@ class DemandForecastRow {
     this.fresh = false,
     this.shelfLifeDays,
     this.wasteRatePct,
+    this.seasonalIndices = const [],
+    this.uplift,
+    this.upliftSource,
+    this.promotedHistoryDays = 0,
+    this.promotedAheadDays = 0,
   });
+
+  /// One line for the year's shape: `Jan 0.92 · Feb 0.95 · …`.
+  String get seasonLine => seasonalIndices.length != 12
+      ? ''
+      : const ['Jan', 'Feb', 'Mar', 'Apr', 'May', 'Jun', 'Jul', 'Aug', 'Sep', 'Oct', 'Nov', 'Dec']
+          .asMap()
+          .entries
+          .map((e) => '${e.value} ${seasonalIndices[e.key].toStringAsFixed(2)}')
+          .join(' · ');
 
   factory DemandForecastRow.fromJson(Map<String, dynamic> j) => DemandForecastRow(
         id: j['id'] as String? ?? '',
@@ -1453,6 +1478,13 @@ class DemandForecastRow {
         fresh: j['fresh'] as bool? ?? false,
         shelfLifeDays: (j['shelfLifeDays'] as num?)?.toInt(),
         wasteRatePct: (j['wasteRatePct'] as num?)?.toDouble(),
+        seasonalIndices: ((j['seasonalIndices'] as List?) ?? [])
+            .map((e) => (e as num).toDouble())
+            .toList(),
+        uplift: (j['uplift'] as num?)?.toDouble(),
+        upliftSource: j['upliftSource'] as String?,
+        promotedHistoryDays: (j['promotedHistoryDays'] as num?)?.toInt() ?? 0,
+        promotedAheadDays: (j['promotedAheadDays'] as num?)?.toInt() ?? 0,
       );
 }
 

@@ -30,7 +30,8 @@ public class ForecastRepository extends BaseJdbcRepository {
   private static final String COLUMNS =
       "id, tenant_id, store_id, variant_id, method, intermittent, alpha, level, weekday_profile,"
           + " history_from, history_to, history_days, horizon_days, from_day, points, holdout_days,"
-          + " mape, bias, mase, computed_at, fresh, shelf_life_days, waste_rate, max_cover_days";
+          + " mape, bias, mase, computed_at, fresh, shelf_life_days, waste_rate, max_cover_days,"
+          + " seasonal_indices, uplift, uplift_source, promoted_history_days, promoted_ahead_days";
 
   private record DailyDemandRow(UUID variantId, LocalDate day, BigDecimal qty) {}
 
@@ -155,7 +156,7 @@ public class ForecastRepository extends BaseJdbcRepository {
               c.prepareStatement(
                   "INSERT INTO demand_forecasts ("
                       + COLUMNS
-                      + ") VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)"
+                      + ") VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)"
                       + " ON CONFLICT (tenant_id, store_id, variant_id) DO UPDATE SET"
                       + " method = EXCLUDED.method, intermittent = EXCLUDED.intermittent,"
                       + " alpha = EXCLUDED.alpha, level = EXCLUDED.level,"
@@ -167,7 +168,11 @@ public class ForecastRepository extends BaseJdbcRepository {
                       + " bias = EXCLUDED.bias, mase = EXCLUDED.mase,"
                       + " computed_at = EXCLUDED.computed_at, fresh = EXCLUDED.fresh,"
                       + " shelf_life_days = EXCLUDED.shelf_life_days, waste_rate = EXCLUDED.waste_rate,"
-                      + " max_cover_days = EXCLUDED.max_cover_days")) {
+                      + " max_cover_days = EXCLUDED.max_cover_days,"
+                      + " seasonal_indices = EXCLUDED.seasonal_indices, uplift = EXCLUDED.uplift,"
+                      + " uplift_source = EXCLUDED.uplift_source,"
+                      + " promoted_history_days = EXCLUDED.promoted_history_days,"
+                      + " promoted_ahead_days = EXCLUDED.promoted_ahead_days")) {
             for (DemandForecast r : rows) {
               Forecast f = r.forecast();
               ps.setObject(1, r.id());
@@ -208,6 +213,16 @@ public class ForecastRepository extends BaseJdbcRepository {
               } else {
                 ps.setInt(24, fresh.maxCoverDays());
               }
+              if (f.seasonalIndices().isEmpty()) {
+                ps.setNull(25, Types.ARRAY);
+              } else {
+                ps.setArray(
+                    25, c.createArrayOf("numeric", f.seasonalIndices().toArray(new BigDecimal[0])));
+              }
+              ps.setBigDecimal(26, f.uplift());
+              ps.setString(27, f.uplift() == null ? null : f.upliftSource());
+              ps.setInt(28, f.promotedHistoryDays());
+              ps.setInt(29, f.promotedAheadDays());
               ps.addBatch();
             }
             ps.executeBatch();
@@ -288,7 +303,12 @@ public class ForecastRepository extends BaseJdbcRepository {
                 rs.getBigDecimal("mape"),
                 rs.getBigDecimal("bias"),
                 rs.getBigDecimal("mase")),
-            rs.getInt("history_days"));
+            rs.getInt("history_days"),
+            decimals(rs.getArray("seasonal_indices")),
+            rs.getBigDecimal("uplift"),
+            rs.getString("uplift_source"),
+            rs.getInt("promoted_history_days"),
+            rs.getInt("promoted_ahead_days"));
     return new DemandForecast(
         rs.getObject("id", UUID.class),
         rs.getObject("tenant_id", UUID.class),
