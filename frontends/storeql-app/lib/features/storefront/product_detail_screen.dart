@@ -9,6 +9,7 @@ import 'storefront_widgets.dart';
 import 'unit_price.dart';
 import 'allergen_summary.dart';
 import 'product_safety_section.dart';
+import '../../core/theme.dart';
 
 class ProductDetailScreen extends ConsumerWidget {
   final String productId;
@@ -45,7 +46,7 @@ class ProductDetailScreen extends ConsumerWidget {
                 productId: product.id,
                 label: product.name,
                 fontSize: 72,
-                borderRadius: BorderRadius.circular(12),
+                borderRadius: AppRadius.input,
               ),
             ),
             const SizedBox(height: 20),

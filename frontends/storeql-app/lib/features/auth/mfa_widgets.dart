@@ -4,6 +4,7 @@ import 'package:qr/qr.dart';
 
 import '../../core/network/api_error.dart';
 import 'mfa_api.dart';
+import '../../core/theme.dart';
 
 /// A QR code, painted from the encoder's modules: what an authenticator app scans.
 class QrView extends StatelessWidget {
@@ -230,7 +231,7 @@ class _RecoveryCodesPanelState extends State<RecoveryCodesPanel> {
         const SizedBox(height: 16),
         Container(
           padding: const EdgeInsets.all(16),
-          decoration: BoxDecoration(color: cs.surfaceContainerHighest, borderRadius: BorderRadius.circular(8)),
+          decoration: BoxDecoration(color: cs.surfaceContainerHighest, borderRadius: AppRadius.chip),
           child: Wrap(
             spacing: 24,
             runSpacing: 8,

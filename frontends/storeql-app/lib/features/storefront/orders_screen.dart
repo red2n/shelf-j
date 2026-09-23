@@ -5,6 +5,7 @@ import 'recall_notice_card.dart';
 import 'storefront_providers.dart';
 import 'storefront_shell.dart' show StorefrontAuthDialog;
 import '../../shared/util/short_ref.dart';
+import '../../core/theme.dart';
 
 class StorefrontOrdersScreen extends ConsumerWidget {
   const StorefrontOrdersScreen({super.key});
@@ -179,7 +180,7 @@ class _StatusChip extends StatelessWidget {
     };
     return Container(
       padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 2),
-      decoration: BoxDecoration(color: bg, borderRadius: BorderRadius.circular(12)),
+      decoration: BoxDecoration(color: bg, borderRadius: AppRadius.badge),
       child: Text(status,
           style: TextStyle(color: fg, fontSize: 11, fontWeight: FontWeight.w600)),
     );

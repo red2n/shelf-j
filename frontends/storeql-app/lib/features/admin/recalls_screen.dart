@@ -13,6 +13,7 @@ import 'providers/admin_providers.dart';
 import 'recall_providers.dart';
 import 'widgets/variant_picker.dart';
 import '../../shared/util/short_ref.dart';
+import '../../core/theme.dart';
 
 final _day = DateFormat('d MMM yyyy');
 final _isoDate = RegExp(r'^\d{4}-\d{2}-\d{2}$');
@@ -151,7 +152,7 @@ class _KindBadge extends StatelessWidget {
       padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 2),
       decoration: BoxDecoration(
         color: recall ? cs.errorContainer : cs.tertiaryContainer,
-        borderRadius: BorderRadius.circular(4),
+        borderRadius: AppRadius.badge,
       ),
       child: Text(
         recall ? 'Recall' : 'Withdrawal',

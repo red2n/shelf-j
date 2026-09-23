@@ -375,7 +375,7 @@ class _SandboxChip extends StatelessWidget {
       padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 3),
       decoration: BoxDecoration(
         color: cs.tertiaryContainer,
-        borderRadius: BorderRadius.circular(12),
+        borderRadius: AppRadius.badge,
       ),
       child: Text(
         'Sandbox',
@@ -401,7 +401,7 @@ class _StatusChip extends StatelessWidget {
       padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 3),
       decoration: BoxDecoration(
         color: active ? cs.secondaryContainer : cs.errorContainer,
-        borderRadius: BorderRadius.circular(12),
+        borderRadius: AppRadius.badge,
       ),
       child: Text(
         label,
@@ -470,7 +470,7 @@ class _OnboardingDialogState extends ConsumerState<_OnboardingDialog> {
     });
 
     return Dialog(
-      shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(16)),
+      shape: const RoundedRectangleBorder(borderRadius: AppRadius.card),
       child: ConstrainedBox(
         constraints: const BoxConstraints(maxWidth: 520),
         child: Padding(
@@ -510,7 +510,7 @@ class _OnboardingDialogState extends ConsumerState<_OnboardingDialog> {
                     const SizedBox(height: 8),
                     LinearProgressIndicator(
                       value: ob.step == 0 ? 0.5 : 1.0,
-                      borderRadius: BorderRadius.circular(4),
+                      borderRadius: AppRadius.badge,
                     ),
                     const SizedBox(height: 16),
                     if (ob.error != null) ...[
@@ -518,7 +518,7 @@ class _OnboardingDialogState extends ConsumerState<_OnboardingDialog> {
                         padding: const EdgeInsets.all(12),
                         decoration: BoxDecoration(
                           color: cs.errorContainer,
-                          borderRadius: BorderRadius.circular(8),
+                          borderRadius: AppRadius.chip,
                         ),
                         child: Text(ob.error!,
                             style: TextStyle(color: cs.onErrorContainer)),

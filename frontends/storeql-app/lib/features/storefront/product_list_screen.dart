@@ -12,6 +12,7 @@ import '../../shared/widgets/loading_view.dart';
 import 'storefront_providers.dart';
 import 'storefront_widgets.dart';
 import 'survey_widgets.dart';
+import '../../core/theme.dart';
 
 // Sentinel placed in the mixed display list to mark where the ad renders.
 class _AdSlot {
@@ -268,8 +269,9 @@ class _Offer {
   final String title;
   final String subtitle;
   final IconData icon;
-  final List<Color> colors;
-  const _Offer(this.title, this.subtitle, this.icon, this.colors);
+  /// Which of the scheme's banner tones the banner takes (see [bannerTone]).
+  final int tone;
+  const _Offer(this.title, this.subtitle, this.icon, this.tone);
 }
 
 class _OffersCarouselState extends ConsumerState<_OffersCarousel> {
@@ -279,28 +281,20 @@ class _OffersCarouselState extends ConsumerState<_OffersCarousel> {
       'Everyday Low Prices',
       'Stock up and save on the essentials',
       Icons.local_offer_outlined,
-      [Color(0xFF1A5276), Color(0xFF2E86C1)],
+      2,
     ),
     _Offer(
       'Free Delivery over £25',
       'On all online orders, no code needed',
       Icons.local_shipping_outlined,
-      [Color(0xFF117A65), Color(0xFF45B39D)],
+      1,
     ),
     _Offer(
       'Fresh New Arrivals',
       'Just landed in store — shop the latest',
       Icons.auto_awesome_outlined,
-      [Color(0xFF7D3C98), Color(0xFFAF7AC5)],
+      0,
     ),
-  ];
-
-  // Rotating palette for live promotions so each banner reads distinctly.
-  static const _palette = [
-    [Color(0xFFB9770E), Color(0xFFE67E22)],
-    [Color(0xFF1A5276), Color(0xFF2E86C1)],
-    [Color(0xFF117A65), Color(0xFF45B39D)],
-    [Color(0xFF7D3C98), Color(0xFFAF7AC5)],
   ];
 
   // Current offers shown; updated each build from the promotions provider so the
@@ -368,7 +362,7 @@ class _OffersCarouselState extends ConsumerState<_OffersCarousel> {
               ? '${promos[i].name} · spend ${promos[i].minOrderAmount!.toStringAsFixed(2)}+'
               : promos[i].name,
           Icons.local_offer_outlined,
-          _palette[i % _palette.length],
+          i, // the tones rotate so neighbouring banners read distinctly
         ),
     ];
   }
@@ -427,13 +421,14 @@ class _OffersCarouselState extends ConsumerState<_OffersCarousel> {
                 onPageChanged: (i) => setState(() => _page = i),
                 itemBuilder: (context, i) {
                   final o = _offers[i];
+                  final tone = bannerTone(Theme.of(context).colorScheme, o.tone);
                   return Padding(
                     padding: const EdgeInsets.symmetric(horizontal: 6),
                     child: DecoratedBox(
                       decoration: BoxDecoration(
-                        borderRadius: BorderRadius.circular(16),
+                        borderRadius: AppRadius.card,
                         gradient: LinearGradient(
-                          colors: o.colors,
+                          colors: tone.gradient,
                           begin: Alignment.topLeft,
                           end: Alignment.bottomRight,
                         ),
@@ -451,8 +446,8 @@ class _OffersCarouselState extends ConsumerState<_OffersCarousel> {
                                     o.title,
                                     maxLines: 2,
                                     overflow: TextOverflow.ellipsis,
-                                    style: const TextStyle(
-                                      color: Colors.white,
+                                    style: TextStyle(
+                                      color: tone.fg,
                                       fontSize: 20,
                                       fontWeight: FontWeight.bold,
                                     ),
@@ -463,7 +458,7 @@ class _OffersCarouselState extends ConsumerState<_OffersCarousel> {
                                     maxLines: 2,
                                     overflow: TextOverflow.ellipsis,
                                     style: TextStyle(
-                                      color: Colors.white.withAlpha(220),
+                                      color: tone.fg.withValues(alpha: 0.85),
                                       fontSize: 13,
                                     ),
                                   ),
@@ -472,7 +467,7 @@ class _OffersCarouselState extends ConsumerState<_OffersCarousel> {
                             ),
                             Icon(
                               o.icon,
-                              color: Colors.white.withAlpha(220),
+                              color: tone.fg.withValues(alpha: 0.85),
                               size: 48,
                             ),
                           ],
@@ -510,7 +505,7 @@ class _OffersCarouselState extends ConsumerState<_OffersCarousel> {
                           color: active
                               ? Theme.of(context).colorScheme.primary
                               : Theme.of(context).colorScheme.outlineVariant,
-                          borderRadius: BorderRadius.circular(3),
+                          borderRadius: AppRadius.badge,
                         ),
                       ),
                     ),
@@ -714,7 +709,7 @@ class _ProductRow extends ConsumerWidget {
                     productId: product.id,
                     label: product.name,
                     fontSize: 24,
-                    borderRadius: BorderRadius.circular(8),
+                    borderRadius: AppRadius.chip,
                   ),
                 ),
                 const SizedBox(width: 14),
@@ -851,9 +846,9 @@ class _AdRow extends StatelessWidget {
                   width: 72,
                   height: 72,
                   child: Container(
-                    decoration: BoxDecoration(
+                    decoration: const BoxDecoration(
                       gradient: _kAdGradient,
-                      borderRadius: BorderRadius.circular(8),
+                      borderRadius: AppRadius.chip,
                     ),
                     alignment: Alignment.center,
                     child: const Icon(
@@ -914,7 +909,7 @@ class _AdBadge extends StatelessWidget {
       padding: const EdgeInsets.symmetric(horizontal: 6, vertical: 2),
       decoration: BoxDecoration(
         color: cs.secondaryContainer,
-        borderRadius: BorderRadius.circular(4),
+        borderRadius: AppRadius.badge,
       ),
       child: Text(
         'AD',

@@ -12,6 +12,7 @@ import '../../shared/widgets/loading_view.dart';
 import 'providers/admin_providers.dart';
 import 'role_dialog.dart';
 import '../../shared/util/short_ref.dart';
+import '../../core/theme.dart';
 
 const _roles = ['OWNER', 'MANAGER', 'STOREKEEPER', 'CASHIER'];
 
@@ -259,7 +260,7 @@ class _RoleBadge extends StatelessWidget {
       padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 2),
       decoration: BoxDecoration(
         color: cs.primaryContainer,
-        borderRadius: BorderRadius.circular(6),
+        borderRadius: AppRadius.chip,
       ),
       child: Text(
         role,
@@ -431,7 +432,7 @@ class _AssignStaffDialogState extends ConsumerState<_AssignStaffDialog> {
                   padding: const EdgeInsets.all(12),
                   decoration: BoxDecoration(
                     color: cs.errorContainer,
-                    borderRadius: BorderRadius.circular(8),
+                    borderRadius: AppRadius.chip,
                   ),
                   child: Text(_error!, style: TextStyle(color: cs.onErrorContainer)),
                 ),
@@ -552,7 +553,7 @@ class _TempPasswordRevealState extends State<_TempPasswordReveal> {
       padding: const EdgeInsets.fromLTRB(12, 8, 4, 8),
       decoration: BoxDecoration(
         color: cs.surfaceContainerHighest,
-        borderRadius: BorderRadius.circular(8),
+        borderRadius: AppRadius.chip,
       ),
       child: Row(
         children: [

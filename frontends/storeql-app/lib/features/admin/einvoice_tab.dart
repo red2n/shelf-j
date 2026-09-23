@@ -401,7 +401,7 @@ class _StatusChip extends StatelessWidget {
       padding: const EdgeInsets.symmetric(horizontal: 6, vertical: 2),
       decoration: BoxDecoration(
         color: color.withAlpha(30),
-        borderRadius: BorderRadius.circular(4),
+        borderRadius: AppRadius.badge,
       ),
       child: Text(
         eInvoiceStatusLabel(status),

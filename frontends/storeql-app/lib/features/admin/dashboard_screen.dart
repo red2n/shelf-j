@@ -403,7 +403,7 @@ class _StatusBadge extends StatelessWidget {
     }
     return Container(
       padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 3),
-      decoration: BoxDecoration(color: bg, borderRadius: BorderRadius.circular(12)),
+      decoration: BoxDecoration(color: bg, borderRadius: AppRadius.badge),
       child: Text(status,
           style: TextStyle(fontSize: 11, fontWeight: FontWeight.w600, color: fg)),
     );

@@ -15,6 +15,7 @@ import 'storefront_shell.dart' show StorefrontAuthDialog;
 import 'survey_widgets.dart';
 import '../../shared/util/short_ref.dart';
 import 'package:storeql_app/core/ids.dart';
+import '../../core/theme.dart';
 
 class StorefrontCartScreen extends ConsumerStatefulWidget {
   const StorefrontCartScreen({super.key});
@@ -454,7 +455,7 @@ class _StorefrontCartScreenState extends ConsumerState<StorefrontCartScreen> {
                     margin: const EdgeInsets.only(bottom: 12),
                     decoration: BoxDecoration(
                       color: cs.secondaryContainer,
-                      borderRadius: BorderRadius.circular(8),
+                      borderRadius: AppRadius.chip,
                     ),
                     child: Row(
                       children: [

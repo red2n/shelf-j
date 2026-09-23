@@ -4,6 +4,7 @@ import 'package:go_router/go_router.dart';
 import '../../shared/widgets/reference_fields.dart';
 import 'onboarding_notifier.dart';
 import 'public_plans.dart';
+import '../../core/theme.dart';
 
 class OnboardingWizard extends ConsumerStatefulWidget {
   const OnboardingWizard({super.key});
@@ -101,7 +102,7 @@ class _OnboardingWizardState extends ConsumerState<OnboardingWizard> {
                       padding: const EdgeInsets.all(12),
                       decoration: BoxDecoration(
                         color: cs.errorContainer,
-                        borderRadius: BorderRadius.circular(8),
+                        borderRadius: AppRadius.chip,
                       ),
                       child: Text(ob.error!, style: TextStyle(color: cs.onErrorContainer)),
                     ),

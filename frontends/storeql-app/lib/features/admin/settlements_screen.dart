@@ -11,6 +11,7 @@ import '../../core/network/api_error.dart';
 import '../../shared/widgets/error_view.dart';
 import '../../shared/widgets/loading_view.dart';
 import 'package:storeql_app/core/ids.dart';
+import '../../shared/widgets/empty_state.dart';
 
 // ---------------------------------------------------------------------------
 // Card settlements (11.10).
@@ -300,7 +301,7 @@ class _BatchList extends ConsumerWidget {
           loading: () => const LoadingView(label: 'Loading payouts…'),
           error: (e, _) => ErrorView(message: friendlyError(e, fallback: 'Could not load payouts.'), onRetry: onChanged),
           data: (list) => list.isEmpty
-              ? const Center(child: Text('No payouts imported yet. Import the acquirer\'s settlement file to begin.'))
+              ? const EmptyState(title: 'No payouts imported yet. Import the acquirer\'s settlement file to begin.')
               : ListView.separated(
                   itemCount: list.length,
                   separatorBuilder: (_, _) => const SizedBox(height: 8),
@@ -344,7 +345,7 @@ class _UnsettledList extends ConsumerWidget {
             onRetry: () => ref.invalidate(unsettledPaymentsProvider),
           ),
           data: (list) => list.isEmpty
-              ? const Center(child: Text('Every card payment older than three days has been paid out.'))
+              ? const EmptyState(title: 'Every card payment older than three days has been paid out.')
               : ListView.separated(
                   itemCount: list.length,
                   separatorBuilder: (_, _) => const Divider(height: 1),

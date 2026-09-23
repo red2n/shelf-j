@@ -948,7 +948,7 @@ class _StatusChip extends StatelessWidget {
       padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 3),
       decoration: BoxDecoration(
           color: cs.surfaceContainerHighest,
-          borderRadius: BorderRadius.circular(12)),
+          borderRadius: AppRadius.badge),
       child: Text(status,
           style: TextStyle(
               fontSize: 11,

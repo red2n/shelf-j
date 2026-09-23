@@ -244,7 +244,7 @@ class _ApiRow extends StatelessWidget {
             decoration: BoxDecoration(
               color: (isGet ? context.status.success : context.status.info)
                   .withValues(alpha: 0.15),
-              borderRadius: BorderRadius.circular(4),
+              borderRadius: AppRadius.badge,
             ),
             child: Text(
               method,

@@ -9,6 +9,7 @@ import '../../core/network/api_client.dart';
 import '../../core/network/api_error.dart';
 import '../../shared/widgets/adaptive_nav_shell.dart';
 import 'providers/admin_providers.dart';
+import '../../core/theme.dart';
 
 class _AdminNavItem {
   final AdaptiveNavDestination destination;
@@ -469,7 +470,7 @@ class _ChangePasswordDialogState extends ConsumerState<ChangePasswordDialog> {
                   padding: const EdgeInsets.all(12),
                   decoration: BoxDecoration(
                       color: cs.errorContainer,
-                      borderRadius: BorderRadius.circular(8)),
+                      borderRadius: AppRadius.chip),
                   child: Text(_error!,
                       style: TextStyle(color: cs.onErrorContainer)),
                 ),

@@ -6,6 +6,7 @@ import '../../core/network/api_error.dart';
 import '../../shared/widgets/error_view.dart';
 import '../../shared/widgets/loading_view.dart';
 import 'providers/admin_providers.dart';
+import '../../core/theme.dart';
 
 class CategoriesScreen extends ConsumerWidget {
   const CategoriesScreen({super.key});
@@ -399,7 +400,7 @@ class _StatusChip extends StatelessWidget {
       padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 3),
       decoration: BoxDecoration(
         color: active ? cs.secondaryContainer : cs.errorContainer,
-        borderRadius: BorderRadius.circular(12),
+        borderRadius: AppRadius.badge,
       ),
       child: Text(label,
           style: TextStyle(
@@ -459,7 +460,7 @@ class _CategoryDialogState extends State<_CategoryDialog> {
         widget.availableParents.where((c) => c.status.toUpperCase() == 'ACTIVE').toList();
 
     return Dialog(
-      shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(16)),
+      shape: const RoundedRectangleBorder(borderRadius: AppRadius.card),
       child: ConstrainedBox(
         constraints: const BoxConstraints(maxWidth: 420),
         child: Padding(
@@ -481,7 +482,7 @@ class _CategoryDialogState extends State<_CategoryDialog> {
                     padding: const EdgeInsets.all(12),
                     decoration: BoxDecoration(
                       color: cs.errorContainer,
-                      borderRadius: BorderRadius.circular(8),
+                      borderRadius: AppRadius.chip,
                     ),
                     child: Text(_error!,
                         style: TextStyle(color: cs.onErrorContainer)),

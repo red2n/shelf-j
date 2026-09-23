@@ -12,6 +12,8 @@ import 'post_journal_dialog.dart';
 import '../../core/constants.dart';
 import '../../core/network/api_client.dart';
 import '../../shared/util/short_ref.dart';
+import '../../core/theme.dart';
+import '../../shared/widgets/empty_state.dart';
 
 enum _ReportType {
   sales,
@@ -144,8 +146,8 @@ class _ReportSidebar extends StatelessWidget {
                   selectedColor: cs.onSecondaryContainer,
                   iconColor: cs.onSurfaceVariant,
                   textColor: cs.onSurfaceVariant,
-                  shape: RoundedRectangleBorder(
-                      borderRadius: BorderRadius.circular(8)),
+                  shape: const RoundedRectangleBorder(
+                      borderRadius: AppRadius.chip),
                   leading: Icon(_reportIcon(r)),
                   title: Text(_reportLabel(r),
                       style: TextStyle(
@@ -381,7 +383,7 @@ class _SupplyDemandReport extends ConsumerWidget {
                   },
           ),
           if (rows.isEmpty)
-            const Expanded(child: Center(child: Text('No netting data yet.')))
+            const Expanded(child: EmptyState(title: 'No netting data yet.'))
           else
             Expanded(
               child: SingleChildScrollView(
@@ -459,7 +461,7 @@ class _SalesReport extends ConsumerWidget {
           const _DateRangeBar(),
           const SizedBox(height: 12),
           if (rows.isEmpty)
-            const Expanded(child: Center(child: Text('No sales yet.')))
+            const Expanded(child: EmptyState(title: 'No sales yet.'))
           else
             Expanded(
               child: SingleChildScrollView(
@@ -540,7 +542,7 @@ class _SalesByDayReport extends ConsumerWidget {
           const SizedBox(height: 12),
           if (rows.isEmpty)
             const Expanded(
-                child: Center(child: Text('No daily sales in this range.')))
+                child: EmptyState(title: 'No daily sales in this range.'))
           else
             Expanded(
               child: SingleChildScrollView(
@@ -649,7 +651,7 @@ class _SalesByCategoryReport extends ConsumerWidget {
             const SizedBox(height: 12),
             if (rows.isEmpty)
               const Expanded(
-                  child: Center(child: Text('No sale lines in this range.')))
+                  child: EmptyState(title: 'No sale lines in this range.'))
             else
               Expanded(
                 child: SingleChildScrollView(
@@ -753,7 +755,7 @@ class _MovementStatsReport extends ConsumerWidget {
                   },
           ),
           if (rows.isEmpty)
-            const Expanded(child: Center(child: Text('No movement data yet.')))
+            const Expanded(child: EmptyState(title: 'No movement data yet.'))
           else
             Expanded(
               child: SingleChildScrollView(
@@ -1053,7 +1055,7 @@ class _LowStockReport extends ConsumerWidget {
           ),
           if (rows.isEmpty)
             const Expanded(
-                child: Center(child: Text('Nothing is below its reorder level.')))
+                child: EmptyState(title: 'Nothing is below its reorder level.'))
           else
             Expanded(
               child: SingleChildScrollView(
@@ -1163,7 +1165,7 @@ class _ValuationReport extends ConsumerWidget {
               ),
             const SizedBox(height: 8),
             if (rows.isEmpty)
-              const Expanded(child: Center(child: Text('No stock to value.')))
+              const Expanded(child: EmptyState(title: 'No stock to value.'))
             else
               Expanded(
                 child: SingleChildScrollView(
@@ -1263,7 +1265,7 @@ class _ShrinkageReport extends ConsumerWidget {
           const SizedBox(height: 12),
           if (rows.isEmpty)
             const Expanded(
-                child: Center(child: Text('No stock adjustments in this range.')))
+                child: EmptyState(title: 'No stock adjustments in this range.'))
           else
             Expanded(
               child: SingleChildScrollView(
@@ -1363,7 +1365,7 @@ class _TaxSummaryReport extends ConsumerWidget {
               padding: const EdgeInsets.all(12),
               decoration: BoxDecoration(
                 color: cs.errorContainer,
-                borderRadius: BorderRadius.circular(8),
+                borderRadius: AppRadius.chip,
               ),
               child: Row(children: [
                 Icon(Icons.warning_amber_outlined, color: cs.onErrorContainer),
@@ -1381,7 +1383,7 @@ class _TaxSummaryReport extends ConsumerWidget {
           const SizedBox(height: 12),
           if (report.rows.isEmpty)
             const Expanded(
-                child: Center(child: Text('No tax transactions in this range.')))
+                child: EmptyState(title: 'No tax transactions in this range.'))
           else
             Expanded(
               child: SingleChildScrollView(
@@ -1496,7 +1498,7 @@ class _ExceptionReport extends ConsumerWidget {
               padding: const EdgeInsets.all(12),
               decoration: BoxDecoration(
                 color: cs.tertiaryContainer,
-                borderRadius: BorderRadius.circular(8),
+                borderRadius: AppRadius.chip,
               ),
               child: Row(children: [
                 Icon(Icons.info_outline, color: cs.onTertiaryContainer),
@@ -1515,7 +1517,7 @@ class _ExceptionReport extends ConsumerWidget {
           const SizedBox(height: 12),
           if (report.rows.isEmpty)
             const Expanded(
-                child: Center(child: Text('No staff exceptions in this range.')))
+                child: EmptyState(title: 'No staff exceptions in this range.'))
           else
             Expanded(
               child: SingleChildScrollView(
@@ -1627,7 +1629,7 @@ class _SalesByHourReport extends ConsumerWidget {
             const SizedBox(height: 12),
             if (rows.isEmpty)
               const Expanded(
-                  child: Center(child: Text('No sales in this range.')))
+                  child: EmptyState(title: 'No sales in this range.'))
             else
               Expanded(
                 child: SingleChildScrollView(
@@ -1736,7 +1738,7 @@ class _SalesByStaffReport extends ConsumerWidget {
             padding: const EdgeInsets.all(12),
             decoration: BoxDecoration(
               color: cs.surfaceContainerHigh,
-              borderRadius: BorderRadius.circular(8),
+              borderRadius: AppRadius.chip,
             ),
             child: Row(children: [
               Icon(Icons.storefront_outlined, size: 18, color: cs.outline),
@@ -1753,8 +1755,7 @@ class _SalesByStaffReport extends ConsumerWidget {
           const SizedBox(height: 12),
           if (rows.isEmpty)
             const Expanded(
-                child: Center(
-                    child: Text('No journalled sales in this range.')))
+                child: EmptyState(title: 'No journalled sales in this range.'))
           else
             Expanded(
               child: SingleChildScrollView(
@@ -1858,7 +1859,7 @@ class _TenderMixReport extends ConsumerWidget {
                 padding: const EdgeInsets.all(12),
                 decoration: BoxDecoration(
                   color: cs.tertiaryContainer,
-                  borderRadius: BorderRadius.circular(8),
+                  borderRadius: AppRadius.chip,
                 ),
                 child: Row(children: [
                   Icon(Icons.error_outline, color: cs.onTertiaryContainer),
@@ -1877,7 +1878,7 @@ class _TenderMixReport extends ConsumerWidget {
             const SizedBox(height: 12),
             if (rows.isEmpty)
               const Expanded(
-                  child: Center(child: Text('No tenders in this range.')))
+                  child: EmptyState(title: 'No tenders in this range.'))
             else
               Expanded(
                 child: SingleChildScrollView(
@@ -2208,7 +2209,7 @@ class _DeadStockReport extends ConsumerWidget {
             const SizedBox(height: 12),
             if (rows.isEmpty)
               const Expanded(
-                  child: Center(child: Text('No stock on hand.')))
+                  child: EmptyState(title: 'No stock on hand.'))
             else
               Expanded(
                 child: SingleChildScrollView(
@@ -2308,7 +2309,7 @@ class _Caveat extends StatelessWidget {
       padding: const EdgeInsets.all(12),
       decoration: BoxDecoration(
         color: cs.tertiaryContainer,
-        borderRadius: BorderRadius.circular(8),
+        borderRadius: AppRadius.chip,
       ),
       child: Row(children: [
         Icon(icon, color: cs.onTertiaryContainer),
@@ -2455,7 +2456,7 @@ class _TrialBalanceReport extends ConsumerWidget {
               padding: const EdgeInsets.all(12),
               decoration: BoxDecoration(
                 color: cs.errorContainer,
-                borderRadius: BorderRadius.circular(8),
+                borderRadius: AppRadius.chip,
               ),
               child: Row(children: [
                 Icon(Icons.warning_amber_outlined, color: cs.onErrorContainer),
@@ -2476,7 +2477,7 @@ class _TrialBalanceReport extends ConsumerWidget {
           const SizedBox(height: 12),
           if (report.rows.isEmpty)
             const Expanded(
-                child: Center(child: Text('Nothing was posted in this range.')))
+                child: EmptyState(title: 'Nothing was posted in this range.'))
           else
             Expanded(
               child: SingleChildScrollView(

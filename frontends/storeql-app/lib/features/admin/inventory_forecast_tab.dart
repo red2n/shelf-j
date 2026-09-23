@@ -8,6 +8,7 @@ import '../../shared/util/short_ref.dart';
 import '../../shared/widgets/error_view.dart';
 import '../../shared/widgets/loading_view.dart';
 import 'providers/admin_providers.dart';
+import '../../shared/widgets/empty_state.dart';
 
 /// The statistical demand forecast (06.x) for a store: run it, read what it
 /// expects of each item over the next week and month, and how sure it is.
@@ -109,7 +110,7 @@ class _InventoryForecastTabState extends ConsumerState<InventoryForecastTab> {
         const SizedBox(height: 8),
         Expanded(
           child: storeId == null
-              ? const Center(child: Text('Add a store to forecast its demand.'))
+              ? const EmptyState(title: 'Add a store to forecast its demand.')
               : ref.watch(forecastsProvider(storeId)).when(
                     loading: () => const LoadingView(label: 'Loading forecasts…'),
                     error: (e, _) => ErrorView(

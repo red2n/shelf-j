@@ -822,7 +822,7 @@ class _ReceiveStockDialogState extends ConsumerState<_ReceiveStockDialog> {
                     padding: const EdgeInsets.all(12),
                     decoration: BoxDecoration(
                       color: cs.errorContainer,
-                      borderRadius: BorderRadius.circular(8),
+                      borderRadius: AppRadius.chip,
                     ),
                     child: Text(
                       _error!,
@@ -1466,7 +1466,7 @@ class _MaterialStatusChip extends StatelessWidget {
       padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 3),
       decoration: BoxDecoration(
         color: color.withAlpha(30),
-        borderRadius: BorderRadius.circular(12),
+        borderRadius: AppRadius.badge,
       ),
       child: Text(
         status,
@@ -1497,7 +1497,7 @@ class _SummaryChip extends StatelessWidget {
       padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 6),
       decoration: BoxDecoration(
         color: color,
-        borderRadius: BorderRadius.circular(20),
+        borderRadius: AppRadius.badge,
       ),
       child: Row(
         mainAxisSize: MainAxisSize.min,
@@ -1598,7 +1598,7 @@ class _AdjustStockDialogState extends ConsumerState<_AdjustStockDialog> {
                   padding: const EdgeInsets.all(12),
                   decoration: BoxDecoration(
                     color: cs.errorContainer,
-                    borderRadius: BorderRadius.circular(8),
+                    borderRadius: AppRadius.chip,
                   ),
                   child: Text(
                     _error!,
@@ -1778,7 +1778,7 @@ class _SetThresholdDialogState extends ConsumerState<_SetThresholdDialog> {
                     padding: const EdgeInsets.all(12),
                     decoration: BoxDecoration(
                       color: cs.errorContainer,
-                      borderRadius: BorderRadius.circular(8),
+                      borderRadius: AppRadius.chip,
                     ),
                     child: Text(
                       _error!,

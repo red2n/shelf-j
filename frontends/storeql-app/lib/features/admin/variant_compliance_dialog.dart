@@ -5,6 +5,7 @@ import '../../core/constants.dart';
 import '../../core/network/api_client.dart';
 import '../../core/network/api_error.dart';
 import 'providers/admin_providers.dart';
+import '../../core/theme.dart';
 
 // ---------------------------------------------------------------------------
 // Allergens, origin, age restriction and how an item is sold — the statements a
@@ -438,7 +439,7 @@ class _VariantComplianceDialogState extends ConsumerState<VariantComplianceDialo
     };
     return Container(
       padding: const EdgeInsets.all(10),
-      decoration: BoxDecoration(color: bg, borderRadius: BorderRadius.circular(8)),
+      decoration: BoxDecoration(color: bg, borderRadius: AppRadius.chip),
       child: Text(label, style: TextStyle(color: fg)),
     );
   }

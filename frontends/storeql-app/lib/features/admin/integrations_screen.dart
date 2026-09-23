@@ -13,6 +13,8 @@ import 'api_keys_api.dart';
 import 'providers/admin_providers.dart';
 import 'sandbox_api.dart';
 import 'webhooks_api.dart';
+import '../../core/theme.dart';
+import '../../shared/widgets/empty_state.dart';
 
 // ---------------------------------------------------------------------------
 // Integrations (22.7): the keys a business's own systems present instead of a
@@ -555,7 +557,7 @@ class SecretShownOnceDialog extends StatelessWidget {
             Container(
               key: const Key('key-secret'),
               padding: const EdgeInsets.all(12),
-              decoration: BoxDecoration(color: cs.surfaceContainerHighest, borderRadius: BorderRadius.circular(8)),
+              decoration: BoxDecoration(color: cs.surfaceContainerHighest, borderRadius: AppRadius.chip),
               child: SelectableText(secret, style: const TextStyle(fontFamily: 'monospace')),
             ),
             if (hint != null) ...[
@@ -975,7 +977,7 @@ class _DeliveriesDialogState extends ConsumerState<_DeliveriesDialog> {
             if (snap.connectionState != ConnectionState.done) return const LoadingView(label: 'Loading deliveries…');
             if (snap.hasError) return Text(friendlyError(snap.error!, fallback: 'Could not load the deliveries.'));
             final rows = snap.data ?? const [];
-            if (rows.isEmpty) return const Center(child: Text('Nothing sent yet. Ping the endpoint to try it.'));
+            if (rows.isEmpty) return const EmptyState(title: 'Nothing sent yet. Ping the endpoint to try it.');
             return ListView(
               children: [
                 for (final d in rows)

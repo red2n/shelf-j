@@ -8,6 +8,7 @@ import '../../core/network/api_error.dart';
 import '../../shared/widgets/error_view.dart';
 import '../../shared/widgets/loading_view.dart';
 import 'package:storeql_app/core/ids.dart';
+import '../../shared/widgets/empty_state.dart';
 
 // ---------------------------------------------------------------------------
 // Chargebacks (11.9).
@@ -226,7 +227,7 @@ class DisputesScreen extends ConsumerWidget {
               loading: () => const LoadingView(label: 'Loading chargebacks…'),
               error: (e, _) => ErrorView(message: friendlyError(e, fallback: 'Could not load chargebacks.'), onRetry: refresh),
               data: (list) => list.isEmpty
-                  ? const Center(child: Text('No chargebacks. Long may it last.'))
+                  ? const EmptyState(title: 'No chargebacks. Long may it last.')
                   : ListView.separated(
                       itemCount: list.length,
                       separatorBuilder: (_, _) => const SizedBox(height: 8),

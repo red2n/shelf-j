@@ -7,6 +7,7 @@ import '../../core/network/api_client.dart';
 import '../../core/network/api_error.dart';
 import '../../shared/widgets/error_view.dart';
 import '../../shared/widgets/loading_view.dart';
+import '../../shared/widgets/empty_state.dart';
 
 // ---------------------------------------------------------------------------
 // Plans and packaging (21.8) — the platform's own price list.
@@ -273,7 +274,7 @@ class PlansScreen extends ConsumerWidget {
               loading: () => const LoadingView(label: 'Loading plans…'),
               error: (e, _) => ErrorView(message: friendlyError(e, fallback: 'Could not load plans.'), onRetry: refresh),
               data: (list) => list.isEmpty
-                  ? const Center(child: Text('No plans yet. Write one, price it, then put it on sale.'))
+                  ? const EmptyState(title: 'No plans yet. Write one, price it, then put it on sale.')
                   : ListView.separated(
                       itemCount: list.length,
                       separatorBuilder: (_, _) => const SizedBox(height: 10),

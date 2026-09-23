@@ -8,6 +8,7 @@ import '../../shared/widgets/error_view.dart';
 import '../../shared/widgets/loading_view.dart';
 import '../pos/weighing_instruments.dart';
 import 'providers/admin_providers.dart';
+import '../../shared/widgets/empty_state.dart';
 
 // The weighing-instrument register for one store (Weights and Measures Act
 // 1985): every scale the store weighs for trade on, whether it may be used
@@ -463,7 +464,7 @@ class _HistoryDialog extends ConsumerWidget {
             onRetry: () => ref.invalidate(_historyProvider((store.id, instrument.id))),
           ),
           data: (rows) => rows.isEmpty
-              ? const Center(child: Text('Never verified.'))
+              ? const EmptyState(title: 'Never verified.')
               : ListView(
                   children: [
                     for (final r in rows)

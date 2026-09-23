@@ -12,6 +12,7 @@ import 'unit_pricing_tabs.dart';
 import 'vat_rate_form.dart';
 import 'providers/admin_providers.dart';
 import 'widgets/variant_picker.dart';
+import '../../core/theme.dart';
 
 class PricingScreen extends ConsumerWidget {
   const PricingScreen({super.key});
@@ -522,7 +523,7 @@ Widget _chip(
   Color fg,
 ) => Container(
   padding: const EdgeInsets.symmetric(horizontal: 6, vertical: 2),
-  decoration: BoxDecoration(color: bg, borderRadius: BorderRadius.circular(4)),
+  decoration: BoxDecoration(color: bg, borderRadius: AppRadius.badge),
   child: Text(
     text,
     style: TextStyle(color: fg, fontSize: 10.5, fontWeight: FontWeight.bold),
@@ -1664,7 +1665,7 @@ class _VatReturnTabState extends ConsumerState<_VatReturnTab> {
                       padding: const EdgeInsets.all(12),
                       decoration: BoxDecoration(
                         color: cs.surfaceContainerHighest,
-                        borderRadius: BorderRadius.circular(8),
+                        borderRadius: AppRadius.chip,
                       ),
                       child: Row(
                         crossAxisAlignment: CrossAxisAlignment.start,
@@ -1688,7 +1689,7 @@ class _VatReturnTabState extends ConsumerState<_VatReturnTab> {
                       padding: const EdgeInsets.all(12),
                       decoration: BoxDecoration(
                         color: cs.errorContainer,
-                        borderRadius: BorderRadius.circular(8),
+                        borderRadius: AppRadius.chip,
                       ),
                       child: Row(
                         crossAxisAlignment: CrossAxisAlignment.start,
@@ -2234,7 +2235,7 @@ Widget _activeBadge(BuildContext context, bool active) {
     padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 3),
     decoration: BoxDecoration(
       color: active ? cs.secondaryContainer : cs.surfaceContainerHighest,
-      borderRadius: BorderRadius.circular(12),
+      borderRadius: AppRadius.badge,
     ),
     child: Text(
       active ? 'ACTIVE' : 'INACTIVE',
@@ -2256,7 +2257,7 @@ Widget _errorBox(BuildContext context, String? error) {
       padding: const EdgeInsets.all(12),
       decoration: BoxDecoration(
         color: cs.errorContainer,
-        borderRadius: BorderRadius.circular(8),
+        borderRadius: AppRadius.chip,
       ),
       child: Text(error, style: TextStyle(color: cs.onErrorContainer)),
     ),

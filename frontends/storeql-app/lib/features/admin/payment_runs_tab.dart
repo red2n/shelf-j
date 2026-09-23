@@ -15,6 +15,7 @@ import '../../shared/widgets/error_view.dart';
 import '../../shared/widgets/loading_view.dart';
 import 'bank_details_validators.dart';
 import 'procurement_providers.dart';
+import '../../core/theme.dart';
 import 'providers/admin_providers.dart' show tenantInfoProvider;
 
 /// Whether the signed-in user may run supplier payments (17.10): a manager
@@ -634,7 +635,7 @@ class _ErrorBanner extends StatelessWidget {
       padding: const EdgeInsets.all(12),
       decoration: BoxDecoration(
         color: cs.errorContainer,
-        borderRadius: BorderRadius.circular(8),
+        borderRadius: AppRadius.chip,
       ),
       child: Text(message, style: TextStyle(color: cs.onErrorContainer)),
     );

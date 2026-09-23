@@ -4,6 +4,7 @@ import '../../core/auth/auth_notifier.dart';
 import '../../core/auth/sso.dart';
 import '../../core/network/api_error.dart';
 import '../../l10n/gen/app_localizations.dart';
+import '../../core/theme.dart';
 
 class LoginScreen extends ConsumerStatefulWidget {
   const LoginScreen({super.key});
@@ -105,7 +106,7 @@ class _LoginScreenState extends ConsumerState<LoginScreen> {
                           padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 10),
                           decoration: BoxDecoration(
                             color: cs.errorContainer,
-                            borderRadius: BorderRadius.circular(8),
+                            borderRadius: AppRadius.chip,
                           ),
                           child: Text(error, style: TextStyle(color: cs.onErrorContainer)),
                         ),

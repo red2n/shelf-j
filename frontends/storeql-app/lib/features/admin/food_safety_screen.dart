@@ -12,6 +12,7 @@ import '../../shared/widgets/error_view.dart';
 import '../../shared/widgets/loading_view.dart';
 import 'food_safety_providers.dart';
 import 'providers/admin_providers.dart';
+import '../../shared/widgets/empty_state.dart';
 
 /// Temperature monitoring and HACCP checks for one store: what is due today,
 /// the diary an inspector reads, and — for managers — the points and the
@@ -57,7 +58,7 @@ class FoodSafetyScreen extends ConsumerWidget {
       return Column(crossAxisAlignment: CrossAxisAlignment.start, children: [
         header,
         const Expanded(
-          child: Center(child: Text('Add a store before setting up checks.')),
+          child: EmptyState(title: 'Add a store before setting up checks.'),
         ),
       ]);
     }
@@ -1019,7 +1020,7 @@ class _ReviewsTab extends ConsumerWidget {
     } else if (!async.hasValue) {
       list = const LoadingView(label: 'Loading reviews…');
     } else if (async.value!.isEmpty) {
-      list = const Center(child: Text('No reviews signed off for this store yet.'));
+      list = const EmptyState(title: 'No reviews signed off for this store yet.');
     } else {
       list = ListView(
         padding: const EdgeInsets.all(AppSpacing.xl),

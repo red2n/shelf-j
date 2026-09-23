@@ -23,38 +23,72 @@ class ProductThumb extends StatelessWidget {
     this.borderRadius = BorderRadius.zero,
   });
 
-  static const _bg = [
-    Color(0xFFEAF2F8),
-    Color(0xFFE8F8F5),
-    Color(0xFFFEF9E7),
-    Color(0xFFFDEDEC),
-    Color(0xFFF4ECF7),
-    Color(0xFFEAFAF1),
-    Color(0xFFFBEEE6),
-    Color(0xFFEBF5FB),
+  // Soft tinted grounds with deep initials in light; deep muted grounds with pale
+  // initials in dark, so a grid of placeholders never glows. Every pair is 4.5:1+.
+  static const _bgLight = [
+    Color(0xFFE5EEF5),
+    Color(0xFFE5F5F3),
+    Color(0xFFF5F1E5),
+    Color(0xFFF5E6E5),
+    Color(0xFFF0E5F5),
+    Color(0xFFE5F5EA),
+    Color(0xFFF5ECE5),
+    Color(0xFFE5F1F5),
   ];
-  static const _fg = [
-    Color(0xFF2E86C1),
-    Color(0xFF17A589),
-    Color(0xFFB7950B),
-    Color(0xFFCB4335),
-    Color(0xFF8E44AD),
-    Color(0xFF229954),
-    Color(0xFFCA6F1E),
-    Color(0xFF2874A6),
+  static const _fgLight = [
+    Color(0xFF225477),
+    Color(0xFF227769),
+    Color(0xFF776222),
+    Color(0xFF772922),
+    Color(0xFF5B2277),
+    Color(0xFF22773E),
+    Color(0xFF774522),
+    Color(0xFF226277),
   ];
+  static const _bgDark = [
+    Color(0xFF263540),
+    Color(0xFF26403C),
+    Color(0xFF403926),
+    Color(0xFF402826),
+    Color(0xFF372640),
+    Color(0xFF26402F),
+    Color(0xFF403126),
+    Color(0xFF263940),
+  ];
+  static const _fgDark = [
+    Color(0xFFB3D0E6),
+    Color(0xFFB3E6DD),
+    Color(0xFFE6D9B3),
+    Color(0xFFE6B7B3),
+    Color(0xFFD5B3E6),
+    Color(0xFFB3E6C4),
+    Color(0xFFE6C8B3),
+    Color(0xFFB3D9E6),
+  ];
+
+  /// The placeholder grounds and their initials, in order, for one brightness —
+  /// so a test can hold every pair to 4.5:1 rather than take the comment's word.
+  static List<(Color bg, Color fg)> tones(Brightness brightness) {
+    final dark = brightness == Brightness.dark;
+    final bgs = dark ? _bgDark : _bgLight;
+    final fgs = dark ? _fgDark : _fgLight;
+    return [for (var i = 0; i < bgs.length; i++) (bgs[i], fgs[i])];
+  }
 
   @override
   Widget build(BuildContext context) {
     final h = seed.hashCode.abs();
-    final i = h % _bg.length;
+    final i = h % _bgLight.length;
+    final dark = Theme.of(context).brightness == Brightness.dark;
+    final bg = dark ? _bgDark[i] : _bgLight[i];
+    final fg = dark ? _fgDark[i] : _fgLight[i];
     return Container(
-      decoration: BoxDecoration(color: _bg[i], borderRadius: borderRadius),
+      decoration: BoxDecoration(color: bg, borderRadius: borderRadius),
       alignment: Alignment.center,
       child: Text(
         _initials(label),
         style: TextStyle(
-          color: _fg[i],
+          color: fg,
           fontWeight: FontWeight.bold,
           fontSize: fontSize,
         ),
@@ -226,10 +260,11 @@ class OfferPriceAdd extends ConsumerWidget {
               '${offer.price.currency} ${offer.price.totalWithVat.toStringAsFixed(2)}',
               maxLines: 1,
               overflow: TextOverflow.ellipsis,
+              // A price is information, not an action: ink, not colour (the design system's rule).
               style: TextStyle(
-                color: cs.primary,
+                color: cs.onSurface,
                 fontWeight: FontWeight.bold,
-                fontSize: 15,
+                fontSize: 16,
               ),
             ),
             WasPriceText(price: offer.price),
@@ -406,7 +441,7 @@ class _Stepper extends StatelessWidget {
     return Container(
       decoration: BoxDecoration(
         color: cs.primaryContainer,
-        borderRadius: BorderRadius.circular(20),
+        borderRadius: AppRadius.pill,
       ),
       child: Row(
         mainAxisSize: MainAxisSize.min,
@@ -435,8 +470,8 @@ class _Stepper extends StatelessWidget {
     );
   }
 
-  // An icon alone names nothing to a screen reader; the label does. 30 px across, past WCAG 2.2's
-  // 24 px minimum target (2.5.8).
+  // An icon alone names nothing to a screen reader; the label does. 36 px across — the design
+  // system's stepper target, past WCAG 2.2's 24 px minimum (2.5.8).
   Widget _btn(
     BuildContext context,
     IconData icon,
@@ -451,10 +486,25 @@ class _Stepper extends StatelessWidget {
         onTap: onTap,
         customBorder: const CircleBorder(),
         child: Padding(
-          padding: const EdgeInsets.all(6),
+          padding: const EdgeInsets.all(9),
           child: Icon(icon, size: 18, color: cs.onPrimaryContainer),
         ),
       ),
     );
   }
+}
+
+/// A banner's colours from the scheme rather than a hard-coded gradient, so a
+/// live promotion reads the same in dark mode as in light: a container tone
+/// shading a little towards its role, with the container's own text colour on
+/// top. Four tones rotate; each is held to 4.5:1 at both ends of its gradient.
+({List<Color> gradient, Color fg}) bannerTone(ColorScheme cs, int tone) {
+  final tones = [
+    (cs.primaryContainer, cs.primary, cs.onPrimaryContainer),
+    (cs.secondaryContainer, cs.secondary, cs.onSecondaryContainer),
+    (cs.tertiaryContainer, cs.tertiary, cs.onTertiaryContainer),
+    (cs.surfaceContainerHighest, cs.onSurfaceVariant, cs.onSurface),
+  ];
+  final t = tones[tone % tones.length];
+  return (gradient: [t.$1, Color.lerp(t.$1, t.$2, 0.18)!], fg: t.$3);
 }

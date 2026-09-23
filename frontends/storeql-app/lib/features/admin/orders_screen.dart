@@ -621,7 +621,7 @@ class _ReturnDialogState extends ConsumerState<_ReturnDialog> {
                       padding: const EdgeInsets.all(12),
                       decoration: BoxDecoration(
                         color: cs.errorContainer,
-                        borderRadius: BorderRadius.circular(8),
+                        borderRadius: AppRadius.chip,
                       ),
                       child: Text(_error!,
                           style: TextStyle(color: cs.onErrorContainer)),
@@ -934,7 +934,7 @@ class _ChannelBadge extends StatelessWidget {
       padding: const EdgeInsets.symmetric(horizontal: 6, vertical: 2),
       decoration: BoxDecoration(
         color: base.withValues(alpha: 0.12),
-        borderRadius: BorderRadius.circular(4),
+        borderRadius: AppRadius.badge,
         border: Border.all(color: base.withValues(alpha: 0.4)),
       ),
       child: Text(
@@ -985,7 +985,7 @@ class _StatusBadge extends StatelessWidget {
     return Container(
       padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 3),
       decoration:
-          BoxDecoration(color: bg, borderRadius: BorderRadius.circular(12)),
+          BoxDecoration(color: bg, borderRadius: AppRadius.badge),
       child: Text(status,
           style: TextStyle(
               fontSize: 11, fontWeight: FontWeight.w600, color: fg)),
@@ -1011,7 +1011,7 @@ class _PaymentMethodBadge extends StatelessWidget {
       padding: const EdgeInsets.symmetric(horizontal: 6, vertical: 2),
       decoration: BoxDecoration(
         color: cs.secondaryContainer,
-        borderRadius: BorderRadius.circular(10),
+        borderRadius: AppRadius.badge,
       ),
       child: Text(label,
           style: TextStyle(
@@ -1129,7 +1129,7 @@ class _CollectPaymentDialogState extends ConsumerState<_CollectPaymentDialog> {
                       padding: const EdgeInsets.all(12),
                       decoration: BoxDecoration(
                         color: cs.errorContainer,
-                        borderRadius: BorderRadius.circular(8),
+                        borderRadius: AppRadius.chip,
                       ),
                       child: Text(_error!,
                           style: TextStyle(color: cs.onErrorContainer)),

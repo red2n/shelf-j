@@ -222,7 +222,7 @@ class _AddCustomerDialogState extends ConsumerState<_AddCustomerDialog> {
                   padding: const EdgeInsets.all(12),
                   decoration: BoxDecoration(
                       color: cs.errorContainer,
-                      borderRadius: BorderRadius.circular(8)),
+                      borderRadius: AppRadius.chip),
                   child: Text(_error!,
                       style: TextStyle(color: cs.onErrorContainer)),
                 ),
@@ -659,7 +659,7 @@ class _StatCard extends StatelessWidget {
     return Container(
       padding: const EdgeInsets.all(16),
       decoration:
-          BoxDecoration(color: color, borderRadius: BorderRadius.circular(12)),
+          BoxDecoration(color: color, borderRadius: AppRadius.badge),
       child: Column(
         crossAxisAlignment: CrossAxisAlignment.start,
         children: [
@@ -845,7 +845,7 @@ class _DefaultChip extends StatelessWidget {
     return Container(
       padding: const EdgeInsets.symmetric(horizontal: 6, vertical: 1),
       decoration: BoxDecoration(
-          color: cs.secondaryContainer, borderRadius: BorderRadius.circular(8)),
+          color: cs.secondaryContainer, borderRadius: AppRadius.chip),
       child: Text('Default',
           style: TextStyle(fontSize: 10, color: cs.onSecondaryContainer)),
     );

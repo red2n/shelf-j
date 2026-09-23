@@ -9,6 +9,7 @@ import '../../core/spacing.dart';
 import '../../shared/widgets/error_view.dart';
 import '../../shared/widgets/loading_view.dart';
 import 'providers/admin_providers.dart';
+import '../../shared/widgets/empty_state.dart';
 
 // ---------------------------------------------------------------------------
 // Shelf space and range (07.17, 07.18).
@@ -183,7 +184,7 @@ class ShelfSpaceScreen extends ConsumerWidget {
     }
     final stores = storesAsync.value!;
     if (stores.isEmpty) {
-      return const Center(child: Text('Add a store before planning its shelves.'));
+      return const EmptyState(title: 'Add a store before planning its shelves.');
     }
     final chosen = ref.watch(shelfSpaceStoreProvider);
     final storeId = stores.any((s) => s.id == chosen) ? chosen! : stores.first.id;

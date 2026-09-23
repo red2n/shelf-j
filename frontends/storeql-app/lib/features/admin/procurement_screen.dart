@@ -532,18 +532,18 @@ class _VarianceChip extends StatelessWidget {
 
   @override
   Widget build(BuildContext context) {
-    final warn = context.status.warning;
+    final status = context.status;
     return Container(
       padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 2),
       decoration: BoxDecoration(
-        color: warn.withValues(alpha: 0.15),
-        borderRadius: BorderRadius.circular(10),
+        color: status.warningContainer,
+        borderRadius: AppRadius.badge,
       ),
       child: Text(
         '${_labels[code] ?? code}${detail ?? ''}',
         style: TextStyle(
           fontSize: 11,
-          color: warn,
+          color: status.onWarningContainer,
           fontWeight: FontWeight.w600,
         ),
       ),
@@ -566,7 +566,7 @@ class _InvoiceStatusBadge extends StatelessWidget {
       padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 3),
       decoration: BoxDecoration(
         color: fg.withValues(alpha: 0.18),
-        borderRadius: BorderRadius.circular(12),
+        borderRadius: AppRadius.badge,
       ),
       child: Text(
         status,
@@ -770,7 +770,7 @@ class _SupplierDialogState extends ConsumerState<_SupplierDialog> {
                     padding: const EdgeInsets.all(12),
                     decoration: BoxDecoration(
                       color: cs.errorContainer,
-                      borderRadius: BorderRadius.circular(8),
+                      borderRadius: AppRadius.chip,
                     ),
                     child: Text(
                       _error!,
@@ -1125,7 +1125,7 @@ class _CreatePoDialogState extends ConsumerState<_CreatePoDialog> {
                 padding: const EdgeInsets.all(12),
                 decoration: BoxDecoration(
                   color: cs.errorContainer,
-                  borderRadius: BorderRadius.circular(8),
+                  borderRadius: AppRadius.chip,
                 ),
                 child: Text(
                   _error!,
@@ -1848,7 +1848,7 @@ class _AddPoLineDialogState extends ConsumerState<_AddPoLineDialog> {
                       padding: const EdgeInsets.all(12),
                       decoration: BoxDecoration(
                         color: cs.errorContainer,
-                        borderRadius: BorderRadius.circular(8),
+                        borderRadius: AppRadius.chip,
                       ),
                       child: Text(
                         _error!,
@@ -2105,7 +2105,7 @@ class _ReturnToVendorDialogState extends ConsumerState<_ReturnToVendorDialog> {
                   padding: const EdgeInsets.all(12),
                   decoration: BoxDecoration(
                     color: cs.errorContainer,
-                    borderRadius: BorderRadius.circular(8),
+                    borderRadius: AppRadius.chip,
                   ),
                   child: Text(
                     _error!,
@@ -2439,7 +2439,7 @@ class _ReceiveGoodsDialogState extends ConsumerState<_ReceiveGoodsDialog> {
                   padding: const EdgeInsets.all(12),
                   decoration: BoxDecoration(
                     color: cs.errorContainer,
-                    borderRadius: BorderRadius.circular(8),
+                    borderRadius: AppRadius.chip,
                   ),
                   child: Text(
                     _error!,
@@ -2561,8 +2561,8 @@ class _PoStatusBadge extends StatelessWidget {
       case 'PARTIALLY_RECEIVED':
         // Amber rather than the generic default: something is still owed, and that is a state a
         // buyer is meant to act on rather than merely observe.
-        bg = context.status.warning.withValues(alpha: 0.18);
-        fg = context.status.warning;
+        bg = context.status.warningContainer;
+        fg = context.status.onWarningContainer;
         break;
       case 'RECEIVED':
       case 'CLOSED':
@@ -2570,14 +2570,14 @@ class _PoStatusBadge extends StatelessWidget {
         fg = cs.onSecondaryContainer;
         break;
       default:
-        bg = context.status.warning.withValues(alpha: 0.18);
-        fg = context.status.warning;
+        bg = context.status.warningContainer;
+        fg = context.status.onWarningContainer;
     }
     return Container(
       padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 3),
       decoration: BoxDecoration(
         color: bg,
-        borderRadius: BorderRadius.circular(12),
+        borderRadius: AppRadius.badge,
       ),
       child: Text(
         status,

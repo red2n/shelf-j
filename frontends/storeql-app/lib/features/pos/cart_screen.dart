@@ -16,6 +16,7 @@ import 'pos_weighed_item.dart';
 import 'variable_measure_barcode.dart';
 import 'weighing_instruments.dart';
 import 'pos_session_providers.dart';
+import '../../shared/widgets/empty_state.dart';
 
 /// The register screen. On a wide terminal it's a two-pane supermarket till —
 /// a persistent product catalog on the left, the live sale on the right. On a
@@ -697,7 +698,7 @@ class _SaleLine extends ConsumerWidget {
                     ),
                     decoration: BoxDecoration(
                       color: Theme.of(context).colorScheme.tertiaryContainer,
-                      borderRadius: BorderRadius.circular(4),
+                      borderRadius: AppRadius.badge,
                     ),
                     child: Text(
                       // A sticker the law will not let be called reduced is still a markdown.
@@ -920,7 +921,7 @@ class _CatalogPaneState extends ConsumerState<_CatalogPane> {
               }
 
               if (displayProducts.isEmpty) {
-                return const Center(child: Text('No in-stock products.'));
+                return const EmptyState(title: 'No in-stock products.');
               }
               return GridView.builder(
                 padding: const EdgeInsets.all(12),
@@ -1539,7 +1540,7 @@ class _CustomerPickerDialogState extends ConsumerState<_CustomerPickerDialog> {
                           return hay.contains(_query);
                         }).toList();
                   if (list.isEmpty) {
-                    return const Center(child: Text('No customers match.'));
+                    return const EmptyState(title: 'No customers match.');
                   }
                   return ListView.separated(
                     itemCount: list.length,

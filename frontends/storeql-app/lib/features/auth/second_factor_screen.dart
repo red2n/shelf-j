@@ -5,6 +5,7 @@ import '../../core/auth/auth_notifier.dart';
 import '../../core/auth/auth_state.dart';
 import '../../core/auth/passkeys.dart';
 import 'mfa_widgets.dart';
+import '../../core/theme.dart';
 
 /// The second step of a sign-in (20.12): the password was right, and the login
 /// holds a second factor — a code from its authenticator app, a passkey on this
@@ -77,7 +78,7 @@ class _SecondFactorScreenState extends ConsumerState<SecondFactorScreen> {
                       Container(
                         key: const Key('mfa-error'),
                         padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 10),
-                        decoration: BoxDecoration(color: cs.errorContainer, borderRadius: BorderRadius.circular(8)),
+                        decoration: BoxDecoration(color: cs.errorContainer, borderRadius: AppRadius.chip),
                         child: Text(owed.error!, style: TextStyle(color: cs.onErrorContainer)),
                       ),
                       const SizedBox(height: 16),

@@ -1,6 +1,7 @@
 import 'package:flutter/material.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 import '../../core/auth/auth_notifier.dart';
+import '../../core/theme.dart';
 
 /// Platform console sign-in. Deliberately separate from the store/POS [LoginScreen]
 /// and its `/auth/login` call — a platform-admin credential must never be entered on
@@ -80,7 +81,7 @@ class _PlatformLoginScreenState extends ConsumerState<PlatformLoginScreen> {
                           padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 10),
                           decoration: BoxDecoration(
                             color: cs.errorContainer,
-                            borderRadius: BorderRadius.circular(8),
+                            borderRadius: AppRadius.chip,
                           ),
                           child: Text(error, style: TextStyle(color: cs.onErrorContainer)),
                         ),

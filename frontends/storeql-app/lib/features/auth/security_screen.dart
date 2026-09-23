@@ -5,6 +5,7 @@ import '../../core/auth/passkeys.dart';
 import '../../core/network/api_error.dart';
 import 'mfa_api.dart';
 import 'mfa_widgets.dart';
+import '../../core/theme.dart';
 
 /// A login's own second factors (20.12): an authenticator app, passkeys, and the
 /// recovery codes that go with them. Taking one away asks for the password, and
@@ -61,7 +62,7 @@ class _Factors extends ConsumerWidget {
           Container(
             key: const Key('mfa-required'),
             padding: const EdgeInsets.all(12),
-            decoration: BoxDecoration(color: cs.secondaryContainer, borderRadius: BorderRadius.circular(8)),
+            decoration: BoxDecoration(color: cs.secondaryContainer, borderRadius: AppRadius.chip),
             child: Text(
               'A second step is required of this login, so the last one cannot be removed.',
               style: TextStyle(color: cs.onSecondaryContainer),

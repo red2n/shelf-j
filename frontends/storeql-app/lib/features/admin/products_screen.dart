@@ -710,7 +710,7 @@ class _StatusChip extends StatelessWidget {
       padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 3),
       decoration: BoxDecoration(
         color: active ? cs.secondaryContainer : cs.errorContainer,
-        borderRadius: BorderRadius.circular(12),
+        borderRadius: AppRadius.badge,
       ),
       child: Text(label,
           style: TextStyle(
@@ -765,7 +765,7 @@ class _ProductDialogState extends State<_ProductDialog> {
         widget.cats.where((c) => c.status.toUpperCase() == 'ACTIVE').toList();
 
     return Dialog(
-      shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(16)),
+      shape: const RoundedRectangleBorder(borderRadius: AppRadius.card),
       child: ConstrainedBox(
         constraints: const BoxConstraints(maxWidth: 480),
         child: Padding(
@@ -788,7 +788,7 @@ class _ProductDialogState extends State<_ProductDialog> {
                       padding: const EdgeInsets.all(12),
                       decoration: BoxDecoration(
                         color: cs.errorContainer,
-                        borderRadius: BorderRadius.circular(8),
+                        borderRadius: AppRadius.chip,
                       ),
                       child: Text(_error!,
                           style: TextStyle(color: cs.onErrorContainer)),
@@ -986,7 +986,7 @@ class _VariantsDialogState extends ConsumerState<_VariantsDialog> {
     final cs = Theme.of(context).colorScheme;
 
     return Dialog(
-      shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(16)),
+      shape: const RoundedRectangleBorder(borderRadius: AppRadius.card),
       child: ConstrainedBox(
         constraints: const BoxConstraints(maxWidth: 560, maxHeight: 600),
         child: Padding(
@@ -1147,7 +1147,7 @@ class _VariantsDialogState extends ConsumerState<_VariantsDialog> {
                     padding: const EdgeInsets.all(8),
                     decoration: BoxDecoration(
                       color: cs.errorContainer,
-                      borderRadius: BorderRadius.circular(8),
+                      borderRadius: AppRadius.chip,
                     ),
                     child: Text(_saveError!,
                         style:
@@ -1439,7 +1439,7 @@ class _AssortmentDialogState extends ConsumerState<_AssortmentDialog> {
                       padding: const EdgeInsets.all(12),
                       decoration: BoxDecoration(
                         color: cs.errorContainer,
-                        borderRadius: BorderRadius.circular(8),
+                        borderRadius: AppRadius.chip,
                       ),
                       child: Text(_error!,
                           style: TextStyle(color: cs.onErrorContainer)),

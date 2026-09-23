@@ -6,6 +6,7 @@ import '../../core/network/api_error.dart';
 import '../../shared/widgets/adaptive_nav_shell.dart';
 import 'storefront_providers.dart';
 import 'survey_widgets.dart';
+import '../../core/theme.dart';
 
 const _destinations = [
   AdaptiveNavDestination(
@@ -348,7 +349,7 @@ class _DeleteAccountDialogState extends ConsumerState<_DeleteAccountDialog> {
                 padding: const EdgeInsets.all(12),
                 decoration: BoxDecoration(
                     color: cs.errorContainer,
-                    borderRadius: BorderRadius.circular(8)),
+                    borderRadius: AppRadius.chip),
                 child:
                     Text(_error!, style: TextStyle(color: cs.onErrorContainer)),
               ),
@@ -467,7 +468,7 @@ class _StorefrontAuthDialogState extends ConsumerState<StorefrontAuthDialog> {
                   padding: const EdgeInsets.all(12),
                   decoration: BoxDecoration(
                       color: cs.errorContainer,
-                      borderRadius: BorderRadius.circular(8)),
+                      borderRadius: AppRadius.chip),
                   child: Text(_error!,
                       style: TextStyle(color: cs.onErrorContainer)),
                 ),

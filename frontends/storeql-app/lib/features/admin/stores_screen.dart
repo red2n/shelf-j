@@ -137,7 +137,7 @@ class StoresScreen extends ConsumerWidget {
                             message:
                                 active ? 'Tap to deactivate' : 'Tap to activate',
                             child: InkWell(
-                              borderRadius: BorderRadius.circular(12),
+                              borderRadius: AppRadius.badge,
                               onTap: () =>
                                   _toggleStoreStatus(context, ref, s, active),
                               child: Container(
@@ -147,7 +147,7 @@ class StoresScreen extends ConsumerWidget {
                                   color: active
                                       ? cs.secondaryContainer
                                       : cs.errorContainer,
-                                  borderRadius: BorderRadius.circular(12),
+                                  borderRadius: AppRadius.badge,
                                 ),
                                 child: Text(
                                   s.status,
@@ -480,7 +480,7 @@ class _DeliveryAreasDialogState extends ConsumerState<_DeliveryAreasDialog> {
                 padding: const EdgeInsets.all(10),
                 decoration: BoxDecoration(
                   color: cs.errorContainer,
-                  borderRadius: BorderRadius.circular(8),
+                  borderRadius: AppRadius.chip,
                 ),
                 child:
                     Text(_error!, style: TextStyle(color: cs.onErrorContainer)),
@@ -685,7 +685,7 @@ class _ZoneFormDialogState extends ConsumerState<_ZoneFormDialog> {
                   padding: const EdgeInsets.all(12),
                   decoration: BoxDecoration(
                     color: cs.errorContainer,
-                    borderRadius: BorderRadius.circular(8),
+                    borderRadius: AppRadius.chip,
                   ),
                   child: Text(_error!, style: TextStyle(color: cs.onErrorContainer)),
                 ),
@@ -860,7 +860,7 @@ class _EditStoreDialogState extends ConsumerState<_EditStoreDialog> {
                     padding: const EdgeInsets.all(12),
                     decoration: BoxDecoration(
                       color: cs.errorContainer,
-                      borderRadius: BorderRadius.circular(8),
+                      borderRadius: AppRadius.chip,
                     ),
                     child:
                         Text(_error!, style: TextStyle(color: cs.onErrorContainer)),
@@ -1168,7 +1168,7 @@ class _AddStoreDialogState extends ConsumerState<_AddStoreDialog> {
                     padding: const EdgeInsets.all(12),
                     decoration: BoxDecoration(
                       color: cs.errorContainer,
-                      borderRadius: BorderRadius.circular(8),
+                      borderRadius: AppRadius.chip,
                     ),
                     child: Text(_error!, style: TextStyle(color: cs.onErrorContainer)),
                   ),
