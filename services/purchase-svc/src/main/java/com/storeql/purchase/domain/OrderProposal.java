@@ -39,8 +39,17 @@ public final class OrderProposal {
       BigDecimal avgDailyDemand,
       int leadTimeDays) {}
 
-  /** Where the item stands: on hand, on order, and what the cover period is expected to sell. */
-  public record Position(BigDecimal available, BigDecimal onOrder, BigDecimal expectedOverCover) {}
+  /**
+   * Where the item stands: on hand, on order, what the cover period is expected to sell, and how
+   * long the item lives. {@code expectedOverCover} is for the cover the caller will actually get —
+   * the cover asked for, or the shelf life when that is shorter — because ordering more of a fresh
+   * item than sells before it expires is ordering waste. {@code shelfLifeDays} null = keeps.
+   */
+  public record Position(
+      BigDecimal available,
+      BigDecimal onOrder,
+      BigDecimal expectedOverCover,
+      Integer shelfLifeDays) {}
 
   /** The policy's answer for one item. */
   public sealed interface Result permits Order, Nothing, Skipped {}
@@ -85,28 +94,51 @@ public final class OrderProposal {
             .append(plain(plan.rop()))
             .append("; ");
     BigDecimal shortfall = plan.rop().subtract(stockPosition);
+    // A fresh item is ordered for no longer than it lives.
+    int cover = coverDays;
+    boolean capped = false;
+    if (position.shelfLifeDays() != null && position.shelfLifeDays() < coverDays) {
+      cover = position.shelfLifeDays();
+      capped = true;
+    }
+    String cappedNote = capped ? " (capped to the " + cover + "-day shelf life)" : "";
+    BigDecimal avg = zeroIfNull(plan.avgDailyDemand());
+    BigDecimal expected =
+        position.expectedOverCover() != null
+            ? position.expectedOverCover()
+            : avg.multiply(BigDecimal.valueOf(cover));
     BigDecimal qty;
     if (plan.eoq() != null && plan.eoq().signum() > 0) {
       qty = plan.eoq();
       reason.append("order EOQ ").append(plain(plan.eoq()));
+      BigDecimal sellsWithinLife = shortfall.add(expected);
+      if (position.shelfLifeDays() != null && qty.compareTo(sellsWithinLife) > 0) {
+        qty = sellsWithinLife;
+        reason
+            .append(" cut to what sells within the ")
+            .append(position.shelfLifeDays())
+            .append("-day shelf life (")
+            .append(plain(sellsWithinLife))
+            .append(")");
+      }
     } else if (position.expectedOverCover() != null) {
-      qty = shortfall.add(position.expectedOverCover());
+      qty = shortfall.add(expected);
       reason
           .append("order back to the reorder point plus forecast ")
-          .append(plain(position.expectedOverCover()))
+          .append(plain(expected))
           .append(" over ")
-          .append(coverDays)
-          .append(" days");
+          .append(cover)
+          .append(" days")
+          .append(cappedNote);
     } else {
-      BigDecimal avg = zeroIfNull(plan.avgDailyDemand());
-      BigDecimal expected = avg.multiply(BigDecimal.valueOf(coverDays));
       qty = shortfall.add(expected);
       reason
           .append("order back to the reorder point plus ")
           .append(plain(avg))
           .append("/day over ")
-          .append(coverDays)
-          .append(" days (no forecast)");
+          .append(cover)
+          .append(" days (no forecast)")
+          .append(cappedNote);
     }
     if (qty.compareTo(shortfall) < 0) {
       qty = shortfall;

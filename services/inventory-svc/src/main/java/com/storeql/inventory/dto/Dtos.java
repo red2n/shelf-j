@@ -1093,7 +1093,9 @@ public final class Dtos {
       @Schema(description = "Mean MAPE over the forecasts that could compute one; null when none.")
           BigDecimal meanMape,
       int horizonDays,
-      String computedAt) {}
+      String computedAt,
+      @Schema(description = "Variants that live fourteen days or fewer, by their batches.")
+          int fresh) {}
 
   @Schema(name = "ForecastPoint")
   public record ForecastPointResponse(String day, BigDecimal qty) {}
@@ -1136,5 +1138,20 @@ public final class Dtos {
               description =
                   "One expected quantity per day from fromDay; only on the single forecast.")
           List<ForecastPointResponse> points,
-      String computedAt) {}
+      String computedAt,
+      @Schema(description = "Lives fourteen days or fewer, by the median of its dated batches.")
+          boolean fresh,
+      @Schema(
+              description =
+                  "Median days from receipt to expiry over the dated batches; null when the item keeps.")
+          Integer shelfLifeDays,
+      @Schema(
+              description =
+                  "Percent of what was received that went out of date unsold (past-date stock plus"
+                      + " EXPIRY write-offs); null when nothing sold or wasted.")
+          BigDecimal wasteRatePct,
+      @Schema(
+              description =
+                  "The longest cover an order should be given: the shelf life; null when the item keeps.")
+          Integer maxCoverDays) {}
 }

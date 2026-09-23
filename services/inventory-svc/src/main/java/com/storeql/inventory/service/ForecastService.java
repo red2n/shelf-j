@@ -3,10 +3,12 @@ package com.storeql.inventory.service;
 import com.storeql.ids.Ids;
 import com.storeql.inventory.domain.Domain.DemandBucket;
 import com.storeql.inventory.domain.Domain.DemandForecast;
+import com.storeql.inventory.domain.Domain.FreshProfile;
 import com.storeql.inventory.domain.Forecasting;
 import com.storeql.inventory.domain.Forecasting.Forecast;
 import com.storeql.inventory.repo.DemandHistoryRepository;
 import com.storeql.inventory.repo.ForecastRepository;
+import com.storeql.inventory.repo.ForecastRepository.FreshFacts;
 import com.storeql.web.ApiException;
 import jakarta.enterprise.context.ApplicationScoped;
 import jakarta.inject.Inject;
@@ -39,6 +41,12 @@ public class ForecastService {
   /** How far back a run reads: long enough for a season's shape, short enough to stay current. */
   static final int HISTORY_DAYS = 182;
 
+  /**
+   * A fresh item's level follows its last eight weeks: what sold in spring says little about this
+   * week.
+   */
+  static final int FRESH_HISTORY_DAYS = 56;
+
   @Inject ForecastRepository repo;
   @Inject DemandHistoryRepository demandHistoryRepo;
 
@@ -49,7 +57,8 @@ public class ForecastService {
       Map<String, Integer> byMethod,
       BigDecimal meanMape,
       int horizonDays,
-      Instant computedAt) {
+      Instant computedAt,
+      int fresh) {
     public RunResult {
       byMethod = Map.copyOf(byMethod);
     }
@@ -76,18 +85,29 @@ public class ForecastService {
     demandHistoryRepo.aggregateDemand(tenantId, storeId, DemandBucket.BUCKET_DAY, from);
     Map<UUID, Map<LocalDate, BigDecimal>> history =
         repo.dailyDemand(tenantId, storeId, variantId, from, to);
+    Map<UUID, FreshFacts> freshFacts = repo.freshFacts(tenantId, storeId, from);
 
     Instant now = Instant.now();
     List<DemandForecast> forecasts = new ArrayList<>();
     Map<String, Integer> byMethod = new TreeMap<>();
     BigDecimal mapeSum = BigDecimal.ZERO;
     int mapeCount = 0;
+    int freshCount = 0;
     for (Map.Entry<UUID, Map<LocalDate, BigDecimal>> e : history.entrySet()) {
       LocalDate first = e.getValue().keySet().iterator().next(); // a TreeMap: the earliest day
-      Forecast f = Forecasting.forecast(zeroFilled(e.getValue(), first, to), to, horizon);
+      List<BigDecimal> series = zeroFilled(e.getValue(), first, to);
+      FreshProfile fresh = freshProfile(freshFacts.get(e.getKey()), series);
+      if (fresh.fresh() && series.size() > FRESH_HISTORY_DAYS) {
+        series = series.subList(series.size() - FRESH_HISTORY_DAYS, series.size());
+        first = to.minusDays(FRESH_HISTORY_DAYS - 1L);
+        freshCount++;
+      } else if (fresh.fresh()) {
+        freshCount++;
+      }
+      Forecast f = Forecasting.forecast(series, to, horizon);
       forecasts.add(
           new DemandForecast(
-              Ids.newId(), tenantId, storeId, e.getKey(), first, to, horizon, f, now));
+              Ids.newId(), tenantId, storeId, e.getKey(), first, to, horizon, f, now, fresh));
       byMethod.merge(f.method(), 1, Integer::sum);
       if (f.accuracy().mape() != null) {
         mapeSum = mapeSum.add(f.accuracy().mape());
@@ -99,7 +119,26 @@ public class ForecastService {
         mapeCount == 0
             ? null
             : mapeSum.divide(BigDecimal.valueOf(mapeCount), 2, RoundingMode.HALF_UP);
-    return new RunResult(storeId, forecasts.size(), byMethod, meanMape, horizon, now);
+    return new RunResult(storeId, forecasts.size(), byMethod, meanMape, horizon, now, freshCount);
+  }
+
+  /**
+   * The item's life as the batches tell it: the median shelf life, rounded to whole days, and the
+   * share of what was received that went out of date unsold — waste over sold plus waste — null
+   * when there was neither.
+   */
+  static FreshProfile freshProfile(FreshFacts facts, List<BigDecimal> series) {
+    if (facts == null) {
+      return FreshProfile.KEEPS;
+    }
+    Integer shelfLife =
+        facts.shelfLifeDays() == null ? null : (int) Math.max(1, Math.round(facts.shelfLifeDays()));
+    BigDecimal sold = series.stream().reduce(BigDecimal.ZERO, BigDecimal::add);
+    BigDecimal wasted = facts.wasted() == null ? BigDecimal.ZERO : facts.wasted();
+    BigDecimal denominator = sold.add(wasted);
+    BigDecimal wasteRate =
+        denominator.signum() <= 0 ? null : wasted.divide(denominator, 4, RoundingMode.HALF_UP);
+    return new FreshProfile(shelfLife, wasteRate);
   }
 
   /** The buckets as a day-by-day series from {@code from} to {@code to}, zero where none. */

@@ -759,5 +759,25 @@ public final class Domain {
       LocalDate historyTo,
       int horizonDays,
       Forecasting.Forecast forecast,
-      Instant computedAt) {}
+      Instant computedAt,
+      FreshProfile fresh) {}
+
+  /**
+   * What the batches say about an item's life (06.x): the median days from receipt to expiry, and
+   * how much of what was received went out of date unsold. An item that lives fourteen days or
+   * fewer is fresh; an order for it should cover no more days than it lives.
+   */
+  public record FreshProfile(Integer shelfLifeDays, BigDecimal wasteRate) {
+    public static final int FRESH_MAX_DAYS = 14;
+    public static final FreshProfile KEEPS = new FreshProfile(null, null);
+
+    public boolean fresh() {
+      return shelfLifeDays != null && shelfLifeDays <= FRESH_MAX_DAYS;
+    }
+
+    /** The longest cover an order should be given: the shelf life, or none when the item keeps. */
+    public Integer maxCoverDays() {
+      return shelfLifeDays;
+    }
+  }
 }

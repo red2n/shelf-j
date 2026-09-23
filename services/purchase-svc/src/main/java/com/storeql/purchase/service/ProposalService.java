@@ -2,6 +2,7 @@ package com.storeql.purchase.service;
 
 import com.storeql.ids.Ids;
 import com.storeql.purchase.client.InventoryClient;
+import com.storeql.purchase.client.InventoryClient.ForecastGlance;
 import com.storeql.purchase.client.PricingClient;
 import com.storeql.purchase.domain.Domain;
 import com.storeql.purchase.domain.Domain.ProposalRun;
@@ -112,7 +113,8 @@ public class ProposalService {
         inventory
             .availableByVariant(tenantId, storeId)
             .orElseThrow(ProposalService::stockUnavailable);
-    Map<UUID, BigDecimal> forecast = inventory.forecastNext28(tenantId, storeId).orElse(Map.of());
+    Map<UUID, ForecastGlance> forecast =
+        inventory.forecastGlances(tenantId, storeId).orElse(Map.of());
     Map<UUID, BigDecimal> onOrder = repo.onOrderByVariant(tenantId, storeId);
     List<UUID> variants = plans.stream().map(Plan::variantId).toList();
     Map<UUID, SupplierChoice> lastBought = repo.lastSupplierByVariant(tenantId, variants);
@@ -122,11 +124,15 @@ public class ProposalService {
     List<SkippedItem> skipped = new ArrayList<>();
     for (Plan plan : plans) {
       UUID v = plan.variantId();
-      BigDecimal expected = forecast.get(v);
-      if (expected != null && cover != FORECAST_DAYS.intValue()) {
+      ForecastGlance glance = forecast.get(v);
+      Integer shelfLife = glance == null ? null : glance.maxCoverDays();
+      // The cover this line will get: what was asked for, or the shelf life when that is shorter.
+      int lineCover = shelfLife != null && shelfLife < cover ? shelfLife : cover;
+      BigDecimal expected = glance == null ? null : glance.next28();
+      if (expected != null && lineCover != FORECAST_DAYS.intValue()) {
         expected =
             expected
-                .multiply(BigDecimal.valueOf(cover))
+                .multiply(BigDecimal.valueOf(lineCover))
                 .divide(FORECAST_DAYS, 3, RoundingMode.HALF_UP);
       }
       OrderProposal.Result result =
@@ -135,7 +141,8 @@ public class ProposalService {
               new Position(
                   available.getOrDefault(v, BigDecimal.ZERO),
                   onOrder.getOrDefault(v, BigDecimal.ZERO),
-                  expected),
+                  expected,
+                  shelfLife),
               cover);
       if (result instanceof Skipped s) {
         skipped.add(new SkippedItem(v, s.reason()));

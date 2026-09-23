@@ -10,6 +10,7 @@ import com.storeql.inventory.domain.Domain.CycleCountLine;
 import com.storeql.inventory.domain.Domain.DeadStockRow;
 import com.storeql.inventory.domain.Domain.DemandBucket;
 import com.storeql.inventory.domain.Domain.DemandForecast;
+import com.storeql.inventory.domain.Domain.FreshProfile;
 import com.storeql.inventory.domain.Domain.KanbanCard;
 import com.storeql.inventory.domain.Domain.Level;
 import com.storeql.inventory.domain.Domain.LevelSummary;
@@ -89,6 +90,8 @@ import com.storeql.inventory.dto.Dtos.TransferOrderResponse;
 import com.storeql.inventory.dto.Dtos.ValuationRowResponse;
 import com.storeql.inventory.dto.Dtos.ZoneGlMappingResponse;
 import com.storeql.inventory.service.ForecastService;
+import java.math.BigDecimal;
+import java.math.RoundingMode;
 import java.time.Instant;
 import java.time.LocalDate;
 import java.time.temporal.ChronoUnit;
@@ -869,7 +872,8 @@ public final class Mappers {
         r.byMethod(),
         r.meanMape(),
         r.horizonDays(),
-        r.computedAt().toString());
+        r.computedAt().toString(),
+        r.fresh());
   }
 
   /**
@@ -878,6 +882,7 @@ public final class Mappers {
    */
   public static ForecastResponse toForecast(DemandForecast d, boolean withPoints) {
     Forecasting.Forecast f = d.forecast();
+    FreshProfile fresh = d.fresh() == null ? FreshProfile.KEEPS : d.fresh();
     List<ForecastPointResponse> points = List.of();
     if (withPoints) {
       List<ForecastPointResponse> out = new java.util.ArrayList<>(f.points().size());
@@ -907,6 +912,12 @@ public final class Mappers {
         f.accuracy().bias(),
         f.accuracy().mase(),
         points,
-        d.computedAt().toString());
+        d.computedAt().toString(),
+        fresh.fresh(),
+        fresh.shelfLifeDays(),
+        fresh.wasteRate() == null
+            ? null
+            : fresh.wasteRate().multiply(BigDecimal.valueOf(100)).setScale(2, RoundingMode.HALF_UP),
+        fresh.maxCoverDays());
   }
 }

@@ -164,12 +164,18 @@ public class InventoryClient {
   }
 
   /**
-   * Each forecast variant's expected demand over the next twenty-eight days.
+   * What a proposal needs of a forecast: the next twenty-eight days, and the shelf life that bounds
+   * an order.
+   */
+  public record ForecastGlance(BigDecimal next28, Integer maxCoverDays) {}
+
+  /**
+   * A glance at each forecast variant at the store.
    *
-   * @return variant → next28; empty when inventory-svc could not be read (the proposal then falls
+   * @return variant → glance; empty when inventory-svc could not be read (the proposal then falls
    *     back to the plan's average daily demand and says so)
    */
-  public Optional<Map<UUID, BigDecimal>> forecastNext28(UUID tenantId, UUID storeId) {
+  public Optional<Map<UUID, ForecastGlance>> forecastGlances(UUID tenantId, UUID storeId) {
     ServiceReader.Reply reply =
         planning.get(tenantId, "/admin/inventory/forecasts", Map.of("store", storeId.toString()));
     if (reply.status() == 404) {
@@ -178,11 +184,15 @@ public class InventoryClient {
     if (!reply.ok()) {
       return Optional.empty();
     }
-    Map<UUID, BigDecimal> out = new HashMap<>();
+    Map<UUID, ForecastGlance> out = new HashMap<>();
     for (JsonObject f : dataArray(reply.body())) {
       BigDecimal next28 = number(f, "next28");
+      Integer maxCover =
+          f.containsKey("maxCoverDays") && !f.isNull("maxCoverDays")
+              ? f.getInt("maxCoverDays")
+              : null;
       if (next28 != null) {
-        out.put(Ids.parse(f.getString("variantId")), next28);
+        out.put(Ids.parse(f.getString("variantId")), new ForecastGlance(next28, maxCover));
       }
     }
     return Optional.of(out);

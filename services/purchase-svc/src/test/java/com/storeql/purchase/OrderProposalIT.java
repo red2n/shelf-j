@@ -335,4 +335,44 @@ class OrderProposalIT {
             .size(),
         is(0));
   }
+
+  @Test
+  @DisplayName(
+      "A fresh item's draft covers no more than its shelf life, whatever cover was asked for")
+  void freshItemsAreCappedToTheirShelfLife() {
+    String dairy = supplier("Dairy Direct");
+    String poId = orderFrom(dairy, v3, "5", "0.80");
+    data(
+        post(
+            "/goods-receipts",
+            "{\"poId\":\""
+                + poId
+                + "\",\"storeId\":\""
+                + store
+                + "\",\"lines\":[{\"variantId\":\""
+                + v3
+                + "\",\"qtyReceived\":5}]}"),
+        201);
+    stockPosition(
+        plan(v3, "5", "null", "1", 2),
+        level(v3, "1"),
+        "{\"variantId\":\""
+            + v3
+            + "\",\"next28\":28.0000,\"fresh\":true,\"shelfLifeDays\":5,\"maxCoverDays\":5}");
+    JsonObject run =
+        data(
+            post(
+                "/purchase-orders/proposals/run",
+                "{\"storeId\":\"" + store + "\",\"coverDays\":28}"),
+            200);
+    JsonObject draft = run.getJsonArray("orders").getJsonObject(0);
+    JsonArray lines =
+        body(as("/purchase-orders/" + draft.getString("poId") + "/lines", "OWNER", null).get(), 200)
+            .getJsonArray("data");
+    JsonObject line = lines.getJsonObject(0);
+    // back to the reorder point (5 - 1 = 4) plus five days of a twenty-eight-day forecast of 28
+    // (5), not 28 days
+    assertThat(line.getJsonNumber("qty").bigDecimalValue(), is(new BigDecimal("9.000")));
+    assertThat(line.getString("proposalReason"), containsString("capped to the 5-day shelf life"));
+  }
 }

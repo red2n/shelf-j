@@ -50,6 +50,7 @@ class ForecastIT {
   private final UUID steady = Ids.newId();
   private final UUID occasional = Ids.newId();
   private final UUID monthlyOnly = Ids.newId();
+  private final UUID yoghurt = Ids.newId();
 
   @AfterAll
   static void stopDb() {
@@ -80,6 +81,30 @@ class ForecastIT {
       ps.setObject(5, day);
       ps.setString(6, type);
       ps.setBigDecimal(7, new BigDecimal(qty));
+      ps.executeUpdate();
+    }
+  }
+
+  /**
+   * A dated batch received on {@code received}, living {@code lifeDays}, with {@code left} unsold.
+   */
+  private void batch(UUID variant, LocalDate received, int lifeDays, String left)
+      throws SQLException {
+    try (var c = PG.dataSource().getConnection();
+        var ps =
+            c.prepareStatement(
+                "INSERT INTO inventory.inventory_batches (id, tenant_id, store_id, variant_id, batch_no,"
+                    + " received_qty, remaining_qty, expiry_date, created_at)"
+                    + " VALUES (?,?,?,?,?,?,?,?,?)")) {
+      ps.setObject(1, Ids.newId());
+      ps.setObject(2, tenant);
+      ps.setObject(3, store);
+      ps.setObject(4, variant);
+      ps.setString(5, "B-" + received);
+      ps.setBigDecimal(6, new BigDecimal("40"));
+      ps.setBigDecimal(7, new BigDecimal(left));
+      ps.setObject(8, received.plusDays(lifeDays));
+      ps.setObject(9, java.time.OffsetDateTime.of(received.atTime(6, 0), ZoneOffset.UTC));
       ps.executeUpdate();
     }
   }
@@ -269,5 +294,40 @@ class ForecastIT {
     JsonObject empty = data(run("OWNER", null, runBody(Ids.newId(), null)));
     assertThat(empty.getInt("variants"), is(0));
     assertThat(empty.getInt("horizonDays"), is(28));
+  }
+
+  @Test
+  @DisplayName(
+      "A fresh item is known by its batches: its shelf life, its waste, and the longest cover an order should get")
+  void freshItemsAreKnownByTheirBatches() throws SQLException {
+    seed();
+    LocalDate yesterday = LocalDate.now(ZoneOffset.UTC).minusDays(1);
+    // Six a day for ninety days; a five-day batch every five days, the two most recent ones already
+    // past their date with three left unsold each (the newest still has three days to run): 540
+    // sold, 6 wasted.
+    for (int i = 0; i < 90; i++) {
+      bucket(store, yoghurt, yesterday.minusDays(i), "DAY", "6");
+    }
+    for (int i = 0; i < 18; i++) {
+      LocalDate received = yesterday.minusDays(2L + 5L * i);
+      batch(yoghurt, received, 5, i == 1 || i == 2 ? "3" : "0");
+    }
+    JsonObject result = data(run("OWNER", null, runBody(store, 28)));
+    assertThat(result.getInt("fresh"), is(1));
+
+    JsonObject f =
+        data(as("/admin/inventory/forecasts/" + store + "/" + yoghurt, "OWNER", null).get());
+    assertThat(f.getBoolean("fresh"), is(true));
+    assertThat(f.getInt("shelfLifeDays"), is(5));
+    assertThat(f.getInt("maxCoverDays"), is(5));
+    assertThat("6 wasted of 540 sold + 6 = 1.10%", num(f, "wasteRatePct"), closeTo(1.10, 0.01));
+    assertThat(
+        "a fresh item's level follows its last eight weeks", f.getInt("historyDays"), is(56));
+    assertThat(num(f, "next7"), closeTo(42.0, 0.5));
+
+    JsonObject keeps =
+        data(as("/admin/inventory/forecasts/" + store + "/" + steady, "OWNER", null).get());
+    assertThat(keeps.getBoolean("fresh"), is(false));
+    assertThat(!keeps.containsKey("shelfLifeDays") || keeps.isNull("shelfLifeDays"), is(true));
   }
 }

@@ -1392,6 +1392,10 @@ class DemandForecastRow {
   final double? mase;
   final List<({String day, double qty})> points;
   final String computedAt;
+  /// Lives fourteen days or fewer, by its dated batches (06.x).
+  final bool fresh;
+  final int? shelfLifeDays;
+  final double? wasteRatePct;
 
   const DemandForecastRow({
     required this.id,
@@ -1413,6 +1417,9 @@ class DemandForecastRow {
     required this.mase,
     required this.points,
     required this.computedAt,
+    this.fresh = false,
+    this.shelfLifeDays,
+    this.wasteRatePct,
   });
 
   factory DemandForecastRow.fromJson(Map<String, dynamic> j) => DemandForecastRow(
@@ -1443,6 +1450,9 @@ class DemandForecastRow {
                 ))
             .toList(),
         computedAt: j['computedAt'] as String? ?? '',
+        fresh: j['fresh'] as bool? ?? false,
+        shelfLifeDays: (j['shelfLifeDays'] as num?)?.toInt(),
+        wasteRatePct: (j['wasteRatePct'] as num?)?.toDouble(),
       );
 }
 

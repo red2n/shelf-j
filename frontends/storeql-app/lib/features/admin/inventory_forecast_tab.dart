@@ -2,6 +2,7 @@ import 'package:flutter/material.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 
 import '../../core/constants.dart';
+import '../../core/theme.dart';
 import '../../core/network/api_client.dart';
 import '../../core/network/api_error.dart';
 import '../../shared/util/short_ref.dart';
@@ -169,6 +170,27 @@ class _ForecastTable extends ConsumerWidget {
                       DataCell(Text('…${shortRef(r.variantId)}')),
                       DataCell(Row(mainAxisSize: MainAxisSize.min, children: [
                         Text(r.method),
+                        if (r.fresh)
+                          Padding(
+                            padding: const EdgeInsets.only(left: 6),
+                            child: Tooltip(
+                              message:
+                                  'Lives ${r.shelfLifeDays} days by its batches; an order covers no more'
+                                  '${r.wasteRatePct == null ? '' : ' · ${r.wasteRatePct!.toStringAsFixed(1)}% went out of date unsold'}',
+                              child: Container(
+                                padding: const EdgeInsets.symmetric(horizontal: 6, vertical: 2),
+                                decoration: BoxDecoration(
+                                  color: cs.secondaryContainer,
+                                  borderRadius: AppRadius.badge,
+                                ),
+                                child: Text('Fresh · ${r.shelfLifeDays} d',
+                                    style: TextStyle(
+                                        fontSize: 11,
+                                        fontWeight: FontWeight.w600,
+                                        color: cs.onSecondaryContainer)),
+                              ),
+                            ),
+                          ),
                         if (r.intermittent)
                           Padding(
                             padding: const EdgeInsets.only(left: 6),
@@ -228,7 +250,10 @@ class _ForecastDetail extends ConsumerWidget {
           const SizedBox(height: 4),
           Text('${f.historyDays} days of history to ${f.fromDay}; ${f.horizonDays} days ahead. '
               'Tested on the last ${f.holdoutDays} days: MAPE ${_fmt(f.mape, suffix: '%')}, '
-              'bias ${_fmt(f.bias, suffix: '%')}, MASE ${_fmt(f.mase, decimals: 2)}.'),
+              'bias ${_fmt(f.bias, suffix: '%')}, MASE ${_fmt(f.mase, decimals: 2)}.'
+              '${f.fresh ? ' Fresh: lives ${f.shelfLifeDays} days, so an order covers no more' : ''}'
+              '${f.wasteRatePct == null ? '' : '; ${f.wasteRatePct!.toStringAsFixed(1)}% of what was received went out of date unsold'}'
+              '${f.fresh || f.wasteRatePct != null ? '.' : ''}'),
           if (f.weekdayProfile.length == 7) ...[
             const SizedBox(height: 8),
             Text('Weekday profile: ${[

@@ -32,6 +32,7 @@ class _Server implements HttpClientAdapter {
 
   static String _row(String variant, String method, bool intermittent, String mape) =>
       '{"id":"f-$variant","storeId":"st-1","variantId":"$variant","method":"$method","intermittent":$intermittent,'
+      '${intermittent ? '"fresh":true,"shelfLifeDays":5,"wasteRatePct":1.10,"maxCoverDays":5,' : '"fresh":false,'}'
       '"alpha":0.2,"level":7.0,"weekdayProfile":[0.9,0.9,0.9,0.9,1.0,1.3,1.1],"historyFrom":"2026-07-25","historyTo":"2026-09-22",'
       '"historyDays":60,"horizonDays":28,"fromDay":"2026-09-23","next7":49.0,"next28":196.0,"holdoutDays":15,'
       '"mape":$mape,"bias":-2.5,"mase":0.8,"points":[],"computedAt":"2026-09-23T06:00:00Z"}';
@@ -94,6 +95,7 @@ void main() {
     expect(find.text('12.5'), findsOneWidget, reason: 'the steady seller\'s MAPE');
     expect(find.text('—'), findsOneWidget, reason: 'the intermittent row cannot compute a MAPE: a dash, never a zero');
     expect(find.byIcon(Icons.scatter_plot_outlined), findsOneWidget, reason: 'the intermittent item is marked');
+    expect(find.text('Fresh · 5 d'), findsOneWidget, reason: 'the fresh item wears its shelf life');
     expect(find.text('60 d'), findsNWidgets(2));
   });
 
