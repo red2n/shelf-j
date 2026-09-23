@@ -2,6 +2,7 @@ package com.storeql.notification.service;
 
 import com.storeql.notification.channel.Channels;
 import com.storeql.notification.channel.NotificationChannel;
+import com.storeql.notification.domain.Domain;
 import com.storeql.notification.repo.NotificationRepository;
 import jakarta.enterprise.context.ApplicationScoped;
 import jakarta.inject.Inject;
@@ -23,6 +24,10 @@ public class Notifier {
   @Inject Channels channels;
   @Inject NotificationRepository repo;
   @Inject Messages messages;
+  @Inject Businesses businesses;
+
+  /** What the log says of a message a sandbox would have sent (22.8). */
+  static final String SUPPRESSED = "SUPPRESSED";
 
   /**
    * A business's message, written in its words and the reader's language (13.x), on the configured
@@ -72,7 +77,10 @@ public class Notifier {
       return;
     }
     Messages.Composed m = messages.compose(tenantId, message);
-    c.send(tenantId, recipient, m.subject(), m.body());
+    boolean suppressed = suppressed(tenantId, c);
+    if (!suppressed) {
+      c.send(tenantId, recipient, m.subject(), m.body());
+    }
     repo.recordNotification(
         tenantId,
         subjectId,
@@ -82,9 +90,25 @@ public class Notifier {
         recipient,
         m.subject(),
         m.body(),
-        "SENT",
+        suppressed ? SUPPRESSED : "SENT",
         m.language(),
         m.template());
+  }
+
+  /**
+   * Whether a message must not leave (22.8): a sandbox reaches no real person — no email, text or
+   * push — but its own in-app log still shows what would have gone and to whom, which is what an
+   * integrator testing against it needs to see.
+   */
+  private boolean suppressed(UUID tenantId, NotificationChannel c) {
+    if (Domain.Channel.APP.equals(c.name())) {
+      return false;
+    }
+    boolean sandbox = businesses.sandbox(tenantId);
+    if (sandbox) {
+      LOG.log(Level.DEBUG, "Sandbox {0}: {1} message suppressed", tenantId, c.name());
+    }
+    return sandbox;
   }
 
   /**
@@ -108,9 +132,20 @@ public class Notifier {
     }
     // Send first: a failure here throws and is NOT recorded, so the consumer redelivers and
     // retries.
-    channel.send(tenantId, recipient, subject, body);
+    boolean suppressed = suppressed(tenantId, channel);
+    if (!suppressed) {
+      channel.send(tenantId, recipient, subject, body);
+    }
     repo.recordNotification(
-        tenantId, subjectId, eventId, type, channel.name(), recipient, subject, body, "SENT");
+        tenantId,
+        subjectId,
+        eventId,
+        type,
+        channel.name(),
+        recipient,
+        subject,
+        body,
+        suppressed ? SUPPRESSED : "SENT");
   }
 
   /**
@@ -139,8 +174,19 @@ public class Notifier {
     if (repo.alreadyNotified(eventId, type)) {
       return;
     }
-    c.send(tenantId, recipient, subject, body);
+    boolean suppressed = suppressed(tenantId, c);
+    if (!suppressed) {
+      c.send(tenantId, recipient, subject, body);
+    }
     repo.recordNotification(
-        tenantId, subjectId, eventId, type, c.name(), recipient, subject, body, "SENT");
+        tenantId,
+        subjectId,
+        eventId,
+        type,
+        c.name(),
+        recipient,
+        subject,
+        body,
+        suppressed ? SUPPRESSED : "SENT");
   }
 }

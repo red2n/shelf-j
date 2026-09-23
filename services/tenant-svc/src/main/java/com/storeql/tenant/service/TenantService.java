@@ -110,6 +110,8 @@ public class TenantService {
             null,
             null,
             null,
+            null,
+            Tenant.MODE_LIVE,
             null);
     var event =
         new OutboxRow(
@@ -745,7 +747,7 @@ public class TenantService {
    * each call site because dunning (21.12) writes the status itself and then announces it, and two
    * copies of the announcement would drift on what it says.
    */
-  private static OutboxRow tenantStatusEvent(UUID tenantId, String status) {
+  static OutboxRow tenantStatusEvent(UUID tenantId, String status) {
     return new OutboxRow(
         "TenantStatusChanged",
         "storeql.tenant.tenant-status-changed",

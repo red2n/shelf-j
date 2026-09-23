@@ -4,6 +4,7 @@ import com.storeql.iam.auth.Tokens;
 import com.storeql.iam.domain.ApiKey;
 import com.storeql.iam.dto.ApiKeyDtos;
 import com.storeql.iam.repo.ApiKeyRepository;
+import com.storeql.iam.repo.SandboxRepository;
 import com.storeql.iam.repo.UserRepository;
 import com.storeql.ids.Ids;
 import com.storeql.web.ApiException;
@@ -35,11 +36,33 @@ public class ApiKeyService {
 
   @Inject ApiKeyRepository keys;
   @Inject UserRepository users;
+  @Inject SandboxRepository sandboxes;
 
   /** A key as made, with the one copy of the key itself. */
   public record Minted(ApiKey key, String secret) {}
 
+  /**
+   * @param tenantId the caller's tenant: the live business, or its sandbox when called from inside
+   *     one — in which case the key is a sandbox key whatever the request says (22.8)
+   */
   public Minted mint(UUID tenantId, UUID by, ApiKeyDtos.CreateRequest req) {
+    // Whose key it is, and where it acts. A sandbox's keys belong to the live business, which lists
+    // and revokes them; a key asked for with sandbox: true acts in the business's active sandbox.
+    UUID owner = sandboxes.liveOf(tenantId).orElse(tenantId);
+    boolean inside = !owner.equals(tenantId);
+    boolean sandbox = inside || Boolean.TRUE.equals(req.sandbox());
+    UUID actsAs =
+        inside
+            ? tenantId
+            : sandbox
+                ? sandboxes
+                    .activeSandboxOf(tenantId)
+                    .orElseThrow(
+                        () ->
+                            ApiException.notFound(
+                                "SANDBOX_NOT_FOUND",
+                                "This business has no sandbox to mint a key for"))
+                : tenantId;
     String name = req.name() == null ? "" : req.name().trim();
     if (name.isEmpty() || name.length() > NAME_MAX) {
       throw ApiException.badRequest(
@@ -62,11 +85,14 @@ public class ApiKeyService {
       for (String s : req.storeIds()) distinct.add(Parsing.uuid(s, "storeIds"));
       stores.addAll(distinct);
     }
-    String secret = ApiKey.PREFIX + Tokens.newOpaqueToken(RANDOM_BYTES);
+    String secret =
+        (sandbox ? ApiKey.TEST_PREFIX : ApiKey.PREFIX) + Tokens.newOpaqueToken(RANDOM_BYTES);
     ApiKey key =
         new ApiKey(
             Ids.newId(),
-            tenantId,
+            actsAs,
+            owner,
+            sandbox,
             name,
             secret.substring(0, ApiKey.SHOWN),
             Tokens.hash(secret),
@@ -79,34 +105,43 @@ public class ApiKeyService {
             null,
             null);
     keys.insert(key);
-    users.audit(tenantId, by, "API_KEY_CREATED", key.id() + " " + key.prefix() + " " + role);
+    users.audit(
+        owner,
+        by,
+        "API_KEY_CREATED",
+        key.id() + " " + key.prefix() + " " + role + (sandbox ? " sandbox " + actsAs : ""));
     return new Minted(key, secret);
   }
 
   /** A page of the business's keys in the order they were made, and where the next page starts. */
   public record Page(List<ApiKey> items, String nextCursor) {}
 
+  /**
+   * Every key the business owns, live and sandbox alike — from the live business or its sandbox.
+   */
   public Page list(UUID tenantId, UUID after, int limit) {
+    UUID owner = sandboxes.liveOf(tenantId).orElse(tenantId);
     int size = Math.max(1, Math.min(limit, 100));
-    List<ApiKey> found = keys.list(tenantId, after, size + 1);
+    List<ApiKey> found = keys.list(owner, after, size + 1);
     if (found.size() <= size) return new Page(found, null);
     List<ApiKey> page = found.subList(0, size);
     return new Page(page, page.get(size - 1).id().toString());
   }
 
   public ApiKey revoke(UUID tenantId, UUID by, UUID id) {
+    UUID owner = sandboxes.liveOf(tenantId).orElse(tenantId);
     ApiKey key =
-        keys.find(tenantId, id)
+        keys.find(owner, id)
             .orElseThrow(() -> ApiException.notFound("API_KEY_NOT_FOUND", "No such key"));
     if (key.revoked()) {
       throw ApiException.conflict("API_KEY_REVOKED", "This key was already revoked");
     }
     Instant now = Instant.now();
-    if (!keys.revoke(tenantId, id, by, now)) {
+    if (!keys.revoke(owner, id, by, now)) {
       throw ApiException.conflict("API_KEY_REVOKED", "This key was already revoked");
     }
-    users.audit(tenantId, by, "API_KEY_REVOKED", key.id() + " " + key.prefix());
-    return keys.find(tenantId, id).orElseThrow();
+    users.audit(owner, by, "API_KEY_REVOKED", key.id() + " " + key.prefix());
+    return keys.find(owner, id).orElseThrow();
   }
 
   /** What a key may do right now, for the gateway; a reason when it may do nothing. */
@@ -129,6 +164,7 @@ public class ApiKeyService {
         key.tenantId().toString(),
         List.of(key.role()),
         key.storeIds().stream().map(UUID::toString).toList(),
-        key.name());
+        key.name(),
+        key.sandbox());
   }
 }

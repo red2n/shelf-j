@@ -73,6 +73,9 @@ public class AdminAuthorizationFilter implements ContainerRequestFilter {
   private static final Set<String> STAFF_ROLES =
       Set.of("PLATFORM_ADMIN", "OWNER", "MANAGER", "STOREKEEPER", "CASHIER");
 
+  /** The gateway's public description of the API's versions (22.8). */
+  private static final String API_VERSIONS = "/api/versions";
+
   /** Identity endpoints — they mint or manage credentials, reachable before any role exists. */
   private static final Set<String> IDENTITY_PATHS =
       Set.of(
@@ -101,8 +104,16 @@ public class AdminAuthorizationFilter implements ContainerRequestFilter {
   @Override
   public void filter(ContainerRequestContext req) throws IOException {
     // UriInfo.getPath() has no leading slash; normalize so "/admin/" matches top-level paths.
-    String path = stripGatewayPrefix("/" + req.getUriInfo().getPath());
+    String raw = "/" + req.getUriInfo().getPath();
+    String path = stripGatewayPrefix(raw);
     String method = req.getMethod();
+
+    // The gateway's own description of the API's versions (22.8): not a service call, and public
+    // by nature — read before any credential is held. Checked on the path as it came, because the
+    // prefix strip would take "versions" for a service name and leave "/".
+    if (API_VERSIONS.equals(raw)) {
+      return;
+    }
 
     // The platform operator's own surface, checked before anything else and gated to one role.
     if (isPlatformOperator(path)) {
@@ -365,8 +376,11 @@ public class AdminAuthorizationFilter implements ContainerRequestFilter {
     if (!path.startsWith("/api/")) {
       return path;
     }
-    int afterService = path.indexOf('/', "/api/".length());
-    return afterService >= 0 ? path.substring(afterService) : "/";
+    // The canonical form carries a version segment (22.8): /api/v1/{service}/… strips to the same
+    // service-local path as the alias /api/{service}/…, so a public read is public on both.
+    String rest = path.substring("/api/".length()).replaceFirst("^v\\d+/", "");
+    int afterService = rest.indexOf('/');
+    return afterService >= 0 ? rest.substring(afterService) : "/";
   }
 
   /**

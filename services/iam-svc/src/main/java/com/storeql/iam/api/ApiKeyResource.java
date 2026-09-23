@@ -103,6 +103,7 @@ public class ApiKeyResource {
         k.expiresAt(),
         k.lastUsedAt(),
         k.revokedAt(),
-        k.revokedBy() == null ? null : k.revokedBy().toString());
+        k.revokedBy() == null ? null : k.revokedBy().toString(),
+        k.sandbox());
   }
 }

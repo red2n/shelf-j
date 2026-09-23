@@ -10,6 +10,7 @@ import '../../shared/widgets/error_view.dart';
 import '../../shared/widgets/loading_view.dart';
 import 'api_keys_api.dart';
 import 'providers/admin_providers.dart';
+import 'sandbox_api.dart';
 import 'webhooks_api.dart';
 
 // ---------------------------------------------------------------------------
@@ -28,6 +29,7 @@ class IntegrationsScreen extends ConsumerWidget {
   Widget build(BuildContext context, WidgetRef ref) {
     final auth = ref.watch(authNotifierProvider).value;
     final owner = auth is AuthAuthenticated && auth.roles.contains('OWNER');
+    final inSandbox = auth is AuthAuthenticated && auth.sandbox;
     final keys = ref.watch(apiKeysProvider);
     final theme = Theme.of(context);
 
@@ -43,6 +45,8 @@ class IntegrationsScreen extends ConsumerWidget {
             style: theme.textTheme.bodyMedium,
           ),
           const SizedBox(height: 24),
+          _SandboxSection(owner: owner, inSandbox: inSandbox),
+          const SizedBox(height: 32),
           Row(
             children: [
               Text('API keys', style: theme.textTheme.titleLarge?.copyWith(fontWeight: FontWeight.bold)),
@@ -148,12 +152,20 @@ class _KeyTile extends StatelessWidget {
       key: Key('key-${k.id}'),
       margin: const EdgeInsets.only(bottom: 8),
       child: ListTile(
-        leading: Icon(Icons.vpn_key_outlined, color: active ? cs.primary : cs.outline),
+        leading: Icon(k.sandbox ? Icons.science_outlined : Icons.vpn_key_outlined, color: active ? cs.primary : cs.outline),
         title: Text(k.name),
         subtitle: Text('${k.prefix}… · ${k.role} · $where · $used$until'),
         trailing: Row(
           mainAxisSize: MainAxisSize.min,
           children: [
+            if (k.sandbox) ...[
+              Chip(
+                key: Key('sandbox-key-${k.id}'),
+                label: const Text('Sandbox'),
+                backgroundColor: cs.tertiaryContainer,
+              ),
+              const SizedBox(width: 8),
+            ],
             Chip(
               label: Text(k.status),
               backgroundColor: active ? cs.primaryContainer : cs.surfaceContainerHighest,
@@ -188,6 +200,7 @@ class _MintKeyDialogState extends ConsumerState<MintKeyDialog> {
   String _role = 'STOREKEEPER';
   final Set<String> _stores = {};
   DateTime? _expiresAt;
+  bool _sandbox = false;
   bool _busy = false;
   String? _error;
 
@@ -209,6 +222,7 @@ class _MintKeyDialogState extends ConsumerState<MintKeyDialog> {
             role: _role,
             storeIds: _stores.toList(),
             expiresAt: _expiresAt,
+            sandbox: _sandbox,
           );
       if (mounted) Navigator.pop(context, minted);
     } catch (e) {
@@ -222,6 +236,9 @@ class _MintKeyDialogState extends ConsumerState<MintKeyDialog> {
   @override
   Widget build(BuildContext context) {
     final stores = ref.watch(storesProvider);
+    final auth = ref.watch(authNotifierProvider).value;
+    final inSandbox = auth is AuthAuthenticated && auth.sandbox;
+    final sandbox = inSandbox ? null : ref.watch(sandboxProvider).value;
     return AlertDialog(
       title: const Text('Mint an API key'),
       content: SizedBox(
@@ -308,6 +325,24 @@ class _MintKeyDialogState extends ConsumerState<MintKeyDialog> {
                       ),
                   ],
                 ),
+                if (inSandbox) ...[
+                  const SizedBox(height: 12),
+                  Text(
+                    'You are in the sandbox: this key acts there and reaches nothing real.',
+                    key: const Key('key-sandbox-note'),
+                    style: Theme.of(context).textTheme.bodySmall,
+                  ),
+                ] else if (sandbox != null && sandbox.active) ...[
+                  const SizedBox(height: 8),
+                  SwitchListTile(
+                    key: const Key('key-sandbox'),
+                    contentPadding: EdgeInsets.zero,
+                    title: const Text('Sandbox key'),
+                    subtitle: const Text('Acts in the sandbox only, never on live data; starts sqk_test_.'),
+                    value: _sandbox,
+                    onChanged: (v) => setState(() => _sandbox = v),
+                  ),
+                ],
                 if (_error != null) ...[
                   const SizedBox(height: 8),
                   Text(_error!, style: TextStyle(color: Theme.of(context).colorScheme.error)),
@@ -328,6 +363,162 @@ class _MintKeyDialogState extends ConsumerState<MintKeyDialog> {
         ),
       ],
     );
+  }
+}
+
+/// The business's sandbox (22.8): whether there is one, and — for the owner —
+/// making it, opening it and removing it. Inside the sandbox, the way back.
+class _SandboxSection extends ConsumerWidget {
+  final bool owner;
+  final bool inSandbox;
+  const _SandboxSection({required this.owner, required this.inSandbox});
+
+  @override
+  Widget build(BuildContext context, WidgetRef ref) {
+    final theme = Theme.of(context);
+    final cs = theme.colorScheme;
+    if (inSandbox) {
+      return Card(
+        key: const Key('sandbox-inside'),
+        color: cs.tertiaryContainer,
+        child: Padding(
+          padding: const EdgeInsets.all(16),
+          child: Row(
+            children: [
+              Icon(Icons.science_outlined, color: cs.onTertiaryContainer),
+              const SizedBox(width: 12),
+              Expanded(
+                child: Text(
+                  'You are in the sandbox. Everything here — products, stock, orders, keys, webhooks — is a rehearsal: '
+                  'no message leaves it, no money moves, nothing is billed. Keys minted here start sqk_test_.',
+                  style: TextStyle(color: cs.onTertiaryContainer),
+                ),
+              ),
+              const SizedBox(width: 12),
+              FilledButton.tonal(
+                key: const Key('sandbox-leave'),
+                onPressed: () => ref.read(authNotifierProvider.notifier).leaveSandbox(),
+                child: const Text('Back to live'),
+              ),
+            ],
+          ),
+        ),
+      );
+    }
+    final sandbox = ref.watch(sandboxProvider);
+    return Column(
+      crossAxisAlignment: CrossAxisAlignment.stretch,
+      children: [
+        Row(
+          children: [
+            Text('Sandbox', style: theme.textTheme.titleLarge?.copyWith(fontWeight: FontWeight.bold)),
+            const Spacer(),
+            if (owner)
+              sandbox.when(
+                loading: () => const SizedBox.shrink(),
+                error: (_, _) => const SizedBox.shrink(),
+                data: (s) => s == null
+                    ? FilledButton.icon(
+                        key: const Key('sandbox-create'),
+                        onPressed: () => _create(context, ref),
+                        icon: const Icon(Icons.science_outlined),
+                        label: const Text('Create a sandbox'),
+                      )
+                    : Row(
+                        children: [
+                          TextButton(
+                            key: const Key('sandbox-delete'),
+                            onPressed: () => _remove(context, ref, s),
+                            child: const Text('Remove the sandbox'),
+                          ),
+                          const SizedBox(width: 8),
+                          FilledButton.icon(
+                            key: const Key('sandbox-enter'),
+                            onPressed: () => _enter(context, ref),
+                            icon: const Icon(Icons.login),
+                            label: const Text('Open the sandbox'),
+                          ),
+                        ],
+                      ),
+              ),
+          ],
+        ),
+        const SizedBox(height: 4),
+        Text(
+          'A copy of the business where your systems can be tried against nothing real: '
+          'no message leaves it, no money moves, nothing is billed. One at a time; remove it and make another to start clean.',
+          style: theme.textTheme.bodyMedium,
+        ),
+        const SizedBox(height: 12),
+        sandbox.when(
+          loading: () => const LoadingView(label: 'Loading the sandbox…'),
+          error: (e, _) => ErrorView(
+            message: friendlyError(e, fallback: 'Could not load the sandbox.'),
+            onRetry: () => ref.invalidate(sandboxProvider),
+          ),
+          data: (s) => s == null
+              ? const Padding(
+                  key: Key('sandbox-none'),
+                  padding: EdgeInsets.symmetric(vertical: 12),
+                  child: Text('No sandbox yet. Create one before pointing a new integration at the live business.'),
+                )
+              : Card(
+                  key: const Key('sandbox-card'),
+                  child: ListTile(
+                    leading: Icon(Icons.science_outlined, color: cs.primary),
+                    title: Text(s.name),
+                    subtitle: Text('SANDBOX plan · made ${AppFormat.date(s.createdAt)} · tenant ${s.id}'),
+                    trailing: Chip(label: Text(s.active ? 'Active' : s.status), backgroundColor: cs.primaryContainer),
+                  ),
+                ),
+        ),
+      ],
+    );
+  }
+
+  Future<void> _create(BuildContext context, WidgetRef ref) async {
+    final messenger = ScaffoldMessenger.of(context);
+    try {
+      final made = await ref.read(sandboxApiProvider).create();
+      ref.invalidate(sandboxProvider);
+      messenger.showSnackBar(SnackBar(content: Text('${made.name} is ready')));
+    } catch (e) {
+      messenger.showSnackBar(SnackBar(content: Text(friendlyError(e, fallback: 'The sandbox could not be made.'))));
+    }
+  }
+
+  Future<void> _enter(BuildContext context, WidgetRef ref) async {
+    final messenger = ScaffoldMessenger.of(context);
+    try {
+      await ref.read(authNotifierProvider.notifier).enterSandbox();
+    } catch (e) {
+      messenger.showSnackBar(SnackBar(content: Text(friendlyError(e, fallback: 'The sandbox could not be opened.'))));
+    }
+  }
+
+  Future<void> _remove(BuildContext context, WidgetRef ref, Sandbox s) async {
+    final sure = await showDialog<bool>(
+      context: context,
+      builder: (ctx) => AlertDialog(
+        title: Text('Remove ${s.name}?'),
+        content: const Text(
+            'Everything in it is erased and its keys stop within seconds. Make a new one whenever you need a clean start.'),
+        actions: [
+          TextButton(onPressed: () => Navigator.pop(ctx, false), child: const Text('Keep it')),
+          FilledButton(key: const Key('sandbox-delete-confirm'), onPressed: () => Navigator.pop(ctx, true), child: const Text('Remove')),
+        ],
+      ),
+    );
+    if (sure != true || !context.mounted) return;
+    final messenger = ScaffoldMessenger.of(context);
+    try {
+      await ref.read(sandboxApiProvider).remove();
+      ref.invalidate(sandboxProvider);
+      ref.invalidate(apiKeysProvider);
+      messenger.showSnackBar(const SnackBar(content: Text('Sandbox removed')));
+    } catch (e) {
+      messenger.showSnackBar(SnackBar(content: Text(friendlyError(e, fallback: 'The sandbox could not be removed.'))));
+    }
   }
 }
 

@@ -235,7 +235,16 @@ class _WideTable extends StatelessWidget {
                     )),
                     DataCell(Text(t.country)),
                     DataCell(Text(t.currency)),
-                    DataCell(_StatusChip(active: active, label: t.status)),
+                    DataCell(Row(
+                      mainAxisSize: MainAxisSize.min,
+                      children: [
+                        _StatusChip(active: active, label: t.status),
+                        if (t.sandbox) ...[
+                          const SizedBox(width: 6),
+                          const _SandboxChip(),
+                        ],
+                      ],
+                    )),
                     DataCell(Text(
                       t.createdAt.length >= 10
                           ? t.createdAt.substring(0, 10)
@@ -315,6 +324,10 @@ class _NarrowList extends StatelessWidget {
               mainAxisSize: MainAxisSize.min,
               children: [
                 _StatusChip(active: active, label: t.status),
+                if (t.sandbox) ...[
+                  const SizedBox(width: 6),
+                  const _SandboxChip(),
+                ],
                 PopupMenuButton<String>(
                   icon: const Icon(Icons.more_vert),
                   tooltip: 'Actions',
@@ -345,6 +358,33 @@ class _NarrowList extends StatelessWidget {
           ),
         );
       },
+    );
+  }
+}
+
+/// A business's sandbox (22.8): a tenant of its own, marked so the platform
+/// never mistakes it for a customer.
+class _SandboxChip extends StatelessWidget {
+  const _SandboxChip();
+
+  @override
+  Widget build(BuildContext context) {
+    final cs = Theme.of(context).colorScheme;
+    return Container(
+      key: const Key('sandbox-chip'),
+      padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 3),
+      decoration: BoxDecoration(
+        color: cs.tertiaryContainer,
+        borderRadius: BorderRadius.circular(12),
+      ),
+      child: Text(
+        'Sandbox',
+        style: TextStyle(
+          fontSize: 11,
+          fontWeight: FontWeight.bold,
+          color: cs.onTertiaryContainer,
+        ),
+      ),
     );
   }
 }

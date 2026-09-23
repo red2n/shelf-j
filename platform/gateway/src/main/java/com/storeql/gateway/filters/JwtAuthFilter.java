@@ -51,6 +51,10 @@ public class JwtAuthFilter implements ContainerRequestFilter {
           "api/iam-svc/auth/register",
           // The price list a prospect reads before signing up (21.13): plans on sale, no identity.
           "api/tenant-svc/plans",
+          // The API's versions and their policy (22.8): what an integrator reads before holding
+          // any credential. Exactly this path — normalize() leaves it alone, having no version
+          // segment to collapse — and nothing under it.
+          "api/versions",
           "api/iam-svc/auth/login",
           // The token signing keys' public halves (20.15): public by nature.
           "api/iam-svc/auth/.well-known/jwks.json",

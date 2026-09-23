@@ -45,6 +45,12 @@ public final class Plans {
    */
   public record Entitlement(String key, String label, boolean limit, String enforcedBy) {}
 
+  /**
+   * The code of the plan a business's sandbox sits on (22.8): seeded by migration, sold to nobody,
+   * never the default, never given to a live business.
+   */
+  public static final String SANDBOX_CODE = "SANDBOX";
+
   public static final String STORES_MAX = "stores.max";
   public static final String STAFF_MAX = "staff.max";
   public static final String PRODUCTS_MAX = "products.max";

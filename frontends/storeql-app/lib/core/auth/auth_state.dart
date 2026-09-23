@@ -69,6 +69,11 @@ class AuthAuthenticated extends AuthState {
   /// narrows, no claim means the tier's defaults.
   final List<String>? permissions;
 
+  /// Whether this token names the business's sandbox (22.8): its `amr` says
+  /// `sandbox`, and everything done with it is against nothing real. The app
+  /// shows where it is and offers the way back to live.
+  final bool sandbox;
+
   const AuthAuthenticated({
     required this.accessToken,
     required this.refreshToken,
@@ -78,6 +83,7 @@ class AuthAuthenticated extends AuthState {
     this.email,
     this.storeIds = const [],
     this.permissions,
+    this.sandbox = false,
   });
 
   /// What a built-in role holds by default. Kept in step with the server's

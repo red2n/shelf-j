@@ -299,6 +299,7 @@ class AdminShell extends ConsumerWidget {
     final storekeeperOnly = auth is AuthAuthenticated &&
         auth.isStorekeeper &&
         !auth.isManager;
+    final inSandbox = auth is AuthAuthenticated && auth.sandbox;
 
     final items = storekeeperOnly
         ? _navItems.where((i) => i.storekeeperVisible).toList()
@@ -354,7 +355,45 @@ class AdminShell extends ConsumerWidget {
           ],
         ),
       ],
-      child: child,
+      child: inSandbox
+          ? Column(children: [const _SandboxBanner(), Expanded(child: child)])
+          : child,
+    );
+  }
+}
+
+/// Where the owner is (22.8): in the sandbox, where nothing is real, with the
+/// way back to the live business one tap away.
+class _SandboxBanner extends ConsumerWidget {
+  const _SandboxBanner();
+
+  @override
+  Widget build(BuildContext context, WidgetRef ref) {
+    final cs = Theme.of(context).colorScheme;
+    return Material(
+      key: const Key('sandbox-banner'),
+      color: cs.tertiaryContainer,
+      child: Padding(
+        padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 6),
+        child: Row(
+          children: [
+            Icon(Icons.science_outlined, color: cs.onTertiaryContainer),
+            const SizedBox(width: 10),
+            Expanded(
+              child: Text(
+                'Sandbox — nothing here is real: no message leaves it, no money moves, nothing is billed.',
+                style: TextStyle(color: cs.onTertiaryContainer),
+              ),
+            ),
+            TextButton(
+              key: const Key('sandbox-leave'),
+              onPressed: () =>
+                  ref.read(authNotifierProvider.notifier).leaveSandbox(),
+              child: const Text('Back to live'),
+            ),
+          ],
+        ),
+      ),
     );
   }
 }

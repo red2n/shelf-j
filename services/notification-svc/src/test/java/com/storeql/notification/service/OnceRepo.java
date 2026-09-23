@@ -26,6 +26,9 @@ public final class OnceRepo extends NotificationRepository {
     return notified || recorded.contains(eventId + "/" + type);
   }
 
+  /** What the last record said happened: SENT, or SUPPRESSED in a sandbox. */
+  public String lastStatus;
+
   /** What the last message was written in, and from which words. */
   public String language;
 
@@ -61,6 +64,7 @@ public final class OnceRepo extends NotificationRepository {
       String template) {
     this.language = language;
     this.template = template;
+    this.lastStatus = status;
     records++;
     this.subjectId = subjectId;
     recorded.add(eventId + "/" + type);

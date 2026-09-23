@@ -19,6 +19,10 @@ import java.util.UUID;
 public record ApiKey(
     UUID id,
     UUID tenantId,
+    /** The live business that made the key and may revoke it; the tenant itself for a live key. */
+    UUID ownerTenantId,
+    /** Whether it acts in the business's sandbox (22.8): {@code sqk_test_}, and never live data. */
+    boolean sandbox,
     String name,
     String prefix,
     String keyHash,
@@ -37,8 +41,16 @@ public record ApiKey(
   /** Every key starts with this, so the gateway knows a key from a token at a glance. */
   public static final String PREFIX = "sqk_";
 
+  /**
+   * A sandbox key starts with this instead (22.8): told apart at a glance, in a log or a config.
+   */
+  public static final String TEST_PREFIX = "sqk_test_";
+
   /** The key: the prefix and 40 characters of 30 random bytes. */
   public static final int LENGTH = 44;
+
+  /** A sandbox key: its longer prefix and the same 40 characters. */
+  public static final int TEST_LENGTH = 49;
 
   /** How many characters of it are shown on the list. */
   public static final int SHOWN = 12;
@@ -57,6 +69,8 @@ public record ApiKey(
 
   /** Whether a string is even shaped like a key, before anything is looked up. */
   public static boolean looksLikeKey(String text) {
-    return text != null && text.length() == LENGTH && text.startsWith(PREFIX);
+    if (text == null) return false;
+    return (text.length() == LENGTH && text.startsWith(PREFIX))
+        || (text.length() == TEST_LENGTH && text.startsWith(TEST_PREFIX));
   }
 }

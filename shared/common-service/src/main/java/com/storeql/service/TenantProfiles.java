@@ -63,7 +63,14 @@ public class TenantProfiles {
   private static final Pattern COUNTRY = Pattern.compile("[A-Z]{2}");
 
   /** What a service needs to know about the tenant it is acting for. */
-  public record Profile(UUID tenantId, String currency, String country) {}
+  /**
+   * What tenant-svc says of a business.
+   *
+   * @param sandbox whether it is a sandbox (22.8): a stand-in for a live business where nothing is
+   *     real — no message leaves it and no money moves. False for a live business, and for a
+   *     profile from before sandboxes existed.
+   */
+  public record Profile(UUID tenantId, String currency, String country, boolean sandbox) {}
 
   private record Cached(Profile profile, Instant expiresAt) {}
 
@@ -124,7 +131,7 @@ public class TenantProfiles {
   }
 
   /** For tests: a fetch function standing in for tenant-svc, and a clock to age the cache with. */
-  static TenantProfiles forTest(Function<UUID, Optional<String>> fetch, Clock clock) {
+  public static TenantProfiles forTest(Function<UUID, Optional<String>> fetch, Clock clock) {
     TenantProfiles p = new TenantProfiles();
     p.fetch = fetch;
     p.clock = clock;
@@ -338,6 +345,16 @@ public class TenantProfiles {
    *
    * @throws ApiException 503 {@code TENANT_PROFILE_UNAVAILABLE} when it cannot be read
    */
+  /**
+   * Whether the business is a sandbox (22.8). False when its profile cannot be read: a business
+   * whose nature is unknown is treated as live, so an outage never makes a real business behave as
+   * a sandbox — the callers that must not act on a sandbox read the profile for other reasons first
+   * and fail closed there.
+   */
+  public boolean isSandbox(UUID tenantId) {
+    return find(tenantId).map(Profile::sandbox).orElse(false);
+  }
+
   public String requireCurrency(UUID tenantId) {
     return require(tenantId).currency();
   }
@@ -421,7 +438,8 @@ public class TenantProfiles {
       String country = upper(data.getString("country", null));
       if (currency == null || !CURRENCY.matcher(currency).matches()) return Optional.empty();
       if (country == null || !COUNTRY.matcher(country).matches()) return Optional.empty();
-      return Optional.of(new Profile(tenantId, currency, country));
+      String mode = upper(data.getString("mode", null));
+      return Optional.of(new Profile(tenantId, currency, country, "SANDBOX".equals(mode)));
     } catch (RuntimeException e) {
       LOG.log(Level.WARNING, "malformed tenant profile for {0}: {1}", tenantId, e.getMessage());
       return Optional.empty();

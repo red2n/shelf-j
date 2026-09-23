@@ -54,7 +54,13 @@ public class ExportableData extends TenantDataSpec {
 
   @Override
   public Map<String, String> tenantPredicates() {
-    return Map.of("user_roles", "user_id IN (SELECT u.id FROM users u WHERE u.tenant_id = ?)");
+    return Map.of(
+        "user_roles",
+        "user_id IN (SELECT u.id FROM users u WHERE u.tenant_id = ?)",
+        // A business's sandboxes are its own data (22.8): the pair is keyed by the sandbox and
+        // belongs to the live business.
+        "tenant_sandboxes",
+        "live_tenant_id = ?");
   }
 
   @Override
@@ -65,7 +71,9 @@ public class ExportableData extends TenantDataSpec {
         "mfa_totp", staffOfTheBusiness,
         "mfa_recovery_codes", staffOfTheBusiness,
         "mfa_passkeys", staffOfTheBusiness,
-        "mfa_challenges", staffOfTheBusiness);
+        "mfa_challenges", staffOfTheBusiness,
+        // Erased with the sandbox it names, and with the live business that had it.
+        "tenant_sandboxes", "? IN (sandbox_tenant_id, live_tenant_id)");
   }
 
   @Override
@@ -76,7 +84,9 @@ public class ExportableData extends TenantDataSpec {
         "sso_connections",
         "the sign-in name is unique on the platform and the secret is not exported: the provider is connected again at the destination",
         "sso_identities",
-        "links to the identity provider's people: each is made again at that person's first sign-in there");
+        "links to the identity provider's people: each is made again at that person's first sign-in there",
+        "tenant_sandboxes",
+        "a sandbox is a tenant of the platform it was made on; the destination business makes its own");
   }
 
   @Override

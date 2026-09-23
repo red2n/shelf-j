@@ -182,9 +182,17 @@ public final class Dtos {
       @Schema(description = "Identifier within that scheme, or null.") String einvoiceId,
       @Schema(
               description =
-                  "Why it is switched off: NON_PAYMENT (dunning, and lifted by paying up) or"
-                      + " ADMINISTRATOR (never lifted by a payment). Null when it is trading.")
-          String deactivatedReason) {}
+                  "Why it is switched off: NON_PAYMENT (dunning, and lifted by paying up),"
+                      + " ADMINISTRATOR (never lifted by a payment) or SANDBOX_DELETED (a sandbox"
+                      + " its owner removed). Null when it is trading.")
+          String deactivatedReason,
+      @Schema(
+              description =
+                  "LIVE, or SANDBOX for a business's test double (22.8): nothing in a sandbox is"
+                      + " real — no message leaves it, no money moves, nothing is billed.")
+          String mode,
+      @Schema(description = "For a SANDBOX, the live business it stands in for; null otherwise.")
+          String sandboxOf) {}
 
   @Schema(name = "StoreResponse")
   public record StoreResponse(

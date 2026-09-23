@@ -35,7 +35,7 @@ public class TenantRepository extends BaseOutboxRepository {
 
   private static final String TENANT_SELECT =
       "SELECT id, name, legal_name, status, plan_id, owner_user_id, country, currency,"
-          + " created_at, updated_at, vat_number, einvoice_scheme, einvoice_id, deactivated_reason FROM tenants";
+          + " created_at, updated_at, vat_number, einvoice_scheme, einvoice_id, deactivated_reason, mode, sandbox_of FROM tenants";
 
   // ─────────────────────────────────────────────── create (atomic with outbox)
 
@@ -134,20 +134,31 @@ public class TenantRepository extends BaseOutboxRepository {
    * @param tenantId the tenant to fetch
    * @return the tenant, or empty when no such tenant exists
    */
-  /** The business a login owns, if any (21.13: one login, one business). */
+  /**
+   * The business a login owns, if any (21.13: one login, one business). The live one: a sandbox is
+   * owned by the same login and is not a second business (22.8).
+   */
   public Optional<Tenant> findByOwner(UUID ownerUserId) {
     return one(
-        "SELECT id, name, legal_name, status, plan_id, owner_user_id, country, currency,"
-            + " created_at, updated_at, vat_number, einvoice_scheme, einvoice_id, deactivated_reason"
-            + " FROM tenants WHERE owner_user_id = ? ORDER BY created_at LIMIT 1",
+        TENANT_SELECT + " WHERE owner_user_id = ? AND mode = 'LIVE' ORDER BY created_at LIMIT 1",
         ownerUserId,
+        TenantRepository::mapTenant);
+  }
+
+  /** The business's active sandbox, if it has one (22.8). */
+  public Optional<Tenant> findActiveSandbox(UUID liveTenantId) {
+    return one(
+        TENANT_SELECT
+            + " WHERE sandbox_of = ? AND mode = 'SANDBOX' AND status = 'ACTIVE'"
+            + " ORDER BY created_at DESC LIMIT 1",
+        liveTenantId,
         TenantRepository::mapTenant);
   }
 
   public Optional<Tenant> findTenant(UUID tenantId) {
     return one(
         "SELECT id, name, legal_name, status, plan_id, owner_user_id, country, currency,"
-            + " created_at, updated_at, vat_number, einvoice_scheme, einvoice_id, deactivated_reason FROM tenants WHERE id = ?",
+            + " created_at, updated_at, vat_number, einvoice_scheme, einvoice_id, deactivated_reason, mode, sandbox_of FROM tenants WHERE id = ?",
         tenantId,
         TenantRepository::mapTenant);
   }
@@ -227,6 +238,17 @@ public class TenantRepository extends BaseOutboxRepository {
    */
   public Tenant updateTenantStatusWithOutbox(
       UUID tenantId, String status, String reason, UUID actorId, OutboxRow event) {
+    return updateTenantStatusWithOutbox(tenantId, status, reason, actorId, List.of(event));
+  }
+
+  /**
+   * The same, announcing more than one thing in the transaction — a sandbox removed is switched off
+   * and its erasure started at once (22.8).
+   *
+   * @param events the outbox rows to commit with the change, in order
+   */
+  public Tenant updateTenantStatusWithOutbox(
+      UUID tenantId, String status, String reason, UUID actorId, List<OutboxRow> events) {
     Instant now = Instant.now();
     boolean off = !"ACTIVE".equals(status);
     inTx(
@@ -279,7 +301,9 @@ public class TenantRepository extends BaseOutboxRepository {
               }
             }
           }
-          insertOutbox(c, event);
+          for (OutboxRow event : events) {
+            insertOutbox(c, event);
+          }
           return null;
         },
         "update tenant status");
@@ -922,7 +946,7 @@ public class TenantRepository extends BaseOutboxRepository {
         c.prepareStatement(
             "INSERT INTO tenants"
                 + " (id, name, legal_name, status, plan_id, owner_user_id, country, currency,"
-                + " created_at, updated_at) VALUES (?,?,?,?,?,?,?,?,?,?)")) {
+                + " created_at, updated_at, mode, sandbox_of) VALUES (?,?,?,?,?,?,?,?,?,?,?,?)")) {
       ps.setObject(1, t.id());
       ps.setString(2, t.name());
       ps.setString(3, t.legalName());
@@ -933,6 +957,8 @@ public class TenantRepository extends BaseOutboxRepository {
       ps.setString(8, t.currency());
       ps.setObject(9, t.createdAt().atOffset(ZoneOffset.UTC));
       ps.setObject(10, t.createdAt().atOffset(ZoneOffset.UTC));
+      ps.setString(11, t.mode() == null ? Tenant.MODE_LIVE : t.mode());
+      ps.setObject(12, t.sandboxOf());
       ps.executeUpdate();
     }
   }
@@ -1044,7 +1070,9 @@ public class TenantRepository extends BaseOutboxRepository {
         rs.getString("vat_number"),
         rs.getString("einvoice_scheme"),
         rs.getString("einvoice_id"),
-        rs.getString("deactivated_reason"));
+        rs.getString("deactivated_reason"),
+        rs.getString("mode"),
+        rs.getObject("sandbox_of", UUID.class));
   }
 
   private static Store mapStore(ResultSet rs) throws SQLException {
@@ -1200,7 +1228,7 @@ public class TenantRepository extends BaseOutboxRepository {
     StringBuilder sql =
         new StringBuilder(
             "SELECT id, name, legal_name, status, plan_id, owner_user_id, country, currency,"
-                + " created_at, updated_at, vat_number, einvoice_scheme, einvoice_id, deactivated_reason FROM tenants");
+                + " created_at, updated_at, vat_number, einvoice_scheme, einvoice_id, deactivated_reason, mode, sandbox_of FROM tenants");
     if (afterCreatedAt != null && afterId != null) sql.append(" WHERE (created_at, id) > (?, ?)");
     sql.append(" ORDER BY created_at, id LIMIT ?");
     return query(

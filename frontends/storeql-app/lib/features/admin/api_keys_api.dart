@@ -24,6 +24,10 @@ class ApiKey {
   final String? lastUsedAt;
   final String? revokedAt;
 
+  /// Whether it acts in the business's sandbox (22.8): `sqk_test_…`, and
+  /// never live data.
+  final bool sandbox;
+
   const ApiKey({
     required this.id,
     required this.name,
@@ -35,6 +39,7 @@ class ApiKey {
     required this.expiresAt,
     required this.lastUsedAt,
     required this.revokedAt,
+    this.sandbox = false,
   });
 
   factory ApiKey.fromJson(Map<String, dynamic> j) => ApiKey(
@@ -48,6 +53,7 @@ class ApiKey {
         expiresAt: j['expiresAt'] as String?,
         lastUsedAt: j['lastUsedAt'] as String?,
         revokedAt: j['revokedAt'] as String?,
+        sandbox: j['sandbox'] as bool? ?? false,
       );
 
   bool get revoked => revokedAt != null;
@@ -101,12 +107,14 @@ class ApiKeysApi {
     required String role,
     List<String> storeIds = const [],
     DateTime? expiresAt,
+    bool sandbox = false,
   }) async {
     final resp = await _dio.post(_base, data: {
       'name': name,
       'role': role,
       if (storeIds.isNotEmpty) 'storeIds': storeIds,
       if (expiresAt != null) 'expiresAt': expiresAt.toUtc().toIso8601String(),
+      if (sandbox) 'sandbox': true,
     });
     final data = resp.data['data'] as Map<String, dynamic>;
     return MintedApiKey(ApiKey.fromJson(data), data['key'] as String);

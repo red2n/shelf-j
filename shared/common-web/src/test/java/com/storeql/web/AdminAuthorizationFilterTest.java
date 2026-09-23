@@ -243,6 +243,25 @@ class AdminAuthorizationFilterTest {
     assertAborted(invoke("POST", "/.well-known/security.txt"), 403);
   }
 
+  /**
+   * At the gateway the request path is the proxy route, and since 22.8 the canonical form carries a
+   * version segment: {@code /api/v1/{service}/…} must strip to the same service-local path as the
+   * alias, or every public read on the versioned form — the price list, a service's OpenAPI
+   * description — is refused to the person with no account it exists for. The versions document
+   * itself is public; a private read stays private on either form.
+   */
+  @Test
+  void theVersionedFormIsAsOpenAsTheAlias() throws Exception {
+    assertNotAborted(invoke("GET", "/api/tenant-svc/plans"));
+    assertNotAborted(invoke("GET", "/api/v1/tenant-svc/plans"));
+    assertNotAborted(invoke("GET", "/api/v1/iam-svc/openapi"));
+    assertNotAborted(invoke("GET", "/api/v12/customer-svc/openapi"));
+    assertNotAborted(invoke("GET", "/api/versions"));
+    assertAborted(invoke("GET", "/api/v1/order-svc/admin/orders"), 403);
+    assertAborted(invoke("GET", "/api/v1/tenant-svc/admin/tenant"), 403);
+    assertAborted(invoke("GET", "/api/versions/extra"), 403);
+  }
+
   /** CORS preflight carries no credentials by design; denying it breaks every browser client. */
   @Test
   void corsPreflightIsNotDenied() throws Exception {

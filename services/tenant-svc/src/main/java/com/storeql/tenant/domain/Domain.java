@@ -30,10 +30,23 @@ public final class Domain {
        * administrator's decision is not an argument a payment can win — so without this the two
        * suspensions are indistinguishable and a payment would overrule one of them silently.
        */
-      String deactivatedReason) {
+      String deactivatedReason,
+      /** LIVE, or SANDBOX for a business's test double (22.8). */
+      String mode,
+      /** For a sandbox, the live business it stands in for; null for a live business. */
+      UUID sandboxOf) {
     public static final String STATUS_PENDING = "PENDING";
     public static final String STATUS_ACTIVE = "ACTIVE";
     public static final String STATUS_INACTIVE = "INACTIVE";
+    public static final String MODE_LIVE = "LIVE";
+    public static final String MODE_SANDBOX = "SANDBOX";
+
+    /** Why a sandbox is switched off: its owner removed it (22.8). Never lifted. */
+    public static final String REASON_SANDBOX_DELETED = "SANDBOX_DELETED";
+
+    public boolean isSandbox() {
+      return MODE_SANDBOX.equals(mode);
+    }
   }
 
   public record Store(

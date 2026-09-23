@@ -11,4 +11,10 @@ public interface Businesses {
 
   /** The name it trades under, which signs its messages. */
   Optional<String> name(UUID tenantId);
+
+  /**
+   * Whether it is a sandbox (22.8): a stand-in for a live business where no message may reach a
+   * real person. False when unknown — an outage never silences a live business.
+   */
+  boolean sandbox(UUID tenantId);
 }

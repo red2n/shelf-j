@@ -130,6 +130,17 @@ public final class Dtos {
     }
   }
 
+  @Schema(
+      name = "SandboxTokenResponse",
+      description =
+          "A token for the business's sandbox (22.8): names the sandbox as its tenant, an owner"
+              + " there, amr [sandbox], no refresh token.")
+  public record SandboxTokenResponse(
+      String accessToken,
+      @Schema(description = "Always \"Bearer\".") String tokenType,
+      Long expiresInSeconds,
+      @Schema(description = "The sandbox tenant the token names.") String tenantId) {}
+
   /** The account holder confirming, with their password, that the account should be deleted. */
   @Schema(name = "DeleteAccountRequest")
   public record DeleteAccountRequest(

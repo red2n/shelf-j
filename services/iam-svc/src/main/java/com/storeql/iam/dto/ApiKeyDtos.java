@@ -26,7 +26,12 @@ public final class ApiKeyDtos {
       @Schema(description = "The stores it may work in; leave out for every store.")
           List<String> storeIds,
       @Schema(description = "When it stops, ISO-8601; leave out for until revoked.")
-          String expiresAt) {}
+          String expiresAt,
+      @Schema(
+              description =
+                  "True for a key that acts in the business's sandbox (22.8): it starts sqk_test_"
+                      + " and reaches nothing real. From inside a sandbox every key is one.")
+          Boolean sandbox) {}
 
   @Schema(name = "ApiKey", description = "A key as listed: never the key itself.")
   public record KeyResponse(
@@ -40,7 +45,8 @@ public final class ApiKeyDtos {
       Instant expiresAt,
       Instant lastUsedAt,
       Instant revokedAt,
-      String revokedBy) {}
+      String revokedBy,
+      @Schema(description = "Whether it acts in the business's sandbox.") boolean sandbox) {}
 
   @Schema(
       name = "ApiKeyCreated",
@@ -56,6 +62,7 @@ public final class ApiKeyDtos {
       Instant expiresAt,
       Instant lastUsedAt,
       Instant revokedAt,
+      @Schema(description = "Whether it acts in the business's sandbox.") boolean sandbox,
       @Schema(description = "The whole key. Copy it now: it is not kept.") String key) {
 
     /** The listing's view of the key, with the key itself beside it. */
@@ -71,6 +78,7 @@ public final class ApiKeyDtos {
           r.expiresAt(),
           r.lastUsedAt(),
           r.revokedAt(),
+          r.sandbox(),
           key);
     }
   }
@@ -94,10 +102,12 @@ public final class ApiKeyDtos {
       String tenantId,
       List<String> roles,
       List<String> storeIds,
-      String name) {
+      String name,
+      @Schema(description = "True when the key acts in a sandbox; absent when refused.")
+          Boolean sandbox) {
 
     public static IntrospectionResponse refused(String reason) {
-      return new IntrospectionResponse(false, reason, null, null, null, null, null);
+      return new IntrospectionResponse(false, reason, null, null, null, null, null, null);
     }
   }
 }

@@ -735,6 +735,12 @@ class PlatformTenant {
   final String currency;
   final String createdAt;
 
+  /// LIVE, or SANDBOX for a business's test double (22.8).
+  final String mode;
+
+  /// For a sandbox, the live business it stands in for.
+  final String? sandboxOf;
+
   const PlatformTenant({
     required this.id,
     required this.name,
@@ -743,7 +749,11 @@ class PlatformTenant {
     required this.country,
     required this.currency,
     required this.createdAt,
+    this.mode = 'LIVE',
+    this.sandboxOf,
   });
+
+  bool get sandbox => mode.toUpperCase() == 'SANDBOX';
 
   factory PlatformTenant.fromJson(Map<String, dynamic> j) => PlatformTenant(
         id: j['id'] as String? ?? '',
@@ -753,6 +763,8 @@ class PlatformTenant {
         country: j['country'] as String? ?? '-',
         currency: j['currency'] as String? ?? '-',
         createdAt: j['createdAt'] as String? ?? '',
+        mode: j['mode'] as String? ?? 'LIVE',
+        sandboxOf: j['sandboxOf'] as String?,
       );
 }
 

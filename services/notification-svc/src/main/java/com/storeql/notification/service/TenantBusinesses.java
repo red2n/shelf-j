@@ -21,4 +21,9 @@ class TenantBusinesses implements Businesses {
   public Optional<String> name(UUID tenantId) {
     return profiles.businessName(tenantId);
   }
+
+  @Override
+  public boolean sandbox(UUID tenantId) {
+    return profiles.isSandbox(tenantId);
+  }
 }

@@ -97,6 +97,30 @@ class JwtAuthFilterTest {
     verify(requestContext).abortWith(any());
   }
 
+  // ── The API's own description (22.8) ──────────────────────────────────────
+  // What versions exist and when the alias retires is the one thing an integrator reads before
+  // holding any credential, so it needs none.
+
+  @Test
+  void theVersionsDocumentIsPublic() throws IOException {
+    when(requestContext.getMethod()).thenReturn("GET");
+    when(uriInfo.getPath()).thenReturn("api/versions");
+
+    filter.filter(requestContext);
+
+    verify(requestContext, never()).abortWith(any());
+  }
+
+  @Test
+  void theVersionsDocumentIsNotAServiceCalledVersions() throws IOException {
+    when(requestContext.getMethod()).thenReturn("GET");
+    when(uriInfo.getPath()).thenReturn("api/versions/anything");
+
+    filter.filter(requestContext);
+
+    verify(requestContext).abortWith(any());
+  }
+
   // ── E-invoice deliveries (07.13, the transport seam) ──────────────────────
   // A network's access point delivers a supplier's e-invoice with no JWT; purchase-svc checks the
   // delivery key. The shape is exact: the network is one segment, and the upload route beside it

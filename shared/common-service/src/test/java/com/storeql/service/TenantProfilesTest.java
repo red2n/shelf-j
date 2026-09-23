@@ -120,6 +120,44 @@ class TenantProfilesTest {
   }
 
   @Test
+  @DisplayName(
+      "A sandbox says so in its profile; a live business, or one from before sandboxes, does not")
+  void readsWhetherTheTenantIsASandbox() {
+    var live = TenantProfiles.parse(TENANT, body("GBP", "GB")).orElseThrow();
+    assertEquals(false, live.sandbox());
+    var marked =
+        TenantProfiles.parse(
+                TENANT,
+                "{\"data\":{\"id\":\""
+                    + TENANT
+                    + "\",\"currency\":\"GBP\",\"country\":\"GB\",\"mode\":\"LIVE\"}}")
+            .orElseThrow();
+    assertEquals(false, marked.sandbox());
+    var sandbox =
+        TenantProfiles.parse(
+                TENANT,
+                "{\"data\":{\"id\":\""
+                    + TENANT
+                    + "\",\"currency\":\"GBP\",\"country\":\"GB\",\"mode\":\"SANDBOX\"}}")
+            .orElseThrow();
+    assertEquals(true, sandbox.sandbox());
+
+    // And through the reader: cached like the rest, and false — not a guess of true — when the
+    // profile cannot be read at all.
+    var answer =
+        new java.util.concurrent.atomic.AtomicReference<Optional<String>>(Optional.empty());
+    TenantProfiles p = TenantProfiles.forTest(t -> answer.get(), java.time.Clock.systemUTC());
+    assertEquals(false, p.isSandbox(TENANT));
+    answer.set(
+        Optional.of(
+            "{\"data\":{\"id\":\""
+                + TENANT
+                + "\",\"currency\":\"GBP\",\"country\":\"GB\",\"mode\":\"SANDBOX\"}}"));
+    assertEquals(true, p.isSandbox(TENANT));
+    assertEquals(false, p.isSandbox(null));
+  }
+
+  @Test
   @DisplayName("Anything short of a real code is no profile, never a guess")
   void refusesWhatIsNotAProfile() {
     for (String bad :

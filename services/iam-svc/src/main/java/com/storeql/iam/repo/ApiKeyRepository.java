@@ -20,12 +20,13 @@ import java.util.UUID;
 public class ApiKeyRepository extends BaseJdbcRepository {
 
   private static final String COLUMNS =
-      "k.id, k.tenant_id, k.name, k.prefix, k.key_hash, k.role, k.store_ids, k.created_by,"
-          + " k.created_at, k.expires_at, k.last_used_at, k.revoked_at, k.revoked_by";
+      "k.id, k.tenant_id, k.owner_tenant_id, k.sandbox, k.name, k.prefix, k.key_hash, k.role,"
+          + " k.store_ids, k.created_by, k.created_at, k.expires_at, k.last_used_at, k.revoked_at,"
+          + " k.revoked_by";
 
   private static final String INSERT =
-      "INSERT INTO api_keys (id, tenant_id, name, prefix, key_hash, role, store_ids, created_by,"
-          + " created_at, expires_at) VALUES (?,?,?,?,?,?,?,?,?,?)";
+      "INSERT INTO api_keys (id, tenant_id, owner_tenant_id, sandbox, name, prefix, key_hash, role,"
+          + " store_ids, created_by, created_at, expires_at) VALUES (?,?,?,?,?,?,?,?,?,?,?,?)";
 
   /** A key by its hash, with whether its business is switched on; nothing else knows tenants. */
   private static final String BY_HASH =
@@ -35,18 +36,18 @@ public class ApiKeyRepository extends BaseJdbcRepository {
           + " LEFT JOIN tenant_status ts ON ts.tenant_id = k.tenant_id WHERE k.key_hash = ?";
 
   private static final String FIND =
-      "SELECT " + COLUMNS + " FROM api_keys k WHERE k.tenant_id = ? AND k.id = ?";
+      "SELECT " + COLUMNS + " FROM api_keys k WHERE k.owner_tenant_id = ? AND k.id = ?";
 
   private static final String LIST =
-      "SELECT " + COLUMNS + " FROM api_keys k WHERE k.tenant_id = ? ORDER BY k.id LIMIT ?";
+      "SELECT " + COLUMNS + " FROM api_keys k WHERE k.owner_tenant_id = ? ORDER BY k.id LIMIT ?";
 
   private static final String LIST_AFTER =
       "SELECT "
           + COLUMNS
-          + " FROM api_keys k WHERE k.tenant_id = ? AND k.id > ? ORDER BY k.id LIMIT ?";
+          + " FROM api_keys k WHERE k.owner_tenant_id = ? AND k.id > ? ORDER BY k.id LIMIT ?";
 
   private static final String REVOKE =
-      "UPDATE api_keys SET revoked_at = ?, revoked_by = ? WHERE tenant_id = ? AND id = ?"
+      "UPDATE api_keys SET revoked_at = ?, revoked_by = ? WHERE owner_tenant_id = ? AND id = ?"
           + " AND revoked_at IS NULL";
 
   /** A use is kept to the minute: one write a minute per key, not one a request. */
@@ -63,14 +64,16 @@ public class ApiKeyRepository extends BaseJdbcRepository {
         ps -> {
           ps.setObject(1, k.id());
           ps.setObject(2, k.tenantId());
-          ps.setString(3, k.name());
-          ps.setString(4, k.prefix());
-          ps.setString(5, k.keyHash());
-          ps.setString(6, k.role());
-          setStores(ps, 7, k.storeIds());
-          ps.setObject(8, k.createdBy());
-          ps.setObject(9, k.createdAt().atOffset(ZoneOffset.UTC));
-          ps.setObject(10, k.expiresAt() == null ? null : k.expiresAt().atOffset(ZoneOffset.UTC));
+          ps.setObject(3, k.ownerTenantId());
+          ps.setBoolean(4, k.sandbox());
+          ps.setString(5, k.name());
+          ps.setString(6, k.prefix());
+          ps.setString(7, k.keyHash());
+          ps.setString(8, k.role());
+          setStores(ps, 9, k.storeIds());
+          ps.setObject(10, k.createdBy());
+          ps.setObject(11, k.createdAt().atOffset(ZoneOffset.UTC));
+          ps.setObject(12, k.expiresAt() == null ? null : k.expiresAt().atOffset(ZoneOffset.UTC));
         },
         "insert api key");
   }
@@ -85,11 +88,12 @@ public class ApiKeyRepository extends BaseJdbcRepository {
         .findFirst();
   }
 
-  public Optional<ApiKey> find(UUID tenantId, UUID id) {
+  /** By the business that owns the key: the live one, whose sandbox keys are its own too (22.8). */
+  public Optional<ApiKey> find(UUID ownerTenantId, UUID id) {
     return query(
             FIND,
             ps -> {
-              ps.setObject(1, tenantId);
+              ps.setObject(1, ownerTenantId);
               ps.setObject(2, id);
             },
             ApiKeyRepository::read,
@@ -162,6 +166,8 @@ public class ApiKeyRepository extends BaseJdbcRepository {
     return new ApiKey(
         rs.getObject("id", UUID.class),
         rs.getObject("tenant_id", UUID.class),
+        rs.getObject("owner_tenant_id", UUID.class),
+        rs.getBoolean("sandbox"),
         rs.getString("name"),
         rs.getString("prefix"),
         rs.getString("key_hash"),

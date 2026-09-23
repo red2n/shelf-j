@@ -3,6 +3,7 @@ package com.storeql.tenant.service;
 import static com.storeql.events.EventPayload.esc;
 
 import com.storeql.ids.Ids;
+import com.storeql.tenant.domain.Domain;
 import com.storeql.tenant.domain.Subscriptions.Invoice;
 import com.storeql.tenant.domain.Subscriptions.Subscription;
 import java.time.Instant;
@@ -22,9 +23,27 @@ final class Events {
 
   static String tenantCreated(
       UUID tenantId, UUID ownerUserId, String name, String country, String currency) {
+    return tenantCreated(
+        tenantId, ownerUserId, name, country, currency, Domain.Tenant.MODE_LIVE, null);
+  }
+
+  /**
+   * A business made, saying what kind (22.8): {@code mode} is {@code LIVE} or {@code SANDBOX}, and
+   * a sandbox names the live business it stands in for as {@code sandboxOf}. iam-svc binds the
+   * owner of a live business and, for a sandbox, keeps the mapping instead — the owner already owns
+   * the live one.
+   */
+  static String tenantCreated(
+      UUID tenantId,
+      UUID ownerUserId,
+      String name,
+      String country,
+      String currency,
+      String mode,
+      UUID sandboxOf) {
     return """
                 {"eventId":"%s","eventType":"TenantCreated","tenantId":"%s","aggregateId":"%s","occurredAt":"%s",\
-                "ownerUserId":"%s","name":"%s","country":"%s","currency":"%s"}"""
+                "ownerUserId":"%s","name":"%s","country":"%s","currency":"%s","mode":"%s","sandboxOf":%s}"""
         .formatted(
             Ids.newId(),
             tenantId,
@@ -33,7 +52,9 @@ final class Events {
             ownerUserId,
             esc(name),
             esc(country),
-            esc(currency));
+            esc(currency),
+            esc(mode),
+            sandboxOf == null ? "null" : "\"" + sandboxOf + "\"");
   }
 
   /**
