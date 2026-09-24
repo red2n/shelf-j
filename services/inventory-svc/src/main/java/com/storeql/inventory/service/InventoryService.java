@@ -87,8 +87,11 @@ import java.util.UUID;
 @ApplicationScoped
 public class InventoryService {
 
+  private static final System.Logger LOG = System.getLogger(InventoryService.class.getName());
+
   @Inject ServiceConfig config;
   @Inject InventoryRepository repo;
+  @Inject com.storeql.inventory.repo.BondRepository bonds;
   @Inject com.storeql.inventory.repo.ShrinkageRepository shrinkageRepo;
   @Inject com.storeql.inventory.repo.ValuationRepository valuationRepo;
   @Inject com.storeql.inventory.repo.LowStockRepository lowStockRepo;
@@ -183,7 +186,52 @@ public class InventoryService {
       String idempotencyKey,
       String ownership,
       UUID ownerSupplierId) {
+    return receive(
+        tenantId,
+        storeId,
+        variantId,
+        qty,
+        batchNo,
+        costPrice,
+        expiry,
+        refType,
+        refId,
+        zoneId,
+        idempotencyKey,
+        ownership,
+        ownerSupplierId,
+        Batch.DUTY_PAID);
+  }
+
+  /**
+   * As above, for excise goods that may arrive into bond: {@code dutyStatus} DUTY_PAID (the
+   * default) or DUTY_SUSPENDED, the latter only at a store approved as a bonded warehouse.
+   *
+   * @throws ApiException 400 {@code INVENTORY_DUTY_STATUS_INVALID}; 400 {@code
+   *     INVENTORY_STORE_NOT_BONDED} for suspended stock at a store nobody approved
+   */
+  public Batch receive(
+      UUID tenantId,
+      UUID storeId,
+      UUID variantId,
+      BigDecimal qty,
+      String batchNo,
+      BigDecimal costPrice,
+      LocalDate expiry,
+      String refType,
+      UUID refId,
+      UUID zoneId,
+      String idempotencyKey,
+      String ownership,
+      UUID ownerSupplierId,
+      String dutyStatus) {
     String owned = ownershipOf(ownership, ownerSupplierId);
+    String duty = dutyStatusOf(dutyStatus);
+    if (Batch.DUTY_SUSPENDED.equals(duty) && !bonds.isBonded(tenantId, storeId)) {
+      throw ApiException.badRequest(
+          "INVENTORY_STORE_NOT_BONDED",
+          "duty-suspended stock may be held only at a store approved as a bonded warehouse");
+    }
     UUID batchId = Ids.newId();
     var batch =
         new Batch(
@@ -203,7 +251,8 @@ public class InventoryService {
             null,
             zoneId,
             owned,
-            Batch.OWNERSHIP_CONSIGNMENT.equals(owned) ? ownerSupplierId : null);
+            Batch.OWNERSHIP_CONSIGNMENT.equals(owned) ? ownerSupplierId : null,
+            duty);
     var event =
         new OutboxRow(
             "StockReceived",
@@ -437,7 +486,54 @@ public class InventoryService {
       UUID refId,
       String ownership,
       UUID ownerSupplierId) {
+    return receiveOnce(
+        dedupeId,
+        consumerName,
+        tenantId,
+        storeId,
+        variantId,
+        qty,
+        batchNo,
+        costPrice,
+        expiry,
+        refType,
+        refId,
+        ownership,
+        ownerSupplierId,
+        Batch.DUTY_PAID);
+  }
+
+  /**
+   * As {@link #receiveOnce}, for a delivery that may arrive into bond. A supplier's word that the
+   * goods are under bond is kept even at a store nobody approved — misstating the duty would be
+   * worse — and the approval gap is logged for a person.
+   */
+  public boolean receiveOnce(
+      UUID dedupeId,
+      String consumerName,
+      UUID tenantId,
+      UUID storeId,
+      UUID variantId,
+      BigDecimal qty,
+      String batchNo,
+      BigDecimal costPrice,
+      LocalDate expiry,
+      String refType,
+      UUID refId,
+      String ownership,
+      UUID ownerSupplierId,
+      String dutyStatus) {
     String owned = ownershipOf(ownership, ownerSupplierId);
+    String duty = dutyStatusOf(dutyStatus);
+    if (Batch.DUTY_SUSPENDED.equals(duty) && !bonds.isBonded(tenantId, storeId)) {
+      LOG.log(
+          System.Logger.Level.WARNING,
+          "duty-suspended delivery {0} received at store {1} of tenant {2}, which is not approved"
+              + " as a bonded warehouse",
+          refId,
+          storeId,
+          tenantId);
+    }
     var batch =
         new Batch(
             Ids.newId(),
@@ -456,9 +552,22 @@ public class InventoryService {
             null,
             null,
             owned,
-            Batch.OWNERSHIP_CONSIGNMENT.equals(owned) ? ownerSupplierId : null);
+            Batch.OWNERSHIP_CONSIGNMENT.equals(owned) ? ownerSupplierId : null,
+            duty);
     return repo.receiveOnce(
         dedupeId, consumerName, batch, refType, refId, stockReceivedEvent(batch));
+  }
+
+  /** DUTY_PAID when unsaid; DUTY_SUSPENDED for goods held in bond. */
+  static String dutyStatusOf(String dutyStatus) {
+    if (dutyStatus == null || dutyStatus.isBlank()) return Batch.DUTY_PAID;
+    String code = dutyStatus.trim().toUpperCase(java.util.Locale.ROOT);
+    if (!Batch.DUTY_PAID.equals(code) && !Batch.DUTY_SUSPENDED.equals(code)) {
+      throw ApiException.badRequest(
+          "INVENTORY_DUTY_STATUS_INVALID",
+          "dutyStatus must be DUTY_PAID or DUTY_SUSPENDED; got " + dutyStatus);
+    }
+    return code;
   }
 
   /** OWNED when unsaid; CONSIGNMENT only with the supplier it belongs to. */

@@ -2,6 +2,7 @@ package com.storeql.inventory.service;
 
 import com.storeql.events.EventPayload;
 import com.storeql.ids.Ids;
+import com.storeql.inventory.domain.Domain.BondRelease;
 import com.storeql.inventory.domain.FoodSafety.CheckRecord;
 import com.storeql.inventory.domain.FoodSafety.OverduePoint;
 import com.storeql.inventory.domain.Recall.AffectedOrder;
@@ -95,6 +96,28 @@ public final class Events {
         + qty.toPlainString()
         + ",\"unitCost\":"
         + (unitCost == null ? "null" : unitCost.toPlainString())
+        + "}";
+  }
+
+  /**
+   * Duty-suspended stock released to home use: the duty on it is now owed to the revenue, and
+   * purchase-svc posts it.
+   */
+  public static String dutyReleased(BondRelease r) {
+    return EventPayload.base("DutyReleased", r.tenantId(), r.id())
+        + storeVariant(r.storeId(), r.variantId())
+        + ",\"releaseId\":\""
+        + r.id()
+        + "\",\"qty\":"
+        + r.qty().toPlainString()
+        + ",\"dutyPerUnit\":"
+        + r.dutyPerUnit().toPlainString()
+        + ",\"dutyAmount\":"
+        + r.dutyAmount().toPlainString()
+        + ",\"currency\":\""
+        + r.currency()
+        + "\",\"reference\":"
+        + (r.reference() == null ? "null" : "\"" + EventPayload.esc(r.reference()) + "\"")
         + "}";
   }
 

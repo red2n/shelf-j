@@ -34,7 +34,12 @@ public final class Dtos {
                       + " sells, valued apart and owed to the supplier as it sells.")
           String ownership,
       @Schema(description = "The supplier that owns a CONSIGNMENT batch; required for one.")
-          String supplierId) {}
+          String supplierId,
+      @Schema(
+              description =
+                  "DUTY_PAID (the default) or DUTY_SUSPENDED: excise goods received into bond at an"
+                      + " approved store — on hand, never available until released.")
+          String dutyStatus) {}
 
   @Schema(name = "BatchReceiveItem", description = "One line of a bulk receive request.")
   public record BatchReceiveItem(
@@ -97,8 +102,10 @@ public final class Dtos {
       @Schema(description = "UUID of the product variant.") String variantId,
       @Schema(description = "Total physical quantity in stock.") BigDecimal onHand,
       @Schema(description = "Quantity currently held by open reservations.") BigDecimal reserved,
-      @Schema(description = "onHand minus reserved; the sellable quantity.")
-          BigDecimal available) {}
+      @Schema(description = "onHand minus what is in bond minus reserved; the sellable quantity.")
+          BigDecimal available,
+      @Schema(description = "How much of onHand sits in bond with its duty suspended.")
+          BigDecimal inBond) {}
 
   @Schema(name = "LevelSummaryResponse", description = "Aggregate stock-level KPI counts.")
   public record LevelSummaryResponse(
@@ -123,8 +130,9 @@ public final class Dtos {
       @Schema(description = "UUID of the zone the batch is placed in.") String zoneId,
       @Schema(description = "OWNED, or CONSIGNMENT when the supplier still owns it.")
           String ownership,
-      @Schema(description = "The owning supplier of a CONSIGNMENT batch.")
-          String ownerSupplierId) {}
+      @Schema(description = "The owning supplier of a CONSIGNMENT batch.") String ownerSupplierId,
+      @Schema(description = "DUTY_PAID, or DUTY_SUSPENDED while the batch sits in bond.")
+          String dutyStatus) {}
 
   @Schema(name = "ReservationResponse", description = "A hold placed against available stock.")
   public record ReservationResponse(
@@ -179,7 +187,74 @@ public final class Dtos {
       @Schema(
               description =
                   "What the consignment holding is worth at the cost the supplier will be owed.")
-          BigDecimal consignmentValue) {}
+          BigDecimal consignmentValue,
+      @Schema(description = "How much of onHandQty is held in bond with its duty suspended.")
+          BigDecimal dutySuspendedQty,
+      @Schema(
+              description =
+                  "The duty that stock would crystallise on release, at the variants' rates.")
+          BigDecimal dutyPotential) {}
+
+  // ── Bonded and duty-suspended stock ─────────────────────────────────────────
+
+  @Schema(name = "BondApprovalRequest")
+  public record BondApprovalRequest(
+      @Schema(description = "The revenue's approval number for the warehouse.") @NotBlank
+          String approvalNumber,
+      @Schema(description = "EXCISE or CUSTOMS.") @NotBlank String regime) {}
+
+  @Schema(name = "BondApprovalResponse")
+  public record BondApprovalResponse(
+      String storeId,
+      String approvalNumber,
+      String regime,
+      boolean active,
+      String createdAt,
+      String endedAt) {}
+
+  @Schema(name = "DutyRateRequest")
+  public record DutyRateRequest(
+      @Schema(description = "The duty one unit crystallises on release, in the home currency.")
+          @NotNull
+          @PositiveOrZero
+          BigDecimal dutyPerUnit,
+      @Schema(description = "How the figure was arrived at.") String note) {}
+
+  @Schema(name = "DutyRateResponse")
+  public record DutyRateResponse(
+      String variantId, BigDecimal dutyPerUnit, String currency, String note, String updatedAt) {}
+
+  @Schema(name = "BondReleaseRequest")
+  public record BondReleaseRequest(
+      @NotBlank String storeId,
+      @NotBlank String variantId,
+      @NotNull @Positive BigDecimal qty,
+      @Schema(description = "The return or warrant this release belongs to.") String reference) {}
+
+  @Schema(name = "BondReleaseResponse")
+  public record BondReleaseResponse(
+      String id,
+      String storeId,
+      String variantId,
+      BigDecimal qty,
+      BigDecimal dutyPerUnit,
+      BigDecimal dutyAmount,
+      String currency,
+      String reference,
+      String releasedAt) {}
+
+  @Schema(name = "BondReleasesResponse", description = "The releases of a period and their duty.")
+  public record BondReleasesResponse(
+      List<BondReleaseResponse> releases, BigDecimal totalDuty, String currency) {}
+
+  @Schema(name = "BondStockResponse", description = "What sits in bond and the duty it carries.")
+  public record BondStockResponse(
+      String storeId,
+      String variantId,
+      BigDecimal qty,
+      @Schema(description = "The variant's duty per unit; null when none is set.")
+          BigDecimal dutyPerUnit,
+      BigDecimal dutyPotential) {}
 
   @Schema(
       name = "ShrinkageRowResponse",

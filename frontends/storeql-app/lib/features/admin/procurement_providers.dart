@@ -93,6 +93,9 @@ class PurchaseOrder {
   final String? salesOrderId;
   final String? shipTo;
 
+  /// DUTY_PAID, or DUTY_SUSPENDED when the goods arrive into bond.
+  final String dutyStatus;
+
   const PurchaseOrder({
     required this.id,
     required this.supplierId,
@@ -108,6 +111,7 @@ class PurchaseOrder {
     this.ownership = 'OWNED',
     this.salesOrderId,
     this.shipTo,
+    this.dutyStatus = 'DUTY_PAID',
   });
 
   factory PurchaseOrder.fromJson(Map<String, dynamic> j) => PurchaseOrder(
@@ -125,6 +129,7 @@ class PurchaseOrder {
     ownership: j['ownership'] as String? ?? 'OWNED',
     salesOrderId: j['salesOrderId'] as String?,
     shipTo: j['shipTo'] as String?,
+    dutyStatus: j['dutyStatus'] as String? ?? 'DUTY_PAID',
   );
 }
 

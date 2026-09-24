@@ -108,12 +108,20 @@ public class ValuationRepository extends BaseJdbcRepository {
                 + consigned
                 + " THEN "
                 + lineValue
-                + " ELSE 0 END)::numeric(18,2) AS consignment_value"
+                + " ELSE 0 END)::numeric(18,2) AS consignment_value,"
+                // In bond: valued at cost without the duty, the duty it would crystallise beside
+                // it.
+                + " SUM(CASE WHEN b.duty_status = 'DUTY_SUSPENDED' THEN b.remaining_qty ELSE 0"
+                + " END)::numeric(18,3) AS duty_suspended_qty,"
+                + " SUM(CASE WHEN b.duty_status = 'DUTY_SUSPENDED' THEN b.remaining_qty *"
+                + " COALESCE(edr.duty_per_unit, 0) ELSE 0 END)::numeric(18,2) AS duty_potential"
                 + " FROM inventory_batches b"
                 + " LEFT JOIN costing_methods cm"
                 + "   ON cm.tenant_id = b.tenant_id"
                 + "  AND cm.store_id = b.store_id"
                 + "  AND cm.variant_id = b.variant_id"
+                + " LEFT JOIN excise_duty_rates edr"
+                + "   ON edr.tenant_id = b.tenant_id AND edr.variant_id = b.variant_id"
                 + " WHERE b.tenant_id = ? AND b.remaining_qty > 0");
     if (storeId != null) sql.append(" AND b.store_id = ?");
     sql.append(" GROUP BY 1 ORDER BY value DESC, group_key ASC LIMIT ?");
@@ -138,6 +146,8 @@ public class ValuationRepository extends BaseJdbcRepository {
         rs.getBigDecimal("unvalued_qty"),
         rs.getBigDecimal("value"),
         rs.getBigDecimal("consignment_qty"),
-        rs.getBigDecimal("consignment_value"));
+        rs.getBigDecimal("consignment_value"),
+        rs.getBigDecimal("duty_suspended_qty"),
+        rs.getBigDecimal("duty_potential"));
   }
 }

@@ -1,5 +1,6 @@
 package com.storeql.inventory.mapper;
 
+import com.storeql.inventory.domain.Domain;
 import com.storeql.inventory.domain.Domain.AbcAssignment;
 import com.storeql.inventory.domain.Domain.AbcCompileRun;
 import com.storeql.inventory.domain.Domain.AccountingPeriod;
@@ -44,6 +45,7 @@ import com.storeql.inventory.domain.Domain.TransferOrderLine;
 import com.storeql.inventory.domain.Domain.ValuationRow;
 import com.storeql.inventory.domain.Domain.ZoneGlMapping;
 import com.storeql.inventory.domain.Forecasting;
+import com.storeql.inventory.dto.Dtos;
 import com.storeql.inventory.dto.Dtos.AbcAssignmentResponse;
 import com.storeql.inventory.dto.Dtos.AbcCompileRunResponse;
 import com.storeql.inventory.dto.Dtos.AccountingPeriodResponse;
@@ -125,7 +127,12 @@ public final class Mappers {
    */
   public static LevelResponse toLevel(Level l) {
     return new LevelResponse(
-        l.storeId().toString(), l.variantId().toString(), l.onHand(), l.reserved(), l.available());
+        l.storeId().toString(),
+        l.variantId().toString(),
+        l.onHand(),
+        l.reserved(),
+        l.available(),
+        l.inBond());
   }
 
   /**
@@ -151,7 +158,45 @@ public final class Mappers {
         b.grade(),
         b.zoneId() == null ? null : b.zoneId().toString(),
         b.ownership(),
-        b.ownerSupplierId() == null ? null : b.ownerSupplierId().toString());
+        b.ownerSupplierId() == null ? null : b.ownerSupplierId().toString(),
+        b.dutyStatus());
+  }
+
+  public static Dtos.BondApprovalResponse toDto(Domain.BondApproval a) {
+    return new Dtos.BondApprovalResponse(
+        a.storeId().toString(),
+        a.approvalNumber(),
+        a.regime(),
+        a.active(),
+        ts(a.createdAt()),
+        a.endedAt() == null ? null : a.endedAt().toString());
+  }
+
+  public static Dtos.DutyRateResponse toDto(Domain.ExciseDutyRate r) {
+    return new Dtos.DutyRateResponse(
+        r.variantId().toString(), r.dutyPerUnit(), r.currency(), r.note(), ts(r.updatedAt()));
+  }
+
+  public static Dtos.BondReleaseResponse toDto(Domain.BondRelease r) {
+    return new Dtos.BondReleaseResponse(
+        r.id().toString(),
+        r.storeId().toString(),
+        r.variantId().toString(),
+        r.qty(),
+        r.dutyPerUnit(),
+        r.dutyAmount(),
+        r.currency(),
+        r.reference(),
+        ts(r.releasedAt()));
+  }
+
+  public static Dtos.BondStockResponse toDto(Domain.BondStock s) {
+    return new Dtos.BondStockResponse(
+        s.storeId().toString(),
+        s.variantId().toString(),
+        s.qty(),
+        s.dutyPerUnit(),
+        s.dutyPotential());
   }
 
   /**
@@ -198,7 +243,9 @@ public final class Mappers {
         r.unvaluedQty(),
         r.value(),
         r.consignmentQty(),
-        r.consignmentValue());
+        r.consignmentValue(),
+        r.dutySuspendedQty(),
+        r.dutyPotential());
   }
 
   /**

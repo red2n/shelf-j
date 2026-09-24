@@ -2,6 +2,7 @@ package com.storeql.inventory.repo;
 
 import com.storeql.ids.Ids;
 import com.storeql.inventory.domain.Domain.Batch;
+import com.storeql.inventory.domain.Domain.BondRelease;
 import com.storeql.inventory.domain.Domain.CycleCountLine;
 import com.storeql.inventory.domain.Domain.Level;
 import com.storeql.inventory.domain.Domain.LevelSummary;
@@ -89,7 +90,7 @@ public class InventoryRepository extends BaseOutboxRepository {
     return query(
             "SELECT id, tenant_id, store_id, variant_id, batch_no, received_qty, remaining_qty,"
                 + " cost_price, expiry_date, created_at, status, material_status,"
-                + " material_status_reason, grade, zone_id, ownership, owner_supplier_id"
+                + " material_status_reason, grade, zone_id, ownership, owner_supplier_id, duty_status"
                 + " FROM inventory_batches WHERE tenant_id=? AND idempotency_key=?",
             ps -> {
               ps.setObject(1, tenantId);
@@ -659,6 +660,89 @@ public class InventoryRepository extends BaseOutboxRepository {
         "deduct sale from order (deduped)");
   }
 
+  // ---------------------------------------------------------------- bond release
+  /**
+   * Releases duty-suspended stock to home use: draws the bonded batches FIFO in a BOND_RELEASE
+   * movement, makes a duty-paid batch of each draw at the same store (same lot, cost and date,
+   * linked in the genealogy), records the release and announces the duty it owes — on one
+   * transaction.
+   *
+   * @throws ApiException 422 {@code INVENTORY_INSUFFICIENT_BONDED_STOCK} when less than {@code qty}
+   *     sits in bond
+   */
+  public BondRelease releaseFromBond(BondRelease r, OutboxRow event) {
+    return inTx(
+        c -> {
+          List<Drawn> drawn;
+          try {
+            drawn =
+                deductBatches(
+                    c,
+                    r.tenantId(),
+                    r.storeId(),
+                    r.variantId(),
+                    r.qty(),
+                    MoveType.BOND_RELEASE,
+                    "BOND_RELEASE",
+                    r.id(),
+                    null,
+                    null,
+                    null,
+                    MovementAttribution.system());
+          } catch (ApiException e) {
+            if ("INSUFFICIENT_STOCK".equals(e.code())) {
+              throw new ApiException(
+                  422,
+                  "INVENTORY_INSUFFICIENT_BONDED_STOCK",
+                  "less than "
+                      + r.qty().toPlainString()
+                      + " of the variant sits in bond at the store",
+                  List.of(),
+                  e);
+            }
+            throw e;
+          }
+          for (Drawn d : drawn) {
+            Batch paid = Provenance.released(r.tenantId(), r.storeId(), r.variantId(), d);
+            insertBatch(c, paid);
+            insertMovement(
+                c,
+                r.tenantId(),
+                r.storeId(),
+                r.variantId(),
+                paid.id(),
+                MoveType.BOND_RELEASE,
+                d.qty(),
+                "BOND_RELEASE",
+                r.id(),
+                MovementAttribution.system());
+            insertGenealogy(
+                c, r.tenantId(), d.batchId(), paid.id(), d.qty(), "BOND_RELEASE " + r.id());
+          }
+          try (PreparedStatement ps =
+              c.prepareStatement(
+                  "INSERT INTO bond_releases (id, tenant_id, store_id, variant_id, qty,"
+                      + " duty_per_unit, duty_amount, currency, reference, released_by, released_at)"
+                      + " VALUES (?,?,?,?,?,?,?,?,?,?,?)")) {
+            ps.setObject(1, r.id());
+            ps.setObject(2, r.tenantId());
+            ps.setObject(3, r.storeId());
+            ps.setObject(4, r.variantId());
+            ps.setBigDecimal(5, r.qty());
+            ps.setBigDecimal(6, r.dutyPerUnit());
+            ps.setBigDecimal(7, r.dutyAmount());
+            ps.setString(8, r.currency());
+            ps.setString(9, r.reference());
+            ps.setObject(10, r.releasedBy());
+            ps.setObject(11, r.releasedAt().atOffset(ZoneOffset.UTC));
+            ps.executeUpdate();
+          }
+          insertOutbox(c, event);
+          return r;
+        },
+        "release from bond");
+  }
+
   // ---------------------------------------------------------------- dropship sourcing
   /**
    * Records purchase-svc's word on how a variant is fulfilled, once per event: the latest word
@@ -800,6 +884,7 @@ public class InventoryRepository extends BaseOutboxRepository {
       """
       SELECT b.store_id, b.variant_id,
              COALESCE(SUM(b.remaining_qty),0) AS on_hand,
+             COALESCE(SUM(CASE WHEN b.duty_status = 'DUTY_SUSPENDED' THEN b.remaining_qty ELSE 0 END),0) AS in_bond,
              COALESCE(MAX(res.reserved),0) AS reserved
       FROM inventory_batches b
       LEFT JOIN (
@@ -894,12 +979,14 @@ public class InventoryRepository extends BaseOutboxRepository {
   private static Level mapLevel(ResultSet rs) throws SQLException {
     BigDecimal onHand = rs.getBigDecimal("on_hand");
     BigDecimal reserved = rs.getBigDecimal("reserved");
+    BigDecimal inBond = rs.getBigDecimal("in_bond");
     return new Level(
         rs.getObject("store_id", UUID.class),
         rs.getObject("variant_id", UUID.class),
         onHand,
         reserved,
-        onHand.subtract(reserved));
+        onHand.subtract(inBond).subtract(reserved),
+        inBond);
   }
 
   // ---------------------------------------------------------------- batches (read)
@@ -920,7 +1007,7 @@ public class InventoryRepository extends BaseOutboxRepository {
         new StringBuilder(
             "SELECT id, tenant_id, store_id, variant_id, batch_no, received_qty,"
                 + " remaining_qty, cost_price, expiry_date, created_at, status,"
-                + " material_status, material_status_reason, grade, zone_id, ownership, owner_supplier_id"
+                + " material_status, material_status_reason, grade, zone_id, ownership, owner_supplier_id, duty_status"
                 + " FROM inventory_batches WHERE tenant_id = ?");
     if (storeId != null) sb.append(" AND store_id = ?");
     if (variantId != null) sb.append(" AND variant_id = ?");
@@ -963,7 +1050,7 @@ public class InventoryRepository extends BaseOutboxRepository {
         query(
             "SELECT id, tenant_id, store_id, variant_id, batch_no, received_qty,"
                 + " remaining_qty, cost_price, expiry_date, created_at, status,"
-                + " material_status, material_status_reason, grade, zone_id, ownership, owner_supplier_id"
+                + " material_status, material_status_reason, grade, zone_id, ownership, owner_supplier_id, duty_status"
                 + " FROM inventory_batches WHERE tenant_id = ? AND id = ?",
             ps -> {
               ps.setObject(1, tenantId);
@@ -1098,7 +1185,7 @@ public class InventoryRepository extends BaseOutboxRepository {
                       + " WHERE tenant_id=? AND id=?"
                       + " RETURNING id, tenant_id, store_id, variant_id, batch_no, received_qty,"
                       + " remaining_qty, cost_price, expiry_date, created_at, status,"
-                      + " material_status, material_status_reason, grade, zone_id, ownership, owner_supplier_id")) {
+                      + " material_status, material_status_reason, grade, zone_id, ownership, owner_supplier_id, duty_status")) {
             ps.setString(1, materialStatus);
             ps.setString(2, reason);
             ps.setObject(3, tenantId);
@@ -1238,7 +1325,7 @@ public class InventoryRepository extends BaseOutboxRepository {
         c.prepareStatement(
             "SELECT remaining_qty FROM inventory_batches"
                 + " WHERE tenant_id=? AND store_id=? AND variant_id=?"
-                + " AND material_status='AVAILABLE' FOR UPDATE")) {
+                + " AND material_status='AVAILABLE' AND duty_status='DUTY_PAID' FOR UPDATE")) {
       ps.setObject(1, tenantId);
       ps.setObject(2, storeId);
       ps.setObject(3, variantId);
@@ -1316,10 +1403,11 @@ public class InventoryRepository extends BaseOutboxRepository {
     try (PreparedStatement ps =
         c.prepareStatement(
             "SELECT id, remaining_qty, batch_no, expiry_date, cost_price, grade, ownership,"
-                + " owner_supplier_id"
+                + " owner_supplier_id, duty_status"
                 + " FROM inventory_batches"
                 + " WHERE tenant_id=? AND store_id=? AND variant_id=? AND remaining_qty > 0"
                 + " AND material_status='AVAILABLE'"
+                + dutyFilter(moveType)
                 + " ORDER BY "
                 + orderBy
                 + " FOR UPDATE")) {
@@ -1337,7 +1425,8 @@ public class InventoryRepository extends BaseOutboxRepository {
                   rs.getBigDecimal("cost_price"),
                   rs.getString("grade"),
                   rs.getString("ownership"),
-                  rs.getObject("owner_supplier_id", UUID.class)));
+                  rs.getObject("owner_supplier_id", UUID.class),
+                  rs.getString("duty_status")));
         }
       }
     }
@@ -1374,6 +1463,17 @@ public class InventoryRepository extends BaseOutboxRepository {
       announceConsignmentSales(c, tenantId, storeId, variantId, refId, drawn);
     }
     return drawn;
+  }
+
+  /**
+   * Which batches a movement may draw, by duty status. Duty-suspended stock sits in bond: a release
+   * draws it and nothing else does — a sale, a transfer or a return to vendor takes duty-paid stock
+   * only (release first), while an adjustment may correct either, since losses in bond are real.
+   */
+  private static String dutyFilter(String moveType) {
+    if (MoveType.BOND_RELEASE.equals(moveType)) return " AND duty_status='DUTY_SUSPENDED'";
+    if (MoveType.ADJUST.equals(moveType)) return "";
+    return " AND duty_status='DUTY_PAID'";
   }
 
   /**
@@ -1426,7 +1526,7 @@ public class InventoryRepository extends BaseOutboxRepository {
     try (PreparedStatement ps =
         c.prepareStatement(
             "SELECT m.batch_id, -m.qty AS qty, b.batch_no, b.expiry_date, b.cost_price, b.grade,"
-                + " b.ownership, b.owner_supplier_id"
+                + " b.ownership, b.owner_supplier_id, b.duty_status"
                 + " FROM stock_movements m JOIN inventory_batches b ON b.id = m.batch_id"
                 + " WHERE m.tenant_id=? AND m.store_id=? AND m.variant_id=? AND m.type=?"
                 + " AND m.ref_type=? AND m.ref_id=? AND m.qty < 0"
@@ -1448,7 +1548,8 @@ public class InventoryRepository extends BaseOutboxRepository {
                   rs.getBigDecimal("cost_price"),
                   rs.getString("grade"),
                   rs.getString("ownership"),
-                  rs.getObject("owner_supplier_id", UUID.class)));
+                  rs.getObject("owner_supplier_id", UUID.class),
+                  rs.getString("duty_status")));
         }
       }
     }
@@ -1682,8 +1783,8 @@ public class InventoryRepository extends BaseOutboxRepository {
             "INSERT INTO inventory_batches"
                 + " (id, tenant_id, store_id, variant_id, batch_no, received_qty,"
                 + " remaining_qty, cost_price, expiry_date, created_at, status, material_status,"
-                + " grade, zone_id, idempotency_key, ownership, owner_supplier_id)"
-                + " VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)")) {
+                + " grade, zone_id, idempotency_key, ownership, owner_supplier_id, duty_status)"
+                + " VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)")) {
       ps.setObject(1, b.id());
       ps.setObject(2, b.tenantId());
       ps.setObject(3, b.storeId());
@@ -1701,6 +1802,7 @@ public class InventoryRepository extends BaseOutboxRepository {
       ps.setString(15, idempotencyKey);
       ps.setString(16, b.ownership() == null ? Batch.OWNERSHIP_OWNED : b.ownership());
       ps.setObject(17, b.ownerSupplierId());
+      ps.setString(18, b.dutyStatus() == null ? Batch.DUTY_PAID : b.dutyStatus());
       ps.executeUpdate();
     }
     return RecallRepository.holdOnArrival(c, b);
@@ -1724,7 +1826,8 @@ public class InventoryRepository extends BaseOutboxRepository {
         b.grade(),
         b.zoneId(),
         b.ownership(),
-        b.ownerSupplierId());
+        b.ownerSupplierId(),
+        b.dutyStatus());
   }
 
   private void insertReservation(Connection c, Reservation r, String idempotencyKey)
@@ -1950,7 +2053,8 @@ public class InventoryRepository extends BaseOutboxRepository {
         rs.getString("grade"),
         rs.getObject("zone_id", UUID.class),
         rs.getString("ownership"),
-        rs.getObject("owner_supplier_id", UUID.class));
+        rs.getObject("owner_supplier_id", UUID.class),
+        rs.getString("duty_status"));
   }
 
   private static Reservation mapReservation(ResultSet rs) throws SQLException {
@@ -2623,7 +2727,7 @@ public class InventoryRepository extends BaseOutboxRepository {
   public List<Batch> listExpiringBatches(UUID tenantId, UUID storeId, int withinDays) {
     return query(
         "SELECT id,tenant_id,store_id,variant_id,batch_no,received_qty,remaining_qty,"
-            + "cost_price,expiry_date,created_at,status,material_status,material_status_reason,grade,zone_id,ownership,owner_supplier_id"
+            + "cost_price,expiry_date,created_at,status,material_status,material_status_reason,grade,zone_id,ownership,owner_supplier_id,duty_status"
             + " FROM inventory_batches"
             + " WHERE tenant_id=? AND store_id=? AND status='ACTIVE'"
             + " AND expiry_date IS NOT NULL"
@@ -2656,7 +2760,7 @@ public class InventoryRepository extends BaseOutboxRepository {
                   "UPDATE inventory_batches SET grade=? WHERE tenant_id=? AND id=?"
                       + " RETURNING id,tenant_id,store_id,variant_id,batch_no,received_qty,"
                       + "remaining_qty,cost_price,expiry_date,created_at,status,"
-                      + "material_status,material_status_reason,grade,zone_id,ownership,owner_supplier_id")) {
+                      + "material_status,material_status_reason,grade,zone_id,ownership,owner_supplier_id,duty_status")) {
             ps.setString(1, grade);
             ps.setObject(2, tenantId);
             ps.setObject(3, batchId);
@@ -2691,7 +2795,7 @@ public class InventoryRepository extends BaseOutboxRepository {
     String orderBy = pickOrderClause(strategy, gradePreference, zonePriorityOrder);
     return query(
         "SELECT id,tenant_id,store_id,variant_id,batch_no,received_qty,remaining_qty,"
-            + "cost_price,expiry_date,created_at,status,material_status,material_status_reason,grade,zone_id,ownership,owner_supplier_id"
+            + "cost_price,expiry_date,created_at,status,material_status,material_status_reason,grade,zone_id,ownership,owner_supplier_id,duty_status"
             + " FROM inventory_batches"
             + " WHERE tenant_id=? AND store_id=? AND variant_id=? AND remaining_qty>0"
             + " AND material_status='AVAILABLE'"

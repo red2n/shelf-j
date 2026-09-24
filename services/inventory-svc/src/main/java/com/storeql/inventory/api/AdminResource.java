@@ -102,7 +102,8 @@ public class AdminResource {
             req.ownership(),
             req.supplierId() == null || req.supplierId().isBlank()
                 ? null
-                : uuid(req.supplierId(), "supplierId"));
+                : uuid(req.supplierId(), "supplierId"),
+            req.dutyStatus());
     return Response.status(Response.Status.CREATED)
         .entity(ApiResponse.ok(Mappers.toBatch(batch)))
         .build();

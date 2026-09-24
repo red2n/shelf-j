@@ -42,6 +42,7 @@ class GoodsReceivedHandler {
     JsonArray lines;
     String ownership;
     UUID supplierId;
+    String dutyStatus;
     try (var reader = Json.createReader(new StringReader(json))) {
       JsonObject obj = reader.readObject();
       eventId = Ids.parse(obj.getString("eventId"));
@@ -54,6 +55,8 @@ class GoodsReceivedHandler {
       lines = obj.getJsonArray("lines");
       // Consignment stock ownership: a delivery on consignment stays the supplier's.
       ownership = nullableString(obj, "ownership");
+      // Bonded stock: a delivery under bond arrives with its duty suspended.
+      dutyStatus = nullableString(obj, "dutyStatus");
       supplierId =
           obj.containsKey("supplierId") && !obj.isNull("supplierId")
               ? Ids.parse(obj.getString("supplierId"))
@@ -93,7 +96,8 @@ class GoodsReceivedHandler {
           "GRN",
           refId,
           ownership,
-          supplierId)) {
+          supplierId,
+          dutyStatus)) {
         created++;
       }
     }

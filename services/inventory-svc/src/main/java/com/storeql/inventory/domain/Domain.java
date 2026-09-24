@@ -30,7 +30,57 @@ public final class Domain {
       /** OWNED (the business's own) or CONSIGNMENT (the supplier's until it sells). */
       String ownership,
       /** The supplier that owns a CONSIGNMENT batch; purchase-svc's id, referenced never joined. */
-      UUID ownerSupplierId) {
+      UUID ownerSupplierId,
+      /** DUTY_PAID, or DUTY_SUSPENDED for excise goods held in bond: on hand, never for sale. */
+      String dutyStatus) {
+
+    /** A batch whose duty is paid. */
+    public Batch(
+        UUID id,
+        UUID tenantId,
+        UUID storeId,
+        UUID variantId,
+        String batchNo,
+        BigDecimal receivedQty,
+        BigDecimal remainingQty,
+        BigDecimal costPrice,
+        LocalDate expiryDate,
+        Instant createdAt,
+        String status,
+        String materialStatus,
+        String materialStatusReason,
+        String grade,
+        UUID zoneId,
+        String ownership,
+        UUID ownerSupplierId) {
+      this(
+          id,
+          tenantId,
+          storeId,
+          variantId,
+          batchNo,
+          receivedQty,
+          remainingQty,
+          costPrice,
+          expiryDate,
+          createdAt,
+          status,
+          materialStatus,
+          materialStatusReason,
+          grade,
+          zoneId,
+          ownership,
+          ownerSupplierId,
+          DUTY_PAID);
+    }
+
+    public static final String DUTY_PAID = "DUTY_PAID";
+    public static final String DUTY_SUSPENDED = "DUTY_SUSPENDED";
+
+    /** Whether the duty on this batch is still suspended (it sits in bond). */
+    public boolean inBond() {
+      return DUTY_SUSPENDED.equals(dutyStatus);
+    }
 
     /** A batch of the business's own stock. */
     public Batch(
@@ -66,7 +116,8 @@ public final class Domain {
           grade,
           zoneId,
           OWNERSHIP_OWNED,
-          null);
+          null,
+          DUTY_PAID);
     }
 
     public static final String OWNERSHIP_OWNED = "OWNED";
@@ -90,7 +141,13 @@ public final class Domain {
 
   /** Stock level rollup for a (store, variant). */
   public record Level(
-      UUID storeId, UUID variantId, BigDecimal onHand, BigDecimal reserved, BigDecimal available) {}
+      UUID storeId,
+      UUID variantId,
+      BigDecimal onHand,
+      BigDecimal reserved,
+      BigDecimal available,
+      /** How much of onHand sits in bond with its duty suspended: on hand, never available. */
+      BigDecimal inBond) {}
 
   /**
    * Aggregate counts over levels: total distinct SKUs and how many are at/below the low threshold.
@@ -225,7 +282,59 @@ public final class Domain {
       /** How much of onHandQty the supplier still owns (consignment): not the business's asset. */
       BigDecimal consignmentQty,
       /** What that consignment holding is worth at the cost the supplier will be owed. */
-      BigDecimal consignmentValue) {}
+      BigDecimal consignmentValue,
+      /** How much of onHandQty is held in bond with its duty suspended. */
+      BigDecimal dutySuspendedQty,
+      /** The duty that stock would crystallise on release, at the variants' rates. */
+      BigDecimal dutyPotential) {}
+
+  // ── Bonded and duty-suspended stock ─────────────────────────────────────────
+
+  /** A store approved as a bonded warehouse: the only place duty-suspended stock may be held. */
+  public record BondApproval(
+      UUID tenantId,
+      UUID storeId,
+      String approvalNumber,
+      String regime,
+      boolean active,
+      UUID createdBy,
+      Instant createdAt,
+      Instant endedAt) {
+    public static final String REGIME_EXCISE = "EXCISE";
+    public static final String REGIME_CUSTOMS = "CUSTOMS";
+  }
+
+  /** The duty one unit of a variant crystallises on release, in the home currency. */
+  public record ExciseDutyRate(
+      UUID tenantId,
+      UUID variantId,
+      BigDecimal dutyPerUnit,
+      String currency,
+      String note,
+      UUID updatedBy,
+      Instant updatedAt) {}
+
+  /** One release to home use: what left bond, at what rate, owing what. */
+  public record BondRelease(
+      UUID id,
+      UUID tenantId,
+      UUID storeId,
+      UUID variantId,
+      BigDecimal qty,
+      BigDecimal dutyPerUnit,
+      BigDecimal dutyAmount,
+      String currency,
+      String reference,
+      UUID releasedBy,
+      Instant releasedAt) {}
+
+  /** What sits in bond for one variant at one store, and the duty it carries. */
+  public record BondStock(
+      UUID storeId,
+      UUID variantId,
+      BigDecimal qty,
+      BigDecimal dutyPerUnit,
+      BigDecimal dutyPotential) {}
 
   /** How a shrinkage report groups its rows. An enum, so no request text ever reaches the SQL. */
   public enum ShrinkageGrouping {
@@ -632,6 +741,10 @@ public final class Domain {
     public static final String RTV = "RTV";
 
     public static final String RESERVE = "RESERVE";
+
+    /** Duty-suspended stock released to home use: out of the bonded batch, into a duty-paid one. */
+    public static final String BOND_RELEASE = "BOND_RELEASE";
+
     public static final String RELEASE = "RELEASE";
   }
 

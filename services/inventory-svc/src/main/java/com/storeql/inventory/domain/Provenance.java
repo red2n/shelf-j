@@ -39,9 +39,11 @@ public final class Provenance {
       String grade,
       /** Whose the stock was: OWNED or CONSIGNMENT — ownership rides with what is drawn. */
       String ownership,
-      UUID ownerSupplierId) {
+      UUID ownerSupplierId,
+      /** DUTY_PAID or DUTY_SUSPENDED: the duty status rides with what is drawn. */
+      String dutyStatus) {
 
-    /** A draw from the business's own stock. */
+    /** A draw from the business's own, duty-paid stock. */
     public Drawn(
         UUID batchId,
         BigDecimal qty,
@@ -49,13 +51,52 @@ public final class Provenance {
         LocalDate expiryDate,
         BigDecimal costPrice,
         String grade) {
-      this(batchId, qty, batchNo, expiryDate, costPrice, grade, Batch.OWNERSHIP_OWNED, null);
+      this(
+          batchId,
+          qty,
+          batchNo,
+          expiryDate,
+          costPrice,
+          grade,
+          Batch.OWNERSHIP_OWNED,
+          null,
+          Batch.DUTY_PAID);
+    }
+
+    /** A draw of duty-paid stock of the given ownership. */
+    public Drawn(
+        UUID batchId,
+        BigDecimal qty,
+        String batchNo,
+        LocalDate expiryDate,
+        BigDecimal costPrice,
+        String grade,
+        String ownership,
+        UUID ownerSupplierId) {
+      this(
+          batchId,
+          qty,
+          batchNo,
+          expiryDate,
+          costPrice,
+          grade,
+          ownership,
+          ownerSupplierId,
+          Batch.DUTY_PAID);
     }
 
     /** The same source, a different quantity of it. */
     public Drawn of(BigDecimal quantity) {
       return new Drawn(
-          batchId, quantity, batchNo, expiryDate, costPrice, grade, ownership, ownerSupplierId);
+          batchId,
+          quantity,
+          batchNo,
+          expiryDate,
+          costPrice,
+          grade,
+          ownership,
+          ownerSupplierId,
+          dutyStatus);
     }
 
     /** Whether the supplier owns what was drawn. */
@@ -130,7 +171,34 @@ public final class Provenance {
         from.grade(),
         null,
         from.ownership() == null ? Batch.OWNERSHIP_OWNED : from.ownership(),
-        from.ownerSupplierId());
+        from.ownerSupplierId(),
+        from.dutyStatus() == null ? Batch.DUTY_PAID : from.dutyStatus());
+  }
+
+  /**
+   * The duty-paid batch a release to home use makes from what it drew out of bond: the same lot,
+   * cost and date, at the same store, its duty now paid.
+   */
+  public static Batch released(UUID tenantId, UUID storeId, UUID variantId, Drawn from) {
+    return new Batch(
+        Ids.newId(),
+        tenantId,
+        storeId,
+        variantId,
+        from.batchNo(),
+        from.qty(),
+        from.qty(),
+        from.costPrice(),
+        from.expiryDate(),
+        Instant.now(),
+        Batch.STATUS_ACTIVE,
+        Batch.MATERIAL_AVAILABLE,
+        null,
+        from.grade(),
+        null,
+        from.ownership() == null ? Batch.OWNERSHIP_OWNED : from.ownership(),
+        from.ownerSupplierId(),
+        Batch.DUTY_PAID);
   }
 
   /** Stock arriving with no source to carry anything from: the anonymous batch of before. */

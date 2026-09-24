@@ -71,6 +71,9 @@ public final class Domain {
   /** A dropship order delivered to the customer: goods the business never held, now owed. */
   public static final String SOURCE_DROPSHIP_DELIVERY = "DROPSHIP_DELIVERY";
 
+  /** Duty-suspended goods released from bond: the duty now owed to the revenue. */
+  public static final String SOURCE_DUTY_RELEASE = "DUTY_RELEASE";
+
   public static final String SOURCE_SALE_TENDER = "SALE_TENDER";
   public static final String SOURCE_SALE_REFUND = "SALE_REFUND";
   // Chargebacks (11.9): the acquirer taking a card payment back, and how the argument ended.
@@ -107,6 +110,16 @@ public final class Domain {
   public static final String CODE_DROPSHIP_PURCHASES = "5020";
 
   public static final String NAME_DROPSHIP_PURCHASES = "Purchases - Dropship";
+
+  /** Excise duty crystallised on releases from bond. */
+  public static final String CODE_EXCISE_DUTY = "5030";
+
+  public static final String NAME_EXCISE_DUTY = "Excise Duty";
+
+  /** Excise duty owed to the revenue and not yet paid. */
+  public static final String CODE_DUTY_PAYABLE = "2140";
+
+  public static final String NAME_DUTY_PAYABLE = "Excise Duty Payable";
   public static final String NAME_SALES = "Sales";
   public static final String CODE_DEFERRED_LOYALTY = "2330";
   public static final String NAME_DEFERRED_LOYALTY = "Deferred Income - Loyalty Points";
@@ -300,7 +313,102 @@ public final class Domain {
       /** For a DROPSHIP order: the sale it fulfils (order-svc's order, referenced), else null. */
       UUID salesOrderId,
       /** For a DROPSHIP order: the customer the supplier ships to, as the order said. */
-      String shipTo) {
+      String shipTo,
+      /**
+       * DUTY_PAID (the default), or DUTY_SUSPENDED for excise goods arriving into bond: the receipt
+       * tells inventory-svc so, and the duty is owed only when they are released to home use.
+       */
+      String dutyStatus) {
+
+    /** An order for duty-paid goods of the given ownership, a dropship order possibly. */
+    public PurchaseOrder(
+        UUID id,
+        UUID tenantId,
+        UUID supplierId,
+        UUID storeId,
+        String status,
+        String currency,
+        BigDecimal totalNet,
+        BigDecimal totalVat,
+        BigDecimal totalGross,
+        LocalDate expectedDelivery,
+        Instant createdAt,
+        Instant updatedAt,
+        Instant cancelledAt,
+        String cancelledReason,
+        Instant closedAt,
+        String closedReason,
+        UUID createdBy,
+        UUID approvedBy,
+        Instant approvedAt,
+        String source,
+        BigDecimal fxRate,
+        BigDecimal totalNetHome,
+        String homeCurrency,
+        String ownership,
+        UUID salesOrderId,
+        String shipTo) {
+      this(
+          id,
+          tenantId,
+          supplierId,
+          storeId,
+          status,
+          currency,
+          totalNet,
+          totalVat,
+          totalGross,
+          expectedDelivery,
+          createdAt,
+          updatedAt,
+          cancelledAt,
+          cancelledReason,
+          closedAt,
+          closedReason,
+          createdBy,
+          approvedBy,
+          approvedAt,
+          source,
+          fxRate,
+          totalNetHome,
+          homeCurrency,
+          ownership,
+          salesOrderId,
+          shipTo,
+          PO_DUTY_PAID);
+    }
+
+    /** The same order, its goods arriving with the given duty status. */
+    public PurchaseOrder withDutyStatus(String duty) {
+      return new PurchaseOrder(
+          id,
+          tenantId,
+          supplierId,
+          storeId,
+          status,
+          currency,
+          totalNet,
+          totalVat,
+          totalGross,
+          expectedDelivery,
+          createdAt,
+          updatedAt,
+          cancelledAt,
+          cancelledReason,
+          closedAt,
+          closedReason,
+          createdBy,
+          approvedBy,
+          approvedAt,
+          source,
+          fxRate,
+          totalNetHome,
+          homeCurrency,
+          ownership,
+          salesOrderId,
+          shipTo,
+          duty);
+    }
 
     /** An order for goods the business will own, with a translation possibly recorded. */
     public PurchaseOrder(
@@ -384,7 +492,8 @@ public final class Domain {
           homeCurrency,
           owned,
           salesOrderId,
-          shipTo);
+          shipTo,
+          dutyStatus);
     }
 
     /** The same order, fulfilling a sale by dropship: shipped by the supplier to the customer. */
@@ -415,7 +524,8 @@ public final class Domain {
           homeCurrency,
           ownership,
           sale,
-          customer);
+          customer,
+          dutyStatus);
     }
 
     /** Whether the supplier ships this order to the customer: stock the business never holds. */
@@ -501,6 +611,28 @@ public final class Domain {
 
   /** The supplier owns the goods until they sell (consignment, sale or return). */
   public static final String PO_OWNERSHIP_CONSIGNMENT = "CONSIGNMENT";
+
+  /** The goods arrive with the duty paid. */
+  public static final String PO_DUTY_PAID = "DUTY_PAID";
+
+  /** Excise goods arriving into bond: the duty is owed only on release to home use. */
+  public static final String PO_DUTY_SUSPENDED = "DUTY_SUSPENDED";
+
+  /** A release from bond as inventory-svc announced it: the duty now owed to the revenue. */
+  public record DutyRelease(
+      UUID id,
+      UUID tenantId,
+      UUID eventId,
+      UUID releaseId,
+      UUID storeId,
+      UUID variantId,
+      BigDecimal qty,
+      BigDecimal dutyPerUnit,
+      BigDecimal dutyAmount,
+      String currency,
+      String reference,
+      LocalDate releasedOn,
+      Instant recordedAt) {}
 
   /** A sale drawn from a supplier's consignment stock, as inventory-svc announced it. */
   public record ConsignmentSale(

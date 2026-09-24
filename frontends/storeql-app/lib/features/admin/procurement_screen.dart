@@ -1062,6 +1062,10 @@ class _PurchaseOrdersTab extends ConsumerWidget {
                             const SizedBox(width: 6),
                             const _DropshipBadge(),
                           ],
+                          if (po.dutyStatus == 'DUTY_SUSPENDED') ...[
+                            const SizedBox(width: 6),
+                            const _InBondBadge(),
+                          ],
                         ],
                       ),
                       subtitle: Text(
@@ -1101,6 +1105,8 @@ class _CreatePoDialogState extends ConsumerState<_CreatePoDialog> {
   DateTime? _eta;
   // Whose the goods will be: ours on arrival, or the supplier's until they sell.
   String _ownership = 'OWNED';
+  // Excise goods may arrive into bond with the duty suspended.
+  String _dutyStatus = 'DUTY_PAID';
   bool _loading = false;
   String? _error;
 
@@ -1124,6 +1130,7 @@ class _CreatePoDialogState extends ConsumerState<_CreatePoDialog> {
               'storeId': _storeId,
               if (_currency != null) 'currency': _currency,
               if (_ownership != 'OWNED') 'ownership': _ownership,
+              if (_dutyStatus != 'DUTY_PAID') 'dutyStatus': _dutyStatus,
               if (_eta != null)
                 'expectedDelivery': _eta!.toIso8601String().split('T').first,
             },
@@ -1233,6 +1240,21 @@ class _CreatePoDialogState extends ConsumerState<_CreatePoDialog> {
                 DropdownMenuItem(value: 'CONSIGNMENT', child: Text("The supplier's until sold (consignment)")),
               ],
               onChanged: (v) => setState(() => _ownership = v ?? 'OWNED'),
+            ),
+            const SizedBox(height: 12),
+            DropdownButtonFormField<String>(
+              key: const Key('po-duty'),
+              initialValue: _dutyStatus,
+              decoration: const InputDecoration(
+                labelText: 'Duty',
+                helperText: 'Duty suspended: excise goods into a bonded warehouse; the duty is owed on release',
+                helperMaxLines: 2,
+              ),
+              items: const [
+                DropdownMenuItem(value: 'DUTY_PAID', child: Text('Duty paid')),
+                DropdownMenuItem(value: 'DUTY_SUSPENDED', child: Text('Duty suspended (into bond)')),
+              ],
+              onChanged: (v) => setState(() => _dutyStatus = v ?? 'DUTY_PAID'),
             ),
             const SizedBox(height: 12),
             ListTile(
@@ -2703,6 +2725,38 @@ class _ProposedBadge extends StatelessWidget {
               fontSize: 11,
               fontWeight: FontWeight.w600,
               color: status.onInfoContainer,
+            ),
+          ),
+        ],
+      ),
+    );
+  }
+}
+
+/// Marks an order whose goods arrive into bond with the duty suspended.
+class _InBondBadge extends StatelessWidget {
+  const _InBondBadge();
+
+  @override
+  Widget build(BuildContext context) {
+    final cs = Theme.of(context).colorScheme;
+    return Container(
+      padding: const EdgeInsets.symmetric(horizontal: 6, vertical: 2),
+      decoration: BoxDecoration(
+        color: cs.secondaryContainer,
+        borderRadius: AppRadius.badge,
+      ),
+      child: Row(
+        mainAxisSize: MainAxisSize.min,
+        children: [
+          Icon(Icons.warehouse_outlined, size: 12, color: cs.onSecondaryContainer),
+          const SizedBox(width: 4),
+          Text(
+            'In bond',
+            style: TextStyle(
+              fontSize: 11,
+              fontWeight: FontWeight.w600,
+              color: cs.onSecondaryContainer,
             ),
           ),
         ],

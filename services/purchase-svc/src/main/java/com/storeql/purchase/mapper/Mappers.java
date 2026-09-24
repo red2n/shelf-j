@@ -95,7 +95,22 @@ public final class Mappers {
         po.homeCurrency(),
         po.ownership(),
         po.salesOrderId(),
-        po.shipTo());
+        po.shipTo(),
+        po.dutyStatus());
+  }
+
+  public static Dtos.DutyReleaseResponse toDto(Domain.DutyRelease r) {
+    return new Dtos.DutyReleaseResponse(
+        r.id(),
+        r.releaseId(),
+        r.storeId(),
+        r.variantId(),
+        r.qty(),
+        r.dutyPerUnit(),
+        r.dutyAmount(),
+        r.currency(),
+        r.reference(),
+        r.releasedOn());
   }
 
   public static Dtos.DropshipArrangementResponse toDto(Domain.DropshipArrangement a) {

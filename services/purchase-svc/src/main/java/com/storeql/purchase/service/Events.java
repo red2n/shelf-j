@@ -77,7 +77,7 @@ final class Events {
    * reaching into another service's schema (golden rule #1), and there was exactly one receipt per
    * order back then, so nothing was lost that a join cannot recover.
    */
-  /** A receipt of the business's own goods, the supplier unnamed. */
+  /** A receipt of the business's own, duty-paid goods, the supplier unnamed. */
   static OutboxRow goodsReceived(
       UUID tenantId,
       UUID grId,
@@ -89,6 +89,7 @@ final class Events {
         tenantId, grId, storeId, poId, lines, unitPrice, Domain.PO_OWNERSHIP_OWNED, null);
   }
 
+  /** A receipt of duty-paid goods of the given ownership. */
   static OutboxRow goodsReceived(
       UUID tenantId,
       UUID grId,
@@ -98,6 +99,28 @@ final class Events {
       java.util.Map<UUID, java.math.BigDecimal> unitPrice,
       String ownership,
       UUID supplierId) {
+    return goodsReceived(
+        tenantId,
+        grId,
+        storeId,
+        poId,
+        lines,
+        unitPrice,
+        ownership,
+        supplierId,
+        Domain.PO_DUTY_PAID);
+  }
+
+  static OutboxRow goodsReceived(
+      UUID tenantId,
+      UUID grId,
+      UUID storeId,
+      UUID poId,
+      List<GoodsReceiptLine> lines,
+      java.util.Map<UUID, java.math.BigDecimal> unitPrice,
+      String ownership,
+      UUID supplierId,
+      String dutyStatus) {
     StringBuilder sb = new StringBuilder();
     sb.append("{\"eventId\":\"")
         .append(grId)
@@ -114,6 +137,9 @@ final class Events {
         .append(ownership == null ? Domain.PO_OWNERSHIP_OWNED : ownership)
         .append("\",\"supplierId\":\"")
         .append(supplierId)
+        // Bonded stock: a delivery under bond arrives with its duty suspended.
+        .append("\",\"dutyStatus\":\"")
+        .append(dutyStatus == null ? Domain.PO_DUTY_PAID : dutyStatus)
         .append("\",\"lines\":[");
     for (int i = 0; i < lines.size(); i++) {
       if (i > 0) sb.append(",");

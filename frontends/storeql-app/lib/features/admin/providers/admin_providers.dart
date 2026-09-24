@@ -53,12 +53,16 @@ class InventoryLevel {
   final double reserved;
   final double available;
 
+  /// How much of onHand sits in bond with its duty suspended: on hand, never available.
+  final double inBond;
+
   const InventoryLevel({
     required this.variantId,
     required this.storeId,
     required this.onHand,
     required this.reserved,
     required this.available,
+    this.inBond = 0,
   });
 
   factory InventoryLevel.fromJson(Map<String, dynamic> j) => InventoryLevel(
@@ -67,6 +71,7 @@ class InventoryLevel {
         onHand: (j['onHand'] as num?)?.toDouble() ?? 0,
         reserved: (j['reserved'] as num?)?.toDouble() ?? 0,
         available: (j['available'] as num?)?.toDouble() ?? 0,
+        inBond: (j['inBond'] as num?)?.toDouble() ?? 0,
       );
 
   /// Default low-stock heuristic when no reorder threshold is configured.
@@ -260,6 +265,9 @@ class BatchInfo {
   final String ownership;
   final String? ownerSupplierId;
 
+  /// DUTY_PAID, or DUTY_SUSPENDED while the batch sits in bond.
+  final String dutyStatus;
+
   const BatchInfo({
     required this.id,
     required this.storeId,
@@ -277,6 +285,7 @@ class BatchInfo {
     this.zoneId,
     this.ownership = 'OWNED',
     this.ownerSupplierId,
+    this.dutyStatus = 'DUTY_PAID',
   });
 
   factory BatchInfo.fromJson(Map<String, dynamic> j) => BatchInfo(
@@ -296,6 +305,7 @@ class BatchInfo {
         zoneId: j['zoneId'] as String?,
         ownership: j['ownership'] as String? ?? 'OWNED',
         ownerSupplierId: j['ownerSupplierId'] as String?,
+        dutyStatus: j['dutyStatus'] as String? ?? 'DUTY_PAID',
       );
 }
 

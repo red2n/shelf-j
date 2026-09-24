@@ -148,7 +148,12 @@ public final class Dtos {
                   "OWNED (the default): the business owns the goods on arrival. CONSIGNMENT: the"
                       + " supplier owns them until they sell — the receipt posts nothing, and"
                       + " each sale is owed to the supplier at this order's price.")
-          String ownership) {}
+          String ownership,
+      @Schema(
+              description =
+                  "DUTY_PAID (the default), or DUTY_SUSPENDED for excise goods arriving into bond"
+                      + " at an approved warehouse: the duty is owed only on release to home use.")
+          String dutyStatus) {}
 
   @Schema(name = "AddPurchaseOrderLineRequest")
   public record AddPurchaseOrderLineRequest(
@@ -227,7 +232,9 @@ public final class Dtos {
           String ownership,
       @Schema(description = "For a DROPSHIP order, the sale it fulfils.") UUID salesOrderId,
       @Schema(description = "For a DROPSHIP order, the customer the supplier ships to.")
-          String shipTo) {}
+          String shipTo,
+      @Schema(description = "DUTY_PAID, or DUTY_SUSPENDED when the goods arrive into bond.")
+          String dutyStatus) {}
 
   @Schema(
       name = "PurchaseOrderLineProgressResponse",
@@ -1020,4 +1027,23 @@ public final class Dtos {
       boolean active,
       Instant createdAt,
       Instant endedAt) {}
+
+  // ── Excise duty on releases from bond ──────────────────────────────────────
+
+  @Schema(name = "DutyReleaseResponse")
+  public record DutyReleaseResponse(
+      UUID id,
+      UUID releaseId,
+      UUID storeId,
+      UUID variantId,
+      BigDecimal qty,
+      BigDecimal dutyPerUnit,
+      BigDecimal dutyAmount,
+      String currency,
+      String reference,
+      LocalDate releasedOn) {}
+
+  @Schema(name = "DutyReleasesResponse", description = "The releases of a period and their duty.")
+  public record DutyReleasesResponse(
+      List<DutyReleaseResponse> releases, BigDecimal totalDuty, String currency) {}
 }

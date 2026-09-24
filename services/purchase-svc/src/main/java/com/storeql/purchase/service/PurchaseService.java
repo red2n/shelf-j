@@ -324,6 +324,7 @@ public class PurchaseService {
   public PurchaseOrder createPurchaseOrder(CreatePurchaseOrderRequest req, TenantContext ctx) {
     Supplier supplier = getSupplier(ctx, req.supplierId());
     String ownership = ownershipOf(req.ownership());
+    String dutyStatus = dutyStatusOf(req.dutyStatus());
     String currency = supplier.currency();
     if (req.currency() != null) {
       String asked = Money.requireIso4217(req.currency());
@@ -365,7 +366,7 @@ public class PurchaseService {
             null,
             null,
             Domain.PO_SOURCE_MANUAL);
-    po = po.withOwnership(ownership);
+    po = po.withOwnership(ownership).withDutyStatus(dutyStatus);
     return repo.createPurchaseOrder(
         po, Events.purchaseOrderCreated(ctx.requireTenantId(), po.id()));
   }
@@ -1034,7 +1035,8 @@ public class PurchaseService {
             lines,
             unitPrice,
             po.ownership(),
-            po.supplierId()),
+            po.supplierId(),
+            po.dutyStatus()),
         receiptPosting(po, gr, lines, unitPrice));
   }
 
@@ -1049,6 +1051,22 @@ public class PurchaseService {
     if (!Domain.PO_OWNERSHIP_OWNED.equals(code) && !Domain.PO_OWNERSHIP_CONSIGNMENT.equals(code)) {
       throw ApiException.badRequest(
           "PURCHASE_OWNERSHIP_INVALID", "ownership must be OWNED or CONSIGNMENT; got " + ownership);
+    }
+    return code;
+  }
+
+  /**
+   * DUTY_PAID when unsaid; DUTY_SUSPENDED for excise goods arriving into bond.
+   *
+   * @throws ApiException 400 {@code PURCHASE_DUTY_STATUS_INVALID} for a status nobody defined
+   */
+  static String dutyStatusOf(String dutyStatus) {
+    if (dutyStatus == null || dutyStatus.isBlank()) return Domain.PO_DUTY_PAID;
+    String code = dutyStatus.trim().toUpperCase(java.util.Locale.ROOT);
+    if (!Domain.PO_DUTY_PAID.equals(code) && !Domain.PO_DUTY_SUSPENDED.equals(code)) {
+      throw ApiException.badRequest(
+          "PURCHASE_DUTY_STATUS_INVALID",
+          "dutyStatus must be DUTY_PAID or DUTY_SUSPENDED; got " + dutyStatus);
     }
     return code;
   }

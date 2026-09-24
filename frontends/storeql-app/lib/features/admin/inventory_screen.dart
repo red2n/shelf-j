@@ -13,6 +13,7 @@ import '../../shared/widgets/loading_view.dart';
 import 'providers/admin_providers.dart';
 import 'providers/inventory_levels_pagination.dart';
 import 'inventory_forecast_tab.dart';
+import 'inventory_bond_tab.dart';
 import 'inventory_markdown_tab.dart';
 import 'inventory_warehouse_tabs.dart';
 import 'procurement_providers.dart';
@@ -30,7 +31,7 @@ class _InventoryScreenState extends ConsumerState<InventoryScreen> {
   @override
   Widget build(BuildContext context) {
     return DefaultTabController(
-      length: 6,
+      length: 8,
       child: Column(
         crossAxisAlignment: CrossAxisAlignment.start,
         children: [
@@ -66,6 +67,7 @@ class _InventoryScreenState extends ConsumerState<InventoryScreen> {
               Tab(text: 'Thresholds'),
               Tab(text: 'Forecast'),
               Tab(text: 'Reduce to clear'),
+              Tab(text: 'Bond & duty'),
             ],
           ),
           const Expanded(
@@ -78,6 +80,8 @@ class _InventoryScreenState extends ConsumerState<InventoryScreen> {
                 _ThresholdsTab(),
                 InventoryForecastTab(),
                 InventoryMarkdownTab(),
+                // Bonded and duty-suspended stock: approvals, duty per unit, releases.
+                InventoryBondTab(),
               ],
             ),
           ),
@@ -684,6 +688,8 @@ class _ReceiveStockDialogState extends ConsumerState<_ReceiveStockDialog> {
   // Whose the stock is: ours, or the supplier's until it sells (consignment).
   String _ownership = 'OWNED';
   String? _supplierId;
+  // Bonded stock: excise goods may arrive with the duty suspended, at an approved store.
+  String _dutyStatus = 'DUTY_PAID';
   bool _loading = false;
   bool _resolving = false;
   String? _error;
@@ -784,6 +790,7 @@ class _ReceiveStockDialogState extends ConsumerState<_ReceiveStockDialog> {
               if (_zoneId != null) 'zoneId': _zoneId,
               if (_ownership != 'OWNED') 'ownership': _ownership,
               if (_ownership == 'CONSIGNMENT') 'supplierId': _supplierId,
+              if (_dutyStatus != 'DUTY_PAID') 'dutyStatus': _dutyStatus,
             },
           );
       if (!mounted) return;
@@ -1024,6 +1031,22 @@ class _ReceiveStockDialogState extends ConsumerState<_ReceiveStockDialog> {
                       ),
                     ],
                   ],
+                ),
+                const SizedBox(height: 12),
+                DropdownButtonFormField<String>(
+                  key: const Key('receive-duty'),
+                  initialValue: _dutyStatus,
+                  isExpanded: true,
+                  decoration: const InputDecoration(
+                    labelText: 'Duty',
+                    helperText: 'Duty-suspended stock goes only into a store approved as a bonded warehouse',
+                    helperMaxLines: 2,
+                  ),
+                  items: const [
+                    DropdownMenuItem(value: 'DUTY_PAID', child: Text('Duty paid')),
+                    DropdownMenuItem(value: 'DUTY_SUSPENDED', child: Text('Duty suspended (in bond)')),
+                  ],
+                  onChanged: (v) => setState(() => _dutyStatus = v ?? 'DUTY_PAID'),
                 ),
                 const SizedBox(height: 12),
                 if (_fromLabel.isNotEmpty)
@@ -1393,6 +1416,7 @@ class _BatchWideTable extends StatelessWidget {
               DataColumn(label: Text('Grade')),
               DataColumn(label: Text('Material status')),
               DataColumn(label: Text('Whose')),
+              DataColumn(label: Text('Duty')),
               DataColumn(label: Text('')),
             ],
             rows: batches.map((b) {
@@ -1430,6 +1454,12 @@ class _BatchWideTable extends StatelessWidget {
                   DataCell(
                     Text(
                       b.ownership == 'CONSIGNMENT' ? 'Supplier (consignment)' : 'Ours',
+                      style: const TextStyle(fontSize: 12),
+                    ),
+                  ),
+                  DataCell(
+                    Text(
+                      b.dutyStatus == 'DUTY_SUSPENDED' ? 'In bond' : 'Paid',
                       style: const TextStyle(fontSize: 12),
                     ),
                   ),
