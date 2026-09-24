@@ -399,6 +399,21 @@ public class InventoryRepository extends BaseOutboxRepository {
         return existing;
       }
     }
+    // Dropship: the supplier fulfils this per order, so there is no shelf to check and nothing to
+    // hold — the reservation exists so the checkout runs as it always has, and says what it is.
+    if (isDropshipTx(c, r.tenantId(), r.variantId())) {
+      Reservation drop = r.asDropship();
+      try {
+        insertReservation(c, drop, idempotencyKey);
+      } catch (SQLException sqle) {
+        if (UNIQUE_VIOLATION.equals(sqle.getSQLState()))
+          throw new ApiException(
+              409, "RESERVATION_DUPLICATE_KEY", "duplicate idempotency key", List.of(), sqle);
+        throw sqle;
+      }
+      insertOutbox(c, event);
+      return drop;
+    }
     BigDecimal available = availableForUpdate(c, r.tenantId(), r.storeId(), r.variantId());
     if (available.compareTo(r.qty()) < 0) {
       throw ApiException.unprocessable(
@@ -480,6 +495,11 @@ public class InventoryRepository extends BaseOutboxRepository {
     if (!Reservation.HELD.equals(r.status())) {
       throw ApiException.unprocessable("RESERVATION_NOT_HELD", "Reservation is " + r.status());
     }
+    if (r.dropship()) {
+      // Nothing was held on the shelf and nothing leaves it: the supplier ships to the customer.
+      setReservationStatus(c, reservationId, Reservation.CONSUMED);
+      return r;
+    }
     Optional<PickingRule> rule = resolvePickingRule(tenantId, r.storeId(), r.variantId());
     List<UUID> zonePriorities =
         rule.filter(rr -> PickingRule.ZONE_PRIORITY.equals(rr.strategy()))
@@ -528,6 +548,7 @@ public class InventoryRepository extends BaseOutboxRepository {
       UUID tenantId, UUID storeId, UUID variantId, BigDecimal qty, UUID orderId, OutboxRow event) {
     inTx(
         c -> {
+          if (isDropshipTx(c, tenantId, variantId)) return null;
           deductFifo(
               c,
               tenantId,
@@ -609,6 +630,14 @@ public class InventoryRepository extends BaseOutboxRepository {
           if (!markProcessedIfNewTx(c, dedupeId, consumerName)) {
             return false;
           }
+          if (isDropshipTx(c, tenantId, variantId)) {
+            // Stock the business never held: the sale earned its revenue, drew no batch.
+            if (netAmount != null) {
+              insertSaleRevenueTx(
+                  c, tenantId, storeId, variantId, orderId, qty, netAmount, null, "SALE");
+            }
+            return true;
+          }
           deductFifo(
               c,
               tenantId,
@@ -628,6 +657,63 @@ public class InventoryRepository extends BaseOutboxRepository {
           return true;
         },
         "deduct sale from order (deduped)");
+  }
+
+  // ---------------------------------------------------------------- dropship sourcing
+  /**
+   * Records purchase-svc's word on how a variant is fulfilled, once per event: the latest word
+   * wins. A variant sourced from a supplier per order is available with nothing on the shelf.
+   */
+  public boolean upsertSourcingOnce(
+      UUID eventId,
+      String consumerName,
+      UUID tenantId,
+      UUID variantId,
+      String fulfilment,
+      UUID supplierId) {
+    return inTx(
+        c -> {
+          if (!markProcessedIfNewTx(c, eventId, consumerName)) return false;
+          try (PreparedStatement ps =
+              c.prepareStatement(
+                  "INSERT INTO variant_sourcing (tenant_id, variant_id, fulfilment, supplier_id,"
+                      + " updated_at) VALUES (?, ?, ?, ?, now())"
+                      + " ON CONFLICT (tenant_id, variant_id) DO UPDATE SET"
+                      + " fulfilment = EXCLUDED.fulfilment, supplier_id = EXCLUDED.supplier_id,"
+                      + " updated_at = now()")) {
+            ps.setObject(1, tenantId);
+            ps.setObject(2, variantId);
+            ps.setString(3, fulfilment);
+            ps.setObject(4, supplierId);
+            ps.executeUpdate();
+          }
+          return true;
+        },
+        "record variant sourcing");
+  }
+
+  /** The variants a supplier fulfils per order for this tenant. */
+  public List<UUID> dropshipVariants(UUID tenantId) {
+    return query(
+        "SELECT variant_id FROM variant_sourcing WHERE tenant_id = ? AND fulfilment = 'DROPSHIP'"
+            + " ORDER BY variant_id",
+        ps -> ps.setObject(1, tenantId),
+        rs -> rs.getObject("variant_id", UUID.class),
+        "list dropship variants");
+  }
+
+  private static boolean isDropshipTx(Connection c, UUID tenantId, UUID variantId)
+      throws SQLException {
+    try (PreparedStatement ps =
+        c.prepareStatement(
+            "SELECT 1 FROM variant_sourcing WHERE tenant_id = ? AND variant_id = ?"
+                + " AND fulfilment = 'DROPSHIP'")) {
+      ps.setObject(1, tenantId);
+      ps.setObject(2, variantId);
+      try (ResultSet rs = ps.executeQuery()) {
+        return rs.next();
+      }
+    }
   }
 
   // ---------------------------------------------------------------- release
@@ -902,7 +988,7 @@ public class InventoryRepository extends BaseOutboxRepository {
   public List<Reservation> listReservations(UUID tenantId, UUID storeId, String status, int limit) {
     StringBuilder sb =
         new StringBuilder(
-            "SELECT id, tenant_id, store_id, variant_id, qty, order_id, status, expires_at,"
+            "SELECT id, tenant_id, store_id, variant_id, qty, order_id, status, expires_at, fulfilment,"
                 + " created_at FROM reservations WHERE tenant_id = ?");
     if (storeId != null) sb.append(" AND store_id = ?");
     if (status != null) sb.append(" AND status = ?");
@@ -934,7 +1020,7 @@ public class InventoryRepository extends BaseOutboxRepository {
    */
   public List<Reservation> heldReservationsByOrder(UUID tenantId, UUID orderId) {
     return query(
-        "SELECT id, tenant_id, store_id, variant_id, qty, order_id, status, expires_at,"
+        "SELECT id, tenant_id, store_id, variant_id, qty, order_id, status, expires_at, fulfilment,"
             + " created_at FROM reservations WHERE tenant_id = ? AND order_id = ?"
             + " AND status = 'HELD'",
         ps -> {
@@ -955,7 +1041,7 @@ public class InventoryRepository extends BaseOutboxRepository {
   public Optional<Reservation> findReservation(UUID tenantId, UUID reservationId) {
     var list =
         query(
-            "SELECT id, tenant_id, store_id, variant_id, qty, order_id, status, expires_at,"
+            "SELECT id, tenant_id, store_id, variant_id, qty, order_id, status, expires_at, fulfilment,"
                 + " created_at FROM reservations WHERE tenant_id = ? AND id = ?",
             ps -> {
               ps.setObject(1, tenantId);
@@ -971,7 +1057,7 @@ public class InventoryRepository extends BaseOutboxRepository {
       UUID tenantId, String idempotencyKey) {
     var list =
         query(
-            "SELECT id, tenant_id, store_id, variant_id, qty, order_id, status, expires_at,"
+            "SELECT id, tenant_id, store_id, variant_id, qty, order_id, status, expires_at, fulfilment,"
                 + " created_at FROM reservations WHERE tenant_id = ? AND idempotency_key = ?",
             ps -> {
               ps.setObject(1, tenantId);
@@ -986,7 +1072,7 @@ public class InventoryRepository extends BaseOutboxRepository {
       Connection c, UUID tenantId, String idempotencyKey) throws SQLException {
     try (PreparedStatement ps =
         c.prepareStatement(
-            "SELECT id, tenant_id, store_id, variant_id, qty, order_id, status, expires_at,"
+            "SELECT id, tenant_id, store_id, variant_id, qty, order_id, status, expires_at, fulfilment,"
                 + " created_at FROM reservations WHERE tenant_id = ? AND idempotency_key = ?")) {
       ps.setObject(1, tenantId);
       ps.setString(2, idempotencyKey);
@@ -1560,7 +1646,7 @@ public class InventoryRepository extends BaseOutboxRepository {
       throws SQLException {
     try (PreparedStatement ps =
         c.prepareStatement(
-            "SELECT id, tenant_id, store_id, variant_id, qty, order_id, status, expires_at,"
+            "SELECT id, tenant_id, store_id, variant_id, qty, order_id, status, expires_at, fulfilment,"
                 + " created_at FROM reservations WHERE tenant_id=? AND id=? FOR UPDATE")) {
       ps.setObject(1, tenantId);
       ps.setObject(2, id);
@@ -1647,8 +1733,8 @@ public class InventoryRepository extends BaseOutboxRepository {
         c.prepareStatement(
             "INSERT INTO reservations"
                 + " (id, tenant_id, store_id, variant_id, qty, order_id, status, expires_at,"
-                + " created_at, idempotency_key)"
-                + " VALUES (?,?,?,?,?,?,?,?,?,?)")) {
+                + " created_at, idempotency_key, fulfilment)"
+                + " VALUES (?,?,?,?,?,?,?,?,?,?,?)")) {
       ps.setObject(1, r.id());
       ps.setObject(2, r.tenantId());
       ps.setObject(3, r.storeId());
@@ -1659,6 +1745,7 @@ public class InventoryRepository extends BaseOutboxRepository {
       ps.setObject(8, r.expiresAt() == null ? null : r.expiresAt().atOffset(ZoneOffset.UTC));
       ps.setObject(9, r.createdAt().atOffset(ZoneOffset.UTC));
       ps.setString(10, idempotencyKey);
+      ps.setString(11, r.fulfilment() == null ? Reservation.STOCK : r.fulfilment());
       ps.executeUpdate();
     }
   }
@@ -1878,7 +1965,8 @@ public class InventoryRepository extends BaseOutboxRepository {
         rs.getObject("order_id", UUID.class),
         rs.getString("status"),
         exp,
-        rs.getObject("created_at", OffsetDateTime.class).toInstant());
+        rs.getObject("created_at", OffsetDateTime.class).toInstant(),
+        rs.getString("fulfilment"));
   }
 
   // ---------------------------------------------------------------- move orders

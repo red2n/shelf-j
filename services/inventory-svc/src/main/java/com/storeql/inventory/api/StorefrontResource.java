@@ -60,12 +60,8 @@ public class StorefrontResource {
       }
     }
     List<AvailabilityResponse> items =
-        service.levels(tenantId, storeId).stream()
-            .map(
-                l ->
-                    new AvailabilityResponse(
-                        l.variantId().toString(),
-                        l.available() != null && l.available().signum() > 0))
+        service.availability(tenantId, storeId).stream()
+            .map(a -> new AvailabilityResponse(a.variantId().toString(), a.inStock(), a.dropship()))
             .toList();
     return ApiResponse.ok(items, ApiResponse.Meta.of(ctx.requestId()));
   }

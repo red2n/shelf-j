@@ -169,7 +169,8 @@ public final class Mappers {
         r.orderId() == null ? null : r.orderId().toString(),
         r.status(),
         r.expiresAt() == null ? null : r.expiresAt().toString(),
-        ts(r.createdAt()));
+        ts(r.createdAt()),
+        r.fulfilment());
   }
 
   /**

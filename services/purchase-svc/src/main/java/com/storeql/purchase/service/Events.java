@@ -29,6 +29,27 @@ final class Events {
    * The reason is caller-supplied text, so it goes through {@link EventPayload#esc} — a quote in it
    * must not be able to corrupt the event JSON.
    */
+  /**
+   * How a variant is fulfilled from now on (dropship): from the supplier per order, or from stock
+   * again. inventory-svc keeps the projection it answers availability and holds from.
+   */
+  static OutboxRow variantSourcingChanged(
+      UUID tenantId, UUID variantId, String fulfilment, UUID supplierId) {
+    return new OutboxRow(
+        "VariantSourcingChanged",
+        "storeql.purchase.variant-sourcing-changed",
+        tenantId,
+        variantId,
+        EventPayload.base("VariantSourcingChanged", tenantId, variantId)
+            + ",\"variantId\":\""
+            + variantId
+            + "\",\"fulfilment\":\""
+            + fulfilment
+            + "\",\"supplierId\":"
+            + (supplierId == null ? "null" : "\"" + supplierId + "\"")
+            + "}");
+  }
+
   static OutboxRow purchaseOrderCancelled(UUID tenantId, UUID poId, String reason) {
     return new OutboxRow(
         "PurchaseOrderCancelled",

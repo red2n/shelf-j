@@ -144,6 +144,52 @@ class EventsTest {
   }
 
   @Test
+  void orderConfirmedCarriesWhereADeliveryGoes() {
+    // Dropship (consignment and dropship stock ownership): purchase-svc raises the supplier's order
+    // from this event, so it must say how the order is fulfilled and where the goods go.
+    var row =
+        Events.orderConfirmed(
+            TENANT,
+            ORDER,
+            STORE,
+            "ONLINE",
+            null,
+            BigDecimal.TEN,
+            BigDecimal.ZERO,
+            "GBP",
+            List.of(),
+            "DELIVERY",
+            "12 High Street, Leeds, LS1 1AA",
+            "Chris Carter",
+            "07700900123");
+    JsonObject json = Json.createReader(new StringReader(row.payload())).readObject();
+    assertEquals("DELIVERY", json.getString("fulfilmentType"));
+    assertEquals("12 High Street, Leeds, LS1 1AA", json.getString("deliveryAddress"));
+    assertEquals("Chris Carter", json.getString("deliveryRecipientName"));
+    assertEquals("07700900123", json.getString("deliveryRecipientPhone"));
+
+    // A till sale delivers nowhere: the fields are there and null, never missing or empty.
+    var till =
+        Events.orderConfirmed(
+            TENANT,
+            ORDER,
+            STORE,
+            "POS",
+            null,
+            BigDecimal.TEN,
+            BigDecimal.ZERO,
+            "GBP",
+            List.of(),
+            "INSTORE",
+            null,
+            null,
+            null);
+    JsonObject tillJson = Json.createReader(new StringReader(till.payload())).readObject();
+    assertEquals("INSTORE", tillJson.getString("fulfilmentType"));
+    assertEquals(true, tillJson.isNull("deliveryAddress"));
+  }
+
+  @Test
   void orderConfirmedWithNoLinesStillSaysSo() {
     var row =
         Events.orderConfirmed(

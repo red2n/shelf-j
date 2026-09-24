@@ -89,6 +89,10 @@ class PurchaseOrder {
   /// OWNED, or CONSIGNMENT when the supplier owns the goods until they sell.
   final String ownership;
 
+  /// For a DROPSHIP order: the sale it fulfils and the customer the supplier ships to.
+  final String? salesOrderId;
+  final String? shipTo;
+
   const PurchaseOrder({
     required this.id,
     required this.supplierId,
@@ -102,6 +106,8 @@ class PurchaseOrder {
     required this.createdAt,
     this.source = 'MANUAL',
     this.ownership = 'OWNED',
+    this.salesOrderId,
+    this.shipTo,
   });
 
   factory PurchaseOrder.fromJson(Map<String, dynamic> j) => PurchaseOrder(
@@ -117,6 +123,8 @@ class PurchaseOrder {
     createdAt: j['createdAt'] as String? ?? '',
     source: j['source'] as String? ?? 'MANUAL',
     ownership: j['ownership'] as String? ?? 'OWNED',
+    salesOrderId: j['salesOrderId'] as String?,
+    shipTo: j['shipTo'] as String?,
   );
 }
 

@@ -185,6 +185,42 @@ public final class Events {
       BigDecimal taxAmount,
       String currency,
       List<OrderItem> lines) {
+    return orderConfirmed(
+        tenantId,
+        orderId,
+        storeId,
+        channel,
+        customerId,
+        total,
+        taxAmount,
+        currency,
+        lines,
+        null,
+        null,
+        null,
+        null);
+  }
+
+  /**
+   * As above, saying how the order is fulfilled and where a delivery goes: purchase-svc raises a
+   * dropship supplier's order from this event (consignment and dropship stock ownership), shipped
+   * to the customer, so the address rides on the event rather than in a call back to order-svc. The
+   * four fields are always present; a till sale carries them as JSON null.
+   */
+  static OutboxRow orderConfirmed(
+      UUID tenantId,
+      UUID orderId,
+      UUID storeId,
+      String channel,
+      UUID customerId,
+      BigDecimal total,
+      BigDecimal taxAmount,
+      String currency,
+      List<OrderItem> lines,
+      String fulfilmentType,
+      String deliveryAddress,
+      String deliveryRecipientName,
+      String deliveryRecipientPhone) {
     String customerPart = customerId != null ? "\"" + customerId + "\"" : "null";
     String amount = total != null ? total.toPlainString() : "0";
     // The VAT inside the total, so the ledger can post revenue net of it (17.7).
@@ -213,7 +249,15 @@ public final class Events {
             + tax
             + ",\"currency\":\""
             + esc(cur)
-            + "\",\"lines\":"
+            + "\",\"fulfilmentType\":"
+            + jsonText(fulfilmentType)
+            + ",\"deliveryAddress\":"
+            + jsonText(deliveryAddress)
+            + ",\"deliveryRecipientName\":"
+            + jsonText(deliveryRecipientName)
+            + ",\"deliveryRecipientPhone\":"
+            + jsonText(deliveryRecipientPhone)
+            + ",\"lines\":"
             + confirmedLines(lines)
             + "}");
   }
@@ -222,6 +266,11 @@ public final class Events {
    * The sale line by line: what reporting-svc groups by category. Unit price is omitted when
    * unknown.
    */
+  /** A JSON string, or JSON null for nothing. */
+  private static String jsonText(String value) {
+    return value == null || value.isBlank() ? "null" : "\"" + esc(value) + "\"";
+  }
+
   private static String confirmedLines(List<OrderItem> lines) {
     StringBuilder sb = new StringBuilder("[");
     for (int i = 0; i < lines.size(); i++) {

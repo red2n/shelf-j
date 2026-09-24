@@ -135,7 +135,9 @@ public final class Dtos {
       @Schema(description = "UUID of the order this reservation is for.") String orderId,
       @Schema(description = "HELD, CONSUMED, or RELEASED.") String status,
       @Schema(description = "Instant after which the hold auto-expires.") String expiresAt,
-      String createdAt) {}
+      String createdAt,
+      @Schema(description = "STOCK, or DROPSHIP when the supplier fulfils it and nothing is held.")
+          String fulfilment) {}
 
   @Schema(
       name = "LowStockRowResponse",
@@ -1061,7 +1063,12 @@ public final class Dtos {
       name = "AvailabilityResponse",
       description = "Public in-stock/out-of-stock signal for a variant; no quantities exposed.")
   public record AvailabilityResponse(
-      @Schema(description = "UUID of the product variant.") String variantId, boolean inStock) {}
+      @Schema(description = "UUID of the product variant.") String variantId,
+      boolean inStock,
+      @Schema(
+              description =
+                  "True when the supplier ships it per order: available with none on the shelf.")
+          boolean dropship) {}
 
   // ── Gross margin and GMROI (19.7) ─────────────────────────────────────────────
 

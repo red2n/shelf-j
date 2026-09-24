@@ -863,6 +863,50 @@ public class InventoryService {
     return repo.levels(tenantId, storeId);
   }
 
+  /**
+   * What a shopper can buy at a store: each variant with stock available on the shelf, and each
+   * variant the supplier fulfils per order (dropship) — available with none on the shelf.
+   */
+  public List<com.storeql.inventory.domain.Domain.Availability> availability(
+      UUID tenantId, UUID storeId) {
+    List<com.storeql.inventory.domain.Domain.Availability> out = new java.util.ArrayList<>();
+    java.util.Set<UUID> seen = new java.util.HashSet<>();
+    for (Level l : repo.levels(tenantId, storeId)) {
+      seen.add(l.variantId());
+      out.add(
+          new com.storeql.inventory.domain.Domain.Availability(
+              l.variantId(), l.available() != null && l.available().signum() > 0, false));
+    }
+    for (UUID variantId : repo.dropshipVariants(tenantId)) {
+      if (seen.add(variantId)) {
+        out.add(new com.storeql.inventory.domain.Domain.Availability(variantId, true, true));
+      }
+    }
+    return out;
+  }
+
+  /** Records purchase-svc's word on how a variant is fulfilled, once per event. */
+  public boolean recordSourcingOnce(
+      UUID eventId,
+      String consumerName,
+      UUID tenantId,
+      UUID variantId,
+      String fulfilment,
+      UUID supplierId) {
+    String code = fulfilment == null ? "" : fulfilment.trim().toUpperCase(java.util.Locale.ROOT);
+    if (!"STOCK".equals(code) && !"DROPSHIP".equals(code)) {
+      throw ApiException.badRequest(
+          "INVENTORY_SOURCING_INVALID", "fulfilment must be STOCK or DROPSHIP; got " + fulfilment);
+    }
+    return repo.upsertSourcingOnce(
+        eventId,
+        consumerName,
+        tenantId,
+        variantId,
+        code,
+        "DROPSHIP".equals(code) ? supplierId : null);
+  }
+
   /** One page of stock levels plus the opaque cursor for the next page (null when exhausted). */
   public record LevelPage(List<Level> levels, String nextCursor) {}
 

@@ -106,11 +106,50 @@ public final class Domain {
       UUID orderId,
       String status,
       Instant expiresAt,
-      Instant createdAt) {
+      Instant createdAt,
+      /**
+       * STOCK: a hold on the shelf. DROPSHIP: the supplier fulfils it; nothing on the shelf is
+       * held.
+       */
+      String fulfilment) {
+
+    /** A hold on stock from the shelf. */
+    public Reservation(
+        UUID id,
+        UUID tenantId,
+        UUID storeId,
+        UUID variantId,
+        BigDecimal qty,
+        UUID orderId,
+        String status,
+        Instant expiresAt,
+        Instant createdAt) {
+      this(id, tenantId, storeId, variantId, qty, orderId, status, expiresAt, createdAt, STOCK);
+    }
+
     public static final String HELD = "HELD";
     public static final String CONSUMED = "CONSUMED";
     public static final String RELEASED = "RELEASED";
+    public static final String STOCK = "STOCK";
+    public static final String DROPSHIP = "DROPSHIP";
+
+    /** Whether the supplier fulfils this, so nothing on the shelf is held or drawn. */
+    public boolean dropship() {
+      return DROPSHIP.equals(fulfilment);
+    }
+
+    /** The same hold, fulfilled by the supplier. */
+    public Reservation asDropship() {
+      return new Reservation(
+          id, tenantId, storeId, variantId, qty, orderId, status, expiresAt, createdAt, DROPSHIP);
+    }
   }
+
+  /**
+   * Whether a shopper can buy a variant at a store: from the shelf, or from the supplier per order
+   * (dropship — stock the business never holds).
+   */
+  public record Availability(UUID variantId, boolean inStock, boolean dropship) {}
 
   /**
    * Who caused a stock movement, and why (SJ-D4).

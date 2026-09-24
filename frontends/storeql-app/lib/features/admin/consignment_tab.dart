@@ -13,6 +13,7 @@ import '../../shared/widgets/empty_state.dart';
 import '../../shared/widgets/error_view.dart';
 import '../../shared/widgets/loading_view.dart';
 import 'procurement_providers.dart';
+import 'widgets/variant_picker.dart';
 
 // ---------------------------------------------------------------------------
 // Consignment stock, the buyer's side (readiness review: "Consignment and
@@ -92,6 +93,44 @@ class ConsignmentSettlement {
       );
 }
 
+/// Which supplier fulfils a variant per order, at what cost (dropship).
+class DropshipArrangement {
+  final String id;
+  final String variantId;
+  final String supplierId;
+  final double unitCost;
+  final String vatCode;
+  final bool active;
+  const DropshipArrangement({
+    required this.id,
+    required this.variantId,
+    required this.supplierId,
+    required this.unitCost,
+    required this.vatCode,
+    required this.active,
+  });
+
+  factory DropshipArrangement.fromJson(Map<String, dynamic> j) => DropshipArrangement(
+        id: j['id'] as String? ?? '',
+        variantId: j['variantId'] as String? ?? '',
+        supplierId: j['supplierId'] as String? ?? '',
+        unitCost: (j['unitCost'] as num?)?.toDouble() ?? 0,
+        vatCode: j['vatCode'] as String? ?? 'T1',
+        active: j['active'] as bool? ?? true,
+      );
+}
+
+final dropshipArrangementsProvider =
+    FutureProvider.autoDispose<List<DropshipArrangement>>((ref) async {
+  final resp = await ref.read(apiClientProvider).dio.get(
+    '/${ApiConstants.purchase}/admin/dropship/arrangements',
+    queryParameters: {'limit': 100},
+  );
+  return ((resp.data['data'] as List?) ?? const [])
+      .map((e) => DropshipArrangement.fromJson(e as Map<String, dynamic>))
+      .toList();
+});
+
 /// What has sold of suppliers' stock and is not yet on a statement.
 final unsettledConsignmentSalesProvider =
     FutureProvider.autoDispose<List<ConsignmentSale>>((ref) async {
@@ -134,6 +173,7 @@ class ConsignmentTab extends ConsumerWidget {
     final management = auth is AuthAuthenticated && auth.isManager;
     final sales = ref.watch(unsettledConsignmentSalesProvider);
     final settlements = ref.watch(consignmentSettlementsProvider);
+    final arrangements = ref.watch(dropshipArrangementsProvider);
     final suppliers = ref.watch(suppliersProvider).value ?? const <Supplier>[];
     String supplierName(String id) =>
         suppliers.where((s) => s.id == id).map((s) => s.name).firstOrNull ?? shortRef(id);
@@ -143,6 +183,105 @@ class ConsignmentTab extends ConsumerWidget {
     return ListView(
       padding: const EdgeInsets.all(16),
       children: [
+        // ── Dropship: stock the business never holds ──
+        Row(
+          crossAxisAlignment: CrossAxisAlignment.start,
+          children: [
+            Expanded(
+              child: Column(
+                crossAxisAlignment: CrossAxisAlignment.start,
+                children: [
+                  Text('Dropship arrangements',
+                      style: text.titleMedium?.copyWith(fontWeight: FontWeight.w600)),
+                  const SizedBox(height: 2),
+                  Text(
+                    'Products a supplier ships straight to the customer, per order. The shop sells'
+                    ' them with none on the shelf; each paid order raises a draft purchase order for'
+                    ' the supplier at the agreed cost, shipped to the customer, for you to submit.',
+                    style: text.bodySmall?.copyWith(color: cs.onSurfaceVariant),
+                  ),
+                ],
+              ),
+            ),
+            if (management) ...[
+              const SizedBox(width: 12),
+              FilledButton.icon(
+                key: const Key('dropship-new'),
+                onPressed: () => showDialog(
+                  context: context,
+                  builder: (_) => NewDropshipArrangementDialog(suppliers: suppliers),
+                ),
+                icon: const Icon(Icons.add),
+                label: const Text('New arrangement'),
+              ),
+            ],
+          ],
+        ),
+        const SizedBox(height: 12),
+        arrangements.when(
+          loading: () => const LoadingView(label: 'Loading arrangements…'),
+          error: (e, _) => ErrorView(
+            message: friendlyError(e, fallback: 'Could not load dropship arrangements.'),
+            onRetry: () => ref.invalidate(dropshipArrangementsProvider),
+          ),
+          data: (list) {
+            if (list.isEmpty) {
+              return const EmptyState(
+                icon: Icons.local_shipping_outlined,
+                title: 'Nothing is dropshipped',
+                detail: 'Arrange for a supplier to ship a product straight to customers.',
+              );
+            }
+            return Column(
+              children: [
+                for (final a in list)
+                  Card(
+                    child: ListTile(
+                      key: Key('arrangement-${a.id}'),
+                      leading: Icon(
+                        Icons.local_shipping_outlined,
+                        color: a.active ? cs.onSurfaceVariant : cs.outline,
+                      ),
+                      title: Text(
+                        'Variant ${shortRef(a.variantId)} from ${supplierName(a.supplierId)}',
+                        style: TextStyle(
+                          fontWeight: FontWeight.w600,
+                          color: a.active ? null : cs.outline,
+                        ),
+                      ),
+                      subtitle: Text(
+                        '${AppFormat.money(a.unitCost, currencyCode: suppliers.where((s) => s.id == a.supplierId).map((s) => s.currency).firstOrNull)} each · VAT ${a.vatCode}'
+                        '${a.active ? '' : ' · ended'}',
+                      ),
+                      trailing: management && a.active
+                          ? TextButton(
+                              key: Key('arrangement-end-${a.id}'),
+                              onPressed: () async {
+                                try {
+                                  await ref.read(apiClientProvider).dio.post(
+                                    '/${ApiConstants.purchase}/admin/dropship/arrangements/${a.id}/end',
+                                    data: const {},
+                                  );
+                                  ref.invalidate(dropshipArrangementsProvider);
+                                  if (!context.mounted) return;
+                                  ScaffoldMessenger.of(context).showSnackBar(const SnackBar(
+                                      content: Text('Ended: the product is stocked again.')));
+                                } on DioException catch (e) {
+                                  if (!context.mounted) return;
+                                  ScaffoldMessenger.of(context).showSnackBar(SnackBar(
+                                      content: Text(friendlyError(e, fallback: 'Could not end it.'))));
+                                }
+                              },
+                              child: const Text('End'),
+                            )
+                          : null,
+                    ),
+                  ),
+              ],
+            );
+          },
+        ),
+        const SizedBox(height: 24),
         Text('Owed to suppliers', style: text.titleMedium?.copyWith(fontWeight: FontWeight.w600)),
         const SizedBox(height: 2),
         Text(
@@ -384,6 +523,118 @@ class _SettleConsignmentDialogState extends ConsumerState<SettleConsignmentDialo
           onPressed: _busy ? null : _save,
           child: const Text('Settle'),
         ),
+      ],
+    );
+  }
+}
+
+/// Arrange for a supplier to ship a product straight to customers, per order.
+class NewDropshipArrangementDialog extends ConsumerStatefulWidget {
+  const NewDropshipArrangementDialog({super.key, required this.suppliers});
+  final List<Supplier> suppliers;
+
+  @override
+  ConsumerState<NewDropshipArrangementDialog> createState() => _NewDropshipArrangementDialogState();
+}
+
+class _NewDropshipArrangementDialogState extends ConsumerState<NewDropshipArrangementDialog> {
+  String? _productId;
+  String? _variantId;
+  String? _supplierId;
+  final _cost = TextEditingController();
+  bool _busy = false;
+  String? _refusal;
+
+  @override
+  void dispose() {
+    _cost.dispose();
+    super.dispose();
+  }
+
+  Future<void> _save() async {
+    if (_variantId == null || _supplierId == null) {
+      setState(() => _refusal = 'Pick the product, its variant and the supplier that ships it.');
+      return;
+    }
+    setState(() {
+      _busy = true;
+      _refusal = null;
+    });
+    try {
+      await ref.read(apiClientProvider).dio.post(
+        '/${ApiConstants.purchase}/admin/dropship/arrangements',
+        data: {
+          'variantId': _variantId,
+          'supplierId': _supplierId,
+          'unitCost': double.tryParse(_cost.text.trim()) ?? -1,
+        },
+      );
+      ref.invalidate(dropshipArrangementsProvider);
+      if (!mounted) return;
+      ScaffoldMessenger.of(context).showSnackBar(const SnackBar(
+          content: Text('Arranged: the product is now shipped by the supplier, per order.')));
+      Navigator.of(context).pop();
+    } on DioException catch (e) {
+      setState(() => _refusal = friendlyError(e, fallback: 'Could not arrange it.'));
+    } finally {
+      if (mounted) setState(() => _busy = false);
+    }
+  }
+
+  @override
+  Widget build(BuildContext context) {
+    final cs = Theme.of(context).colorScheme;
+    return AlertDialog(
+      title: const Text('New dropship arrangement'),
+      content: SizedBox(
+        width: 440,
+        child: SingleChildScrollView(
+          child: Column(
+            mainAxisSize: MainAxisSize.min,
+            crossAxisAlignment: CrossAxisAlignment.stretch,
+            children: [
+              VariantPicker(
+                productId: _productId,
+                variantId: _variantId,
+                onProduct: (v) => setState(() {
+                  _productId = v;
+                  _variantId = null;
+                }),
+                onVariant: (v) => setState(() => _variantId = v),
+              ),
+              const SizedBox(height: 8),
+              DropdownButtonFormField<String>(
+                key: const Key('dropship-supplier'),
+                initialValue: _supplierId,
+                isExpanded: true,
+                decoration: const InputDecoration(labelText: 'Supplier that ships it *'),
+                items: [
+                  for (final s in widget.suppliers)
+                    DropdownMenuItem(value: s.id, child: Text(s.name, overflow: TextOverflow.ellipsis)),
+                ],
+                onChanged: (v) => setState(() => _supplierId = v),
+              ),
+              const SizedBox(height: 8),
+              TextField(
+                key: const Key('dropship-cost'),
+                controller: _cost,
+                decoration: const InputDecoration(
+                  labelText: 'What the supplier charges per unit *',
+                  helperText: "In the supplier's currency",
+                ),
+                keyboardType: const TextInputType.numberWithOptions(decimal: true),
+              ),
+              if (_refusal != null) ...[
+                const SizedBox(height: 12),
+                Text(_refusal!, key: const Key('dropship-refusal'), style: TextStyle(color: cs.error)),
+              ],
+            ],
+          ),
+        ),
+      ),
+      actions: [
+        TextButton(onPressed: _busy ? null : () => Navigator.of(context).pop(), child: const Text('Cancel')),
+        FilledButton(key: const Key('dropship-save'), onPressed: _busy ? null : _save, child: const Text('Arrange')),
       ],
     );
   }

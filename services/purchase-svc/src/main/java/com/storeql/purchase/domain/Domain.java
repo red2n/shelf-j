@@ -68,6 +68,9 @@ public final class Domain {
   /** A consignment sale: what the supplier is owed the moment its stock sold. */
   public static final String SOURCE_CONSIGNMENT_SALE = "CONSIGNMENT_SALE";
 
+  /** A dropship order delivered to the customer: goods the business never held, now owed. */
+  public static final String SOURCE_DROPSHIP_DELIVERY = "DROPSHIP_DELIVERY";
+
   public static final String SOURCE_SALE_TENDER = "SALE_TENDER";
   public static final String SOURCE_SALE_REFUND = "SALE_REFUND";
   // Chargebacks (11.9): the acquirer taking a card payment back, and how the argument ended.
@@ -99,6 +102,11 @@ public final class Domain {
   public static final String CODE_CONSIGNMENT_PURCHASES = "5010";
 
   public static final String NAME_CONSIGNMENT_PURCHASES = "Purchases - Consignment";
+
+  /** Cost of goods a supplier shipped straight to the customer (dropship). */
+  public static final String CODE_DROPSHIP_PURCHASES = "5020";
+
+  public static final String NAME_DROPSHIP_PURCHASES = "Purchases - Dropship";
   public static final String NAME_SALES = "Sales";
   public static final String CODE_DEFERRED_LOYALTY = "2330";
   public static final String NAME_DEFERRED_LOYALTY = "Deferred Income - Loyalty Points";
@@ -288,7 +296,11 @@ public final class Domain {
        * Whose the goods will be on arrival: OWNED (the business's, the default) or CONSIGNMENT (the
        * supplier's until they sell — nothing is owed at the door, the sale is owed).
        */
-      String ownership) {
+      String ownership,
+      /** For a DROPSHIP order: the sale it fulfils (order-svc's order, referenced), else null. */
+      UUID salesOrderId,
+      /** For a DROPSHIP order: the customer the supplier ships to, as the order said. */
+      String shipTo) {
 
     /** An order for goods the business will own, with a translation possibly recorded. */
     public PurchaseOrder(
@@ -339,7 +351,9 @@ public final class Domain {
           fxRate,
           totalNetHome,
           homeCurrency,
-          PO_OWNERSHIP_OWNED);
+          PO_OWNERSHIP_OWNED,
+          null,
+          null);
     }
 
     /** The same order, for goods of the given ownership. */
@@ -368,7 +382,45 @@ public final class Domain {
           fxRate,
           totalNetHome,
           homeCurrency,
-          owned);
+          owned,
+          salesOrderId,
+          shipTo);
+    }
+
+    /** The same order, fulfilling a sale by dropship: shipped by the supplier to the customer. */
+    public PurchaseOrder withDropship(UUID sale, String customer) {
+      return new PurchaseOrder(
+          id,
+          tenantId,
+          supplierId,
+          storeId,
+          status,
+          currency,
+          totalNet,
+          totalVat,
+          totalGross,
+          expectedDelivery,
+          createdAt,
+          updatedAt,
+          cancelledAt,
+          cancelledReason,
+          closedAt,
+          closedReason,
+          createdBy,
+          approvedBy,
+          approvedAt,
+          source,
+          fxRate,
+          totalNetHome,
+          homeCurrency,
+          ownership,
+          sale,
+          customer);
+    }
+
+    /** Whether the supplier ships this order to the customer: stock the business never holds. */
+    public boolean dropship() {
+      return PO_SOURCE_DROPSHIP.equals(source);
     }
 
     /** Whether the supplier keeps ownership of the goods until they sell. */
@@ -427,6 +479,22 @@ public final class Domain {
 
   public static final String PO_SOURCE_MANUAL = "MANUAL";
   public static final String PO_SOURCE_PROPOSAL = "PROPOSAL";
+
+  /** Raised from a confirmed sale for a supplier that ships to the customer (dropship). */
+  public static final String PO_SOURCE_DROPSHIP = "DROPSHIP";
+
+  /** Which supplier fulfils a variant per order, at what cost; one live per variant. */
+  public record DropshipArrangement(
+      UUID id,
+      UUID tenantId,
+      UUID variantId,
+      UUID supplierId,
+      BigDecimal unitCost,
+      String vatCode,
+      boolean active,
+      UUID createdBy,
+      Instant createdAt,
+      Instant endedAt) {}
 
   /** The business will own the goods on arrival. */
   public static final String PO_OWNERSHIP_OWNED = "OWNED";

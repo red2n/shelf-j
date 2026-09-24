@@ -41,6 +41,7 @@ import org.eclipse.microprofile.openapi.annotations.tags.Tag;
 public class PurchaseOrderResource {
 
   @Inject PurchaseService svc;
+  @Inject com.storeql.purchase.service.DropshipService dropship;
   @Inject TenantContext ctx;
 
   /**
@@ -130,6 +131,21 @@ public class PurchaseOrderResource {
   @Path("/{id}/submit")
   public Response submit(@PathParam("id") UUID id) {
     return Response.ok(ApiResponse.ok(Mappers.toDto(svc.submitPurchaseOrder(ctx, id)))).build();
+  }
+
+  @Operation(
+      summary = "Mark a dropship order delivered to the customer",
+      description =
+          "The move a goods receipt makes for stock that arrives here: a SUBMITTED dropship order"
+              + " becomes RECEIVED without any stock, and the cost of goods the business never held"
+              + " is posted against what the supplier will invoice. Anything else is received.")
+  @APIResponse(responseCode = "200", description = "Delivered")
+  @APIResponse(responseCode = "404", description = "Purchase order not found")
+  @APIResponse(responseCode = "409", description = "PURCHASE_PO_NOT_DELIVERABLE")
+  @POST
+  @Path("/{id}/dropship-delivered")
+  public Response dropshipDelivered(@PathParam("id") UUID id) {
+    return Response.ok(ApiResponse.ok(Mappers.toDto(dropship.deliver(ctx, id)))).build();
   }
 
   /**

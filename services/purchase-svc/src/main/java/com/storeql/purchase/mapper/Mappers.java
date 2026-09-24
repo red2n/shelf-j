@@ -93,7 +93,21 @@ public final class Mappers {
         po.fxRate(),
         po.totalNetHome(),
         po.homeCurrency(),
-        po.ownership());
+        po.ownership(),
+        po.salesOrderId(),
+        po.shipTo());
+  }
+
+  public static Dtos.DropshipArrangementResponse toDto(Domain.DropshipArrangement a) {
+    return new Dtos.DropshipArrangementResponse(
+        a.id(),
+        a.variantId(),
+        a.supplierId(),
+        a.unitCost(),
+        a.vatCode(),
+        a.active(),
+        a.createdAt(),
+        a.endedAt());
   }
 
   public static Dtos.ConsignmentSaleResponse toDto(Domain.ConsignmentSale s) {

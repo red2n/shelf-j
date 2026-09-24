@@ -52,7 +52,7 @@ class ProcurementScreen extends ConsumerWidget {
                     Tab(text: 'E-invoices'),
                     Tab(text: 'Suppliers'),
                     Tab(text: 'Payments'),
-                    Tab(text: 'Consignment'),
+                    Tab(text: 'Consignment & dropship'),
                   ],
                 ),
                 const Expanded(
@@ -1058,6 +1058,10 @@ class _PurchaseOrdersTab extends ConsumerWidget {
                             const SizedBox(width: 6),
                             const _ConsignmentBadge(),
                           ],
+                          if (po.source == 'DROPSHIP') ...[
+                            const SizedBox(width: 6),
+                            const _DropshipBadge(),
+                          ],
                         ],
                       ),
                       subtitle: Text(
@@ -1319,10 +1323,29 @@ class _PoDetailDialogState extends ConsumerState<_PoDetailDialog> {
     final progress = progressAsync.asData?.value ?? const [];
 
     return AlertDialog(
-      title: Row(
+      title: Column(
+        crossAxisAlignment: CrossAxisAlignment.start,
         children: [
-          Expanded(child: Text('PO #${_short(poId)}')),
-          if (po != null) _PoStatusBadge(po.status),
+          Row(
+            children: [
+              Expanded(child: Text('PO #${_short(poId)}')),
+              if (po != null) _PoStatusBadge(po.status),
+              if (po != null && po.source == 'DROPSHIP') ...[
+                const SizedBox(width: 6),
+                const _DropshipBadge(),
+              ],
+            ],
+          ),
+          // A dropship order ships to the customer, never here: say where.
+          if (po?.shipTo != null)
+            Padding(
+              padding: const EdgeInsets.only(top: 4),
+              child: Text(
+                'Ships to ${po!.shipTo}',
+                key: const Key('po-ship-to'),
+                style: Theme.of(context).textTheme.bodySmall,
+              ),
+            ),
         ],
       ),
       content: SizedBox(
@@ -2680,6 +2703,38 @@ class _ProposedBadge extends StatelessWidget {
               fontSize: 11,
               fontWeight: FontWeight.w600,
               color: status.onInfoContainer,
+            ),
+          ),
+        ],
+      ),
+    );
+  }
+}
+
+/// Marks an order the supplier ships straight to the customer: stock never held.
+class _DropshipBadge extends StatelessWidget {
+  const _DropshipBadge();
+
+  @override
+  Widget build(BuildContext context) {
+    final cs = Theme.of(context).colorScheme;
+    return Container(
+      padding: const EdgeInsets.symmetric(horizontal: 6, vertical: 2),
+      decoration: BoxDecoration(
+        color: cs.tertiaryContainer,
+        borderRadius: AppRadius.badge,
+      ),
+      child: Row(
+        mainAxisSize: MainAxisSize.min,
+        children: [
+          Icon(Icons.local_shipping_outlined, size: 12, color: cs.onTertiaryContainer),
+          const SizedBox(width: 4),
+          Text(
+            'Dropship',
+            style: TextStyle(
+              fontSize: 11,
+              fontWeight: FontWeight.w600,
+              color: cs.onTertiaryContainer,
             ),
           ),
         ],

@@ -798,6 +798,23 @@ public class OrderService {
    * for that. DELIVERY is excluded: a till can take payment for goods that go out on a van, and
    * those are handed over when they arrive.
    */
+  /** The delivery address as one line, or null when the order delivers nowhere. */
+  static String deliveryAddressOf(Order order) {
+    StringBuilder sb = new StringBuilder();
+    for (String part :
+        new String[] {
+          order.deliveryLine1(),
+          order.deliveryLine2(),
+          order.deliveryCity(),
+          order.deliveryPostalCode()
+        }) {
+      if (part == null || part.isBlank()) continue;
+      if (sb.length() > 0) sb.append(", ");
+      sb.append(part.trim());
+    }
+    return sb.length() == 0 ? null : sb.toString();
+  }
+
   static boolean isTillSale(String channel, String fulfilmentType) {
     return Order.CHANNEL_POS.equals(channel)
         && (Order.FULFILMENT_INSTORE.equals(fulfilmentType)
@@ -831,7 +848,11 @@ public class OrderService {
             order.total(),
             order.taxAmount(),
             order.currency(),
-            repo.findOrderItems(tenantId, orderId));
+            repo.findOrderItems(tenantId, orderId),
+            order.fulfilmentType(),
+            deliveryAddressOf(order),
+            order.deliveryRecipientName(),
+            order.deliveryRecipientPhone());
     Order confirmed =
         isTillSale(order.channel(), order.fulfilmentType())
             ? repo.confirmAndFulfil(
@@ -1876,7 +1897,11 @@ public class OrderService {
                 order.total(),
                 order.taxAmount(),
                 order.currency(),
-                items),
+                items,
+                order.fulfilmentType(),
+                deliveryAddressOf(order),
+                order.deliveryRecipientName(),
+                order.deliveryRecipientPhone()),
             fulfilEvent);
 
     // Till sales are confirmed here, not in confirmOrder, so this is where most receipts are

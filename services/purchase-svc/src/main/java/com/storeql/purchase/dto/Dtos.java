@@ -224,7 +224,10 @@ public final class Dtos {
       @Schema(description = "The home currency the translation was into; null without one.")
           String homeCurrency,
       @Schema(description = "OWNED, or CONSIGNMENT when the supplier owns the goods until sold.")
-          String ownership) {}
+          String ownership,
+      @Schema(description = "For a DROPSHIP order, the sale it fulfils.") UUID salesOrderId,
+      @Schema(description = "For a DROPSHIP order, the customer the supplier ships to.")
+          String shipTo) {}
 
   @Schema(
       name = "PurchaseOrderLineProgressResponse",
@@ -994,4 +997,27 @@ public final class Dtos {
       Instant createdAt,
       @Schema(description = "The sales gathered; present when one settlement is read.")
           List<ConsignmentSaleResponse> sales) {}
+
+  // ── Dropship: stock the business never holds ────────────────────────────────
+
+  @Schema(name = "CreateDropshipArrangementRequest")
+  public record CreateDropshipArrangementRequest(
+      @NotNull UUID variantId,
+      @NotNull UUID supplierId,
+      @Schema(description = "What the supplier charges per unit, in its own currency.")
+          @NotNull
+          @DecimalMin("0")
+          BigDecimal unitCost,
+      @Schema(description = "VAT code for the supplier's line; T1 by default.") String vatCode) {}
+
+  @Schema(name = "DropshipArrangementResponse")
+  public record DropshipArrangementResponse(
+      UUID id,
+      UUID variantId,
+      UUID supplierId,
+      BigDecimal unitCost,
+      String vatCode,
+      boolean active,
+      Instant createdAt,
+      Instant endedAt) {}
 }

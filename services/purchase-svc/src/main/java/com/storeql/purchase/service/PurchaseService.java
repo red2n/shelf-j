@@ -979,6 +979,12 @@ public class PurchaseService {
   public GoodsReceipt receiveGoods(
       CreateGoodsReceiptRequest req, TenantContext ctx, String idempotencyKey) {
     PurchaseOrder po = getPurchaseOrder(ctx, req.poId());
+    if (po.dropship()) {
+      throw ApiException.conflict(
+          "PURCHASE_DROPSHIP_NOT_RECEIVED",
+          "a dropship order ships to the customer and is never received into stock; mark it"
+              + " delivered instead (POST /purchase-orders/{id}/dropship-delivered)");
+    }
     // A partially received order is still receivable — that is the whole point of the state. The
     // authoritative check is inside the repository transaction, under a row lock; this one exists
     // to fail a hopeless request early with a clearer message than a rolled-back transaction.
