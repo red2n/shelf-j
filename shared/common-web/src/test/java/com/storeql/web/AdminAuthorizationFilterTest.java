@@ -717,6 +717,24 @@ class AdminAuthorizationFilterTest {
   // ── 21.10: whether one more metered thing may be done, read service-to-service ──
 
   @Test
+  void exchangeRatesAreStaffReadableAndSettingThemIsManagement() throws Exception {
+    // pricing-svc shows a price in another currency and purchase-svc translates a spend ceiling
+    // (03.x): both read the business's rates as STOREKEEPER, the identity one service uses for
+    // another's staff-operable reads. The leaf only; setting a rate stays management's.
+    ctx.set(null, null, Set.of("STOREKEEPER"), null, null);
+    assertNotAborted(invoke("GET", "/admin/tenant/fx-rates"));
+    assertAborted(invoke("GET", "/admin/tenant/fx-rates/USD/history"), 403);
+    assertAborted(invoke("PUT", "/admin/tenant/fx-rates/USD"), 403);
+    ctx.set(null, null, Set.of("CUSTOMER"), null, null);
+    assertAborted(invoke("GET", "/admin/tenant/fx-rates"), 403);
+    // The currencies a shop shows prices in are for anyone browsing, like a price itself.
+    assertNotAborted(invoke("GET", "/prices/currencies"));
+    ctx.set(null, null, Set.of("MANAGER"), null, null);
+    assertNotAborted(invoke("PUT", "/admin/tenant/fx-rates/USD"));
+    assertNotAborted(invoke("GET", "/admin/tenant/fx-rates/USD/history"));
+  }
+
+  @Test
   void promotionWindowsAreStaffReadableAndTheRestOfPromotionsIsManagement() throws Exception {
     // inventory-svc reads the windows for its forecast (06.x) as STOREKEEPER, the identity one
     // service uses for another's staff-operable reads. The leaf only: creating, scoping and

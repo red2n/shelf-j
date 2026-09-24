@@ -36,7 +36,8 @@ import java.util.Set;
  *         <li>Reads one service makes of another under a staff identity: {@code GET
  *             /admin/tenant/obligations}, {@code GET /admin/tenant/retention}, {@code GET
  *             /admin/tenant/plan/limits}, {@code GET /admin/tenant/usage/allowance}, {@code GET
- *             /admin/promotions/windows} — each the leaf only, never the subtree it sits in
+ *             /admin/promotions/windows}, {@code GET /admin/tenant/fx-rates} — each the leaf only,
+ *             never the subtree it sits in
  *       </ul>
  *       Without this tier, STOREKEEPER could not receive stock and CASHIER could not open a till,
  *       even though the resource classes intentionally allow those roles.
@@ -305,6 +306,8 @@ public class AdminAuthorizationFilter implements ContainerRequestFilter {
         || pathEqualsOrUnder(path, "/storefront")
         // Stock display on a product page. Availability only — no cost, no batch, no location.
         || "/inventory/availability".equals(path)
+        // The currencies a shop can show prices in (03.x): read by anyone browsing.
+        || "/prices/currencies".equals(path)
         // /orders/mine and the id-addressed order reads. These are NOT unguarded: order-svc
         // applies object-level authorization to each — the owning customer gets their order, a
         // different customer in the same tenant gets 404 rather than 403, so the endpoint is not
@@ -636,6 +639,8 @@ public class AdminAuthorizationFilter implements ContainerRequestFilter {
       // enforced outside tenant-svc silently enforced nothing — the SJ-D10 shape again, an
       // authorisation claim that reads as correct and is never executed.
       if ("/admin/tenant/plan/limits".equals(path)) return true;
+      // The business's exchange rates (03.x): pricing-svc and purchase-svc read them as staff.
+      if ("/admin/tenant/fx-rates".equals(path)) return true;
       // Whether one more of a metered thing may be done (21.10): notification-svc asks before a
       // marketing text, under a staff identity, as product-svc asks for its limit above. Only the
       // answer; what the business used, what it costs and every write stay management work — and

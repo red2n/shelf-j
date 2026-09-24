@@ -62,6 +62,7 @@ public class PurchaseService {
   @Inject com.storeql.purchase.client.InventoryClient inventory;
 
   @Inject ServiceConfig config;
+  @Inject com.storeql.service.FxRates fx;
 
   // ── Currency ──────────────────────────────────────────────────────────────────
 
@@ -473,7 +474,8 @@ public class PurchaseService {
       throw ApiException.badRequest("PURCHASE_PO_NOT_DRAFT", "Only DRAFT orders can be submitted");
 
     SpendAuthority authority =
-        SpendAuthority.decide(po.totalNet(), po.currency(), ctx.roles(), config.approvalLimits());
+        SpendAuthority.decide(
+            po.totalNet(), po.currency(), ctx.roles(), config.approvalLimits(), translation(po));
     String landing = authority.authorised() ? Domain.PO_SUBMITTED : Domain.PO_PENDING_APPROVAL;
 
     boolean submitted =
@@ -485,7 +487,25 @@ public class PurchaseService {
     if (!submitted)
       throw ApiException.conflict(
           "PURCHASE_PO_NOT_DRAFT", "The order stopped being DRAFT before it could be submitted");
+    if (authority.translation() != null) {
+      // The figure the decision was made against, kept: a rate moves, the record must not.
+      SpendAuthority.Translation t = authority.translation();
+      repo.recordTranslation(tenantId, poId, t.rate(), t.homeAmount(), t.homeCurrency());
+    }
     return getPurchaseOrder(ctx, poId);
+  }
+
+  /**
+   * The order's net in the business's home currency at the rate it keeps (03.x), or null when the
+   * order is already in the home currency or no rate is kept — in which case an unconfigured
+   * currency fails closed, as before.
+   */
+  private SpendAuthority.Translation translation(PurchaseOrder po) {
+    if (po.totalNet() == null || po.currency() == null) return null;
+    return fx.toHome(po.tenantId(), po.totalNet(), po.currency())
+        .filter(c -> !c.currency().equals(po.currency()))
+        .map(c -> new SpendAuthority.Translation(c.amount(), c.currency(), c.rate()))
+        .orElse(null);
   }
 
   /**
@@ -510,7 +530,8 @@ public class PurchaseService {
     PurchaseOrder po = requirePendingApproval(ctx, poId);
 
     SpendAuthority authority =
-        SpendAuthority.decide(po.totalNet(), po.currency(), ctx.roles(), config.approvalLimits());
+        SpendAuthority.decide(
+            po.totalNet(), po.currency(), ctx.roles(), config.approvalLimits(), translation(po));
     if (!authority.authorised())
       throw ApiException.forbidden("PURCHASE_APPROVAL_EXCEEDS_AUTHORITY", authority.reason());
 
@@ -557,7 +578,8 @@ public class PurchaseService {
           "A rejection must say why, so the buyer knows what to change");
 
     SpendAuthority authority =
-        SpendAuthority.decide(po.totalNet(), po.currency(), ctx.roles(), config.approvalLimits());
+        SpendAuthority.decide(
+            po.totalNet(), po.currency(), ctx.roles(), config.approvalLimits(), translation(po));
     boolean decided =
         repo.decidePurchaseOrder(
             tenantId, poId, false, trailRow(ctx, po, Domain.APPROVAL_REJECTED, authority, reason));

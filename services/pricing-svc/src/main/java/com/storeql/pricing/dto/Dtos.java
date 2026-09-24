@@ -209,7 +209,46 @@ public final class Dtos {
       @Schema(description = "ONLINE or POS. Defaults to ALL.") String channel,
       @Schema(description = "Quantity being priced. Defaults to 1.") BigDecimal qty,
       @Schema(description = "UUID of the customer, for customer-specific pricing.")
-          String customerId) {}
+          String customerId,
+      @Schema(
+              description =
+                  "ISO 4217 code to show the price in as well (03.x), at the business's own rate;"
+                      + " the price stays in the business's currency. 400 FX_RATE_MISSING without a"
+                      + " rate for it.")
+          String displayCurrency) {}
+
+  @Schema(
+      name = "DisplayPriceResponse",
+      description =
+          "The same figures in another currency at the business's rate (03.x): what a shopper sees,"
+              + " not what is charged.")
+  public record DisplayPriceResponse(
+      String currency,
+      @Schema(description = "Home units per one unit of the display currency.") BigDecimal rate,
+      BigDecimal unitPrice,
+      BigDecimal totalWithVat) {}
+
+  @Schema(
+      name = "DisplayBasketResponse",
+      description = "A basket's totals in another currency at the business's rate (03.x).")
+  public record DisplayBasketResponse(
+      String currency,
+      BigDecimal rate,
+      BigDecimal subtotal,
+      BigDecimal totalDiscount,
+      BigDecimal vatAmount,
+      BigDecimal total) {}
+
+  @Schema(name = "DisplayRateResponse", description = "Home units per one unit of a currency.")
+  public record DisplayRateResponse(String currency, BigDecimal rate) {}
+
+  @Schema(
+      name = "CurrenciesResponse",
+      description =
+          "The currencies a shop can show prices in: its own, then those it keeps a rate for, with"
+              + " the rates so a client can show a figure it already holds.")
+  public record CurrenciesResponse(
+      String home, List<String> currencies, List<DisplayRateResponse> rates) {}
 
   @Schema(name = "ResolvedPriceResponse")
   public record ResolvedPriceResponse(
@@ -250,7 +289,9 @@ public final class Dtos {
               description =
                   "Whether this price may be announced as a reduction: a promotion applies and, where"
                       + " art.6a binds, its prior price is known and above today's.")
-          boolean reductionAnnounceable) {}
+          boolean reductionAnnounceable,
+      @Schema(description = "The price in the display currency asked for; absent when none was.")
+          DisplayPriceResponse display) {}
 
   @Schema(
       name = "AppliedPriceResponse",
@@ -485,7 +526,12 @@ public final class Dtos {
       @Schema(description = "UUID of the customer, for per-customer coupon caps.")
           String customerId,
       @Schema(description = "Coupon codes the customer presented. Matched case-insensitively.")
-          List<String> couponCodes) {}
+          List<String> couponCodes,
+      @Schema(
+              description =
+                  "ISO 4217 code to show the totals in as well (03.x), at the business's own rate;"
+                      + " the basket is charged in the business's currency.")
+          String displayCurrency) {}
 
   @Schema(name = "QuoteLineRequest")
   public record QuoteLineRequest(
@@ -548,7 +594,9 @@ public final class Dtos {
                       + " NO_SUCH_COUPON, NOT_APPLICABLE, COUPON_EXHAUSTED or"
                       + " COUPON_LIMIT_REACHED. Returned rather than ignored — a customer who"
                       + " typed a code is owed an answer.")
-          Map<String, String> rejectedCoupons) {}
+          Map<String, String> rejectedCoupons,
+      @Schema(description = "The totals in the display currency asked for; absent when none was.")
+          DisplayBasketResponse display) {}
 
   @Schema(
       name = "RecordRedemptionsRequest",

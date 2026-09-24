@@ -71,6 +71,7 @@ class StorefrontShell extends ConsumerWidget {
       actions: suspended
           ? const []
           : [
+              const CurrencyPicker(),
               const _AccountAction(),
               Padding(
                 padding: const EdgeInsets.only(right: 8),
@@ -202,6 +203,42 @@ class _CartBar extends ConsumerWidget {
 
 /// App-bar account button: shows the signed-in email (with sign-out) or a
 /// "Sign in" entry point to the customer auth dialog.
+/// The currency the shopper sees prices in (03.x): the shop's own and every
+/// currency it keeps a rate for. Shown only when there is a choice; prices are
+/// always charged in the shop's own currency, and the menu says so.
+class CurrencyPicker extends ConsumerWidget {
+  const CurrencyPicker({super.key});
+
+  @override
+  Widget build(BuildContext context, WidgetRef ref) {
+    final shop = ref.watch(storefrontCurrenciesProvider).value;
+    if (shop == null || shop.currencies.length < 2) return const SizedBox.shrink();
+    final chosen = ref.watch(displayCurrencyProvider) ?? shop.home;
+    return PopupMenuButton<String>(
+      key: const Key('currency-picker'),
+      tooltip: 'Show prices in another currency',
+      initialValue: chosen,
+      onSelected: (c) =>
+          ref.read(displayCurrencyProvider.notifier).state = c == shop.home ? null : c,
+      itemBuilder: (_) => [
+        for (final c in shop.currencies)
+          PopupMenuItem(
+            value: c,
+            child: Text(c == shop.home ? '$c (you pay in $c)' : '$c, shown at the shop\'s rate'),
+          ),
+      ],
+      child: Padding(
+        padding: const EdgeInsets.symmetric(horizontal: 8),
+        child: Row(mainAxisSize: MainAxisSize.min, children: [
+          const Icon(Icons.currency_exchange_outlined, size: 18),
+          const SizedBox(width: 4),
+          Text(chosen, key: const Key('currency-picker-value')),
+        ]),
+      ),
+    );
+  }
+}
+
 class _AccountAction extends ConsumerWidget {
   const _AccountAction();
 

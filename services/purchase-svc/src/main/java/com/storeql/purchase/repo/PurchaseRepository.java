@@ -285,7 +285,8 @@ public class PurchaseRepository extends BaseOutboxRepository {
     return query(
         "SELECT id,tenant_id,supplier_id,store_id,status,currency,"
             + "total_net,total_vat,total_gross,expected_delivery,created_at,updated_at,cancelled_at,"
-            + "cancelled_reason,closed_at,closed_reason,created_by,approved_by,approved_at,source"
+            + "cancelled_reason,closed_at,closed_reason,created_by,approved_by,approved_at,source,"
+            + "fx_rate,total_net_home,home_currency"
             + " FROM purchase_orders WHERE tenant_id=? ORDER BY created_at DESC LIMIT ?",
         ps -> {
           ps.setObject(1, tenantId);
@@ -307,7 +308,8 @@ public class PurchaseRepository extends BaseOutboxRepository {
         query(
             "SELECT id,tenant_id,supplier_id,store_id,status,currency,"
                 + "total_net,total_vat,total_gross,expected_delivery,created_at,updated_at,cancelled_at,"
-                + "cancelled_reason,closed_at,closed_reason,created_by,approved_by,approved_at,source"
+                + "cancelled_reason,closed_at,closed_reason,created_by,approved_by,approved_at,source,"
+                + "fx_rate,total_net_home,home_currency"
                 + " FROM purchase_orders WHERE tenant_id=? AND id=?",
             ps -> {
               ps.setObject(1, tenantId);
@@ -531,7 +533,32 @@ public class PurchaseRepository extends BaseOutboxRepository {
         rs.getObject("approved_at", OffsetDateTime.class) == null
             ? null
             : rs.getObject("approved_at", OffsetDateTime.class).toInstant(),
-        rs.getString("source"));
+        rs.getString("source"),
+        // Kept at the column's ten decimals; read back as it was set (0.79, not 0.7900000000).
+        rs.getBigDecimal("fx_rate") == null
+            ? null
+            : rs.getBigDecimal("fx_rate").stripTrailingZeros(),
+        rs.getBigDecimal("total_net_home"),
+        rs.getString("home_currency"));
+  }
+
+  /**
+   * Keeps the translation a spend decision was made against (03.x): the rate and the net in the
+   * home currency. A rate moves; the record of what was decided must not.
+   */
+  public void recordTranslation(
+      UUID tenantId, UUID id, BigDecimal fxRate, BigDecimal totalNetHome, String homeCurrency) {
+    exec(
+        "UPDATE purchase_orders SET fx_rate=?, total_net_home=?, home_currency=?"
+            + " WHERE tenant_id=? AND id=?",
+        ps -> {
+          ps.setBigDecimal(1, fxRate);
+          ps.setBigDecimal(2, totalNetHome);
+          ps.setString(3, homeCurrency);
+          ps.setObject(4, tenantId);
+          ps.setObject(5, id);
+        },
+        "record purchase order translation");
   }
 
   // ── PO Lines ──────────────────────────────────────────────────────────────────

@@ -232,6 +232,10 @@ class ResolvedPrice {
   /// where the law needs a prior price it cannot prove.
   final bool reductionAnnounceable;
 
+  /// The same price in the currency the shopper chose to see (03.x), at the
+  /// shop's own rate; null when they see the shop's currency. Shown, never charged.
+  final DisplayPrice? display;
+
   const ResolvedPrice({
     required this.unitPrice,
     required this.totalWithVat,
@@ -240,7 +244,15 @@ class ResolvedPrice {
     this.promotionApplied,
     this.priorPrice,
     this.reductionAnnounceable = false,
+    this.display,
   });
+
+  /// `≈ USD 15.00` when the shopper sees another currency; empty otherwise.
+  String get shownLine {
+    final d = display;
+    if (d == null || d.currency == currency) return '';
+    return '≈ ${d.currency} ${d.totalWithVat.toStringAsFixed(2)}';
+  }
 
   factory ResolvedPrice.fromJson(Map<String, dynamic> j) => ResolvedPrice(
         unitPrice: (j['unitPrice'] as num?)?.toDouble() ?? 0,
@@ -250,8 +262,73 @@ class ResolvedPrice {
         promotionApplied: j['promotionApplied'] as String?,
         priorPrice: (j['priorPrice'] as num?)?.toDouble(),
         reductionAnnounceable: j['reductionAnnounceable'] as bool? ?? false,
+        display: j['display'] is Map<String, dynamic>
+            ? DisplayPrice.fromJson(j['display'] as Map<String, dynamic>)
+            : null,
       );
 }
+
+/// A price in another currency at the shop's own rate (03.x): what a shopper
+/// sees beside the price they pay.
+class DisplayPrice {
+  final String currency;
+  final double rate;
+  final double unitPrice;
+  final double totalWithVat;
+  const DisplayPrice({
+    required this.currency,
+    required this.rate,
+    required this.unitPrice,
+    required this.totalWithVat,
+  });
+
+  factory DisplayPrice.fromJson(Map<String, dynamic> j) => DisplayPrice(
+        currency: j['currency'] as String? ?? '',
+        rate: (j['rate'] as num?)?.toDouble() ?? 1,
+        unitPrice: (j['unitPrice'] as num?)?.toDouble() ?? 0,
+        totalWithVat: (j['totalWithVat'] as num?)?.toDouble() ?? 0,
+      );
+}
+
+/// The currencies this shop can show prices in (03.x): its own first, then
+/// those it keeps a rate for, with the rates (home units per one unit).
+class ShopCurrencies {
+  final String home;
+  final List<String> currencies;
+  final Map<String, double> rates;
+  const ShopCurrencies({required this.home, required this.currencies, required this.rates});
+
+  factory ShopCurrencies.fromJson(Map<String, dynamic> j) => ShopCurrencies(
+        home: j['home'] as String? ?? '',
+        currencies: ((j['currencies'] as List?) ?? []).map((e) => e.toString()).toList(),
+        rates: {
+          for (final r in ((j['rates'] as List?) ?? []))
+            (r as Map<String, dynamic>)['currency'] as String: ((r['rate'] as num?)?.toDouble() ?? 1),
+        },
+      );
+
+  /// A home-currency amount shown in [currency]; null without a rate.
+  double? shown(double homeAmount, String currency) {
+    if (currency == home) return homeAmount;
+    final rate = rates[currency];
+    return rate == null || rate <= 0 ? null : homeAmount / rate;
+  }
+}
+
+/// The currencies the shop offers; empty when it could not be asked.
+final storefrontCurrenciesProvider = FutureProvider<ShopCurrencies?>((ref) async {
+  final dio = ref.watch(storefrontDioProvider);
+  try {
+    final resp = await dio.get('/${ApiConstants.pricing}/prices/currencies');
+    final data = resp.data is Map ? resp.data['data'] : null;
+    return data is Map<String, dynamic> ? ShopCurrencies.fromJson(data) : null;
+  } on DioException {
+    return null;
+  }
+});
+
+/// The currency the shopper chose to see prices in; null for the shop's own.
+final displayCurrencyProvider = StateProvider<String?>((ref) => null);
 
 class StoreCategory {
   final String id;
@@ -640,9 +717,15 @@ final productFirstVariantProvider =
 final variantPriceProvider =
     FutureProvider.family<ResolvedPrice, String>((ref, variantId) async {
   final dio = ref.watch(storefrontDioProvider);
+  final shownIn = ref.watch(displayCurrencyProvider);
   final resp = await dio.post(
     '/${ApiConstants.pricing}/prices/resolve',
-    data: {'variantId': variantId, 'channel': 'ONLINE', 'qty': 1},
+    data: {
+      'variantId': variantId,
+      'channel': 'ONLINE',
+      'qty': 1,
+      'displayCurrency': ?shownIn,
+    },
   );
   return ResolvedPrice.fromJson(resp.data['data'] as Map<String, dynamic>);
 });

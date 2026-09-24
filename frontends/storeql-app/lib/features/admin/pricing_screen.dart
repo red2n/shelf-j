@@ -12,6 +12,9 @@ import 'unit_pricing_tabs.dart';
 import 'vat_rate_form.dart';
 import 'providers/admin_providers.dart';
 import 'widgets/variant_picker.dart';
+import 'fx_rates_card.dart';
+import '../../core/auth/auth_notifier.dart';
+import '../../core/auth/auth_state.dart';
 import '../../core/theme.dart';
 
 class PricingScreen extends ConsumerWidget {
@@ -95,8 +98,16 @@ class _PriceListsTab extends ConsumerWidget {
   Widget build(BuildContext context, WidgetRef ref) {
     final async = ref.watch(priceListsProvider);
     final cs = Theme.of(context).colorScheme;
+    final auth = ref.watch(authNotifierProvider).value;
+    final management = auth is AuthAuthenticated &&
+        (auth.roles.contains('OWNER') ||
+            auth.roles.contains('MANAGER') ||
+            auth.roles.contains('PLATFORM_ADMIN'));
     return Column(
       children: [
+        // The business's exchange rates (03.x): what a price is shown in, what a foreign order is
+        // measured in.
+        FxRatesCard(management: management),
         _addBar(
           context,
           'New price list',
@@ -2219,13 +2230,16 @@ class _MtdFileDialogState extends ConsumerState<_MtdFileDialog> {
 // ── Shared bits ──────────────────────────────────────────────────────────────
 
 Widget _empty(ColorScheme cs, IconData icon, String text) => Center(
-  child: Column(
-    mainAxisSize: MainAxisSize.min,
-    children: [
-      Icon(icon, size: 64, color: cs.outlineVariant),
-      const SizedBox(height: 12),
-      Text(text),
-    ],
+  // Scrolls rather than overflows when a card above leaves it little room (03.x).
+  child: SingleChildScrollView(
+    child: Column(
+      mainAxisSize: MainAxisSize.min,
+      children: [
+        Icon(icon, size: 64, color: cs.outlineVariant),
+        const SizedBox(height: 12),
+        Text(text),
+      ],
+    ),
   ),
 );
 

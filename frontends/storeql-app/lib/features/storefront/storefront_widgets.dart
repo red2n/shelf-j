@@ -267,6 +267,12 @@ class OfferPriceAdd extends ConsumerWidget {
                 fontSize: 16,
               ),
             ),
+            if (offer.price.shownLine.isNotEmpty)
+              Text(offer.price.shownLine,
+                  key: const Key('price-shown'),
+                  maxLines: 1,
+                  overflow: TextOverflow.ellipsis,
+                  style: TextStyle(color: cs.onSurfaceVariant, fontSize: 12)),
             WasPriceText(price: offer.price),
             UnitPriceText(price: offer.price),
             if (hasAvailData) StockBadge(inStock: inStock),

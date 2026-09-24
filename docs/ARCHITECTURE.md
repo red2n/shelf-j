@@ -202,7 +202,7 @@ Non-negotiable, apply to **every** service:
 10. **DTOs are the contract.** Never expose JPA/domain entities over HTTP.
 11. **Idempotency-Key** on retryable writes (checkout, payment capture, stock receipt, cash movements).
 12. **Health + metrics + tracing** on every service (3 probes: started/live/ready; ready checks DB+Kafka+config).
-13. **Money is `BigDecimal` / `NUMERIC`** — never floating point.
+13. **Money is `BigDecimal` / `NUMERIC`** — never floating point. **FX (03.x):** a business keeps one home currency and its own dated rates (home units per one unit of another currency; tenant-svc owns them); converting goes through common-service's `Fx` alone and rounds to the target currency's minor units; a price is *shown* in another currency, never charged in it; a spend ceiling in another currency is translated at the business's rate and fails closed without one.
 14. **Time is UTC** (`timestamptz`); convert at the UI edge only.
 15. **Validate every input** at the boundary (Bean Validation); reject bad input with `400`.
 
@@ -390,6 +390,7 @@ order-svc    ──REST──►  pricing-svc, inventory-svc, payment-svc
 cart-svc     ──REST──►  pricing-svc, inventory-svc, product-svc
 pricing-svc  ──REST──►  inventory-svc (expiring batches, for the markdown plan)
 inventory-svc ──REST──► pricing-svc   (promotion windows, for the forecast's uplift — 06.x)
+pricing-svc, purchase-svc ──REST──► tenant-svc (the business's exchange rates, through common-service's cached FxRates reader — 03.x)
 product-svc  ──REST──►  inventory-svc   (stock flag on product page)
 purchase-svc ──REST──►  product-svc     (validate variant)
 tenant-svc   ──REST──►  iam-svc         (verify user on staff assignment)

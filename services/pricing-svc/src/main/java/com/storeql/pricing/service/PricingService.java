@@ -4,6 +4,7 @@ import com.storeql.ids.Ids;
 import com.storeql.pricing.domain.Domain;
 import com.storeql.pricing.domain.Domain.BasketLine;
 import com.storeql.pricing.domain.Domain.CustomerVatStatus;
+import com.storeql.pricing.domain.Domain.DisplayPrice;
 import com.storeql.pricing.domain.Domain.PriceList;
 import com.storeql.pricing.domain.Domain.PriceListItem;
 import com.storeql.pricing.domain.Domain.PriceOverride;
@@ -59,6 +60,7 @@ public class PricingService {
 
   @Inject PricingRepository repo;
   @Inject com.storeql.service.TenantProfiles profiles;
+  @Inject com.storeql.service.FxRates fx;
   @Inject com.storeql.service.Jurisdictions jurisdictions;
   @Inject AppliedPriceService appliedPrices;
   @Inject PromotionEngine engine;
@@ -459,7 +461,73 @@ public class PricingService {
       boolean withPromotions,
       Instant at,
       boolean withPriorPrice) {
-    return price(tenantId, req, withPromotions, at, withPriorPrice, false);
+    return displayed(
+        tenantId, price(tenantId, req, withPromotions, at, withPriorPrice, false), req);
+  }
+
+  /**
+   * The price in the display currency asked for (03.x), at the business's rate — shown beside the
+   * price, never in its place. The price's own currency converts to itself.
+   *
+   * @throws ApiException {@code 400 FX_RATE_MISSING} when the business keeps no rate for it
+   */
+  private ResolvedPrice displayed(UUID tenantId, ResolvedPrice rp, ResolvePriceRequest req) {
+    String wanted = displayCurrency(req.displayCurrency());
+    if (wanted == null) return rp;
+    return rp.withDisplay(
+        new DisplayPrice(
+            wanted,
+            fxRateFor(tenantId, rp.currency(), wanted),
+            convertForDisplay(tenantId, rp.unitPrice(), rp.currency(), wanted),
+            convertForDisplay(tenantId, rp.totalWithVat(), rp.currency(), wanted)));
+  }
+
+  static String displayCurrency(String requested) {
+    if (requested == null || requested.isBlank()) return null;
+    String code = requested.trim().toUpperCase(java.util.Locale.ROOT);
+    if (!com.storeql.service.Fx.isCurrency(code)) {
+      throw ApiException.badRequest(
+          "FX_CURRENCY_INVALID", "displayCurrency must be an ISO 4217 code, e.g. USD");
+    }
+    return code;
+  }
+
+  private BigDecimal fxRateFor(UUID tenantId, String from, String to) {
+    if (from.equals(to)) return BigDecimal.ONE;
+    return fx.rate(tenantId, to).map(r -> r.rate()).orElseThrow(() -> noRate(from, to));
+  }
+
+  private BigDecimal convertForDisplay(UUID tenantId, BigDecimal amount, String from, String to) {
+    if (amount == null || from.equals(to)) return amount;
+    return fx.fromHome(tenantId, amount, to)
+        .map(c -> c.amount())
+        .orElseThrow(() -> noRate(from, to));
+  }
+
+  private static ApiException noRate(String from, String to) {
+    return ApiException.badRequest(
+        "FX_RATE_MISSING",
+        "the business keeps no exchange rate for " + to + "; prices are in " + from);
+  }
+
+  /**
+   * The currencies a shop can show prices in — its own first, then those it keeps a rate for — with
+   * the rates, so a client can show a figure it already holds in the shop's currency.
+   */
+  public com.storeql.pricing.dto.Dtos.CurrenciesResponse currencies(UUID tenantId) {
+    java.util.Optional<com.storeql.service.FxRates.Table> table = fx.table(tenantId);
+    if (table.isEmpty()) {
+      String home = profiles.requireCurrency(tenantId);
+      return new com.storeql.pricing.dto.Dtos.CurrenciesResponse(
+          home, java.util.List.of(home), java.util.List.of());
+    }
+    java.util.List<com.storeql.pricing.dto.Dtos.DisplayRateResponse> rates =
+        table.get().rates().values().stream()
+            .sorted(java.util.Comparator.comparing(com.storeql.service.Fx.Rate::currency))
+            .map(r -> new com.storeql.pricing.dto.Dtos.DisplayRateResponse(r.currency(), r.rate()))
+            .toList();
+    return new com.storeql.pricing.dto.Dtos.CurrenciesResponse(
+        table.get().home(), fx.currencies(tenantId), rates);
   }
 
   /**
@@ -700,6 +768,7 @@ public class PricingService {
             m.storeId() == null ? null : m.storeId().toString(),
             PriceList.CHANNEL_POS,
             BigDecimal.ONE,
+            null,
             null);
     BigDecimal regular;
     try {
@@ -774,7 +843,7 @@ public class PricingService {
     List<com.storeql.pricing.domain.Domain.ShelfLabel> out = new java.util.ArrayList<>();
     for (String id : variantIds.stream().distinct().toList()) {
       UUID variantId = Parsing.uuid(id, "variantIds");
-      var regularReq = new ResolvePriceRequest(id, storeId, channel, BigDecimal.ONE, null);
+      var regularReq = new ResolvePriceRequest(id, storeId, channel, BigDecimal.ONE, null, null);
       ResolvedPrice regular;
       try {
         regular = resolve(regularReq, ctx, false);
@@ -1110,6 +1179,20 @@ public class PricingService {
               d.promotionId(), d.promotionName(), d.variantId(), d.amount()));
     }
 
+    String basketCurrency =
+        currency != null ? currency : profiles.requireCurrency(ctx.requireTenantId());
+    String wanted = displayCurrency(req.displayCurrency());
+    com.storeql.pricing.dto.Dtos.DisplayBasketResponse display = null;
+    if (wanted != null) {
+      display =
+          new com.storeql.pricing.dto.Dtos.DisplayBasketResponse(
+              wanted,
+              fxRateFor(tenantId, basketCurrency, wanted),
+              convertForDisplay(tenantId, subtotal, basketCurrency, wanted),
+              convertForDisplay(tenantId, totalDiscount, basketCurrency, wanted),
+              convertForDisplay(tenantId, vatTotal, basketCurrency, wanted),
+              convertForDisplay(tenantId, total, basketCurrency, wanted));
+    }
     return new QuoteBasketResponse(
         lineResponses,
         subtotal,
@@ -1117,9 +1200,10 @@ public class PricingService {
         basketDiscount,
         vatTotal,
         total,
-        currency != null ? currency : profiles.requireCurrency(ctx.requireTenantId()),
+        basketCurrency,
         appliedResponses,
-        outcome.rejectedCoupons());
+        outcome.rejectedCoupons(),
+        display);
   }
 
   /**

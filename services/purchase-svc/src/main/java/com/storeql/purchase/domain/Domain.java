@@ -265,7 +265,65 @@ public final class Domain {
       UUID approvedBy,
       Instant approvedAt,
       /** MANUAL, or PROPOSAL when a proposal run raised it (06.x). */
-      String source) {}
+      String source,
+      /**
+       * Home units per one unit of the order's currency, as used at submission (03.x); null until
+       * then.
+       */
+      BigDecimal fxRate,
+      /** The net translated into the home currency at fxRate; null without a translation. */
+      BigDecimal totalNetHome,
+      /** The home currency the translation was into; null without one. */
+      String homeCurrency) {
+
+    /** An order with no translation recorded yet. */
+    public PurchaseOrder(
+        UUID id,
+        UUID tenantId,
+        UUID supplierId,
+        UUID storeId,
+        String status,
+        String currency,
+        BigDecimal totalNet,
+        BigDecimal totalVat,
+        BigDecimal totalGross,
+        LocalDate expectedDelivery,
+        Instant createdAt,
+        Instant updatedAt,
+        Instant cancelledAt,
+        String cancelledReason,
+        Instant closedAt,
+        String closedReason,
+        UUID createdBy,
+        UUID approvedBy,
+        Instant approvedAt,
+        String source) {
+      this(
+          id,
+          tenantId,
+          supplierId,
+          storeId,
+          status,
+          currency,
+          totalNet,
+          totalVat,
+          totalGross,
+          expectedDelivery,
+          createdAt,
+          updatedAt,
+          cancelledAt,
+          cancelledReason,
+          closedAt,
+          closedReason,
+          createdBy,
+          approvedBy,
+          approvedAt,
+          source,
+          null,
+          null,
+          null);
+    }
+  }
 
   public static final String PO_SOURCE_MANUAL = "MANUAL";
   public static final String PO_SOURCE_PROPOSAL = "PROPOSAL";

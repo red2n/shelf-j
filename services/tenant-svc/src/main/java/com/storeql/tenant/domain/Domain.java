@@ -1,6 +1,8 @@
 package com.storeql.tenant.domain;
 
+import java.math.BigDecimal;
 import java.time.Instant;
+import java.time.LocalDate;
 import java.util.List;
 import java.util.UUID;
 
@@ -440,4 +442,19 @@ public final class Domain {
       return new NoticeDuties(null, false, null, List.of());
     }
   }
+
+  /**
+   * One exchange rate a business keeps (03.x): {@code rate} home units per one unit of {@code
+   * currency}, in force from {@code effectiveFrom}. A row is never changed; a new rate is a new
+   * row.
+   */
+  public record FxRate(
+      UUID id,
+      UUID tenantId,
+      String currency,
+      BigDecimal rate,
+      LocalDate effectiveFrom,
+      String reason,
+      UUID setBy,
+      Instant setAt) {}
 }

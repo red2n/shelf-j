@@ -302,7 +302,63 @@ public final class Domain {
       UnitPrice unitPricing,
       boolean unitPriceRequired,
       PriorPrice priorPrice,
-      boolean priorPriceRequired) {}
+      boolean priorPriceRequired,
+      DisplayPrice display) {
+
+    /** A price with no display currency asked for. */
+    public ResolvedPrice(
+        UUID variantId,
+        BigDecimal unitPrice,
+        String vatCode,
+        BigDecimal vatRate,
+        BigDecimal vatAmount,
+        BigDecimal totalWithVat,
+        String currency,
+        UUID priceListId,
+        String promotionApplied,
+        UnitPrice unitPricing,
+        boolean unitPriceRequired,
+        PriorPrice priorPrice,
+        boolean priorPriceRequired) {
+      this(
+          variantId,
+          unitPrice,
+          vatCode,
+          vatRate,
+          vatAmount,
+          totalWithVat,
+          currency,
+          priceListId,
+          promotionApplied,
+          unitPricing,
+          unitPriceRequired,
+          priorPrice,
+          priorPriceRequired,
+          null);
+    }
+
+    public ResolvedPrice withDisplay(DisplayPrice d) {
+      return new ResolvedPrice(
+          variantId,
+          unitPrice,
+          vatCode,
+          vatRate,
+          vatAmount,
+          totalWithVat,
+          currency,
+          priceListId,
+          promotionApplied,
+          unitPricing,
+          unitPriceRequired,
+          priorPrice,
+          priorPriceRequired,
+          d);
+    }
+  }
+
+  /** The same price in another currency at the business's rate (03.x): shown, never charged. */
+  public record DisplayPrice(
+      String currency, BigDecimal rate, BigDecimal unitPrice, BigDecimal totalWithVat) {}
 
   /**
    * HMRC MTD VAT return. Boxes per VAT Notice 700 s.17: 1=output VAT, 2=EU acquisitions VAT

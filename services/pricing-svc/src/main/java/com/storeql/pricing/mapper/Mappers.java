@@ -17,6 +17,7 @@ import com.storeql.pricing.domain.Domain.VatRate;
 import com.storeql.pricing.domain.Domain.VatReturn;
 import com.storeql.pricing.dto.Dtos;
 import com.storeql.pricing.dto.Dtos.CustomerVatStatusResponse;
+import com.storeql.pricing.dto.Dtos.DisplayPriceResponse;
 import com.storeql.pricing.dto.Dtos.PriceListItemResponse;
 import com.storeql.pricing.dto.Dtos.PriceListResponse;
 import com.storeql.pricing.dto.Dtos.PriceOverrideResponse;
@@ -161,7 +162,14 @@ public final class Mappers {
         announceable(
             rp.promotionApplied() != null,
             rp.priorPriceRequired(),
-            rp.priorPrice() == null ? null : rp.priorPrice().status()));
+            rp.priorPrice() == null ? null : rp.priorPrice().status()),
+        rp.display() == null
+            ? null
+            : new DisplayPriceResponse(
+                rp.display().currency(),
+                rp.display().rate(),
+                rp.display().unitPrice(),
+                rp.display().totalWithVat()));
   }
 
   /**

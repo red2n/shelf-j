@@ -118,9 +118,10 @@ public class PurchaseOrderResource {
           "Transitions a DRAFT purchase order to SUBMITTED, or to PENDING_APPROVAL when its net"
               + " value is above the submitter's own spend authority. Either way the submission is"
               + " recorded in the order's append-only approval trail. Spend authority is configured"
-              + " per currency AND per role: there is no FX handling in StoreQL, so a ceiling"
-              + " expressed in one currency cannot be meaningfully compared against an order in"
-              + " another. When no authority is configured at all, approval is off and this behaves"
+              + " per currency AND per role; an order in a currency with no ceiling of its own is"
+              + " measured in the business's home currency at the exchange rate it keeps (03.x), the"
+              + " rate and translated net recorded on the order — and without a rate it fails"
+              + " closed. When no authority is configured at all, approval is off and this behaves"
               + " as it did before the feature existed.")
   @APIResponse(responseCode = "200", description = "Submitted, or routed for approval")
   @APIResponse(responseCode = "400", description = "Only DRAFT orders can be submitted")

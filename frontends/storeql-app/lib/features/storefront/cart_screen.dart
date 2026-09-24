@@ -289,6 +289,27 @@ class _StorefrontCartScreenState extends ConsumerState<StorefrontCartScreen> {
                                   ?.copyWith(fontWeight: FontWeight.bold)),
                         ],
                       ),
+                    if (showPrices)
+                      Consumer(builder: (context, ref, _) {
+                        // Shown in the currency the shopper chose (03.x); paid in the shop's own.
+                        final shownIn = ref.watch(displayCurrencyProvider);
+                        final shop = ref.watch(storefrontCurrenciesProvider).value;
+                        final shown = shownIn == null || shop == null
+                            ? null
+                            : shop.shown(total, shownIn);
+                        if (shown == null || shownIn == currency) return const SizedBox.shrink();
+                        return Padding(
+                          padding: const EdgeInsets.only(top: 4),
+                          child: Row(children: [
+                            const Spacer(),
+                            Text(
+                              '≈ $shownIn ${shown.toStringAsFixed(2)} at the shop\'s rate; you pay in $currency',
+                              key: const Key('cart-total-shown'),
+                              style: Theme.of(context).textTheme.bodySmall,
+                            ),
+                          ]),
+                        );
+                      }),
                     if (showPrices && scheme != null) ...[
                       const SizedBox(height: 6),
                       Text(

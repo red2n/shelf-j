@@ -125,7 +125,8 @@ class RolesIT {
     assertThat(listed.getJsonObject(0).getString("code"), is("OWNER"));
     assertThat(listed.getJsonObject(0).getBoolean("custom"), is(false));
     assertThat(listed.getJsonObject(1).getString("code"), is("MANAGER"));
-    assertThat(listed.getJsonObject(1).getJsonArray("permissions").size(), is(12));
+    // The permissions catalogue common-web publishes: thirteen since stock.transfer (SJ-D73).
+    assertThat(listed.getJsonObject(1).getJsonArray("permissions").size(), is(13));
     assertThat(listed.getJsonObject(3).getString("code"), is("CASHIER"));
     assertThat(
         listed.getJsonObject(3).getJsonArray("permissions").toString(),
@@ -161,7 +162,7 @@ class RolesIT {
                         .readEntity(String.class)))
             .readObject()
             .getJsonArray("data");
-    assertThat(catalogue.size(), is(12));
+    assertThat(catalogue.size(), is(13));
     boolean sawNoSale = false;
     for (JsonValue v : catalogue) {
       JsonObject p = v.asJsonObject();

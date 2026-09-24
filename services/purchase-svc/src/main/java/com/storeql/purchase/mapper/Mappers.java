@@ -89,7 +89,10 @@ public final class Mappers {
         po.createdBy(),
         po.approvedBy(),
         po.approvedAt(),
-        po.source());
+        po.source(),
+        po.fxRate(),
+        po.totalNetHome(),
+        po.homeCurrency());
   }
 
   /**

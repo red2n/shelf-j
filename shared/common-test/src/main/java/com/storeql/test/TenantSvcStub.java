@@ -26,6 +26,7 @@ public final class TenantSvcStub implements AutoCloseable {
   private final Map<String, java.util.List<String>> stores = new ConcurrentHashMap<>();
   private final java.util.Map<String, String> retention =
       new java.util.concurrent.ConcurrentHashMap<>();
+  private final Map<String, java.util.List<String>> fxRates = new ConcurrentHashMap<>();
 
   /** Percentage of net each business's people earn, for the commission rating route. */
   private final Map<String, String> commissionPercent = new ConcurrentHashMap<>();
@@ -160,6 +161,33 @@ public final class TenantSvcStub implements AutoCloseable {
                   + String.join(",", stub.cashLimits.getOrDefault(country, java.util.List.of()))
                   + "],\"depositSchemes\":["
                   + String.join(",", stub.depositSchemes.getOrDefault(country, java.util.List.of()))
+                  + "]}}");
+        });
+    // A tenant's exchange rates (03.x): the home currency from its profile and the rates given
+    // with withFxRate; a tenant with none keeps only its home currency.
+    server.createContext(
+        "/admin/tenant/fx-rates",
+        exchange -> {
+          stub.requests.incrementAndGet();
+          String tenant = exchange.getRequestHeaders().getFirst("X-Tenant-Id");
+          String profile = tenant == null ? null : stub.profiles.get(tenant);
+          if (profile == null) {
+            JsonStub.reply(
+                exchange,
+                404,
+                "{\"error\":{\"code\":\"TENANT_NOT_FOUND\",\"message\":\"no such tenant\"}}");
+            return;
+          }
+          java.util.regex.Matcher m =
+              java.util.regex.Pattern.compile("\"currency\":\"([A-Z]{3})\"").matcher(profile);
+          String home = m.find() ? m.group(1) : "GBP";
+          JsonStub.reply(
+              exchange,
+              200,
+              "{\"data\":{\"home\":\""
+                  + home
+                  + "\",\"rates\":["
+                  + String.join(",", stub.fxRates.getOrDefault(tenant, java.util.List.of()))
                   + "]}}");
         });
     // A tenant's retention schedule (21.16), as registered; a tenant with none has an empty one.
@@ -385,6 +413,22 @@ public final class TenantSvcStub implements AutoCloseable {
    * @param holds hold objects as the sheet lists them, e.g. {@code
    *     {"subjectKind":"CUSTOMER","subjectId":"…"}}
    */
+  /**
+   * Gives a registered tenant an exchange rate (03.x): {@code rate} home units per one unit of
+   * {@code currency}, as tenant-svc's {@code GET /admin/tenant/fx-rates} would list it.
+   */
+  public TenantSvcStub withFxRate(String tenantId, String currency, String rate) {
+    fxRates
+        .computeIfAbsent(tenantId, k -> new java.util.concurrent.CopyOnWriteArrayList<>())
+        .add(
+            "{\"currency\":\""
+                + currency
+                + "\",\"rate\":"
+                + rate
+                + ",\"effectiveFrom\":\"2026-01-01\"}");
+    return this;
+  }
+
   public TenantSvcStub withRetention(
       String tenantId, java.util.Map<String, Integer> periods, java.util.List<String> holds) {
     StringBuilder classes = new StringBuilder();

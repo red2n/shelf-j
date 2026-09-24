@@ -535,6 +535,10 @@ public class JwtAuthFilter implements ContainerRequestFilter {
     if ("POST".equals(method) && "api/pricing-svc/prices/resolve".equals(path)) {
       return true;
     }
+    // The currencies a shop shows prices in (03.x): the picker a visitor sees before signing in.
+    if ("GET".equals(method) && "api/pricing-svc/prices/currencies".equals(path)) {
+      return true;
+    }
     // Active promotions powering the storefront offers banner (advertised, public offers).
     if ("GET".equals(method) && "api/pricing-svc/promotions".equals(path)) {
       return true;

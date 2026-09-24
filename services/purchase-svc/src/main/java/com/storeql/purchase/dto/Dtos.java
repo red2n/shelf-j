@@ -205,7 +205,18 @@ public final class Dtos {
       @Schema(description = "When it was approved; null unless it needed and received approval.")
           Instant approvedAt,
       @Schema(description = "MANUAL, or PROPOSAL when a proposal run raised it (06.x).")
-          String source) {}
+          String source,
+      @Schema(
+              description =
+                  "Home units per one unit of the order's currency, as used when its spend authority"
+                      + " was measured (03.x); null while unsubmitted or when no translation applied.")
+          BigDecimal fxRate,
+      @Schema(
+              description =
+                  "The net translated into the home currency at fxRate; null without one.")
+          BigDecimal totalNetHome,
+      @Schema(description = "The home currency the translation was into; null without one.")
+          String homeCurrency) {}
 
   @Schema(
       name = "PurchaseOrderLineProgressResponse",
