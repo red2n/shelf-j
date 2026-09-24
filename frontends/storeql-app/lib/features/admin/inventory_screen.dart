@@ -15,6 +15,7 @@ import 'providers/inventory_levels_pagination.dart';
 import 'inventory_forecast_tab.dart';
 import 'inventory_markdown_tab.dart';
 import 'inventory_warehouse_tabs.dart';
+import 'procurement_providers.dart';
 import '../../shared/util/short_ref.dart';
 import 'package:storeql_app/core/ids.dart';
 
@@ -680,6 +681,9 @@ class _ReceiveStockDialogState extends ConsumerState<_ReceiveStockDialog> {
   List<String> _fromLabel = const [];
   String? _storeId;
   String? _zoneId;
+  // Whose the stock is: ours, or the supplier's until it sells (consignment).
+  String _ownership = 'OWNED';
+  String? _supplierId;
   bool _loading = false;
   bool _resolving = false;
   String? _error;
@@ -753,6 +757,10 @@ class _ReceiveStockDialogState extends ConsumerState<_ReceiveStockDialog> {
       setState(() => _error = 'Select a store.');
       return;
     }
+    if (_ownership == 'CONSIGNMENT' && _supplierId == null) {
+      setState(() => _error = 'Consignment stock belongs to a supplier: pick one.');
+      return;
+    }
     setState(() {
       _loading = true;
       _error = null;
@@ -774,6 +782,8 @@ class _ReceiveStockDialogState extends ConsumerState<_ReceiveStockDialog> {
               if (_expiryCtrl.text.trim().isNotEmpty)
                 'expiryDate': _expiryCtrl.text.trim(),
               if (_zoneId != null) 'zoneId': _zoneId,
+              if (_ownership != 'OWNED') 'ownership': _ownership,
+              if (_ownership == 'CONSIGNMENT') 'supplierId': _supplierId,
             },
           );
       if (!mounted) return;
@@ -962,6 +972,57 @@ class _ReceiveStockDialogState extends ConsumerState<_ReceiveStockDialog> {
                         ),
                       ),
                     ),
+                  ],
+                ),
+                const SizedBox(height: 12),
+                // Consignment stock ownership: the supplier's until it sells.
+                Row(
+                  children: [
+                    Expanded(
+                      child: DropdownButtonFormField<String>(
+                        key: const Key('receive-ownership'),
+                        initialValue: _ownership,
+                        isExpanded: true,
+                        decoration: const InputDecoration(labelText: 'Whose stock'),
+                        items: const [
+                          DropdownMenuItem(value: 'OWNED', child: Text('Ours')),
+                          DropdownMenuItem(
+                            value: 'CONSIGNMENT',
+                            child: Text("The supplier's (consignment)"),
+                          ),
+                        ],
+                        onChanged: (v) => setState(() {
+                          _ownership = v ?? 'OWNED';
+                          if (_ownership == 'OWNED') _supplierId = null;
+                        }),
+                      ),
+                    ),
+                    if (_ownership == 'CONSIGNMENT') ...[
+                      const SizedBox(width: 12),
+                      Expanded(
+                        child: ref.watch(suppliersProvider).when(
+                              loading: () => const LinearProgressIndicator(),
+                              error: (e, _) => Text(
+                                friendlyError(e, fallback: 'Could not load suppliers.'),
+                                style: TextStyle(color: cs.error),
+                              ),
+                              data: (suppliers) => DropdownButtonFormField<String>(
+                                key: const Key('receive-supplier'),
+                                initialValue: _supplierId,
+                                isExpanded: true,
+                                decoration: const InputDecoration(labelText: 'Supplier *'),
+                                items: [
+                                  for (final s in suppliers)
+                                    DropdownMenuItem(
+                                      value: s.id,
+                                      child: Text(s.name, overflow: TextOverflow.ellipsis),
+                                    ),
+                                ],
+                                onChanged: (v) => setState(() => _supplierId = v),
+                              ),
+                            ),
+                      ),
+                    ],
                   ],
                 ),
                 const SizedBox(height: 12),
@@ -1331,6 +1392,7 @@ class _BatchWideTable extends StatelessWidget {
               DataColumn(label: Text('Expiry')),
               DataColumn(label: Text('Grade')),
               DataColumn(label: Text('Material status')),
+              DataColumn(label: Text('Whose')),
               DataColumn(label: Text('')),
             ],
             rows: batches.map((b) {
@@ -1365,6 +1427,12 @@ class _BatchWideTable extends StatelessWidget {
                   DataCell(Text(b.expiryDate ?? '—')),
                   DataCell(Text(b.grade ?? '—')),
                   DataCell(_MaterialStatusChip(status: b.materialStatus)),
+                  DataCell(
+                    Text(
+                      b.ownership == 'CONSIGNMENT' ? 'Supplier (consignment)' : 'Ours',
+                      style: const TextStyle(fontSize: 12),
+                    ),
+                  ),
                   DataCell(
                     IconButton(
                       icon: const Icon(Icons.tune, size: 18),

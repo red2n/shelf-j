@@ -40,6 +40,8 @@ class GoodsReceivedHandler {
     UUID storeId;
     UUID refId;
     JsonArray lines;
+    String ownership;
+    UUID supplierId;
     try (var reader = Json.createReader(new StringReader(json))) {
       JsonObject obj = reader.readObject();
       eventId = Ids.parse(obj.getString("eventId"));
@@ -50,6 +52,12 @@ class GoodsReceivedHandler {
               ? Ids.parse(obj.getString("refId"))
               : null;
       lines = obj.getJsonArray("lines");
+      // Consignment stock ownership: a delivery on consignment stays the supplier's.
+      ownership = nullableString(obj, "ownership");
+      supplierId =
+          obj.containsKey("supplierId") && !obj.isNull("supplierId")
+              ? Ids.parse(obj.getString("supplierId"))
+              : null;
     } catch (RuntimeException e) {
       LOG.log(Level.WARNING, "Malformed GoodsReceived payload skipped: " + e.getMessage());
       return;
@@ -83,7 +91,9 @@ class GoodsReceivedHandler {
           cost,
           expiry,
           "GRN",
-          refId)) {
+          refId,
+          ownership,
+          supplierId)) {
         created++;
       }
     }

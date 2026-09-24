@@ -36,11 +36,31 @@ public final class Provenance {
       String batchNo,
       LocalDate expiryDate,
       BigDecimal costPrice,
-      String grade) {
+      String grade,
+      /** Whose the stock was: OWNED or CONSIGNMENT — ownership rides with what is drawn. */
+      String ownership,
+      UUID ownerSupplierId) {
+
+    /** A draw from the business's own stock. */
+    public Drawn(
+        UUID batchId,
+        BigDecimal qty,
+        String batchNo,
+        LocalDate expiryDate,
+        BigDecimal costPrice,
+        String grade) {
+      this(batchId, qty, batchNo, expiryDate, costPrice, grade, Batch.OWNERSHIP_OWNED, null);
+    }
 
     /** The same source, a different quantity of it. */
     public Drawn of(BigDecimal quantity) {
-      return new Drawn(batchId, quantity, batchNo, expiryDate, costPrice, grade);
+      return new Drawn(
+          batchId, quantity, batchNo, expiryDate, costPrice, grade, ownership, ownerSupplierId);
+    }
+
+    /** Whether the supplier owns what was drawn. */
+    public boolean consigned() {
+      return Batch.OWNERSHIP_CONSIGNMENT.equals(ownership);
     }
   }
 
@@ -108,7 +128,9 @@ public final class Provenance {
         Batch.MATERIAL_AVAILABLE,
         null,
         from.grade(),
-        null);
+        null,
+        from.ownership() == null ? Batch.OWNERSHIP_OWNED : from.ownership(),
+        from.ownerSupplierId());
   }
 
   /** Stock arriving with no source to carry anything from: the anonymous batch of before. */

@@ -323,6 +323,7 @@ public class PurchaseService {
    */
   public PurchaseOrder createPurchaseOrder(CreatePurchaseOrderRequest req, TenantContext ctx) {
     Supplier supplier = getSupplier(ctx, req.supplierId());
+    String ownership = ownershipOf(req.ownership());
     String currency = supplier.currency();
     if (req.currency() != null) {
       String asked = Money.requireIso4217(req.currency());
@@ -364,6 +365,7 @@ public class PurchaseService {
             null,
             null,
             Domain.PO_SOURCE_MANUAL);
+    po = po.withOwnership(ownership);
     return repo.createPurchaseOrder(
         po, Events.purchaseOrderCreated(ctx.requireTenantId(), po.id()));
   }
@@ -769,6 +771,12 @@ public class PurchaseService {
       TenantContext ctx, CaptureSupplierInvoiceRequest req) {
     UUID tenantId = ctx.requireTenantId();
     PurchaseOrder po = getPurchaseOrder(ctx, req.poId());
+    if (po.consigned()) {
+      throw ApiException.conflict(
+          "PURCHASE_CONSIGNMENT_NOT_INVOICED",
+          "a consignment order is settled on its sales (see /admin/consignment/settlements), not"
+              + " invoiced on receipt");
+    }
 
     if (req.lines() == null || req.lines().isEmpty())
       throw ApiException.badRequest(
@@ -1013,8 +1021,30 @@ public class PurchaseService {
         gr,
         lines,
         Events.goodsReceived(
-            ctx.requireTenantId(), gr.id(), gr.storeId(), gr.poId(), lines, unitPrice),
+            ctx.requireTenantId(),
+            gr.id(),
+            gr.storeId(),
+            gr.poId(),
+            lines,
+            unitPrice,
+            po.ownership(),
+            po.supplierId()),
         receiptPosting(po, gr, lines, unitPrice));
+  }
+
+  /**
+   * OWNED when unsaid; CONSIGNMENT for goods the supplier keeps until they sell.
+   *
+   * @throws ApiException 400 {@code PURCHASE_OWNERSHIP_INVALID} for an ownership nobody defined
+   */
+  static String ownershipOf(String ownership) {
+    if (ownership == null || ownership.isBlank()) return Domain.PO_OWNERSHIP_OWNED;
+    String code = ownership.trim().toUpperCase(java.util.Locale.ROOT);
+    if (!Domain.PO_OWNERSHIP_OWNED.equals(code) && !Domain.PO_OWNERSHIP_CONSIGNMENT.equals(code)) {
+      throw ApiException.badRequest(
+          "PURCHASE_OWNERSHIP_INVALID", "ownership must be OWNED or CONSIGNMENT; got " + ownership);
+    }
+    return code;
   }
 
   /** The order's price per variant — the first line's, where a variant appears twice. */
@@ -1727,6 +1757,8 @@ public class PurchaseService {
       GoodsReceipt gr,
       List<GoodsReceiptLine> lines,
       java.util.Map<UUID, BigDecimal> priceByVariant) {
+    // Consignment stock is the supplier's until it sells: no asset, and nothing owed at the door.
+    if (po.consigned()) return List.of();
     BigDecimal value = BigDecimal.ZERO;
     for (GoodsReceiptLine l : lines) {
       BigDecimal price = priceByVariant.get(l.variantId());

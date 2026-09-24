@@ -70,6 +70,34 @@ public final class Events {
         + "\"}";
   }
 
+  /**
+   * A sale drawn from a batch the supplier still owns: purchase-svc owes the supplier {@code qty}
+   * at {@code unitCost} (the order's price) for it. One per consignment batch drawn.
+   */
+  public static String consignmentStockSold(
+      UUID tenantId,
+      UUID storeId,
+      UUID variantId,
+      UUID batchId,
+      UUID supplierId,
+      UUID orderId,
+      BigDecimal qty,
+      BigDecimal unitCost) {
+    return EventPayload.base("ConsignmentStockSold", tenantId, batchId)
+        + storeVariant(storeId, variantId)
+        + ",\"batchId\":\""
+        + batchId
+        + "\",\"supplierId\":\""
+        + supplierId
+        + "\",\"orderId\":"
+        + (orderId == null ? "null" : "\"" + orderId + "\"")
+        + ",\"qty\":"
+        + qty.toPlainString()
+        + ",\"unitCost\":"
+        + (unitCost == null ? "null" : unitCost.toPlainString())
+        + "}";
+  }
+
   static String stockAdjusted(UUID tenantId, UUID storeId, UUID variantId, BigDecimal delta) {
     return EventPayload.base("StockAdjusted", tenantId, variantId)
         + storeVariant(storeId, variantId)

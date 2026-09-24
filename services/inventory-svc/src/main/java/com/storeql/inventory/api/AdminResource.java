@@ -98,7 +98,11 @@ public class AdminResource {
             "MANUAL",
             null,
             zoneId,
-            idempotencyKey != null && !idempotencyKey.isBlank() ? idempotencyKey : null);
+            idempotencyKey != null && !idempotencyKey.isBlank() ? idempotencyKey : null,
+            req.ownership(),
+            req.supplierId() == null || req.supplierId().isBlank()
+                ? null
+                : uuid(req.supplierId(), "supplierId"));
     return Response.status(Response.Status.CREATED)
         .entity(ApiResponse.ok(Mappers.toBatch(batch)))
         .build();

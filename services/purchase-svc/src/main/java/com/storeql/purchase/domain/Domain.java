@@ -64,6 +64,10 @@ public final class Domain {
   public static final String SOURCE_JOURNAL = "JOURNAL";
   public static final String SOURCE_SUPPLIER_PAYMENT = "SUPPLIER_PAYMENT";
   public static final String SOURCE_SALE = "SALE";
+
+  /** A consignment sale: what the supplier is owed the moment its stock sold. */
+  public static final String SOURCE_CONSIGNMENT_SALE = "CONSIGNMENT_SALE";
+
   public static final String SOURCE_SALE_TENDER = "SALE_TENDER";
   public static final String SOURCE_SALE_REFUND = "SALE_REFUND";
   // Chargebacks (11.9): the acquirer taking a card payment back, and how the argument ended.
@@ -90,6 +94,11 @@ public final class Domain {
   public static final String CODE_STORE_CREDIT_LIABILITY = "2320";
   public static final String NAME_STORE_CREDIT_LIABILITY = "Store Credit Liability";
   public static final String CODE_SALES = "4010";
+
+  /** Cost of goods sold that were the supplier's until they sold (consignment). */
+  public static final String CODE_CONSIGNMENT_PURCHASES = "5010";
+
+  public static final String NAME_CONSIGNMENT_PURCHASES = "Purchases - Consignment";
   public static final String NAME_SALES = "Sales";
   public static final String CODE_DEFERRED_LOYALTY = "2330";
   public static final String NAME_DEFERRED_LOYALTY = "Deferred Income - Loyalty Points";
@@ -274,7 +283,98 @@ public final class Domain {
       /** The net translated into the home currency at fxRate; null without a translation. */
       BigDecimal totalNetHome,
       /** The home currency the translation was into; null without one. */
-      String homeCurrency) {
+      String homeCurrency,
+      /**
+       * Whose the goods will be on arrival: OWNED (the business's, the default) or CONSIGNMENT (the
+       * supplier's until they sell — nothing is owed at the door, the sale is owed).
+       */
+      String ownership) {
+
+    /** An order for goods the business will own, with a translation possibly recorded. */
+    public PurchaseOrder(
+        UUID id,
+        UUID tenantId,
+        UUID supplierId,
+        UUID storeId,
+        String status,
+        String currency,
+        BigDecimal totalNet,
+        BigDecimal totalVat,
+        BigDecimal totalGross,
+        LocalDate expectedDelivery,
+        Instant createdAt,
+        Instant updatedAt,
+        Instant cancelledAt,
+        String cancelledReason,
+        Instant closedAt,
+        String closedReason,
+        UUID createdBy,
+        UUID approvedBy,
+        Instant approvedAt,
+        String source,
+        BigDecimal fxRate,
+        BigDecimal totalNetHome,
+        String homeCurrency) {
+      this(
+          id,
+          tenantId,
+          supplierId,
+          storeId,
+          status,
+          currency,
+          totalNet,
+          totalVat,
+          totalGross,
+          expectedDelivery,
+          createdAt,
+          updatedAt,
+          cancelledAt,
+          cancelledReason,
+          closedAt,
+          closedReason,
+          createdBy,
+          approvedBy,
+          approvedAt,
+          source,
+          fxRate,
+          totalNetHome,
+          homeCurrency,
+          PO_OWNERSHIP_OWNED);
+    }
+
+    /** The same order, for goods of the given ownership. */
+    public PurchaseOrder withOwnership(String owned) {
+      return new PurchaseOrder(
+          id,
+          tenantId,
+          supplierId,
+          storeId,
+          status,
+          currency,
+          totalNet,
+          totalVat,
+          totalGross,
+          expectedDelivery,
+          createdAt,
+          updatedAt,
+          cancelledAt,
+          cancelledReason,
+          closedAt,
+          closedReason,
+          createdBy,
+          approvedBy,
+          approvedAt,
+          source,
+          fxRate,
+          totalNetHome,
+          homeCurrency,
+          owned);
+    }
+
+    /** Whether the supplier keeps ownership of the goods until they sell. */
+    public boolean consigned() {
+      return PO_OWNERSHIP_CONSIGNMENT.equals(ownership);
+    }
 
     /** An order with no translation recorded yet. */
     public PurchaseOrder(
@@ -327,6 +427,49 @@ public final class Domain {
 
   public static final String PO_SOURCE_MANUAL = "MANUAL";
   public static final String PO_SOURCE_PROPOSAL = "PROPOSAL";
+
+  /** The business will own the goods on arrival. */
+  public static final String PO_OWNERSHIP_OWNED = "OWNED";
+
+  /** The supplier owns the goods until they sell (consignment, sale or return). */
+  public static final String PO_OWNERSHIP_CONSIGNMENT = "CONSIGNMENT";
+
+  /** A sale drawn from a supplier's consignment stock, as inventory-svc announced it. */
+  public record ConsignmentSale(
+      UUID id,
+      UUID tenantId,
+      UUID eventId,
+      UUID supplierId,
+      UUID storeId,
+      UUID variantId,
+      UUID batchId,
+      UUID orderId,
+      BigDecimal qty,
+      BigDecimal unitCost,
+      BigDecimal amount,
+      String currency,
+      LocalDate soldOn,
+      UUID settlementId,
+      Instant recordedAt) {
+
+    public boolean settled() {
+      return settlementId != null;
+    }
+  }
+
+  /** One statement of a supplier's consignment sales over a period, for it to invoice against. */
+  public record ConsignmentSettlement(
+      UUID id,
+      UUID tenantId,
+      UUID supplierId,
+      String reference,
+      LocalDate periodFrom,
+      LocalDate periodTo,
+      String currency,
+      BigDecimal total,
+      int salesCount,
+      UUID createdBy,
+      Instant createdAt) {}
 
   /** An item a proposal run could not judge, and why. */
   public record SkippedItem(UUID variantId, String reason) {}

@@ -26,7 +26,57 @@ public final class Domain {
       String materialStatus,
       String materialStatusReason,
       String grade,
-      UUID zoneId) {
+      UUID zoneId,
+      /** OWNED (the business's own) or CONSIGNMENT (the supplier's until it sells). */
+      String ownership,
+      /** The supplier that owns a CONSIGNMENT batch; purchase-svc's id, referenced never joined. */
+      UUID ownerSupplierId) {
+
+    /** A batch of the business's own stock. */
+    public Batch(
+        UUID id,
+        UUID tenantId,
+        UUID storeId,
+        UUID variantId,
+        String batchNo,
+        BigDecimal receivedQty,
+        BigDecimal remainingQty,
+        BigDecimal costPrice,
+        LocalDate expiryDate,
+        Instant createdAt,
+        String status,
+        String materialStatus,
+        String materialStatusReason,
+        String grade,
+        UUID zoneId) {
+      this(
+          id,
+          tenantId,
+          storeId,
+          variantId,
+          batchNo,
+          receivedQty,
+          remainingQty,
+          costPrice,
+          expiryDate,
+          createdAt,
+          status,
+          materialStatus,
+          materialStatusReason,
+          grade,
+          zoneId,
+          OWNERSHIP_OWNED,
+          null);
+    }
+
+    public static final String OWNERSHIP_OWNED = "OWNED";
+    public static final String OWNERSHIP_CONSIGNMENT = "CONSIGNMENT";
+
+    /** Whether the supplier, not the business, owns what is left of this batch. */
+    public boolean consigned() {
+      return OWNERSHIP_CONSIGNMENT.equals(ownership);
+    }
+
     public static final String STATUS_ACTIVE = "ACTIVE";
     public static final String STATUS_DEPLETED = "DEPLETED";
     public static final String STATUS_EXPIRED = "EXPIRED";
@@ -132,7 +182,11 @@ public final class Domain {
       String method,
       BigDecimal onHandQty,
       BigDecimal unvaluedQty,
-      BigDecimal value) {}
+      BigDecimal value,
+      /** How much of onHandQty the supplier still owns (consignment): not the business's asset. */
+      BigDecimal consignmentQty,
+      /** What that consignment holding is worth at the cost the supplier will be owed. */
+      BigDecimal consignmentValue) {}
 
   /** How a shrinkage report groups its rows. An enum, so no request text ever reaches the SQL. */
   public enum ShrinkageGrouping {

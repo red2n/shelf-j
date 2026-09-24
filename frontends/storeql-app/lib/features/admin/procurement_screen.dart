@@ -17,6 +17,7 @@ import 'procurement_providers.dart';
 import 'resolve_invoice_dialog.dart';
 import 'widgets/variant_picker.dart';
 import 'bank_details_validators.dart';
+import 'consignment_tab.dart';
 
 class ProcurementScreen extends ConsumerWidget {
   const ProcurementScreen({super.key});
@@ -25,7 +26,7 @@ class ProcurementScreen extends ConsumerWidget {
   Widget build(BuildContext context, WidgetRef ref) {
     final canPay = canRunPayments(ref.watch(authNotifierProvider).value);
     return DefaultTabController(
-      length: 5,
+      length: 6,
       child: Builder(
         // A Builder gives this subtree a context below DefaultTabController,
         // so DefaultTabController.of(context) below can find it.
@@ -51,6 +52,7 @@ class ProcurementScreen extends ConsumerWidget {
                     Tab(text: 'E-invoices'),
                     Tab(text: 'Suppliers'),
                     Tab(text: 'Payments'),
+                    Tab(text: 'Consignment'),
                   ],
                 ),
                 const Expanded(
@@ -61,6 +63,8 @@ class ProcurementScreen extends ConsumerWidget {
                       EInvoicesTab(),
                       _SuppliersTab(),
                       PaymentRunsTab(),
+                      // Consignment stock: what suppliers are owed as their stock sells.
+                      ConsignmentTab(),
                     ],
                   ),
                 ),
@@ -71,7 +75,10 @@ class ProcurementScreen extends ConsumerWidget {
             // per tab.
             floatingActionButton: ListenableBuilder(
               listenable: tabController,
-              builder: (context, _) => tabController.index == 4
+              builder: (context, _) => tabController.index == 5
+                  // Consignment settles per supplier from the tab itself.
+                  ? const SizedBox.shrink()
+                  : tabController.index == 4
                   ? (canPay
                         ? FloatingActionButton.extended(
                             onPressed: () => showDialog(
@@ -1047,6 +1054,10 @@ class _PurchaseOrdersTab extends ConsumerWidget {
                             const SizedBox(width: 6),
                             const _ProposedBadge(),
                           ],
+                          if (po.ownership == 'CONSIGNMENT') ...[
+                            const SizedBox(width: 6),
+                            const _ConsignmentBadge(),
+                          ],
                         ],
                       ),
                       subtitle: Text(
@@ -1084,6 +1095,8 @@ class _CreatePoDialogState extends ConsumerState<_CreatePoDialog> {
   String? _storeId;
   String? _currency;
   DateTime? _eta;
+  // Whose the goods will be: ours on arrival, or the supplier's until they sell.
+  String _ownership = 'OWNED';
   bool _loading = false;
   String? _error;
 
@@ -1106,6 +1119,7 @@ class _CreatePoDialogState extends ConsumerState<_CreatePoDialog> {
               'supplierId': _supplierId,
               'storeId': _storeId,
               if (_currency != null) 'currency': _currency,
+              if (_ownership != 'OWNED') 'ownership': _ownership,
               if (_eta != null)
                 'expectedDelivery': _eta!.toIso8601String().split('T').first,
             },
@@ -1200,6 +1214,21 @@ class _CreatePoDialogState extends ConsumerState<_CreatePoDialog> {
             CurrencyField(
               value: _currency ?? ref.watch(tenantInfoProvider).value?.currency,
               onChanged: (v) => setState(() => _currency = v),
+            ),
+            const SizedBox(height: 12),
+            DropdownButtonFormField<String>(
+              key: const Key('po-ownership'),
+              initialValue: _ownership,
+              decoration: const InputDecoration(
+                labelText: 'Whose goods',
+                helperText: 'Consignment: the supplier owns them until they sell; nothing is owed at the door',
+                helperMaxLines: 2,
+              ),
+              items: const [
+                DropdownMenuItem(value: 'OWNED', child: Text('Ours on arrival')),
+                DropdownMenuItem(value: 'CONSIGNMENT', child: Text("The supplier's until sold (consignment)")),
+              ],
+              onChanged: (v) => setState(() => _ownership = v ?? 'OWNED'),
             ),
             const SizedBox(height: 12),
             ListTile(
@@ -2651,6 +2680,38 @@ class _ProposedBadge extends StatelessWidget {
               fontSize: 11,
               fontWeight: FontWeight.w600,
               color: status.onInfoContainer,
+            ),
+          ),
+        ],
+      ),
+    );
+  }
+}
+
+/// Marks an order whose goods stay the supplier's until they sell.
+class _ConsignmentBadge extends StatelessWidget {
+  const _ConsignmentBadge();
+
+  @override
+  Widget build(BuildContext context) {
+    final status = context.status;
+    return Container(
+      padding: const EdgeInsets.symmetric(horizontal: 6, vertical: 2),
+      decoration: BoxDecoration(
+        color: status.warningContainer,
+        borderRadius: AppRadius.badge,
+      ),
+      child: Row(
+        mainAxisSize: MainAxisSize.min,
+        children: [
+          Icon(Icons.handshake_outlined, size: 12, color: status.onWarningContainer),
+          const SizedBox(width: 4),
+          Text(
+            'Consignment',
+            style: TextStyle(
+              fontSize: 11,
+              fontWeight: FontWeight.w600,
+              color: status.onWarningContainer,
             ),
           ),
         ],

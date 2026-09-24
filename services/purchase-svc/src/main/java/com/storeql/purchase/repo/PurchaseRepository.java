@@ -252,8 +252,9 @@ public class PurchaseRepository extends BaseOutboxRepository {
               c.prepareStatement(
                   "INSERT INTO purchase_orders"
                       + " (id,tenant_id,supplier_id,store_id,status,currency,"
-                      + "  total_net,total_vat,total_gross,expected_delivery,created_by,source)"
-                      + " VALUES (?,?,?,?,?,?,?,?,?,?,?,?)")) {
+                      + "  total_net,total_vat,total_gross,expected_delivery,created_by,source,"
+                      + "  ownership)"
+                      + " VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?)")) {
             ps.setObject(1, po.id());
             ps.setObject(2, po.tenantId());
             ps.setObject(3, po.supplierId());
@@ -266,6 +267,7 @@ public class PurchaseRepository extends BaseOutboxRepository {
             ps.setObject(10, po.expectedDelivery());
             ps.setObject(11, po.createdBy());
             ps.setString(12, po.source() == null ? Domain.PO_SOURCE_MANUAL : po.source());
+            ps.setString(13, po.ownership() == null ? Domain.PO_OWNERSHIP_OWNED : po.ownership());
             ps.executeUpdate();
           }
           insertOutbox(c, event);
@@ -286,7 +288,7 @@ public class PurchaseRepository extends BaseOutboxRepository {
         "SELECT id,tenant_id,supplier_id,store_id,status,currency,"
             + "total_net,total_vat,total_gross,expected_delivery,created_at,updated_at,cancelled_at,"
             + "cancelled_reason,closed_at,closed_reason,created_by,approved_by,approved_at,source,"
-            + "fx_rate,total_net_home,home_currency"
+            + "fx_rate,total_net_home,home_currency,ownership"
             + " FROM purchase_orders WHERE tenant_id=? ORDER BY created_at DESC LIMIT ?",
         ps -> {
           ps.setObject(1, tenantId);
@@ -309,7 +311,7 @@ public class PurchaseRepository extends BaseOutboxRepository {
             "SELECT id,tenant_id,supplier_id,store_id,status,currency,"
                 + "total_net,total_vat,total_gross,expected_delivery,created_at,updated_at,cancelled_at,"
                 + "cancelled_reason,closed_at,closed_reason,created_by,approved_by,approved_at,source,"
-                + "fx_rate,total_net_home,home_currency"
+                + "fx_rate,total_net_home,home_currency,ownership"
                 + " FROM purchase_orders WHERE tenant_id=? AND id=?",
             ps -> {
               ps.setObject(1, tenantId);
@@ -539,7 +541,8 @@ public class PurchaseRepository extends BaseOutboxRepository {
             ? null
             : rs.getBigDecimal("fx_rate").stripTrailingZeros(),
         rs.getBigDecimal("total_net_home"),
-        rs.getString("home_currency"));
+        rs.getString("home_currency"),
+        rs.getString("ownership"));
   }
 
   /**

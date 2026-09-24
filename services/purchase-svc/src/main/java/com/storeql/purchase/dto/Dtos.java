@@ -142,7 +142,13 @@ public final class Dtos {
               description =
                   "Date the goods are expected to arrive, as yyyy-MM-dd (e.g. 2026-01-31). A"
                       + " value carrying a time is rejected with INVALID_DATE.")
-          String expectedDelivery) {}
+          String expectedDelivery,
+      @Schema(
+              description =
+                  "OWNED (the default): the business owns the goods on arrival. CONSIGNMENT: the"
+                      + " supplier owns them until they sell — the receipt posts nothing, and"
+                      + " each sale is owed to the supplier at this order's price.")
+          String ownership) {}
 
   @Schema(name = "AddPurchaseOrderLineRequest")
   public record AddPurchaseOrderLineRequest(
@@ -216,7 +222,9 @@ public final class Dtos {
                   "The net translated into the home currency at fxRate; null without one.")
           BigDecimal totalNetHome,
       @Schema(description = "The home currency the translation was into; null without one.")
-          String homeCurrency) {}
+          String homeCurrency,
+      @Schema(description = "OWNED, or CONSIGNMENT when the supplier owns the goods until sold.")
+          String ownership) {}
 
   @Schema(
       name = "PurchaseOrderLineProgressResponse",
@@ -946,4 +954,44 @@ public final class Dtos {
       @Schema(description = "Items with a reorder plan at the store.") int considered,
       List<ProposedOrderResponse> orders,
       List<SkippedItemResponse> skipped) {}
+
+  // ── Consignment stock, the buyer's side ─────────────────────────────────────
+
+  @Schema(name = "CreateConsignmentSettlementRequest")
+  public record CreateConsignmentSettlementRequest(
+      @NotNull UUID supplierId,
+      @Schema(description = "First day of the period, yyyy-MM-dd.") @NotBlank String from,
+      @Schema(description = "Last day of the period, yyyy-MM-dd.") @NotBlank String to) {}
+
+  @Schema(name = "ConsignmentSaleResponse")
+  public record ConsignmentSaleResponse(
+      UUID id,
+      UUID supplierId,
+      UUID storeId,
+      UUID variantId,
+      UUID batchId,
+      UUID orderId,
+      BigDecimal qty,
+      @Schema(description = "The order's price per unit: what the supplier is owed for each.")
+          BigDecimal unitCost,
+      BigDecimal amount,
+      String currency,
+      LocalDate soldOn,
+      boolean settled,
+      UUID settlementId,
+      Instant recordedAt) {}
+
+  @Schema(name = "ConsignmentSettlementResponse")
+  public record ConsignmentSettlementResponse(
+      UUID id,
+      UUID supplierId,
+      @Schema(description = "What the supplier invoices against.") String reference,
+      LocalDate periodFrom,
+      LocalDate periodTo,
+      String currency,
+      BigDecimal total,
+      int salesCount,
+      Instant createdAt,
+      @Schema(description = "The sales gathered; present when one settlement is read.")
+          List<ConsignmentSaleResponse> sales) {}
 }

@@ -256,6 +256,10 @@ class BatchInfo {
   final String? grade;
   final String? zoneId;
 
+  /// OWNED, or CONSIGNMENT when the supplier still owns what is left.
+  final String ownership;
+  final String? ownerSupplierId;
+
   const BatchInfo({
     required this.id,
     required this.storeId,
@@ -271,6 +275,8 @@ class BatchInfo {
     this.materialStatusReason,
     this.grade,
     this.zoneId,
+    this.ownership = 'OWNED',
+    this.ownerSupplierId,
   });
 
   factory BatchInfo.fromJson(Map<String, dynamic> j) => BatchInfo(
@@ -288,6 +294,8 @@ class BatchInfo {
         materialStatusReason: j['materialStatusReason'] as String?,
         grade: j['grade'] as String?,
         zoneId: j['zoneId'] as String?,
+        ownership: j['ownership'] as String? ?? 'OWNED',
+        ownerSupplierId: j['ownerSupplierId'] as String?,
       );
 }
 
@@ -1638,12 +1646,19 @@ class ValuationRow {
   final double unvaluedQty;
   final double value;
 
+  /// Stock the supplier still owns (consignment): not the business's asset,
+  /// reported apart at the cost the supplier will be owed.
+  final double consignmentQty;
+  final double consignmentValue;
+
   const ValuationRow({
     required this.groupKey,
     required this.method,
     required this.onHandQty,
     required this.unvaluedQty,
     required this.value,
+    this.consignmentQty = 0,
+    this.consignmentValue = 0,
   });
 
   factory ValuationRow.fromJson(Map<String, dynamic> j) => ValuationRow(
@@ -1652,6 +1667,8 @@ class ValuationRow {
         onHandQty: (j['onHandQty'] as num?)?.toDouble() ?? 0,
         unvaluedQty: (j['unvaluedQty'] as num?)?.toDouble() ?? 0,
         value: (j['value'] as num?)?.toDouble() ?? 0,
+        consignmentQty: (j['consignmentQty'] as num?)?.toDouble() ?? 0,
+        consignmentValue: (j['consignmentValue'] as num?)?.toDouble() ?? 0,
       );
 }
 

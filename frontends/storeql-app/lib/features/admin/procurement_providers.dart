@@ -86,6 +86,9 @@ class PurchaseOrder {
   /// MANUAL, or PROPOSAL when a proposal run raised it (06.x).
   final String source;
 
+  /// OWNED, or CONSIGNMENT when the supplier owns the goods until they sell.
+  final String ownership;
+
   const PurchaseOrder({
     required this.id,
     required this.supplierId,
@@ -98,6 +101,7 @@ class PurchaseOrder {
     this.expectedDelivery,
     required this.createdAt,
     this.source = 'MANUAL',
+    this.ownership = 'OWNED',
   });
 
   factory PurchaseOrder.fromJson(Map<String, dynamic> j) => PurchaseOrder(
@@ -112,6 +116,7 @@ class PurchaseOrder {
     expectedDelivery: j['expectedDelivery'] as String?,
     createdAt: j['createdAt'] as String? ?? '',
     source: j['source'] as String? ?? 'MANUAL',
+    ownership: j['ownership'] as String? ?? 'OWNED',
   );
 }
 

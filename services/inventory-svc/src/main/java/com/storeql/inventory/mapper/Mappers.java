@@ -149,7 +149,9 @@ public final class Mappers {
         b.materialStatus(),
         b.materialStatusReason(),
         b.grade(),
-        b.zoneId() == null ? null : b.zoneId().toString());
+        b.zoneId() == null ? null : b.zoneId().toString(),
+        b.ownership(),
+        b.ownerSupplierId() == null ? null : b.ownerSupplierId().toString());
   }
 
   /**
@@ -189,7 +191,13 @@ public final class Mappers {
    */
   public static ValuationRowResponse toValuationRow(ValuationRow r) {
     return new ValuationRowResponse(
-        r.groupKey(), r.method(), r.onHandQty(), r.unvaluedQty(), r.value());
+        r.groupKey(),
+        r.method(),
+        r.onHandQty(),
+        r.unvaluedQty(),
+        r.value(),
+        r.consignmentQty(),
+        r.consignmentValue());
   }
 
   /**

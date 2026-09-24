@@ -1118,18 +1118,21 @@ class _ValuationReport extends ConsumerWidget {
       data: (rows) {
         final totalValue = rows.fold<double>(0, (s, r) => s + r.value);
         final totalUnvalued = rows.fold<double>(0, (s, r) => s + r.unvaluedQty);
+        final totalConsignmentQty = rows.fold<double>(0, (s, r) => s + r.consignmentQty);
+        final totalConsignmentValue = rows.fold<double>(0, (s, r) => s + r.consignmentValue);
         return Column(
           crossAxisAlignment: CrossAxisAlignment.start,
           children: [
             _ReportHeader(
               title: 'Stock Valuation',
-              subtitle: 'What the holding is worth on its configured cost basis',
+              subtitle:
+                  "What the business's own holding is worth on its configured cost basis; consignment stock, the supplier's until it sells, is shown apart",
               onRefresh: () => ref.invalidate(valuationReportProvider),
               onExportCsv: rows.isEmpty
                   ? null
                   : () {
                       final buf = StringBuffer(
-                          'groupKey,method,onHandQty,unvaluedQty,value\n');
+                          'groupKey,method,onHandQty,unvaluedQty,value,consignmentQty,consignmentValue\n');
                       for (final r in rows) {
                         buf.writeln([
                           _csvEscape(r.groupKey),
@@ -1137,6 +1140,8 @@ class _ValuationReport extends ConsumerWidget {
                           r.onHandQty,
                           r.unvaluedQty,
                           r.value,
+                          r.consignmentQty,
+                          r.consignmentValue,
                         ].join(','));
                       }
                       _downloadCsv('valuation.csv', buf.toString());
@@ -1182,6 +1187,8 @@ class _ValuationReport extends ConsumerWidget {
                         DataColumn(label: Text('On hand'), numeric: true),
                         DataColumn(label: Text('Uncosted'), numeric: true),
                         DataColumn(label: Text('Value'), numeric: true),
+                        DataColumn(label: Text('On consignment'), numeric: true),
+                        DataColumn(label: Text("Suppliers' value"), numeric: true),
                       ],
                       rows: [
                         ...rows.map((r) => DataRow(cells: [
@@ -1194,6 +1201,16 @@ class _ValuationReport extends ConsumerWidget {
                                           ? cs.outline
                                           : null))),
                               DataCell(Text(r.value.toStringAsFixed(2))),
+                              DataCell(Text(r.consignmentQty.toStringAsFixed(0),
+                                  style: TextStyle(
+                                      color: r.consignmentQty > 0
+                                          ? null
+                                          : cs.outline))),
+                              DataCell(Text(r.consignmentValue.toStringAsFixed(2),
+                                  style: TextStyle(
+                                      color: r.consignmentValue > 0
+                                          ? null
+                                          : cs.outline))),
                             ])),
                         DataRow(cells: [
                           const DataCell(Text('Total',
@@ -1202,6 +1219,10 @@ class _ValuationReport extends ConsumerWidget {
                           const DataCell(Text('')),
                           DataCell(Text(totalUnvalued.toStringAsFixed(0))),
                           DataCell(Text(totalValue.toStringAsFixed(2),
+                              style:
+                                  const TextStyle(fontWeight: FontWeight.bold))),
+                          DataCell(Text(totalConsignmentQty.toStringAsFixed(0))),
+                          DataCell(Text(totalConsignmentValue.toStringAsFixed(2),
                               style:
                                   const TextStyle(fontWeight: FontWeight.bold))),
                         ]),

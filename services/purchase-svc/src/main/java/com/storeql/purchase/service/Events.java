@@ -56,6 +56,7 @@ final class Events {
    * reaching into another service's schema (golden rule #1), and there was exactly one receipt per
    * order back then, so nothing was lost that a join cannot recover.
    */
+  /** A receipt of the business's own goods, the supplier unnamed. */
   static OutboxRow goodsReceived(
       UUID tenantId,
       UUID grId,
@@ -63,6 +64,19 @@ final class Events {
       UUID poId,
       List<GoodsReceiptLine> lines,
       java.util.Map<UUID, java.math.BigDecimal> unitPrice) {
+    return goodsReceived(
+        tenantId, grId, storeId, poId, lines, unitPrice, Domain.PO_OWNERSHIP_OWNED, null);
+  }
+
+  static OutboxRow goodsReceived(
+      UUID tenantId,
+      UUID grId,
+      UUID storeId,
+      UUID poId,
+      List<GoodsReceiptLine> lines,
+      java.util.Map<UUID, java.math.BigDecimal> unitPrice,
+      String ownership,
+      UUID supplierId) {
     StringBuilder sb = new StringBuilder();
     sb.append("{\"eventId\":\"")
         .append(grId)
@@ -74,6 +88,11 @@ final class Events {
         .append(grId)
         .append("\",\"poId\":\"")
         .append(poId)
+        // Whose the stock is (consignment stock ownership): OWNED, or the supplier's until sold.
+        .append("\",\"ownership\":\"")
+        .append(ownership == null ? Domain.PO_OWNERSHIP_OWNED : ownership)
+        .append("\",\"supplierId\":\"")
+        .append(supplierId)
         .append("\",\"lines\":[");
     for (int i = 0; i < lines.size(); i++) {
       if (i > 0) sb.append(",");

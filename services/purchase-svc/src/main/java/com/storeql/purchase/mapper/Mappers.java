@@ -92,7 +92,41 @@ public final class Mappers {
         po.source(),
         po.fxRate(),
         po.totalNetHome(),
-        po.homeCurrency());
+        po.homeCurrency(),
+        po.ownership());
+  }
+
+  public static Dtos.ConsignmentSaleResponse toDto(Domain.ConsignmentSale s) {
+    return new Dtos.ConsignmentSaleResponse(
+        s.id(),
+        s.supplierId(),
+        s.storeId(),
+        s.variantId(),
+        s.batchId(),
+        s.orderId(),
+        s.qty(),
+        s.unitCost(),
+        s.amount(),
+        s.currency(),
+        s.soldOn(),
+        s.settled(),
+        s.settlementId(),
+        s.recordedAt());
+  }
+
+  public static Dtos.ConsignmentSettlementResponse toDto(
+      Domain.ConsignmentSettlement s, List<Domain.ConsignmentSale> sales) {
+    return new Dtos.ConsignmentSettlementResponse(
+        s.id(),
+        s.supplierId(),
+        s.reference(),
+        s.periodFrom(),
+        s.periodTo(),
+        s.currency(),
+        s.total(),
+        s.salesCount(),
+        s.createdAt(),
+        sales == null ? null : sales.stream().map(Mappers::toDto).toList());
   }
 
   /**

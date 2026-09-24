@@ -146,6 +146,44 @@ public class InventoryService {
       UUID refId,
       UUID zoneId,
       String idempotencyKey) {
+    return receive(
+        tenantId,
+        storeId,
+        variantId,
+        qty,
+        batchNo,
+        costPrice,
+        expiry,
+        refType,
+        refId,
+        zoneId,
+        idempotencyKey,
+        Batch.OWNERSHIP_OWNED,
+        null);
+  }
+
+  /**
+   * Receives stock that may be the supplier's: {@code ownership} OWNED (the default) or
+   * CONSIGNMENT, in which case the owning supplier is named (consignment stock ownership).
+   *
+   * @throws ApiException 400 {@code INVENTORY_OWNERSHIP_INVALID} for an ownership nobody defined;
+   *     400 {@code INVENTORY_CONSIGNMENT_SUPPLIER_REQUIRED} for consignment stock with no supplier
+   */
+  public Batch receive(
+      UUID tenantId,
+      UUID storeId,
+      UUID variantId,
+      BigDecimal qty,
+      String batchNo,
+      BigDecimal costPrice,
+      LocalDate expiry,
+      String refType,
+      UUID refId,
+      UUID zoneId,
+      String idempotencyKey,
+      String ownership,
+      UUID ownerSupplierId) {
+    String owned = ownershipOf(ownership, ownerSupplierId);
     UUID batchId = Ids.newId();
     var batch =
         new Batch(
@@ -163,7 +201,9 @@ public class InventoryService {
             Batch.MATERIAL_AVAILABLE,
             null,
             null,
-            zoneId);
+            zoneId,
+            owned,
+            Batch.OWNERSHIP_CONSIGNMENT.equals(owned) ? ownerSupplierId : null);
     var event =
         new OutboxRow(
             "StockReceived",
@@ -366,6 +406,38 @@ public class InventoryService {
       LocalDate expiry,
       String refType,
       UUID refId) {
+    return receiveOnce(
+        dedupeId,
+        consumerName,
+        tenantId,
+        storeId,
+        variantId,
+        qty,
+        batchNo,
+        costPrice,
+        expiry,
+        refType,
+        refId,
+        Batch.OWNERSHIP_OWNED,
+        null);
+  }
+
+  /** As {@link #receiveOnce}, for stock that may be the supplier's (consignment). */
+  public boolean receiveOnce(
+      UUID dedupeId,
+      String consumerName,
+      UUID tenantId,
+      UUID storeId,
+      UUID variantId,
+      BigDecimal qty,
+      String batchNo,
+      BigDecimal costPrice,
+      LocalDate expiry,
+      String refType,
+      UUID refId,
+      String ownership,
+      UUID ownerSupplierId) {
+    String owned = ownershipOf(ownership, ownerSupplierId);
     var batch =
         new Batch(
             Ids.newId(),
@@ -382,9 +454,28 @@ public class InventoryService {
             Batch.MATERIAL_AVAILABLE,
             null,
             null,
-            null);
+            null,
+            owned,
+            Batch.OWNERSHIP_CONSIGNMENT.equals(owned) ? ownerSupplierId : null);
     return repo.receiveOnce(
         dedupeId, consumerName, batch, refType, refId, stockReceivedEvent(batch));
+  }
+
+  /** OWNED when unsaid; CONSIGNMENT only with the supplier it belongs to. */
+  static String ownershipOf(String ownership, UUID ownerSupplierId) {
+    if (ownership == null || ownership.isBlank()) return Batch.OWNERSHIP_OWNED;
+    String code = ownership.trim().toUpperCase(java.util.Locale.ROOT);
+    if (!Batch.OWNERSHIP_OWNED.equals(code) && !Batch.OWNERSHIP_CONSIGNMENT.equals(code)) {
+      throw ApiException.badRequest(
+          "INVENTORY_OWNERSHIP_INVALID",
+          "ownership must be OWNED or CONSIGNMENT; got " + ownership);
+    }
+    if (Batch.OWNERSHIP_CONSIGNMENT.equals(code) && ownerSupplierId == null) {
+      throw ApiException.badRequest(
+          "INVENTORY_CONSIGNMENT_SUPPLIER_REQUIRED",
+          "consignment stock belongs to a supplier: give supplierId");
+    }
+    return code;
   }
 
   /**
@@ -2771,7 +2862,9 @@ public class InventoryService {
             Batch.MATERIAL_AVAILABLE,
             null,
             source.grade(),
-            source.zoneId());
+            source.zoneId(),
+            source.ownership(),
+            source.ownerSupplierId());
     OutboxRow splitEvent =
         new OutboxRow(
             "LotSplit",

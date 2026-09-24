@@ -27,7 +27,14 @@ public final class Dtos {
       @Schema(description = "Unit cost of this batch.") BigDecimal costPrice,
       @Schema(description = "ISO expiry date, if perishable.") String expiryDate,
       String grade,
-      @Schema(description = "UUID of the zone the batch is placed in.") String zoneId) {}
+      @Schema(description = "UUID of the zone the batch is placed in.") String zoneId,
+      @Schema(
+              description =
+                  "OWNED (the default) or CONSIGNMENT: stock the supplier still owns until it"
+                      + " sells, valued apart and owed to the supplier as it sells.")
+          String ownership,
+      @Schema(description = "The supplier that owns a CONSIGNMENT batch; required for one.")
+          String supplierId) {}
 
   @Schema(name = "BatchReceiveItem", description = "One line of a bulk receive request.")
   public record BatchReceiveItem(
@@ -113,7 +120,11 @@ public final class Dtos {
       @Schema(description = "e.g. AVAILABLE, QUARANTINE, HOLD, REJECTED.") String materialStatus,
       String materialStatusReason,
       String grade,
-      @Schema(description = "UUID of the zone the batch is placed in.") String zoneId) {}
+      @Schema(description = "UUID of the zone the batch is placed in.") String zoneId,
+      @Schema(description = "OWNED, or CONSIGNMENT when the supplier still owns it.")
+          String ownership,
+      @Schema(description = "The owning supplier of a CONSIGNMENT batch.")
+          String ownerSupplierId) {}
 
   @Schema(name = "ReservationResponse", description = "A hold placed against available stock.")
   public record ReservationResponse(
@@ -156,8 +167,17 @@ public final class Dtos {
                   "How much of onHandQty carries no cost and is excluded from value. Reported"
                       + " rather than valued at zero, which would understate the holding.")
           BigDecimal unvaluedQty,
-      @Schema(description = "Money value of the quantity that could be costed.")
-          BigDecimal value) {}
+      @Schema(
+              description =
+                  "Money value of the quantity that could be costed and that the business owns."
+                      + " Consignment stock is not its asset and is reported apart.")
+          BigDecimal value,
+      @Schema(description = "How much of onHandQty the supplier still owns (consignment).")
+          BigDecimal consignmentQty,
+      @Schema(
+              description =
+                  "What the consignment holding is worth at the cost the supplier will be owed.")
+          BigDecimal consignmentValue) {}
 
   @Schema(
       name = "ShrinkageRowResponse",
