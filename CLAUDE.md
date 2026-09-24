@@ -87,9 +87,10 @@ storeql/
 ├── services/                # the 12 business microservices (one Maven module each)
 ├── shared/                  # contracts + shared infra, NO business logic: common-ids (`Ids.newId()`), events-contract, common-web, common-service (DataSource/Flyway/Consul/outbox/health base — reuse it, never re-implement), common-test, einvoice (EN 16931 UBL/CII/Factur-X read, write and rules)
 ├── frontends/               # storeql-app: ONE Flutter app with four shells (storefront, admin, POS, platform console)
+├── intent/                  # one page per feature, before code and kept after: problem, scope, open questions, acceptance, decisions (TEMPLATE.md)
 ├── docs/                    # ARCHITECTURE.md, API-GUIDE.md, UI-GUIDE.md, onboarding-and-locations.md, coding-standards.md, …
 ├── PRD.md  README.md  CLAUDE.md
-└── .claude/skills/          # invokable skills (scaffold-service, add-endpoint, add-event, onboard-tenant)
+└── .claude/skills/          # invokable skills (capture-intent, scaffold-service, add-endpoint, add-event, onboard-tenant)
 ```
 
 Per-service internal shape (copy for each): `api/ dto/ service/ domain/ repo/ messaging/ client/ mapper/ config/` + `resources/db/migration/` (Flyway). See [ARCHITECTURE §7](docs/ARCHITECTURE.md#7-anatomy-of-one-service).
@@ -145,16 +146,21 @@ Invokable skills live in `.claude/skills/`. Prefer them for consistency:
 
 | Skill | Use when |
 |---|---|
+| `capture-intent` | Starting a roadmap item or any new feature: writes `intent/<slug>.md`, gets its open questions answered before code, keeps its Decisions while building. |
 | `scaffold-service` | Creating a brand-new business microservice (sets up module, layers, Flyway, health, config, registration). |
 | `add-endpoint` | Adding a REST endpoint to an existing service (enforces layering, envelope, validation, tenant rule). |
 | `add-event` | Adding a Kafka event (producer via outbox + idempotent consumer + contract in `events-contract`). |
 | `onboard-tenant` | Implementing/walking the client onboarding + Tenant→Stores→Zones location-mapping flow. |
+
+**Intent before code.** A roadmap item or new feature starts with `capture-intent`. No code is written until its `intent/<slug>.md` is `CONFIRMED`, meaning the user has answered every open question. Before changing an area, run `grep -ril "<table|event|screen>" intent/` and read what comes back: its **Decisions** and **Out, on purpose** hold the "why" the code doesn't show. Bug fixes and small follow-ups don't get a page; they start from a failing test.
 
 ---
 
 ## Definition of Done (before declaring any service complete)
 
 Self-check against [ARCHITECTURE §19](docs/ARCHITECTURE.md#19-definition-of-done). Highlights: own schema via Flyway · no cross-service DB access · DTOs in/out · tenant filtering · discovery registration · external config · outbox + idempotent consumers · 3 health probes (ready checks deps) · starts in any order · sync calls have timeout/retry/breaker/fallback · unit + Testcontainers tests · builds with `mvn clean install` · runs in docker-compose.
+
+For a feature, also: its `intent/<slug>.md` is `BUILT`, every Acceptance line is ticked with the test that proves it, and its Decisions are recorded.
 
 ---
 
@@ -165,4 +171,5 @@ Self-check against [ARCHITECTURE §19](docs/ARCHITECTURE.md#19-definition-of-don
 - **Onboarding / stores / zones / delivery?** → [docs/onboarding-and-locations.md](docs/onboarding-and-locations.md).
 - **SQL or SOLID rule question?** → [docs/coding-standards.md](docs/coding-standards.md).
 - **Cutting a release / tagging a version?** → [docs/RELEASE-PROCESS.md](docs/RELEASE-PROCESS.md).
-- **A decision isn't settled?** → [PRD §11 open questions](PRD.md). Don't silently guess on those; surface them.
+- **Why is a feature shaped this way, or what was left out on purpose?** → its page in [intent/](intent/) (Decisions; Scope → Out, on purpose).
+- **A decision isn't settled?** → [PRD §11 open questions](PRD.md), or the feature's intent page under Open questions. Don't silently guess on those; surface them.
