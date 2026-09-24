@@ -1,6 +1,7 @@
 package com.storeql.inventory.dto;
 
 import jakarta.validation.Valid;
+import jakarta.validation.constraints.DecimalMin;
 import jakarta.validation.constraints.NotBlank;
 import jakarta.validation.constraints.NotNull;
 import jakarta.validation.constraints.Positive;
@@ -246,6 +247,115 @@ public final class Dtos {
   @Schema(name = "BondReleasesResponse", description = "The releases of a period and their duty.")
   public record BondReleasesResponse(
       List<BondReleaseResponse> releases, BigDecimal totalDuty, String currency) {}
+
+  // ── Fresh yield, preparation and butchery loss ─────────────────────────────
+
+  @Schema(name = "YieldOutputSpecRequest", description = "One cut a primal is expected to yield.")
+  public record YieldOutputSpecRequest(
+      @NotBlank String variantId,
+      @Schema(description = "The cut's expected share of the input quantity, in percent.")
+          @NotNull
+          @Positive
+          BigDecimal expectedPct,
+      @Schema(
+              description =
+                  "The relative share of the primal's cost this cut carries; the expected share"
+                      + " when unsaid, so cost follows weight.")
+          BigDecimal costShare,
+      @Schema(
+              description =
+                  "The cut's own shelf life from the day it is made; unsaid keeps the primal's date.")
+          Integer shelfLifeDays) {}
+
+  @Schema(name = "YieldTemplateRequest", description = "What a primal should break into.")
+  public record YieldTemplateRequest(
+      @NotBlank String name,
+      @NotBlank String inputVariantId,
+      @Schema(description = "The unit the shares are read in (kg, each); a label for people.")
+          String unit,
+      String notes,
+      @NotNull @Valid List<YieldOutputSpecRequest> outputs) {}
+
+  @Schema(name = "YieldOutputSpecResponse")
+  public record YieldOutputSpecResponse(
+      String variantId, BigDecimal expectedPct, BigDecimal costShare, Integer shelfLifeDays) {}
+
+  @Schema(name = "YieldTemplateResponse")
+  public record YieldTemplateResponse(
+      String id,
+      String name,
+      String inputVariantId,
+      String unit,
+      String notes,
+      boolean active,
+      @Schema(description = "What the cuts' shares leave: the loss expected, in percent.")
+          BigDecimal expectedLossPct,
+      List<YieldOutputSpecResponse> outputs,
+      String createdAt) {}
+
+  @Schema(name = "YieldRunOutputRequest", description = "What came out of one cut.")
+  public record YieldRunOutputRequest(
+      @NotBlank String variantId, @NotNull @DecimalMin("0") BigDecimal qty) {}
+
+  @Schema(name = "YieldRunRequest", description = "A breakdown made at a store.")
+  public record YieldRunRequest(
+      @NotBlank String storeId,
+      @NotBlank String templateId,
+      @Schema(description = "How much of the primal went in.") @NotNull @Positive
+          BigDecimal inputQty,
+      @Schema(description = "What came out, per cut; a cut left out came to nothing.")
+          @NotNull
+          @Valid
+          List<YieldRunOutputRequest> outputs,
+      @Schema(description = "The docket or the day's sheet this breakdown belongs to.")
+          String reference,
+      String notes) {}
+
+  @Schema(name = "YieldRunOutputResponse")
+  public record YieldRunOutputResponse(
+      String variantId,
+      BigDecimal qty,
+      BigDecimal expectedQty,
+      @Schema(
+              description =
+                  "The cut's cost per unit, the primal's cost apportioned; null when the primal had none.")
+          BigDecimal unitCost,
+      @Schema(description = "The batch the cut became; null when nothing came out.")
+          String batchId) {}
+
+  @Schema(name = "YieldRunResponse")
+  public record YieldRunResponse(
+      String id,
+      String storeId,
+      String templateId,
+      String templateName,
+      String inputVariantId,
+      BigDecimal inputQty,
+      BigDecimal inputCost,
+      BigDecimal outputQty,
+      BigDecimal lossQty,
+      BigDecimal lossPct,
+      BigDecimal expectedLossQty,
+      @Schema(description = "Loss less expected loss: positive when more was lost than expected.")
+          BigDecimal lossVariance,
+      @Schema(description = "The loss at the primal's unit cost: what the bin took.")
+          BigDecimal lossAtCost,
+      String reference,
+      String notes,
+      String recordedAt,
+      List<YieldRunOutputResponse> outputs) {}
+
+  @Schema(name = "YieldTotalsResponse", description = "A period's breakdowns added up.")
+  public record YieldTotalsResponse(
+      int runs,
+      BigDecimal inputQty,
+      BigDecimal outputQty,
+      BigDecimal lossQty,
+      BigDecimal expectedLossQty,
+      BigDecimal lossAtCost) {}
+
+  @Schema(name = "YieldRunsResponse", description = "The butchery-loss report.")
+  public record YieldRunsResponse(List<YieldRunResponse> runs, YieldTotalsResponse totals) {}
 
   @Schema(name = "BondStockResponse", description = "What sits in bond and the duty it carries.")
   public record BondStockResponse(

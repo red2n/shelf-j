@@ -190,6 +190,61 @@ public final class Mappers {
         ts(r.releasedAt()));
   }
 
+  // ── Fresh yield, preparation and butchery loss ─────────────────────────────
+
+  public static Dtos.YieldOutputSpecResponse toDto(Domain.YieldOutputSpec o) {
+    return new Dtos.YieldOutputSpecResponse(
+        o.variantId().toString(), o.expectedPct(), o.costShare(), o.shelfLifeDays());
+  }
+
+  public static Dtos.YieldTemplateResponse toDto(Domain.YieldTemplate t) {
+    return new Dtos.YieldTemplateResponse(
+        t.id().toString(),
+        t.name(),
+        t.inputVariantId().toString(),
+        t.unit(),
+        t.notes(),
+        t.active(),
+        t.expectedLossPct(),
+        t.outputs().stream().map(Mappers::toDto).toList(),
+        t.createdAt().toString());
+  }
+
+  public static Dtos.YieldRunOutputResponse toDto(Domain.YieldRunOutput o) {
+    return new Dtos.YieldRunOutputResponse(
+        o.variantId().toString(),
+        o.qty(),
+        o.expectedQty(),
+        o.unitCost(),
+        o.batchId() == null ? null : o.batchId().toString());
+  }
+
+  public static Dtos.YieldRunResponse toDto(Domain.YieldRun r) {
+    return new Dtos.YieldRunResponse(
+        r.id().toString(),
+        r.storeId().toString(),
+        r.templateId().toString(),
+        r.templateName(),
+        r.inputVariantId().toString(),
+        r.inputQty(),
+        r.inputCost(),
+        r.outputQty(),
+        r.lossQty(),
+        r.lossPct(),
+        r.expectedLossQty(),
+        r.lossVariance(),
+        r.lossAtCost(),
+        r.reference(),
+        r.notes(),
+        r.recordedAt().toString(),
+        r.outputs().stream().map(Mappers::toDto).toList());
+  }
+
+  public static Dtos.YieldTotalsResponse toDto(Domain.YieldTotals t) {
+    return new Dtos.YieldTotalsResponse(
+        t.runs(), t.inputQty(), t.outputQty(), t.lossQty(), t.expectedLossQty(), t.lossAtCost());
+  }
+
   public static Dtos.BondStockResponse toDto(Domain.BondStock s) {
     return new Dtos.BondStockResponse(
         s.storeId().toString(),

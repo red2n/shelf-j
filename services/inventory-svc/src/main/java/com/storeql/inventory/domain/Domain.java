@@ -328,6 +328,108 @@ public final class Domain {
       UUID releasedBy,
       Instant releasedAt) {}
 
+  // ── Fresh yield, preparation and butchery loss ─────────────────────────────
+
+  /** One cut a template expects: its share of the input, of the cost, and its own shelf life. */
+  public record YieldOutputSpec(
+      UUID variantId, BigDecimal expectedPct, BigDecimal costShare, Integer shelfLifeDays) {}
+
+  /** What a primal should break into, and by difference what is expected to be lost. */
+  public record YieldTemplate(
+      UUID id,
+      UUID tenantId,
+      String name,
+      UUID inputVariantId,
+      String unit,
+      String notes,
+      boolean active,
+      UUID createdBy,
+      Instant createdAt,
+      List<YieldOutputSpec> outputs) {
+
+    public BigDecimal expectedLossPct() {
+      return Yield.expectedLossPct(outputs.stream().map(YieldOutputSpec::expectedPct).toList());
+    }
+  }
+
+  /**
+   * One cut of a breakdown: what came out against what was expected, at what cost, as which batch.
+   */
+  public record YieldRunOutput(
+      UUID variantId,
+      BigDecimal qty,
+      BigDecimal expectedQty,
+      BigDecimal costShare,
+      Integer shelfLifeDays,
+      BigDecimal unitCost,
+      UUID batchId) {
+
+    public YieldRunOutput made(BigDecimal unitCost, UUID batchId) {
+      return new YieldRunOutput(
+          variantId, qty, expectedQty, costShare, shelfLifeDays, unitCost, batchId);
+    }
+  }
+
+  /** A breakdown made at a store: the primal consumed, the cuts made, the loss known. */
+  public record YieldRun(
+      UUID id,
+      UUID tenantId,
+      UUID storeId,
+      UUID templateId,
+      String templateName,
+      UUID inputVariantId,
+      BigDecimal inputQty,
+      BigDecimal inputCost,
+      BigDecimal outputQty,
+      BigDecimal lossQty,
+      BigDecimal expectedLossQty,
+      BigDecimal lossAtCost,
+      String reference,
+      String notes,
+      UUID recordedBy,
+      Instant recordedAt,
+      List<YieldRunOutput> outputs) {
+
+    public BigDecimal lossPct() {
+      return Yield.lossPct(inputQty, outputQty);
+    }
+
+    /** Positive when more was lost than expected. */
+    public BigDecimal lossVariance() {
+      return lossQty.subtract(expectedLossQty);
+    }
+
+    public YieldRun costed(BigDecimal inputCost, BigDecimal lossAtCost, List<YieldRunOutput> made) {
+      return new YieldRun(
+          id,
+          tenantId,
+          storeId,
+          templateId,
+          templateName,
+          inputVariantId,
+          inputQty,
+          inputCost,
+          outputQty,
+          lossQty,
+          expectedLossQty,
+          lossAtCost,
+          reference,
+          notes,
+          recordedBy,
+          recordedAt,
+          made);
+    }
+  }
+
+  /** A period's breakdowns added up: the butchery-loss report's bottom line. */
+  public record YieldTotals(
+      int runs,
+      BigDecimal inputQty,
+      BigDecimal outputQty,
+      BigDecimal lossQty,
+      BigDecimal expectedLossQty,
+      BigDecimal lossAtCost) {}
+
   /** What sits in bond for one variant at one store, and the duty it carries. */
   public record BondStock(
       UUID storeId,
@@ -744,6 +846,9 @@ public final class Domain {
 
     /** Duty-suspended stock released to home use: out of the bonded batch, into a duty-paid one. */
     public static final String BOND_RELEASE = "BOND_RELEASE";
+
+    /** A breakdown: out of the primal's batch, into a batch per cut. */
+    public static final String YIELD = "YIELD";
 
     public static final String RELEASE = "RELEASE";
   }

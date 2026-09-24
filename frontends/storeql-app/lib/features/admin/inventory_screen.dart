@@ -15,6 +15,7 @@ import 'providers/inventory_levels_pagination.dart';
 import 'inventory_forecast_tab.dart';
 import 'inventory_bond_tab.dart';
 import 'inventory_markdown_tab.dart';
+import 'inventory_yield_tab.dart';
 import 'inventory_warehouse_tabs.dart';
 import 'procurement_providers.dart';
 import '../../shared/util/short_ref.dart';
@@ -31,7 +32,7 @@ class _InventoryScreenState extends ConsumerState<InventoryScreen> {
   @override
   Widget build(BuildContext context) {
     return DefaultTabController(
-      length: 8,
+      length: 9,
       child: Column(
         crossAxisAlignment: CrossAxisAlignment.start,
         children: [
@@ -68,6 +69,7 @@ class _InventoryScreenState extends ConsumerState<InventoryScreen> {
               Tab(text: 'Forecast'),
               Tab(text: 'Reduce to clear'),
               Tab(text: 'Bond & duty'),
+              Tab(text: 'Yield & prep'),
             ],
           ),
           const Expanded(
@@ -82,6 +84,8 @@ class _InventoryScreenState extends ConsumerState<InventoryScreen> {
                 InventoryMarkdownTab(),
                 // Bonded and duty-suspended stock: approvals, duty per unit, releases.
                 InventoryBondTab(),
+                // Fresh yield: what a primal breaks into, and the butchery loss against expected.
+                InventoryYieldTab(),
               ],
             ),
           ),

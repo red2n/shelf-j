@@ -3,6 +3,8 @@ package com.storeql.inventory.service;
 import com.storeql.events.EventPayload;
 import com.storeql.ids.Ids;
 import com.storeql.inventory.domain.Domain.BondRelease;
+import com.storeql.inventory.domain.Domain.YieldRun;
+import com.storeql.inventory.domain.Domain.YieldRunOutput;
 import com.storeql.inventory.domain.FoodSafety.CheckRecord;
 import com.storeql.inventory.domain.FoodSafety.OverduePoint;
 import com.storeql.inventory.domain.Recall.AffectedOrder;
@@ -119,6 +121,51 @@ public final class Events {
         + "\",\"reference\":"
         + (r.reference() == null ? "null" : "\"" + EventPayload.esc(r.reference()) + "\"")
         + "}";
+  }
+
+  /**
+   * A breakdown recorded: the primal consumed, each cut made as a batch at its apportioned cost,
+   * and the loss against what was expected — for a report that wants yield by store and template.
+   */
+  public static String yieldRecorded(YieldRun r) {
+    StringBuilder sb = new StringBuilder(EventPayload.base("YieldRecorded", r.tenantId(), r.id()));
+    sb.append(",\"runId\":\"")
+        .append(r.id())
+        .append("\",\"storeId\":\"")
+        .append(r.storeId())
+        .append("\",\"templateId\":\"")
+        .append(r.templateId())
+        .append("\",\"inputVariantId\":\"")
+        .append(r.inputVariantId())
+        .append("\",\"inputQty\":")
+        .append(r.inputQty().toPlainString())
+        .append(",\"inputCost\":")
+        .append(r.inputCost() == null ? "null" : r.inputCost().toPlainString())
+        .append(",\"outputQty\":")
+        .append(r.outputQty().toPlainString())
+        .append(",\"lossQty\":")
+        .append(r.lossQty().toPlainString())
+        .append(",\"expectedLossQty\":")
+        .append(r.expectedLossQty().toPlainString())
+        .append(",\"lossAtCost\":")
+        .append(r.lossAtCost() == null ? "null" : r.lossAtCost().toPlainString())
+        .append(",\"outputs\":[");
+    boolean first = true;
+    for (YieldRunOutput o : r.outputs()) {
+      if (!first) sb.append(',');
+      first = false;
+      sb.append("{\"variantId\":\"")
+          .append(o.variantId())
+          .append("\",\"qty\":")
+          .append(o.qty().toPlainString())
+          .append(",\"unitCost\":")
+          .append(o.unitCost() == null ? "null" : o.unitCost().toPlainString())
+          .append(",\"batchId\":")
+          .append(o.batchId() == null ? "null" : "\"" + o.batchId() + "\"")
+          .append('}');
+    }
+    sb.append("]}");
+    return sb.toString();
   }
 
   static String stockAdjusted(UUID tenantId, UUID storeId, UUID variantId, BigDecimal delta) {

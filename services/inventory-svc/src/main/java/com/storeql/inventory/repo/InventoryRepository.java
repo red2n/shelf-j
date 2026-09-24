@@ -1586,17 +1586,31 @@ public class InventoryRepository extends BaseOutboxRepository {
   private void insertGenealogy(
       Connection c, UUID tenantId, UUID parentId, UUID childId, BigDecimal qty, String notes)
       throws SQLException {
+    insertGenealogy(c, tenantId, parentId, childId, qty, "SPLIT", notes);
+  }
+
+  /** A link in the lot genealogy: SPLIT for a share moved on, TRANSFORM for a cut made from it. */
+  void insertGenealogy(
+      Connection c,
+      UUID tenantId,
+      UUID parentId,
+      UUID childId,
+      BigDecimal qty,
+      String relation,
+      String notes)
+      throws SQLException {
     try (PreparedStatement ps =
         c.prepareStatement(
             "INSERT INTO lot_genealogy"
                 + " (id, tenant_id, parent_batch_id, child_batch_id, qty, relation_type, notes)"
-                + " VALUES (?,?,?,?,?,'SPLIT',?)")) {
+                + " VALUES (?,?,?,?,?,?,?)")) {
       ps.setObject(1, Ids.newId());
       ps.setObject(2, tenantId);
       ps.setObject(3, parentId);
       ps.setObject(4, childId);
       ps.setBigDecimal(5, qty);
-      ps.setString(6, notes);
+      ps.setString(6, relation);
+      ps.setString(7, notes);
       ps.executeUpdate();
     }
   }
@@ -1766,7 +1780,7 @@ public class InventoryRepository extends BaseOutboxRepository {
     }
   }
 
-  private void insertBatch(Connection c, Batch b) throws SQLException {
+  void insertBatch(Connection c, Batch b) throws SQLException {
     insertBatch(c, b, null);
   }
 
