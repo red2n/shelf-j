@@ -13,6 +13,10 @@ class Supplier {
   final String? currency;
   final int paymentTermsDays;
 
+  /// The supplier's quoted lead time in days: the promise a delivery is
+  /// measured against when an order names no date.
+  final int? leadTimeDays;
+
   /// Where remittance advice is emailed when a payment run pays it (17.10).
   final String? remittanceEmail;
   final String? bankAccountName;
@@ -39,6 +43,7 @@ class Supplier {
     this.countryCode,
     this.currency,
     required this.paymentTermsDays,
+    this.leadTimeDays,
     this.remittanceEmail,
     this.bankAccountName,
     this.bankSortCode,
@@ -59,6 +64,7 @@ class Supplier {
     countryCode: j['countryCode'] as String?,
     currency: j['currency'] as String?,
     paymentTermsDays: (j['paymentTermsDays'] as num?)?.toInt() ?? 0,
+    leadTimeDays: (j['leadTimeDays'] as num?)?.toInt(),
     remittanceEmail: j['remittanceEmail'] as String?,
     bankAccountName: j['bankAccountName'] as String?,
     bankSortCode: j['bankSortCode'] as String?,

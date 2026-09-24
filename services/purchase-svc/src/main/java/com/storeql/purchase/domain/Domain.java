@@ -207,7 +207,12 @@ public final class Domain {
       Instant bankDetailsChangedAt,
       UUID bankDetailsChangedBy,
       String einvoiceScheme,
-      String einvoiceId) {
+      String einvoiceId,
+      /**
+       * The supplier's quoted lead time in days: the promise a delivery is measured against when
+       * the order named no date. Null when the supplier has never quoted one.
+       */
+      Integer leadTimeDays) {
 
     /** The bank details as one validated value. */
     public BankAccount.Details bank() {
@@ -242,7 +247,8 @@ public final class Domain {
           bankDetailsChangedAt,
           bankDetailsChangedBy,
           scheme,
-          identifier);
+          identifier,
+          leadTimeDays);
     }
   }
 

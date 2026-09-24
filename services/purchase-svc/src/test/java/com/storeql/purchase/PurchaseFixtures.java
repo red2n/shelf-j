@@ -21,6 +21,7 @@ final class PurchaseFixtures {
   private static final String TABLES =
       String.join(
           ", ",
+          "purchase.supplier_deliveries",
           "purchase.duty_releases",
           "purchase.dropship_arrangements",
           "purchase.consignment_sales",

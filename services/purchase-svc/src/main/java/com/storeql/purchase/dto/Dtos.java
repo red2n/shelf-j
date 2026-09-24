@@ -58,7 +58,13 @@ public final class Dtos {
           @Size(max = 8)
           String einvoiceScheme,
       @Schema(description = "The supplier's identifier within that scheme.") @Size(max = 128)
-          String einvoiceId) {}
+          String einvoiceId,
+      @Schema(
+              description =
+                  "The supplier's quoted lead time in days: the promise a delivery is measured"
+                      + " against when an order names no date.")
+          @Min(0)
+          Integer leadTimeDays) {}
 
   @Schema(
       name = "UpdateSupplierRequest",
@@ -97,7 +103,9 @@ public final class Dtos {
           @Size(max = 8)
           String einvoiceScheme,
       @Schema(description = "The supplier's identifier within that scheme.") @Size(max = 128)
-          String einvoiceId) {}
+          String einvoiceId,
+      @Schema(description = "Quoted lead time in days; unchanged when omitted.") @Min(0)
+          Integer leadTimeDays) {}
 
   @Schema(name = "SupplierResponse")
   public record SupplierResponse(
@@ -124,7 +132,90 @@ public final class Dtos {
       @Schema(description = "When the bank details last changed; a run flags a recent change.")
           Instant bankDetailsChangedAt,
       @Schema(description = "The e-invoicing address scheme (EAS), or null.") String einvoiceScheme,
-      @Schema(description = "The identifier within that scheme, or null.") String einvoiceId) {}
+      @Schema(description = "The identifier within that scheme, or null.") String einvoiceId,
+      @Schema(description = "The supplier's quoted lead time in days, or null.")
+          Integer leadTimeDays) {}
+
+  // ── Supplier lead times and scorecards ─────────────────────────────────────
+
+  @Schema(
+      name = "SupplierDeliveryResponse",
+      description = "One delivery as measured on its receipt.")
+  public record SupplierDeliveryResponse(
+      UUID id,
+      UUID supplierId,
+      UUID poId,
+      UUID grId,
+      UUID storeId,
+      @Schema(description = "When the order went to the supplier.") Instant orderedAt,
+      @Schema(
+              description =
+                  "The date the goods were due: the order's, or the quoted lead time from the order; null when nothing was promised.")
+          LocalDate promisedDate,
+      Instant receivedAt,
+      @Schema(description = "Whole days from order to arrival.") int leadDays,
+      @Schema(
+              description =
+                  "Days after the promise, negative when early; null when nothing was promised.")
+          Integer lateDays,
+      @Schema(description = "Whether this receipt completed the order.") boolean complete,
+      BigDecimal receivedQty) {}
+
+  @Schema(name = "DeliveryStatsResponse")
+  public record DeliveryStatsResponse(
+      int count,
+      BigDecimal avgLeadDays,
+      BigDecimal medianLeadDays,
+      Integer maxLeadDays,
+      @Schema(description = "Deliveries that had a promise to be judged against.") int promised,
+      int onTime,
+      int late,
+      @Schema(description = "On or before the promise, over those promised; null when none.")
+          BigDecimal onTimePct,
+      @Schema(description = "Average days late over the late ones; null when none.")
+          BigDecimal avgDaysLate,
+      BigDecimal receivedQty) {}
+
+  @Schema(
+      name = "FillStatsResponse",
+      description = "Ordered against received over the orders finished in the period.")
+  public record FillStatsResponse(
+      int orders,
+      BigDecimal orderedQty,
+      BigDecimal receivedQty,
+      BigDecimal fillRatePct,
+      @Schema(description = "Orders closed short: the balance was never going to come.")
+          int shortClosed) {}
+
+  @Schema(name = "QualityStatsResponse", description = "What went back against what arrived.")
+  public record QualityStatsResponse(
+      int returns, BigDecimal returnedQty, BigDecimal returnRatePct) {}
+
+  @Schema(
+      name = "InvoiceStatsResponse",
+      description = "Invoices that matched the order and the receipt, against all of them.")
+  public record InvoiceStatsResponse(int invoices, int flagged, BigDecimal accuracyPct) {}
+
+  @Schema(
+      name = "SupplierScorecardResponse",
+      description = "One supplier's performance over a period, weighed into a score.")
+  public record SupplierScorecardResponse(
+      UUID supplierId,
+      String supplierName,
+      @Schema(description = "The supplier's quoted lead time in days, or null.")
+          Integer leadTimeDays,
+      LocalDate from,
+      LocalDate to,
+      DeliveryStatsResponse deliveries,
+      FillStatsResponse fill,
+      QualityStatsResponse quality,
+      InvoiceStatsResponse invoices,
+      @Schema(
+              description =
+                  "0 to 100: on time 40, fill 30, quality 20, invoice accuracy 10, over the parts known; null when nothing is.")
+          BigDecimal score,
+      @Schema(description = "A from 90, B from 75, C from 60, D below; null for no score.")
+          String grade) {}
 
   // ── Purchase Order ────────────────────────────────────────────────────────────
   @Schema(name = "CreatePurchaseOrderRequest", description = "Create a DRAFT purchase order.")

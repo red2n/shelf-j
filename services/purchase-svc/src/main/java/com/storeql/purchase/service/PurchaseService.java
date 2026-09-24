@@ -137,7 +137,8 @@ public class PurchaseService {
             bank.empty() ? null : now,
             bank.empty() ? null : ctx.userId(),
             address == null ? null : address.scheme(),
-            address == null ? null : address.id());
+            address == null ? null : address.id(),
+            req.leadTimeDays());
     return repo.createSupplier(s);
   }
 
@@ -241,7 +242,8 @@ public class PurchaseService {
             bankChangedAt,
             bankChangedBy,
             address == null ? null : address.scheme(),
-            address == null ? null : address.id());
+            address == null ? null : address.id(),
+            req.leadTimeDays() == null ? existing.leadTimeDays() : req.leadTimeDays());
     if (!repo.updateSupplier(updated)) {
       throw ApiException.notFound("PURCHASE_SUPPLIER_NOT_FOUND", "Supplier not found: " + id);
     }

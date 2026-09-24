@@ -10,6 +10,7 @@ import com.storeql.purchase.domain.Domain.PurchaseOrderLine;
 import com.storeql.purchase.domain.Domain.Supplier;
 import com.storeql.purchase.domain.LandedCost;
 import com.storeql.purchase.domain.SpendAuthority;
+import com.storeql.purchase.domain.SupplierScorecard;
 import com.storeql.purchase.dto.Dtos;
 import com.storeql.purchase.dto.Dtos.GoodsReceiptLineResponse;
 import com.storeql.purchase.dto.Dtos.GoodsReceiptResponse;
@@ -59,7 +60,56 @@ public final class Mappers {
         s.hasBankDetails(),
         s.bankDetailsChangedAt(),
         s.einvoiceScheme(),
-        s.einvoiceId());
+        s.einvoiceId(),
+        s.leadTimeDays());
+  }
+
+  // ── Supplier lead times and scorecards ─────────────────────────────────────
+
+  public static Dtos.SupplierDeliveryResponse toDto(SupplierScorecard.Delivery d) {
+    return new Dtos.SupplierDeliveryResponse(
+        d.id(),
+        d.supplierId(),
+        d.poId(),
+        d.grId(),
+        d.storeId(),
+        d.orderedAt(),
+        d.promisedDate(),
+        d.receivedAt(),
+        d.leadDays(),
+        d.lateDays(),
+        d.complete(),
+        d.receivedQty());
+  }
+
+  public static Dtos.SupplierScorecardResponse toDto(SupplierScorecard.Card c) {
+    SupplierScorecard.Deliveries d = c.deliveries();
+    SupplierScorecard.Fill f = c.fill();
+    SupplierScorecard.Quality q = c.quality();
+    SupplierScorecard.Invoices i = c.invoices();
+    return new Dtos.SupplierScorecardResponse(
+        c.supplierId(),
+        c.supplierName(),
+        c.leadTimeDays(),
+        c.from(),
+        c.to(),
+        new Dtos.DeliveryStatsResponse(
+            d.count(),
+            d.avgLeadDays(),
+            d.medianLeadDays(),
+            d.maxLeadDays(),
+            d.promised(),
+            d.onTime(),
+            d.late(),
+            d.onTimePct(),
+            d.avgDaysLate(),
+            d.receivedQty()),
+        new Dtos.FillStatsResponse(
+            f.orders(), f.orderedQty(), f.receivedQty(), f.fillRatePct(), f.shortClosed()),
+        new Dtos.QualityStatsResponse(q.returns(), q.returnedQty(), q.returnRatePct()),
+        new Dtos.InvoiceStatsResponse(i.invoices(), i.flagged(), i.accuracyPct()),
+        c.score(),
+        c.grade());
   }
 
   /**

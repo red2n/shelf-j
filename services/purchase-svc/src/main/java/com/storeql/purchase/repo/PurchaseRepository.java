@@ -49,8 +49,8 @@ public class PurchaseRepository extends BaseOutboxRepository {
                       + " (id,tenant_id,name,vat_number,vat_registered,country_code,currency,payment_terms_days,"
                       + "  remittance_email,bank_account_name,bank_sort_code,bank_account_number,bank_iban,"
                       + "  bank_bic,bank_details_changed_at,bank_details_changed_by,einvoice_scheme,"
-                      + "  einvoice_id)"
-                      + " VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)")) {
+                      + "  einvoice_id,lead_time_days)"
+                      + " VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)")) {
             ps.setObject(1, s.id());
             ps.setObject(2, s.tenantId());
             ps.setString(3, s.name());
@@ -62,6 +62,7 @@ public class PurchaseRepository extends BaseOutboxRepository {
             bindPaymentFields(ps, 9, s);
             ps.setString(17, s.einvoiceScheme());
             ps.setString(18, s.einvoiceId());
+            bindLeadTime(ps, 19, s);
             ps.executeUpdate();
           } catch (java.sql.SQLException sqle) {
             throw supplierConflict(sqle);
@@ -146,7 +147,7 @@ public class PurchaseRepository extends BaseOutboxRepository {
                       + " currency=?, payment_terms_days=?, remittance_email=?, bank_account_name=?,"
                       + " bank_sort_code=?, bank_account_number=?, bank_iban=?, bank_bic=?,"
                       + " bank_details_changed_at=?, bank_details_changed_by=?, einvoice_scheme=?,"
-                      + " einvoice_id=?, updated_at=now()"
+                      + " einvoice_id=?, lead_time_days=?, updated_at=now()"
                       + " WHERE tenant_id=? AND id=?")) {
             ps.setString(1, s.name());
             ps.setString(2, s.vatNumber());
@@ -157,8 +158,9 @@ public class PurchaseRepository extends BaseOutboxRepository {
             bindPaymentFields(ps, 7, s);
             ps.setString(15, s.einvoiceScheme());
             ps.setString(16, s.einvoiceId());
-            ps.setObject(17, s.tenantId());
-            ps.setObject(18, s.id());
+            bindLeadTime(ps, 17, s);
+            ps.setObject(18, s.tenantId());
+            ps.setObject(19, s.id());
             return ps.executeUpdate() > 0;
           } catch (java.sql.SQLException sqle) {
             throw supplierConflict(sqle);
@@ -193,7 +195,7 @@ public class PurchaseRepository extends BaseOutboxRepository {
       "id,tenant_id,name,vat_number,vat_registered,country_code,currency,payment_terms_days,"
           + "created_at,updated_at,remittance_email,bank_account_name,bank_sort_code,"
           + "bank_account_number,bank_iban,bank_bic,bank_details_changed_at,bank_details_changed_by,"
-          + "einvoice_scheme,einvoice_id";
+          + "einvoice_scheme,einvoice_id,lead_time_days";
 
   /**
    * Binds the eight payment fields — remittance email, bank details, the change stamp — from {@code
@@ -211,8 +213,17 @@ public class PurchaseRepository extends BaseOutboxRepository {
     ps.setObject(at + 7, s.bankDetailsChangedBy());
   }
 
+  private static void bindLeadTime(java.sql.PreparedStatement ps, int at, Supplier s)
+      throws SQLException {
+    if (s.leadTimeDays() == null) ps.setNull(at, java.sql.Types.INTEGER);
+    else ps.setInt(at, s.leadTimeDays());
+  }
+
   static Supplier mapSupplier(ResultSet rs) throws SQLException {
     OffsetDateTime changed = rs.getObject("bank_details_changed_at", OffsetDateTime.class);
+    // wasNull speaks of the last column read: asked right after the one that may be null.
+    int quoted = rs.getInt("lead_time_days");
+    Integer leadTimeDays = rs.wasNull() ? null : quoted;
     return new Supplier(
         rs.getObject("id", UUID.class),
         rs.getObject("tenant_id", UUID.class),
@@ -233,7 +244,8 @@ public class PurchaseRepository extends BaseOutboxRepository {
         changed == null ? null : changed.toInstant(),
         rs.getObject("bank_details_changed_by", UUID.class),
         rs.getString("einvoice_scheme"),
-        rs.getString("einvoice_id"));
+        rs.getString("einvoice_id"),
+        leadTimeDays);
   }
 
   // ── Purchase Orders ───────────────────────────────────────────────────────────
@@ -347,11 +359,15 @@ public class PurchaseRepository extends BaseOutboxRepository {
           int rows;
           try (var ps =
               c.prepareStatement(
-                  "UPDATE purchase_orders SET status=?, updated_at=now()"
+                  // The moment the order went to the supplier, kept for the lead time it is
+                  // measured by; an order that waits for approval is stamped when approved.
+                  "UPDATE purchase_orders SET status=?, updated_at=now(),"
+                      + " submitted_at = CASE WHEN ?='SUBMITTED' THEN now() ELSE submitted_at END"
                       + " WHERE tenant_id=? AND id=? AND status='DRAFT'")) {
             ps.setString(1, status);
-            ps.setObject(2, tenantId);
-            ps.setObject(3, id);
+            ps.setString(2, status);
+            ps.setObject(3, tenantId);
+            ps.setObject(4, id);
             rows = ps.executeUpdate();
           }
           if (rows == 0) return false;
@@ -382,6 +398,7 @@ public class PurchaseRepository extends BaseOutboxRepository {
           String sql =
               approve
                   ? "UPDATE purchase_orders SET status='SUBMITTED', approved_by=?, approved_at=now(),"
+                      + " submitted_at=now(),"
                       + " updated_at=now() WHERE tenant_id=? AND id=? AND status='PENDING_APPROVAL'"
                   : "UPDATE purchase_orders SET status='DRAFT', approved_by=NULL, approved_at=NULL,"
                       + " updated_at=now() WHERE tenant_id=? AND id=? AND status='PENDING_APPROVAL'";
@@ -803,6 +820,9 @@ public class PurchaseRepository extends BaseOutboxRepository {
               gr.tenantId(),
               gr.poId(),
               complete ? Domain.PO_RECEIVED : Domain.PO_PARTIALLY_RECEIVED);
+          // The delivery as measured against the order's promise: the fact the supplier's
+          // scorecard is made from, kept with the receipt it belongs to.
+          SupplierPerformanceRepository.recordDeliveryTx(c, gr, lines, complete);
 
           // The asset and the accrual commit with the receipt, or neither does. An idempotent
           // replay returned above, before any of this, so a retried delivery posts once.

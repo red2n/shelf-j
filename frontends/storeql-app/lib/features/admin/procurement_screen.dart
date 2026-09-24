@@ -14,6 +14,7 @@ import 'providers/admin_providers.dart';
 import 'einvoice_tab.dart';
 import 'payment_runs_tab.dart';
 import 'procurement_providers.dart';
+import 'supplier_scorecards.dart';
 import 'resolve_invoice_dialog.dart';
 import 'widgets/variant_picker.dart';
 import 'bank_details_validators.dart';
@@ -135,6 +136,8 @@ class _SuppliersTab extends ConsumerWidget {
     return Column(
       children: [
         const SizedBox(height: 12),
+        // Who delivers on time and in full: management's reading of the period.
+        if (isManager) const SupplierScorecardsCard(),
         Expanded(
           child: async.when(
             loading: () => const LoadingView(label: 'Loading suppliers…'),
@@ -182,6 +185,7 @@ class _SuppliersTab extends ConsumerWidget {
                         [
                           if (s.currency != null) s.currency,
                           '${s.paymentTermsDays}d terms',
+                          if (s.leadTimeDays != null) '${s.leadTimeDays}d lead time',
                           if (s.vatRegistered) 'VAT ${s.vatNumber ?? 'reg'}',
                           if (s.countryCode != null) s.countryCode,
                           if (isManager)
@@ -600,6 +604,7 @@ class _SupplierDialogState extends ConsumerState<_SupplierDialog> {
   final _nameCtrl = TextEditingController();
   final _vatCtrl = TextEditingController();
   final _termsCtrl = TextEditingController(text: '30');
+  final _leadCtrl = TextEditingController();
   final _emailCtrl = TextEditingController();
   final _bankNameCtrl = TextEditingController();
   final _sortCtrl = TextEditingController();
@@ -627,6 +632,7 @@ class _SupplierDialogState extends ConsumerState<_SupplierDialog> {
       _nameCtrl.text = e.name;
       _vatCtrl.text = e.vatNumber ?? '';
       _termsCtrl.text = e.paymentTermsDays.toString();
+      if (e.leadTimeDays != null) _leadCtrl.text = e.leadTimeDays.toString();
       _country = e.countryCode ?? _country;
       _currency = e.currency ?? _currency;
       _vatRegistered = e.vatRegistered;
@@ -643,6 +649,7 @@ class _SupplierDialogState extends ConsumerState<_SupplierDialog> {
     _nameCtrl.dispose();
     _vatCtrl.dispose();
     _termsCtrl.dispose();
+    _leadCtrl.dispose();
     _emailCtrl.dispose();
     _bankNameCtrl.dispose();
     _sortCtrl.dispose();
@@ -706,6 +713,9 @@ class _SupplierDialogState extends ConsumerState<_SupplierDialog> {
         if (_country != null) 'countryCode': _country,
         if (_currency != null) 'currency': _currency,
         'paymentTermsDays': int.tryParse(_termsCtrl.text.trim()) ?? 30,
+        // The quoted lead time: unsaid leaves it as it was.
+        if (_leadCtrl.text.trim().isNotEmpty)
+          'leadTimeDays': int.tryParse(_leadCtrl.text.trim()),
         // On an edit an empty email clears it; on a create it is just absent.
         'remittanceEmail': _editing
             ? _emailCtrl.text.trim()
@@ -831,6 +841,17 @@ class _SupplierDialogState extends ConsumerState<_SupplierDialog> {
                   decoration: const InputDecoration(
                     labelText: 'Payment terms (days)',
                     prefixIcon: Icon(Icons.calendar_today_outlined),
+                  ),
+                ),
+                const SizedBox(height: 12),
+                TextFormField(
+                  key: const Key('supplier-lead-time'),
+                  controller: _leadCtrl,
+                  keyboardType: TextInputType.number,
+                  decoration: const InputDecoration(
+                    labelText: 'Quoted lead time (days)',
+                    helperText: 'What a delivery is measured against when an order names no date',
+                    prefixIcon: Icon(Icons.timer_outlined),
                   ),
                 ),
                 const SizedBox(height: 8),
