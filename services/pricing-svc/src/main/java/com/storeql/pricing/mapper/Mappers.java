@@ -113,7 +113,8 @@ public final class Mappers {
         pl.effectiveFrom() != null ? pl.effectiveFrom().toString() : null,
         pl.effectiveTo() != null ? pl.effectiveTo().toString() : null,
         pl.active(),
-        pl.createdAt() != null ? pl.createdAt().toString() : null);
+        pl.createdAt() != null ? pl.createdAt().toString() : null,
+        pl.zoneId());
   }
 
   /**
@@ -628,5 +629,70 @@ public final class Mappers {
         r.priorPriceStatus(),
         r.priorPriceRequired(),
         r.perishableExempt());
+  }
+
+  // ── Price zones and competitor-driven repricing (03.x) ─────────────────────
+
+  public static Dtos.PriceZoneResponse toDto(Domain.PriceZone z) {
+    return new Dtos.PriceZoneResponse(
+        z.id(), z.name(), z.description(), z.storeIds(), text(z.createdAt()));
+  }
+
+  public static Dtos.CompetitorPriceResponse toDto(Domain.CompetitorPrice c) {
+    return new Dtos.CompetitorPriceResponse(
+        c.id(),
+        c.variantId(),
+        c.competitor(),
+        c.price(),
+        c.currency(),
+        c.zoneId(),
+        text(c.observedOn()),
+        c.source(),
+        text(c.recordedAt()));
+  }
+
+  public static Dtos.RepricingRuleResponse toDto(Domain.RepricingRule r) {
+    return new Dtos.RepricingRuleResponse(
+        r.id(),
+        r.name(),
+        r.priceListId(),
+        r.zoneId(),
+        r.rule().strategy().name(),
+        r.rule().value(),
+        r.rule().floorPercent(),
+        r.rule().rounding().name(),
+        r.rule().maxAgeDays(),
+        r.active(),
+        text(r.createdAt()));
+  }
+
+  public static Dtos.RepricingProposalResponse toDto(Domain.RepricingProposal p) {
+    return new Dtos.RepricingProposalResponse(
+        p.id(),
+        p.ruleId(),
+        p.priceListId(),
+        p.zoneId(),
+        p.variantId(),
+        p.currentPrice(),
+        p.competitor(),
+        p.competitorPrice(),
+        text(p.observedOn()),
+        p.proposedPrice(),
+        p.currency(),
+        p.status(),
+        text(p.proposedAt()),
+        text(p.decidedAt()));
+  }
+
+  public static Dtos.RepricingRunResponse toDto(Domain.RepricingRun run) {
+    return new Dtos.RepricingRunResponse(
+        run.ruleId(),
+        run.examined(),
+        run.proposed(),
+        run.proposals().stream().map(Mappers::toDto).toList());
+  }
+
+  private static String text(Object value) {
+    return value == null ? null : value.toString();
   }
 }

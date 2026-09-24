@@ -13,6 +13,7 @@ import 'vat_rate_form.dart';
 import 'providers/admin_providers.dart';
 import 'widgets/variant_picker.dart';
 import 'fx_rates_card.dart';
+import 'price_zones_tab.dart';
 import '../../core/auth/auth_notifier.dart';
 import '../../core/auth/auth_state.dart';
 import '../../core/theme.dart';
@@ -22,8 +23,13 @@ class PricingScreen extends ConsumerWidget {
 
   @override
   Widget build(BuildContext context, WidgetRef ref) {
+    final auth = ref.watch(authNotifierProvider).value;
+    final management = auth is AuthAuthenticated &&
+        (auth.roles.contains('OWNER') ||
+            auth.roles.contains('MANAGER') ||
+            auth.roles.contains('PLATFORM_ADMIN'));
     return DefaultTabController(
-      length: 7,
+      length: 8,
       child: Column(
         crossAxisAlignment: CrossAxisAlignment.start,
         children: [
@@ -52,18 +58,21 @@ class PricingScreen extends ConsumerWidget {
               Tab(text: 'Shelf Labels'),
               Tab(text: 'Unit Pricing'),
               Tab(text: 'Reductions'),
+              Tab(text: 'Zones & repricing'),
             ],
           ),
-          const Expanded(
+          Expanded(
             child: TabBarView(
               children: [
-                _PriceListsTab(),
-                _PromotionsTab(),
-                _VatRatesTab(),
-                _VatReturnTab(),
-                ShelfLabelsTab(),
-                UnitPricingGapsTab(),
-                PriceReductionsTab(),
+                const _PriceListsTab(),
+                const _PromotionsTab(),
+                const _VatRatesTab(),
+                const _VatReturnTab(),
+                const ShelfLabelsTab(),
+                const UnitPricingGapsTab(),
+                const PriceReductionsTab(),
+                // Price zones and competitor-driven repricing (03.x).
+                PriceZonesTab(management: management),
               ],
             ),
           ),
@@ -227,6 +236,8 @@ class _PriceListDialogState extends ConsumerState<_PriceListDialog> {
   final _nameCtrl = TextEditingController();
   String _channel = 'ALL';
   String? _currency;
+  // 03.x: a list bound to a price zone prices that zone's stores and no other.
+  String? _zoneId;
   DateTime _from = DateTime.now();
   bool _loading = false;
   String? _error;
@@ -256,6 +267,7 @@ class _PriceListDialogState extends ConsumerState<_PriceListDialog> {
               'name': _nameCtrl.text.trim(),
               'channel': _channel,
               if (_currency != null) 'currency': _currency,
+              if (_zoneId != null) 'zoneId': _zoneId,
               // A bare '2026-01-01' is rejected with INVALID_DATE — the column is
               // TIMESTAMPTZ. Sent as a UTC instant, which is also what golden rule
               // 14 asks for: convert at the UI edge, store UTC.
@@ -322,6 +334,25 @@ class _PriceListDialogState extends ConsumerState<_PriceListDialog> {
               'Effective from',
               _from,
               (d) => setState(() => _from = d),
+            ),
+            const SizedBox(height: 12),
+            DropdownButtonFormField<String?>(
+              key: const Key('price-list-zone'),
+              initialValue: _zoneId,
+              isExpanded: true,
+              decoration: const InputDecoration(
+                labelText: 'Prices',
+                helperText: 'Every store, or the stores of one price zone',
+              ),
+              items: [
+                const DropdownMenuItem<String?>(
+                  value: null,
+                  child: Text('Every store (tenant-wide)'),
+                ),
+                for (final z in ref.watch(priceZonesProvider).value ?? const <PriceZone>[])
+                  DropdownMenuItem<String?>(value: z.id, child: Text('Zone: ${z.name}')),
+              ],
+              onChanged: (v) => setState(() => _zoneId = v),
             ),
           ],
         ),

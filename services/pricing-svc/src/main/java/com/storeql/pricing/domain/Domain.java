@@ -73,7 +73,32 @@ public final class Domain {
       Instant effectiveFrom,
       Instant effectiveTo,
       boolean active,
-      Instant createdAt) {
+      Instant createdAt,
+      UUID zoneId) {
+
+    /** A tenant-wide list, bound to no price zone: what every store falls back to (03.x). */
+    public PriceList(
+        UUID id,
+        UUID tenantId,
+        String name,
+        String channel,
+        String currency,
+        Instant effectiveFrom,
+        Instant effectiveTo,
+        boolean active,
+        Instant createdAt) {
+      this(
+          id,
+          tenantId,
+          name,
+          channel,
+          currency,
+          effectiveFrom,
+          effectiveTo,
+          active,
+          createdAt,
+          null);
+    }
 
     public static final String CHANNEL_ALL = "ALL";
     public static final String CHANNEL_ONLINE = "ONLINE";
@@ -752,4 +777,72 @@ public final class Domain {
       String currency,
       PriorPrice prior,
       boolean required) {}
+
+  // ── Price zones and competitor-driven repricing (03.x) ─────────────────────
+
+  /** A group of stores that price alike; a price list bound to it beats the tenant-wide list. */
+  public record PriceZone(
+      UUID id,
+      UUID tenantId,
+      String name,
+      String description,
+      List<UUID> storeIds,
+      Instant createdAt) {}
+
+  /** What a rival charged for a variant on a day, as seen; append-only. */
+  public record CompetitorPrice(
+      UUID id,
+      UUID tenantId,
+      UUID variantId,
+      String competitor,
+      BigDecimal price,
+      String currency,
+      UUID zoneId,
+      LocalDate observedOn,
+      String source,
+      UUID recordedBy,
+      Instant recordedAt) {
+
+    public static final String SOURCE_MANUAL = "MANUAL";
+    public static final String SOURCE_IMPORT = "IMPORT";
+  }
+
+  /** How one price list answers its rivals; the zone is the list's. */
+  public record RepricingRule(
+      UUID id,
+      UUID tenantId,
+      String name,
+      UUID priceListId,
+      UUID zoneId,
+      Repricing.Rule rule,
+      boolean active,
+      Instant createdAt) {}
+
+  /** What a run proposed for one variant, and what became of it. */
+  public record RepricingProposal(
+      UUID id,
+      UUID tenantId,
+      UUID ruleId,
+      UUID priceListId,
+      UUID zoneId,
+      UUID variantId,
+      BigDecimal currentPrice,
+      String competitor,
+      BigDecimal competitorPrice,
+      LocalDate observedOn,
+      BigDecimal proposedPrice,
+      String currency,
+      String status,
+      Instant proposedAt,
+      Instant decidedAt,
+      UUID decidedBy) {
+
+    public static final String PROPOSED = "PROPOSED";
+    public static final String APPLIED = "APPLIED";
+    public static final String DISMISSED = "DISMISSED";
+  }
+
+  /** One run of a rule: how many priced variants had a fresh rival price, how many moved. */
+  public record RepricingRun(
+      UUID ruleId, int examined, int proposed, List<RepricingProposal> proposals) {}
 }

@@ -59,6 +59,7 @@ import java.util.UUID;
 public class PricingService {
 
   @Inject PricingRepository repo;
+  @Inject com.storeql.pricing.repo.RepricingRepository zones;
   @Inject com.storeql.service.TenantProfiles profiles;
   @Inject com.storeql.service.FxRates fx;
   @Inject com.storeql.service.Jurisdictions jurisdictions;
@@ -290,6 +291,12 @@ public class PricingService {
    * @return the created price list
    */
   public PriceList createPriceList(CreatePriceListRequest req, TenantContext ctx) {
+    // 03.x: a list bound to a price zone prices that zone's stores and no other.
+    UUID zoneId = Parsing.optionalUuid(req.zoneId(), "zoneId");
+    if (zoneId != null && zones.findZone(ctx.tenantId(), zoneId).isEmpty()) {
+      throw ApiException.badRequest(
+          "PRICING_ZONE_UNKNOWN", "price zone " + req.zoneId() + " is not one of this business's");
+    }
     PriceList pl =
         new PriceList(
             Ids.newId(),
@@ -300,7 +307,8 @@ public class PricingService {
             Parsing.instant(req.effectiveFrom(), "effectiveFrom"),
             req.effectiveTo() != null ? Parsing.instant(req.effectiveTo(), "effectiveTo") : null,
             true,
-            Instant.now());
+            Instant.now(),
+            zoneId);
     return repo.createPriceList(pl);
   }
 
@@ -558,11 +566,17 @@ public class PricingService {
     // SJ-D55: a quantity tier is a volume price, never a reason a fraction of a unit has no price.
     // A weighed line arrives as its weight (0.375 kg), and the list price's minimum quantity is 1,
     // so a fraction is matched as one; a list holding only a bulk tier still refuses a single item.
+    // 03.x: the store decides which price list answers — its price zone's, or the tenant-wide one.
+    UUID storeId =
+        req.storeId() == null || req.storeId().isBlank()
+            ? null
+            : Parsing.uuid(req.storeId(), "storeId");
     PriceListItem baseItem =
         (asRecorded
                 ? repo.resolveBasePriceAsOf(
-                    tenantId, variantId, channel, qty.max(BigDecimal.ONE), at)
-                : repo.resolveBasePrice(tenantId, variantId, channel, qty.max(BigDecimal.ONE), at))
+                    tenantId, variantId, channel, qty.max(BigDecimal.ONE), at, storeId)
+                : repo.resolveBasePrice(
+                    tenantId, variantId, channel, qty.max(BigDecimal.ONE), at, storeId))
             .orElseThrow(
                 () ->
                     ApiException.notFound(
@@ -577,10 +591,6 @@ public class PricingService {
     // convenience: this endpoint answers "what does this item cost" for a product page, and
     // showing a spend-threshold price against one item advertises a total the shopper will not be
     // charged. The checkout path calls quoteBasket, where the threshold can actually be tested.
-    UUID storeId =
-        req.storeId() == null || req.storeId().isBlank()
-            ? null
-            : Parsing.uuid(req.storeId(), "storeId");
     List<Promotion> candidates =
         (withPromotions
                 ? (asRecorded
@@ -1020,7 +1030,8 @@ public class PricingService {
       } else {
         var baseItem =
             // SJ-D55: a fraction of a unit is matched against the tiers as one.
-            repo.resolveBasePrice(tenantId, variantId, channel, qty.max(BigDecimal.ONE))
+            repo.resolveBasePrice(
+                    tenantId, variantId, channel, qty.max(BigDecimal.ONE), Instant.now(), storeId)
                 .orElseThrow(
                     () ->
                         ApiException.notFound(
