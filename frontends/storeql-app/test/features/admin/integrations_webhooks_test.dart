@@ -22,7 +22,10 @@ const _live = '019987c0-0f1e-7c3b-8a4d-3e2f1a0b9d01';
 const _off = '019987c0-0f1e-7c3b-8a4d-3e2f1a0b9d02';
 const _delivered = '019987c0-0f1e-7c3b-8a4d-3e2f1a0b9d03';
 const _dead = '019987c0-0f1e-7c3b-8a4d-3e2f1a0b9d04';
-const _secret = 'whsec_c2VjcmV0LWZvci10aGUtd2lkZ2V0LXRlc3QtMTIzNDU2';
+// Fixtures are never secret-shaped: a real signing secret is whsec_ + base64, and a fixture that
+// looked like one raised GitHub secret-scanning alert #1. This one carries hyphens and says what
+// it is; the widget shows whatever string the server answers.
+const _secret = 'whsec_not-a-real-secret-widget-test-fixture';
 
 Map<String, dynamic> _endpoint(String id, String description, {bool enabled = true, String? reason}) => {
       'id': id,
@@ -78,7 +81,7 @@ class _Server implements HttpClientAdapter {
       );
     }
     if (path.endsWith('/ping')) return jsonResponse(jsonEncode({'data': {'deliveryId': _delivered}}), 202);
-    if (path.endsWith('/secret')) return jsonResponse(jsonEncode({'data': {'secret': 'whsec_rotated-secret-for-the-test-1234567890'}}));
+    if (path.endsWith('/secret')) return jsonResponse(jsonEncode({'data': {'secret': 'whsec_not-a-real-rotated-secret-widget-test'}}));
     if (path.endsWith('/redeliver')) {
       return jsonResponse(jsonEncode({'data': {'id': _dead, 'endpointId': _live, 'eventId': 'x', 'eventType': 'OrderPlaced', 'status': 'PENDING', 'attempts': 5, 'createdAt': '2026-09-22T09:00:00Z'}}));
     }
@@ -205,7 +208,7 @@ void main() {
     await tester.tap(find.byKey(const Key('rotate-confirm')));
     await tester.pumpAndSettle();
     expect(server.of('POST').single.path, endsWith('/webhooks/endpoints/$_live/secret'));
-    expect(find.text('whsec_rotated-secret-for-the-test-1234567890'), findsOneWidget);
+    expect(find.text('whsec_not-a-real-rotated-secret-widget-test'), findsOneWidget);
     await tester.tap(find.byKey(const Key('key-done')));
     await tester.pumpAndSettle();
 
