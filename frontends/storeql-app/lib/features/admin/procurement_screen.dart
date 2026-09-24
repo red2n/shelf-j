@@ -14,6 +14,7 @@ import 'providers/admin_providers.dart';
 import 'einvoice_tab.dart';
 import 'payment_runs_tab.dart';
 import 'procurement_providers.dart';
+import 'sourcing_tab.dart';
 import 'supplier_scorecards.dart';
 import 'resolve_invoice_dialog.dart';
 import 'widgets/variant_picker.dart';
@@ -27,7 +28,7 @@ class ProcurementScreen extends ConsumerWidget {
   Widget build(BuildContext context, WidgetRef ref) {
     final canPay = canRunPayments(ref.watch(authNotifierProvider).value);
     return DefaultTabController(
-      length: 6,
+      length: 7,
       child: Builder(
         // A Builder gives this subtree a context below DefaultTabController,
         // so DefaultTabController.of(context) below can find it.
@@ -54,6 +55,7 @@ class ProcurementScreen extends ConsumerWidget {
                     Tab(text: 'Suppliers'),
                     Tab(text: 'Payments'),
                     Tab(text: 'Consignment & dropship'),
+                    Tab(text: 'Sourcing'),
                   ],
                 ),
                 const Expanded(
@@ -66,6 +68,8 @@ class ProcurementScreen extends ConsumerWidget {
                       PaymentRunsTab(),
                       // Consignment stock: what suppliers are owed as their stock sells.
                       ConsignmentTab(),
+                      // RFQs: several suppliers asked, quotes compared at home, the award raising drafts.
+                      SourcingTab(),
                     ],
                   ),
                 ),
@@ -1086,6 +1090,10 @@ class _PurchaseOrdersTab extends ConsumerWidget {
                           if (po.dutyStatus == 'DUTY_SUSPENDED') ...[
                             const SizedBox(width: 6),
                             const _InBondBadge(),
+                          ],
+                          if (po.source == 'RFQ') ...[
+                            const SizedBox(width: 6),
+                            const _RfqBadge(),
                           ],
                         ],
                       ),
@@ -2746,6 +2754,38 @@ class _ProposedBadge extends StatelessWidget {
               fontSize: 11,
               fontWeight: FontWeight.w600,
               color: status.onInfoContainer,
+            ),
+          ),
+        ],
+      ),
+    );
+  }
+}
+
+/// Marks an order an RFQ award raised, at the price the supplier quoted.
+class _RfqBadge extends StatelessWidget {
+  const _RfqBadge();
+
+  @override
+  Widget build(BuildContext context) {
+    final cs = Theme.of(context).colorScheme;
+    return Container(
+      padding: const EdgeInsets.symmetric(horizontal: 6, vertical: 2),
+      decoration: BoxDecoration(
+        color: cs.primaryContainer,
+        borderRadius: AppRadius.badge,
+      ),
+      child: Row(
+        mainAxisSize: MainAxisSize.min,
+        children: [
+          Icon(Icons.request_quote_outlined, size: 12, color: cs.onPrimaryContainer),
+          const SizedBox(width: 4),
+          Text(
+            'From RFQ',
+            style: TextStyle(
+              fontSize: 11,
+              fontWeight: FontWeight.w600,
+              color: cs.onPrimaryContainer,
             ),
           ),
         ],

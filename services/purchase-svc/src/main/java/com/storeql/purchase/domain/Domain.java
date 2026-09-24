@@ -599,6 +599,9 @@ public final class Domain {
   /** Raised from a confirmed sale for a supplier that ships to the customer (dropship). */
   public static final String PO_SOURCE_DROPSHIP = "DROPSHIP";
 
+  /** Raised by an RFQ award, at the price the supplier quoted. */
+  public static final String PO_SOURCE_RFQ = "RFQ";
+
   /** Which supplier fulfils a variant per order, at what cost; one live per variant. */
   public record DropshipArrangement(
       UUID id,
