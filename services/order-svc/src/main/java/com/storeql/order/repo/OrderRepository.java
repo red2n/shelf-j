@@ -230,8 +230,9 @@ public class OrderRepository extends BaseOutboxRepository {
                 + "  subtotal,tax_amount,discount_amount,total,currency,notes,idempotency_key,"
                 + "  tax_exempt,exempt_reason,delivery_line1,delivery_line2,delivery_city,"
                 + "  delivery_postal_code,delivery_recipient_name,delivery_recipient_phone,contact_phone,"
-                + "  payment_method,promotion_discount,seller_user_id,group_id,group_part)"
-                + " VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)")) {
+                + "  payment_method,promotion_discount,seller_user_id,group_id,group_part,"
+                + "  allow_substitutions)"
+                + " VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)")) {
       ps.setObject(1, order.id());
       ps.setObject(2, order.tenantId());
       ps.setObject(3, order.storeId());
@@ -266,6 +267,7 @@ public class OrderRepository extends BaseOutboxRepository {
       ps.setObject(28, groupId);
       if (groupPart == null) ps.setNull(29, java.sql.Types.SMALLINT);
       else ps.setInt(29, groupPart);
+      ps.setBoolean(30, order.allowSubstitutions());
       ps.executeUpdate();
     } catch (java.sql.SQLException sqle) {
       if (UNIQUE_VIOLATION.equals(sqle.getSQLState()))
@@ -313,7 +315,7 @@ public class OrderRepository extends BaseOutboxRepository {
                 + " idempotency_key, created_at, updated_at, tax_exempt, exempt_reason,"
                 + " delivery_line1, delivery_line2, delivery_city, delivery_postal_code,"
                 + " delivery_recipient_name, delivery_recipient_phone, contact_phone, payment_method,"
-                + " seller_user_id"
+                + " seller_user_id, allow_substitutions"
                 + " FROM orders WHERE tenant_id=? AND idempotency_key=?",
             ps -> {
               ps.setObject(1, tenantId);
@@ -364,7 +366,7 @@ public class OrderRepository extends BaseOutboxRepository {
                 + " idempotency_key, created_at, updated_at, tax_exempt, exempt_reason,"
                 + " delivery_line1, delivery_line2, delivery_city, delivery_postal_code,"
                 + " delivery_recipient_name, delivery_recipient_phone, contact_phone, payment_method,"
-                + " seller_user_id"
+                + " seller_user_id, allow_substitutions"
                 + " FROM orders o WHERE tenant_id=?");
     if (storeId != null) sql.append(" AND store_id=?");
     if (customerId != null) sql.append(" AND customer_id=?");
@@ -406,6 +408,447 @@ public class OrderRepository extends BaseOutboxRepository {
         },
         rs -> mapOrder(rs),
         "list orders");
+  }
+
+  // ── Short closes and substitutions (substitutions for out-of-stock online lines) ──
+
+  /** A substitute the store puts in the bag, priced: what its new line is charged. */
+  public record Substitute(
+      UUID variantId,
+      BigDecimal qty,
+      BigDecimal unitPrice,
+      BigDecimal lineNet,
+      BigDecimal lineVat,
+      String vatCode,
+      BigDecimal vatRate) {}
+
+  /**
+   * What an adjustment did.
+   *
+   * @param order the order as it now stands
+   * @param items its lines as they now stand
+   * @param adjustment the fact recorded
+   * @param substituteItem the substitute's new line, for a substitution
+   * @param outstanding what each variant still owes, after
+   * @param complete whether every line is now picked or closed
+   * @param previousStatus the status before
+   */
+  public record Adjusted(
+      Order order,
+      List<OrderItem> items,
+      com.storeql.order.domain.LineAdjustment adjustment,
+      OrderItem substituteItem,
+      java.util.Map<UUID, BigDecimal> outstanding,
+      boolean complete,
+      String previousStatus) {
+    public Adjusted {
+      items = List.copyOf(items);
+      outstanding = java.util.Map.copyOf(outstanding);
+    }
+  }
+
+  /**
+   * Closes {@code qty} of a variant's line short and, for a substitution, puts the substitute's
+   * line in its place — on one transaction: the order locked, the quantity checked against what the
+   * line still owes, the line's charge and VAT (and any container deposit on it) reduced pro rata
+   * to what stands, the substitute inserted already picked, the order's totals recomputed, the
+   * adjustment written, the status moved to FULFILLED when every line is picked or closed, and the
+   * events the caller builds from the outcome written to the outbox.
+   *
+   * @param substitute the substitute's priced line, or null for a plain close
+   * @param events builds the outbox rows from what was done
+   * @throws ApiException 409 {@code ORDER_LINE_NOT_ADJUSTABLE} unless a CONFIRMED or
+   *     PARTIALLY_FULFILLED online pickup or delivery; 400 {@code ORDER_LINE_UNKNOWN}; 409 {@code
+   *     ORDER_LINE_QTY_EXCEEDS_OUTSTANDING}; 409 {@code ORDER_DUPLICATE_KEY} when the key was used
+   */
+  public Adjusted adjustLine(
+      UUID tenantId,
+      UUID orderId,
+      UUID variantId,
+      BigDecimal qty,
+      Substitute substitute,
+      String reason,
+      UUID adjustedBy,
+      String idempotencyKey,
+      java.util.function.Function<Adjusted, List<OutboxRow>> events) {
+    return inTx(
+        c -> {
+          lockOrderTx(c, tenantId, orderId);
+          Order before = findOrderInTx(c, tenantId, orderId);
+          boolean adjustable =
+              Order.CHANNEL_ONLINE.equals(before.channel())
+                  && (Order.FULFILMENT_PICKUP.equals(before.fulfilmentType())
+                      || Order.FULFILMENT_DELIVERY.equals(before.fulfilmentType()))
+                  && (Order.STATUS_CONFIRMED.equals(before.status())
+                      || Order.STATUS_PARTIALLY_FULFILLED.equals(before.status()));
+          if (!adjustable) {
+            throw ApiException.conflict(
+                "ORDER_LINE_NOT_ADJUSTABLE",
+                "only a confirmed or part-picked online pickup or delivery order has lines to close"
+                    + " or substitute; this is a "
+                    + before.channel()
+                    + " "
+                    + before.fulfilmentType()
+                    + " order, "
+                    + before.status());
+          }
+          List<OrderItem> items = lockedItemsTx(c, tenantId, orderId);
+          List<OrderItem> ofVariant =
+              items.stream().filter(i -> i.variantId().equals(variantId)).toList();
+          if (ofVariant.isEmpty()) {
+            throw ApiException.badRequest(
+                "ORDER_LINE_UNKNOWN", "variant " + variantId + " is not on this order");
+          }
+          BigDecimal outstanding =
+              ofVariant.stream()
+                  .map(OrderItem::remainingQty)
+                  .reduce(BigDecimal.ZERO, BigDecimal::add);
+          if (qty.signum() <= 0 || qty.compareTo(outstanding) > 0) {
+            throw ApiException.conflict(
+                "ORDER_LINE_QTY_EXCEEDS_OUTSTANDING",
+                "variant "
+                    + variantId
+                    + ": "
+                    + qty.stripTrailingZeros().toPlainString()
+                    + " asked, "
+                    + outstanding.stripTrailingZeros().toPlainString()
+                    + " still outstanding");
+          }
+          // Close the quantity over the variant's lines, oldest first, each line's charge, VAT and
+          // deposit shrinking to what stands of it.
+          BigDecimal left = qty;
+          UUID firstItem = null;
+          for (OrderItem i : ofVariant) {
+            if (left.signum() <= 0) break;
+            if (i.remainingQty().signum() <= 0) continue;
+            BigDecimal take = left.min(i.remainingQty());
+            if (firstItem == null) firstItem = i.id();
+            BigDecimal standingBefore = i.standingQty();
+            BigDecimal standingAfter = standingBefore.subtract(take);
+            BigDecimal lineTotal =
+                com.storeql.order.domain.SubstitutePrice.share(
+                    i.lineTotal(), standingAfter, standingBefore, 2);
+            BigDecimal vat =
+                com.storeql.order.domain.SubstitutePrice.share(
+                    i.vatAmount(), standingAfter, standingBefore, 2);
+            try (PreparedStatement ps =
+                c.prepareStatement(
+                    "UPDATE order_items SET short_qty = short_qty + ?, line_total = ?,"
+                        + " vat_amount = ? WHERE tenant_id=? AND id=?"
+                        + " AND fulfilled_qty + short_qty + ? <= qty")) {
+              ps.setBigDecimal(1, take);
+              ps.setBigDecimal(2, lineTotal);
+              ps.setBigDecimal(3, vat);
+              ps.setObject(4, tenantId);
+              ps.setObject(5, i.id());
+              ps.setBigDecimal(6, take);
+              if (ps.executeUpdate() == 0) {
+                throw ApiException.conflict(
+                    "ORDER_LINE_QTY_EXCEEDS_OUTSTANDING", "line changed under this request");
+              }
+            }
+            DepositRepository.shrinkDepositTx(c, tenantId, i.id(), standingAfter, standingBefore);
+            left = left.subtract(take);
+          }
+          OrderItem subItem = null;
+          if (substitute != null) {
+            subItem =
+                new OrderItem(
+                    Ids.newId(),
+                    tenantId,
+                    orderId,
+                    substitute.variantId(),
+                    substitute.qty(),
+                    substitute.unitPrice(),
+                    substitute.lineNet(),
+                    null,
+                    null,
+                    substitute.qty(),
+                    substitute.lineVat(),
+                    null,
+                    substitute.vatCode(),
+                    substitute.vatRate(),
+                    BigDecimal.ZERO,
+                    firstItem);
+            insertOrderItem(c, subItem);
+          }
+          // The totals, as the checkout computed them: lines, their VAT (pro rata to the subtotal
+          // when a line carries none), less the discounts as they were, plus the deposits.
+          Totals t = totalsTx(c, tenantId, orderId, before);
+          List<OrderItem> after = lockedItemsTx(c, tenantId, orderId);
+          boolean complete = after.stream().allMatch(i -> i.remainingQty().signum() <= 0);
+          boolean anyPicked =
+              after.stream()
+                  .anyMatch(i -> i.fulfilledQty() != null && i.fulfilledQty().signum() > 0);
+          String next =
+              complete
+                  ? Order.STATUS_FULFILLED
+                  : anyPicked ? Order.STATUS_PARTIALLY_FULFILLED : before.status();
+          try (PreparedStatement ps =
+              c.prepareStatement(
+                  "UPDATE orders SET subtotal=?, tax_amount=?, total=?, status=?, updated_at=now()"
+                      + " WHERE tenant_id=? AND id=?")) {
+            ps.setBigDecimal(1, t.subtotal());
+            ps.setBigDecimal(2, t.tax());
+            ps.setBigDecimal(3, t.total());
+            ps.setString(4, next);
+            ps.setObject(5, tenantId);
+            ps.setObject(6, orderId);
+            ps.executeUpdate();
+          }
+          BigDecimal refund = before.total().subtract(t.total()).max(BigDecimal.ZERO);
+          BigDecimal charged =
+              subItem == null ? BigDecimal.ZERO : subItem.lineTotal().add(nz(subItem.vatAmount()));
+          var adjustment =
+              new com.storeql.order.domain.LineAdjustment(
+                  Ids.newId(),
+                  tenantId,
+                  orderId,
+                  subItem == null
+                      ? com.storeql.order.domain.LineAdjustment.SHORT_CLOSED
+                      : com.storeql.order.domain.LineAdjustment.SUBSTITUTED,
+                  firstItem,
+                  variantId,
+                  qty,
+                  subItem == null ? null : subItem.id(),
+                  subItem == null ? null : subItem.variantId(),
+                  charged,
+                  refund,
+                  reason,
+                  adjustedBy,
+                  idempotencyKey,
+                  Instant.now());
+          insertAdjustmentTx(c, adjustment);
+          String said =
+              (subItem == null
+                      ? "short: " + qty.stripTrailingZeros().toPlainString() + " × " + variantId
+                      : "substituted: "
+                          + qty.stripTrailingZeros().toPlainString()
+                          + " × "
+                          + variantId
+                          + " → "
+                          + subItem.variantId()
+                          + ", charged "
+                          + charged.toPlainString())
+                  + (refund.signum() > 0 ? ", refund " + refund.toPlainString() : "")
+                  + (reason == null ? "" : " (" + reason + ")");
+          appendStatusHistory(c, tenantId, orderId, before.status(), next, said, adjustedBy);
+          Order now = findOrderInTx(c, tenantId, orderId);
+          java.util.Map<UUID, BigDecimal> owed = new java.util.LinkedHashMap<>();
+          for (OrderItem i : after) owed.merge(i.variantId(), i.remainingQty(), BigDecimal::add);
+          Adjusted done =
+              new Adjusted(now, after, adjustment, subItem, owed, complete, before.status());
+          for (OutboxRow row : events.apply(done)) insertOutbox(c, row);
+          return done;
+        },
+        "adjust order line");
+  }
+
+  private record Totals(BigDecimal subtotal, BigDecimal tax, BigDecimal total) {}
+
+  private static Totals totalsTx(Connection c, UUID tenantId, UUID orderId, Order before)
+      throws SQLException {
+    BigDecimal subtotal = BigDecimal.ZERO;
+    BigDecimal vat = BigDecimal.ZERO;
+    boolean everyLineTaxed = true;
+    try (PreparedStatement ps =
+        c.prepareStatement(
+            "SELECT COALESCE(SUM(line_total), 0) AS subtotal, COALESCE(SUM(vat_amount), 0) AS vat,"
+                + " BOOL_AND(vat_amount IS NOT NULL) AS taxed"
+                + " FROM order_items WHERE tenant_id=? AND order_id=?")) {
+      ps.setObject(1, tenantId);
+      ps.setObject(2, orderId);
+      try (ResultSet rs = ps.executeQuery()) {
+        if (rs.next()) {
+          subtotal = rs.getBigDecimal("subtotal");
+          vat = rs.getBigDecimal("vat");
+          everyLineTaxed = rs.getBoolean("taxed");
+        }
+      }
+    }
+    BigDecimal tax =
+        everyLineTaxed
+            ? vat.setScale(2, java.math.RoundingMode.HALF_UP)
+            : com.storeql.order.domain.SubstitutePrice.share(
+                before.taxAmount(), subtotal, before.subtotal(), 2);
+    BigDecimal deposits = DepositRepository.depositTotalTx(c, tenantId, orderId);
+    BigDecimal total =
+        subtotal
+            .add(nz(tax))
+            .subtract(nz(before.discountAmount()))
+            .subtract(nz(before.promotionDiscount()))
+            .add(deposits)
+            .max(BigDecimal.ZERO);
+    return new Totals(subtotal, nz(tax), total);
+  }
+
+  private static BigDecimal nz(BigDecimal v) {
+    return v == null ? BigDecimal.ZERO : v;
+  }
+
+  private static void lockOrderTx(Connection c, UUID tenantId, UUID orderId) throws SQLException {
+    try (PreparedStatement ps =
+        c.prepareStatement("SELECT id FROM orders WHERE tenant_id=? AND id=? FOR UPDATE")) {
+      ps.setObject(1, tenantId);
+      ps.setObject(2, orderId);
+      try (ResultSet rs = ps.executeQuery()) {
+        if (!rs.next()) throw ApiException.notFound("ORDER_NOT_FOUND", "order not found");
+      }
+    }
+  }
+
+  private List<OrderItem> lockedItemsTx(Connection c, UUID tenantId, UUID orderId)
+      throws SQLException {
+    List<OrderItem> items = new java.util.ArrayList<>();
+    try (PreparedStatement ps =
+        c.prepareStatement(
+            "SELECT id, tenant_id, order_id, variant_id, qty, unit_price, line_total, notes,"
+                + " weighing_instrument_id, fulfilled_qty, vat_amount, markdown_id, vat_code,"
+                + " vat_rate, short_qty, substitutes_item_id"
+                + " FROM order_items WHERE tenant_id=? AND order_id=? ORDER BY created_at, id"
+                + " FOR UPDATE")) {
+      ps.setObject(1, tenantId);
+      ps.setObject(2, orderId);
+      try (ResultSet rs = ps.executeQuery()) {
+        while (rs.next()) items.add(mapOrderItem(rs));
+      }
+    }
+    return items;
+  }
+
+  private static final String ADJUSTMENT_COLUMNS =
+      "id, tenant_id, order_id, kind, item_id, variant_id, qty, substitute_item_id,"
+          + " substitute_variant_id, charged_amount, refund_amount, reason, adjusted_by,"
+          + " idempotency_key, adjusted_at";
+
+  private static void insertAdjustmentTx(Connection c, com.storeql.order.domain.LineAdjustment a)
+      throws SQLException {
+    try (PreparedStatement ps =
+        c.prepareStatement(
+            "INSERT INTO order_line_adjustments ("
+                + ADJUSTMENT_COLUMNS
+                + ") VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)")) {
+      ps.setObject(1, a.id());
+      ps.setObject(2, a.tenantId());
+      ps.setObject(3, a.orderId());
+      ps.setString(4, a.kind());
+      ps.setObject(5, a.itemId());
+      ps.setObject(6, a.variantId());
+      ps.setBigDecimal(7, a.qty());
+      ps.setObject(8, a.substituteItemId());
+      ps.setObject(9, a.substituteVariantId());
+      ps.setBigDecimal(10, a.chargedAmount());
+      ps.setBigDecimal(11, a.refundAmount());
+      ps.setString(12, a.reason());
+      ps.setObject(13, a.adjustedBy());
+      ps.setString(14, a.idempotencyKey());
+      ps.setObject(15, a.adjustedAt().atOffset(java.time.ZoneOffset.UTC));
+      ps.executeUpdate();
+    } catch (SQLException sqle) {
+      if (UNIQUE_VIOLATION.equals(sqle.getSQLState()))
+        throw new ApiException(
+            409, "ORDER_DUPLICATE_KEY", "duplicate idempotency key", List.of(), sqle);
+      throw sqle;
+    }
+  }
+
+  /** The adjustment a key already made, so a retried press is answered rather than repeated. */
+  public Optional<com.storeql.order.domain.LineAdjustment> findAdjustmentByKey(
+      UUID tenantId, String idempotencyKey) {
+    return query(
+            "SELECT "
+                + ADJUSTMENT_COLUMNS
+                + " FROM order_line_adjustments WHERE tenant_id = ? AND idempotency_key = ?",
+            ps -> {
+              ps.setObject(1, tenantId);
+              ps.setString(2, idempotencyKey);
+            },
+            OrderRepository::mapAdjustment,
+            "find adjustment by key")
+        .stream()
+        .findFirst();
+  }
+
+  /** An order's closes and substitutions, oldest first. */
+  public List<com.storeql.order.domain.LineAdjustment> findAdjustments(
+      UUID tenantId, UUID orderId) {
+    return query(
+        "SELECT "
+            + ADJUSTMENT_COLUMNS
+            + " FROM order_line_adjustments WHERE tenant_id = ? AND order_id = ?"
+            + " ORDER BY adjusted_at, id",
+        ps -> {
+          ps.setObject(1, tenantId);
+          ps.setObject(2, orderId);
+        },
+        OrderRepository::mapAdjustment,
+        "list adjustments");
+  }
+
+  private static com.storeql.order.domain.LineAdjustment mapAdjustment(ResultSet rs)
+      throws SQLException {
+    return new com.storeql.order.domain.LineAdjustment(
+        rs.getObject("id", UUID.class),
+        rs.getObject("tenant_id", UUID.class),
+        rs.getObject("order_id", UUID.class),
+        rs.getString("kind"),
+        rs.getObject("item_id", UUID.class),
+        rs.getObject("variant_id", UUID.class),
+        rs.getBigDecimal("qty"),
+        rs.getObject("substitute_item_id", UUID.class),
+        rs.getObject("substitute_variant_id", UUID.class),
+        rs.getBigDecimal("charged_amount"),
+        rs.getBigDecimal("refund_amount"),
+        rs.getString("reason"),
+        rs.getObject("adjusted_by", UUID.class),
+        rs.getString("idempotency_key"),
+        rs.getTimestamp("adjusted_at").toInstant());
+  }
+
+  /**
+   * The store's online orders still owing something — confirmed or part-picked, pickup or delivery
+   * — oldest first, bounded; the queue the Fulfilment screen works.
+   */
+  public List<Order> findOwingOrders(UUID tenantId, UUID storeId) {
+    return query(
+        "SELECT id, tenant_id, store_id, customer_id, login_id, channel, fulfilment_type, status,"
+            + " subtotal, tax_amount, discount_amount, promotion_discount, total, currency, notes,"
+            + " idempotency_key, created_at, updated_at, tax_exempt, exempt_reason,"
+            + " delivery_line1, delivery_line2, delivery_city, delivery_postal_code,"
+            + " delivery_recipient_name, delivery_recipient_phone, contact_phone, payment_method,"
+            + " seller_user_id, allow_substitutions"
+            + " FROM orders WHERE tenant_id=? AND store_id=? AND channel='ONLINE'"
+            + " AND fulfilment_type IN ('PICKUP','DELIVERY')"
+            + " AND status IN ('CONFIRMED','PARTIALLY_FULFILLED')"
+            + " ORDER BY created_at, id LIMIT 200",
+        ps -> {
+          ps.setObject(1, tenantId);
+          ps.setObject(2, storeId);
+        },
+        rs -> mapOrder(rs),
+        "list owing orders");
+  }
+
+  /** The lines of several orders, by order. */
+  public java.util.Map<UUID, List<OrderItem>> findOrderItems(UUID tenantId, List<UUID> orderIds) {
+    java.util.Map<UUID, List<OrderItem>> out = new java.util.HashMap<>();
+    if (orderIds.isEmpty()) return out;
+    for (OrderItem i :
+        query(
+            "SELECT id, tenant_id, order_id, variant_id, qty, unit_price, line_total, notes,"
+                + " weighing_instrument_id, fulfilled_qty, vat_amount, markdown_id, vat_code,"
+                + " vat_rate, short_qty, substitutes_item_id"
+                + " FROM order_items WHERE tenant_id=? AND order_id = ANY(?)"
+                + " ORDER BY created_at, id",
+            ps -> {
+              ps.setObject(1, tenantId);
+              ps.setArray(2, ps.getConnection().createArrayOf("uuid", orderIds.toArray()));
+            },
+            rs -> mapOrderItem(rs),
+            "list lines of orders")) {
+      out.computeIfAbsent(i.orderId(), k -> new java.util.ArrayList<>()).add(i);
+    }
+    return out;
   }
 
   // ── Handover (ship-from-store and dark-store picking) ─────────────────────
@@ -535,7 +978,7 @@ public class OrderRepository extends BaseOutboxRepository {
                 + " idempotency_key, created_at, updated_at, tax_exempt, exempt_reason,"
                 + " delivery_line1, delivery_line2, delivery_city, delivery_postal_code,"
                 + " delivery_recipient_name, delivery_recipient_phone, contact_phone, payment_method,"
-                + " seller_user_id"
+                + " seller_user_id, allow_substitutions"
                 + " FROM orders WHERE tenant_id=? AND id=?",
             ps -> {
               ps.setObject(1, tenantId);
@@ -1108,7 +1551,7 @@ public class OrderRepository extends BaseOutboxRepository {
               c.prepareStatement(
                   "SELECT id, tenant_id, order_id, variant_id, qty, unit_price, line_total, notes,"
                       + " weighing_instrument_id, fulfilled_qty, vat_amount, markdown_id, vat_code,"
-                      + " vat_rate"
+                      + " vat_rate, short_qty, substitutes_item_id"
                       + " FROM order_items"
                       + " WHERE tenant_id=? AND order_id=? ORDER BY created_at FOR UPDATE")) {
             ps.setObject(1, tenantId);
@@ -1256,7 +1699,7 @@ public class OrderRepository extends BaseOutboxRepository {
               c.prepareStatement(
                   "SELECT id, tenant_id, order_id, variant_id, qty, unit_price, line_total, notes,"
                       + " weighing_instrument_id, fulfilled_qty, vat_amount, markdown_id, vat_code,"
-                      + " vat_rate"
+                      + " vat_rate, short_qty, substitutes_item_id"
                       + " FROM order_items"
                       + " WHERE tenant_id=? AND order_id=? ORDER BY created_at FOR UPDATE")) {
             ps.setObject(1, tenantId);
@@ -1338,8 +1781,8 @@ public class OrderRepository extends BaseOutboxRepository {
           BigDecimal ordered = BigDecimal.ZERO;
           try (PreparedStatement ps =
               c.prepareStatement(
-                  "SELECT SUM(qty) AS ordered, SUM(fulfilled_qty) AS handed,"
-                      + " BOOL_AND(fulfilled_qty >= qty) AS complete"
+                  "SELECT SUM(qty - short_qty) AS ordered, SUM(fulfilled_qty) AS handed,"
+                      + " BOOL_AND(fulfilled_qty + short_qty >= qty) AS complete"
                       + " FROM order_items WHERE tenant_id=? AND order_id=?")) {
             ps.setObject(1, tenantId);
             ps.setObject(2, orderId);
@@ -1388,6 +1831,16 @@ public class OrderRepository extends BaseOutboxRepository {
    * status-history row commit in one transaction (golden rule #7).
    */
   public void applyRefundOnce(UUID eventId, UUID tenantId, UUID orderId, BigDecimal amount) {
+    applyRefundOnce(eventId, tenantId, orderId, amount, false);
+  }
+
+  /**
+   * As above; an {@code adjustment} refund — a line closed short or substituted (substitutions for
+   * out-of-stock online lines) — records the money but moves no status: the goods are still to be
+   * handed over, and the order's total was already lowered by as much.
+   */
+  public void applyRefundOnce(
+      UUID eventId, UUID tenantId, UUID orderId, BigDecimal amount, boolean adjustment) {
     inTx(
         c -> {
           if (!markProcessedIfNewTx(c, eventId, REFUND_CONSUMER)) {
@@ -1411,9 +1864,10 @@ public class OrderRepository extends BaseOutboxRepository {
           }
           BigDecimal newRefunded = refunded.add(amount);
           String newStatus = status;
-          if (Order.STATUS_CONFIRMED.equals(status)
-              || Order.STATUS_FULFILLED.equals(status)
-              || Order.STATUS_PARTIALLY_REFUNDED.equals(status)) {
+          if (!adjustment
+              && (Order.STATUS_CONFIRMED.equals(status)
+                  || Order.STATUS_FULFILLED.equals(status)
+                  || Order.STATUS_PARTIALLY_REFUNDED.equals(status))) {
             newStatus =
                 newRefunded.compareTo(total) >= 0
                     ? Order.STATUS_REFUNDED
@@ -1431,6 +1885,9 @@ public class OrderRepository extends BaseOutboxRepository {
           }
           if (!newStatus.equals(status)) {
             appendStatusHistory(c, tenantId, orderId, status, newStatus, "refund", null);
+          } else if (adjustment) {
+            appendStatusHistory(
+                c, tenantId, orderId, status, status, "refunded: " + amount.toPlainString(), null);
           }
           return null;
         },
@@ -1459,7 +1916,7 @@ public class OrderRepository extends BaseOutboxRepository {
             + " idempotency_key, created_at, updated_at, tax_exempt, exempt_reason,"
             + " delivery_line1, delivery_line2, delivery_city, delivery_postal_code,"
             + " delivery_recipient_name, delivery_recipient_phone, contact_phone, payment_method,"
-            + " seller_user_id"
+            + " seller_user_id, allow_substitutions"
             + " FROM orders WHERE tenant_id=? AND (customer_id=? OR login_id=?)"
             + " ORDER BY created_at DESC, id DESC LIMIT ?",
         ps -> {
@@ -1483,7 +1940,8 @@ public class OrderRepository extends BaseOutboxRepository {
     return query(
         "SELECT id, tenant_id, order_id, variant_id, qty, unit_price, line_total,"
             + " notes, created_at, discount_amount, discount_reason, weighing_instrument_id,"
-            + " fulfilled_qty, vat_amount, markdown_id, vat_code, vat_rate"
+            + " fulfilled_qty, vat_amount, markdown_id, vat_code, vat_rate, short_qty,"
+            + " substitutes_item_id"
             + " FROM order_items WHERE tenant_id=? AND order_id=? ORDER BY created_at",
         ps -> {
           ps.setObject(1, tenantId);
@@ -2208,8 +2666,9 @@ public class OrderRepository extends BaseOutboxRepository {
         c.prepareStatement(
             "INSERT INTO order_items"
                 + " (id,tenant_id,order_id,variant_id,qty,unit_price,line_total,notes,"
-                + "  weighing_instrument_id, vat_amount, markdown_id, vat_code, vat_rate)"
-                + " VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?)")) {
+                + "  weighing_instrument_id, vat_amount, markdown_id, vat_code, vat_rate,"
+                + "  fulfilled_qty, short_qty, substitutes_item_id)"
+                + " VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)")) {
       ps.setObject(1, item.id());
       ps.setObject(2, item.tenantId());
       ps.setObject(3, item.orderId());
@@ -2223,6 +2682,10 @@ public class OrderRepository extends BaseOutboxRepository {
       ps.setObject(11, item.markdownId());
       ps.setString(12, item.vatCode());
       ps.setBigDecimal(13, item.vatRate());
+      ps.setBigDecimal(
+          14, item.fulfilledQty() == null ? java.math.BigDecimal.ZERO : item.fulfilledQty());
+      ps.setBigDecimal(15, item.shortQty() == null ? java.math.BigDecimal.ZERO : item.shortQty());
+      ps.setObject(16, item.substitutesItemId());
       ps.executeUpdate();
     }
   }
@@ -2260,7 +2723,7 @@ public class OrderRepository extends BaseOutboxRepository {
                 + " idempotency_key, created_at, updated_at, tax_exempt, exempt_reason,"
                 + " delivery_line1, delivery_line2, delivery_city, delivery_postal_code,"
                 + " delivery_recipient_name, delivery_recipient_phone, contact_phone, payment_method,"
-                + " seller_user_id"
+                + " seller_user_id, allow_substitutions"
                 + " FROM orders WHERE tenant_id=? AND id=?")) {
       ps.setObject(1, tenantId);
       ps.setObject(2, orderId);
@@ -2421,7 +2884,8 @@ public class OrderRepository extends BaseOutboxRepository {
         rs.getString("contact_phone"),
         rs.getString("payment_method"),
         rs.getBigDecimal("promotion_discount"),
-        rs.getObject("seller_user_id", UUID.class));
+        rs.getObject("seller_user_id", UUID.class),
+        rs.getBoolean("allow_substitutions"));
   }
 
   /**
@@ -2490,7 +2954,9 @@ public class OrderRepository extends BaseOutboxRepository {
         rs.getBigDecimal("vat_amount"),
         rs.getObject("markdown_id", UUID.class),
         rs.getString("vat_code"),
-        rs.getBigDecimal("vat_rate"));
+        rs.getBigDecimal("vat_rate"),
+        rs.getBigDecimal("short_qty"),
+        rs.getObject("substitutes_item_id", UUID.class));
   }
 
   private OrderStatusHistory mapHistory(ResultSet rs) throws SQLException {

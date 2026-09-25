@@ -77,6 +77,10 @@ class OrderEventHandler {
       waves.forget(tenantId, orderId, waits(obj));
       return;
     }
+    if ("OrderLineShortClosed".equals(eventType) || "OrderLineSubstituted".equals(eventType)) {
+      lineClosed(obj, eventType, tenantId, orderId);
+      return;
+    }
 
     boolean fulfil = "OrderFulfilled".equals(eventType);
     boolean returned = "OrderReturned".equals(eventType);
@@ -184,6 +188,41 @@ class OrderEventHandler {
     // nothing.
     if (fulfil && complete) waves.forget(tenantId, orderId, waits(obj));
     LOG.log(Level.INFO, "{0} {1}: processed {2} line(s)", eventType, orderId, items.size());
+  }
+
+  /**
+   * A line the store could not fill (substitutions for out-of-stock online lines): the quantity
+   * closed short — or replaced, the substitute's own draw riding the {@code OrderFulfilled} beside
+   * this — leaves the order's hold on the variant and its waiting line, once per event. A failure
+   * to write propagates so the loop redelivers.
+   */
+  private void lineClosed(JsonObject obj, String eventType, UUID tenantId, UUID orderId) {
+    UUID eventId;
+    UUID variantId;
+    BigDecimal qty;
+    try {
+      eventId = Ids.parse(obj.getString("eventId"));
+      variantId =
+          Ids.parse(
+              obj.getString(
+                  "OrderLineSubstituted".equals(eventType) ? "fromVariantId" : "variantId"));
+      qty = new BigDecimal(obj.get("qty").toString());
+    } catch (RuntimeException e) {
+      LOG.log(Level.WARNING, eventType + " " + orderId + " malformed, skipped: " + e.getMessage());
+      return;
+    }
+    if (qty.signum() <= 0) {
+      return;
+    }
+    if (service.lineClosedOnce(eventId, CONSUMER_NAME, tenantId, orderId, variantId, qty)) {
+      LOG.log(
+          Level.INFO,
+          "{0} {1}: {2} of {3} given back",
+          eventType,
+          orderId,
+          qty.stripTrailingZeros().toPlainString(),
+          variantId);
+    }
   }
 
   /** Whether the event's order is one that waits to be picked (online, pickup or delivery). */

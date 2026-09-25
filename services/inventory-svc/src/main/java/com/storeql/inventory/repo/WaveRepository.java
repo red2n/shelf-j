@@ -183,7 +183,10 @@ public class WaveRepository extends BaseOutboxRepository {
         "awaiting line fulfilled by hand");
   }
 
-  private static void reduceAwaitingTx(
+  /**
+   * The order needs {@code qty} less of a line; shared with the order-line close (same package).
+   */
+  static void reduceAwaitingTx(
       Connection c, UUID tenantId, UUID orderId, UUID variantId, BigDecimal qty)
       throws SQLException {
     try (PreparedStatement ps =
@@ -199,7 +202,7 @@ public class WaveRepository extends BaseOutboxRepository {
   }
 
   /** An order with nothing outstanding waits no more, and is done. */
-  private static void pruneOrderTx(Connection c, UUID tenantId, UUID orderId) throws SQLException {
+  static void pruneOrderTx(Connection c, UUID tenantId, UUID orderId) throws SQLException {
     try (PreparedStatement ps =
         c.prepareStatement(
             "SELECT 1 FROM awaiting_order_lines WHERE tenant_id = ? AND order_id = ? AND"

@@ -307,7 +307,77 @@ public final class Domain {
        * pays commission pays the seller. Null for a sale nobody is credited with — the ordinary
        * case online.
        */
-      UUID sellerUserId) {
+      UUID sellerUserId,
+      /**
+       * Whether the shopper allows the store to substitute a line it cannot fill (substitutions for
+       * out-of-stock online lines): their choice at checkout, on unless they turned it off.
+       */
+      boolean allowSubstitutions) {
+
+    /** An order as recorded before the shopper could say: substitutions allowed. */
+    public Order(
+        UUID id,
+        UUID tenantId,
+        UUID storeId,
+        UUID customerId,
+        UUID loginId,
+        String channel,
+        String fulfilmentType,
+        String status,
+        BigDecimal subtotal,
+        BigDecimal taxAmount,
+        BigDecimal discountAmount,
+        BigDecimal total,
+        String currency,
+        String notes,
+        String idempotencyKey,
+        Instant createdAt,
+        Instant updatedAt,
+        boolean taxExempt,
+        String exemptReason,
+        String deliveryLine1,
+        String deliveryLine2,
+        String deliveryCity,
+        String deliveryPostalCode,
+        String deliveryRecipientName,
+        String deliveryRecipientPhone,
+        String contactPhone,
+        String paymentMethod,
+        BigDecimal promotionDiscount,
+        UUID sellerUserId) {
+      this(
+          id,
+          tenantId,
+          storeId,
+          customerId,
+          loginId,
+          channel,
+          fulfilmentType,
+          status,
+          subtotal,
+          taxAmount,
+          discountAmount,
+          total,
+          currency,
+          notes,
+          idempotencyKey,
+          createdAt,
+          updatedAt,
+          taxExempt,
+          exemptReason,
+          deliveryLine1,
+          deliveryLine2,
+          deliveryCity,
+          deliveryPostalCode,
+          deliveryRecipientName,
+          deliveryRecipientPhone,
+          contactPhone,
+          paymentMethod,
+          promotionDiscount,
+          sellerUserId,
+          true);
+    }
+
     public static final String CHANNEL_ONLINE = "ONLINE";
     public static final String CHANNEL_POS = "POS";
     public static final String FULFILMENT_PICKUP = "PICKUP";
@@ -368,7 +438,50 @@ public final class Domain {
       /** The VAT code the quote applied (18.9); null for a line placed before it was kept. */
       String vatCode,
       /** The VAT rate the quote applied, as a fraction: 0.2000 for 20% (18.9). */
-      BigDecimal vatRate) {
+      BigDecimal vatRate,
+      /**
+       * How much of {@code qty} will never be handed over: closed short by the store, or replaced
+       * by a substitute (substitutions for out-of-stock online lines). The line's charge is reduced
+       * pro rata to what stands.
+       */
+      BigDecimal shortQty,
+      /** The line this one stands in for, when it is a substitute the store put in the bag. */
+      UUID substitutesItemId) {
+
+    /** A line as recorded before short closes and substitutes existed. */
+    public OrderItem(
+        UUID id,
+        UUID tenantId,
+        UUID orderId,
+        UUID variantId,
+        BigDecimal qty,
+        BigDecimal unitPrice,
+        BigDecimal lineTotal,
+        String notes,
+        UUID weighingInstrumentId,
+        BigDecimal fulfilledQty,
+        BigDecimal vatAmount,
+        UUID markdownId,
+        String vatCode,
+        BigDecimal vatRate) {
+      this(
+          id,
+          tenantId,
+          orderId,
+          variantId,
+          qty,
+          unitPrice,
+          lineTotal,
+          notes,
+          weighingInstrumentId,
+          fulfilledQty,
+          vatAmount,
+          markdownId,
+          vatCode,
+          vatRate,
+          BigDecimal.ZERO,
+          null);
+    }
 
     /** A line as recorded before its VAT code and rate were kept. */
     public OrderItem(
@@ -455,9 +568,15 @@ public final class Domain {
           null);
     }
 
-    /** What is still to be handed over. */
+    /** What is still to be handed over: not yet picked, and not closed short. */
     public BigDecimal remainingQty() {
-      return qty.subtract(fulfilledQty == null ? BigDecimal.ZERO : fulfilledQty);
+      return qty.subtract(fulfilledQty == null ? BigDecimal.ZERO : fulfilledQty)
+          .subtract(shortQty == null ? BigDecimal.ZERO : shortQty);
+    }
+
+    /** What stands of the line: ordered less what was closed short. */
+    public BigDecimal standingQty() {
+      return qty.subtract(shortQty == null ? BigDecimal.ZERO : shortQty);
     }
   }
 

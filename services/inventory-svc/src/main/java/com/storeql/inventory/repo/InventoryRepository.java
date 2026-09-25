@@ -829,6 +829,80 @@ public class InventoryRepository extends BaseOutboxRepository {
         "release reservation");
   }
 
+  /**
+   * A line of an online order closed short or replaced by a substitute (substitutions for
+   * out-of-stock online lines): {@code qty} of the order's hold on the variant goes back to the
+   * shelf — the hold shrinks, or is released when nothing of it is left — as a RELEASE movement per
+   * hold, and the order's waiting line needs that much less; all on one transaction, once per
+   * event. A substitute's own draw rides the {@code OrderFulfilled} beside the event.
+   *
+   * @param released builds the {@code StockReleased} event for a hold released in full
+   * @return false when the event was already applied
+   */
+  public boolean lineClosedOnce(
+      UUID eventId,
+      String consumer,
+      UUID tenantId,
+      UUID orderId,
+      UUID variantId,
+      BigDecimal qty,
+      java.util.function.Function<UUID, OutboxRow> released) {
+    return inTx(
+        c -> {
+          if (!markProcessedIfNewTx(c, eventId, consumer)) {
+            return false;
+          }
+          List<Reservation> holds = new ArrayList<>();
+          try (PreparedStatement ps =
+              c.prepareStatement(
+                  "SELECT id, tenant_id, store_id, variant_id, qty, order_id, status, expires_at,"
+                      + " fulfilment, created_at FROM reservations WHERE tenant_id = ? AND order_id"
+                      + " = ? AND variant_id = ? AND status = 'HELD' ORDER BY created_at"
+                      + " FOR UPDATE")) {
+            ps.setObject(1, tenantId);
+            ps.setObject(2, orderId);
+            ps.setObject(3, variantId);
+            try (ResultSet rs = ps.executeQuery()) {
+              while (rs.next()) holds.add(mapReservation(rs));
+            }
+          }
+          BigDecimal left = qty;
+          for (Reservation r : holds) {
+            if (left.signum() <= 0) break;
+            BigDecimal take = left.min(r.qty());
+            insertMovement(
+                c,
+                tenantId,
+                r.storeId(),
+                r.variantId(),
+                null,
+                MoveType.RELEASE,
+                take,
+                "RESERVATION",
+                r.id(),
+                MovementAttribution.system());
+            if (take.compareTo(r.qty()) >= 0) {
+              setReservationStatus(c, r.id(), Reservation.RELEASED);
+              insertOutbox(c, released.apply(r.id()));
+            } else {
+              try (PreparedStatement ps =
+                  c.prepareStatement(
+                      "UPDATE reservations SET qty = qty - ? WHERE tenant_id = ? AND id = ?")) {
+                ps.setBigDecimal(1, take);
+                ps.setObject(2, tenantId);
+                ps.setObject(3, r.id());
+                ps.executeUpdate();
+              }
+            }
+            left = left.subtract(take);
+          }
+          WaveRepository.reduceAwaitingTx(c, tenantId, orderId, variantId, qty);
+          WaveRepository.pruneOrderTx(c, tenantId, orderId);
+          return true;
+        },
+        "order line closed");
+  }
+
   /** Find HELD reservations that have expired (for the sweeper). */
   public List<UUID> expiredHeldReservations(int limit) {
     return query(

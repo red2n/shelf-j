@@ -51,6 +51,14 @@ public final class Webhooks {
               "storeql.order.order-collected",
               "A picked pickup order was collected by its shopper"),
           new EventType(
+              "OrderLineShortClosed",
+              "storeql.order.order-line-short-closed",
+              "A line of an online order was closed short: the store could not fill it"),
+          new EventType(
+              "OrderLineSubstituted",
+              "storeql.order.order-line-substituted",
+              "A line of an online order was replaced by a substitute the store put in the bag"),
+          new EventType(
               "OrderCancelled", "storeql.order.order-cancelled", "An order was cancelled"),
           new EventType(
               "OrderReturned", "storeql.order.order-returned", "Goods came back on an order"),

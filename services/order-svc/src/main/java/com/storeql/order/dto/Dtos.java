@@ -1,6 +1,7 @@
 package com.storeql.order.dto;
 
 import jakarta.validation.Valid;
+import jakarta.validation.constraints.DecimalMin;
 import jakarta.validation.constraints.Max;
 import jakarta.validation.constraints.Min;
 import jakarta.validation.constraints.NotBlank;
@@ -109,7 +110,12 @@ public final class Dtos {
                       + " one assistant sells and another takes the money, and a shop paying"
                       + " commission pays the seller. POS only, and the operator when omitted; an"
                       + " online sale is credited to nobody.")
-          String sellerUserId) {}
+          String sellerUserId,
+      @Schema(
+              description =
+                  "Whether the store may substitute a line it cannot fill (substitutions for"
+                      + " out-of-stock online lines). On unless the shopper turns it off.")
+          Boolean allowSubstitutions) {}
 
   @Schema(
       name = "PriceOrderRequest",
@@ -143,7 +149,16 @@ public final class Dtos {
                       + " placed with server-side pricing off.")
           BigDecimal vatAmount,
       @Schema(description = "The markdown a scanned sticker priced this line at (05.4), if any.")
-          String markdownId) {}
+          String markdownId,
+      @Schema(
+              description =
+                  "How much of qty will never be handed over: closed short or replaced by a"
+                      + " substitute (substitutions for out-of-stock online lines).")
+          BigDecimal shortQty,
+      @Schema(description = "qty less what was handed over and what was closed short.")
+          BigDecimal outstandingQty,
+      @Schema(description = "The line this one stands in for, when it is a substitute.")
+          String substitutesItemId) {}
 
   @Schema(
       name = "FulfilRequest",
@@ -225,7 +240,12 @@ public final class Dtos {
               description =
                   "How a picked online order was handed over (ship-from-store): dispatched to a"
                       + " carrier, or collected by its shopper. Absent until it is.")
-          HandoverResponse handover) {}
+          HandoverResponse handover,
+      @Schema(
+              description =
+                  "Whether the shopper allows the store to substitute a line it cannot fill;"
+                      + " their choice at checkout.")
+          Boolean allowSubstitutions) {}
 
   @Schema(
       name = "DispatchRequest",
@@ -245,6 +265,65 @@ public final class Dtos {
   public record CollectRequest(
       @Schema(description = "Who took it, when staff noted it.") @Size(max = 120)
           String collectedBy) {}
+
+  @Schema(
+      name = "ShortCloseRequest",
+      description =
+          "Close a line short (substitutions for out-of-stock online lines): the quantity that will"
+              + " never be handed over comes off the order and the money for it goes back.")
+  public record ShortCloseRequest(
+      @Schema(description = "How much to close; everything still outstanding when omitted.")
+          @DecimalMin("0.001")
+          BigDecimal qty,
+      @Schema(description = "Why, for the history.") @Size(max = 200) String reason) {}
+
+  @Schema(
+      name = "SubstituteRequest",
+      description =
+          "Put a substitute in the bag for a line the store cannot fill: a new line, charged at no"
+              + " more than the original, the original closed short for the quantity.")
+  public record SubstituteRequest(
+      @Schema(description = "The variant put in the bag.") @NotBlank String substituteVariantId,
+      @Schema(description = "How much; everything still outstanding when omitted.")
+          @DecimalMin("0.001")
+          BigDecimal qty,
+      @Schema(
+              description =
+                  "The substitute's net unit price, only when server-side pricing is off; ignored"
+                      + " otherwise.")
+          BigDecimal unitPrice,
+      @Schema(description = "Why, for the history.") @Size(max = 200) String reason) {}
+
+  @Schema(
+      name = "SubstituteSuggestionResponse",
+      description =
+          "A stand-in the business declared for a line's product, with what the order's store has"
+              + " of it.")
+  public record SubstituteSuggestionResponse(
+      String variantId, String productName, String sku, BigDecimal available) {}
+
+  @Schema(
+      name = "OwingLineResponse",
+      description = "A line of an online order the store still owes something on.")
+  public record OwingLineResponse(
+      String variantId,
+      BigDecimal qty,
+      BigDecimal fulfilledQty,
+      BigDecimal shortQty,
+      BigDecimal outstandingQty) {}
+
+  @Schema(
+      name = "OwingOrderResponse",
+      description =
+          "An online order at the store still owing something — confirmed or part-picked — with"
+              + " the lines it owes and whether the shopper allows substitutions.")
+  public record OwingOrderResponse(
+      String orderId,
+      String status,
+      String fulfilmentType,
+      boolean allowSubstitutions,
+      String createdAt,
+      List<OwingLineResponse> lines) {}
 
   @Schema(
       name = "HandoverResponse",
@@ -367,7 +446,12 @@ public final class Dtos {
               description =
                   "How a picked online order was handed over (ship-from-store); absent until it"
                       + " is.")
-          HandoverResponse handover) {}
+          HandoverResponse handover,
+      @Schema(
+              description =
+                  "Whether the shopper allows the store to substitute a line it cannot fill;"
+                      + " their choice at checkout.")
+          Boolean allowSubstitutions) {}
 
   @Schema(name = "VoidRequest")
   public record VoidRequest(

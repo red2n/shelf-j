@@ -25,6 +25,11 @@ const _dc = '01a0d930-0000-7000-8000-0000000000d1';
 const _packed = '01a0d930-0000-7000-8000-0000000000f1';
 const _ready = '01a0d930-0000-7000-8000-0000000000f2';
 const _gone = '01a0d930-0000-7000-8000-0000000000f3';
+const _owing = '01a0d930-0000-7000-8000-0000000000f4';
+const _noSubs = '01a0d930-0000-7000-8000-0000000000f5';
+const _apples = '01a0d930-0000-7000-8000-0000000000a1';
+const _pears = '01a0d930-0000-7000-8000-0000000000a2';
+const _plums = '01a0d930-0000-7000-8000-0000000000a3';
 
 class _Server implements HttpClientAdapter {
   final List<RequestOptions> requests = [];
@@ -48,6 +53,26 @@ class _Server implements HttpClientAdapter {
           '{"id":"$_leeds","name":"Leeds","code":"LDS","type":"STORE","status":"ACTIVE"},'
           '{"id":"$_dark","name":"Online hub","code":"HUB","type":"DARK_STORE","status":"ACTIVE"}'
           '],"meta":{"nextCursor":null}}');
+    }
+    if (path.endsWith('/orders/owing')) {
+      return jsonResponse('{"data":['
+          '{"orderId":"$_owing","status":"CONFIRMED","fulfilmentType":"DELIVERY","allowSubstitutions":true,'
+          '"createdAt":"2026-09-25T09:00:00Z","lines":[{"variantId":"$_apples","qty":3,"fulfilledQty":1,"shortQty":0,"outstandingQty":2}]},'
+          '{"orderId":"$_noSubs","status":"CONFIRMED","fulfilmentType":"PICKUP","allowSubstitutions":false,'
+          '"createdAt":"2026-09-25T09:05:00Z","lines":[{"variantId":"$_apples","qty":1,"fulfilledQty":0,"shortQty":0,"outstandingQty":1}]}'
+          ']}');
+    }
+    if (path.endsWith('/lines/$_apples/substitutes')) {
+      return jsonResponse('{"data":['
+          '{"variantId":"$_pears","productName":"Pears","sku":"PEA","available":5},'
+          '{"variantId":"$_plums","productName":"Plums","sku":"PLU","available":0}'
+          ']}');
+    }
+    if (path.endsWith('/admin/products/variants/resolve')) {
+      return jsonResponse('{"data":[{"variantId":"$_apples","productName":"Apples","sku":"APL"}]}');
+    }
+    if (path.endsWith('/short') || path.endsWith('/substitute')) {
+      return jsonResponse('{"data":${_order(_owing, 'DELIVERY')}}');
     }
     if (path.endsWith('/waves/awaiting')) {
       return jsonResponse('{"data":[{"orderId":"a"},{"orderId":"b"},{"orderId":"c"}]}');
@@ -129,5 +154,54 @@ void main() {
     await tester.pumpAndSettle();
     final post = server.requests.singleWhere((r) => r.method == 'POST' && r.path.endsWith('/orders/$_ready/collect'));
     expect(_body(post), {'collectedBy': 'Sam Shopper'});
+  });
+
+  // ── substitutions for out-of-stock online lines ────────────────────────────
+
+  testWidgets('outstanding lines are listed by name, and Substitute posts the chosen stand-in',
+      (tester) async {
+    final server = await _open(tester);
+    expect(find.byKey(const Key('owing-count')), findsOneWidget);
+    expect(find.text('2 of 3 outstanding'), findsOneWidget);
+    expect(find.text('Apples'), findsNWidgets(2), reason: 'names, not ids');
+    expect(find.byKey(const Key('substitute-$_owing-$_apples')), findsOneWidget);
+    expect(find.byKey(const Key('substitute-$_noSubs-$_apples')), findsNothing,
+        reason: 'the shopper said no: only Short is offered');
+    expect(find.byKey(const Key('short-$_noSubs-$_apples')), findsOneWidget);
+    await tester.tap(find.byKey(const Key('substitute-$_owing-$_apples')));
+    await tester.pumpAndSettle();
+    expect(find.text('Pears'), findsOneWidget);
+    expect(find.text('PEA · 5 available'), findsOneWidget);
+    await tester.tap(find.byKey(const Key('substitute-save')));
+    await tester.pumpAndSettle();
+    expect(find.text('Say what you packed.'), findsOneWidget);
+    await tester.tap(find.byKey(const Key('suggestion-$_pears')));
+    await tester.pumpAndSettle();
+    await tester.tap(find.byKey(const Key('substitute-save')));
+    await tester.pumpAndSettle();
+    final post = server.requests.singleWhere(
+        (r) => r.method == 'POST' && r.path.endsWith('/orders/$_owing/lines/$_apples/substitute'));
+    expect(_body(post), {'substituteVariantId': _pears, 'qty': 2});
+    expect(post.headers['Idempotency-Key'], isNotNull);
+    expect(find.text('Substituted. The shopper is told and pays no more.'), findsOneWidget);
+  });
+
+  testWidgets('Short posts the quantity and reason, at most what the line still owes',
+      (tester) async {
+    final server = await _open(tester);
+    await tester.tap(find.byKey(const Key('short-$_owing-$_apples')));
+    await tester.pumpAndSettle();
+    await tester.enterText(find.byKey(const Key('short-qty')), '5');
+    await tester.tap(find.byKey(const Key('short-save')));
+    await tester.pumpAndSettle();
+    expect(find.byKey(const Key('short-error')), findsOneWidget);
+    await tester.enterText(find.byKey(const Key('short-qty')), '1');
+    await tester.enterText(find.byKey(const Key('short-reason')), 'last one bruised');
+    await tester.tap(find.byKey(const Key('short-save')));
+    await tester.pumpAndSettle();
+    final post = server.requests.singleWhere(
+        (r) => r.method == 'POST' && r.path.endsWith('/orders/$_owing/lines/$_apples/short'));
+    expect(_body(post), {'qty': 1, 'reason': 'last one bruised'});
+    expect(find.text('Closed short. The shopper is told and refunded.'), findsOneWidget);
   });
 }

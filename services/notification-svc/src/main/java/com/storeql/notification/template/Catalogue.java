@@ -212,6 +212,82 @@ public final class Catalogue {
                   .text("reference", "15501234567890")
                   .text("shop", "Hollins Grocers"));
 
+  /** Substitutions for out-of-stock online lines: an item the store could not include. */
+  static final MessageType ORDER_LINE_SHORT =
+      new MessageType(
+          "ORDER_LINE_SHORT",
+          "Item unavailable",
+          Audience.CUSTOMER,
+          "Sent to a shopper with an account when the store closes a line of their online order"
+              + " short: what they will not get, and what goes back to them for it.",
+          List.of(
+              v("order", "TEXT", "The order's reference"),
+              v("item", "TEXT", "The product the store could not include"),
+              v("qty", "TEXT", "How many of it"),
+              v("refund", "MONEY", "What goes back to the shopper, when anything does"),
+              SHOP),
+          List.of(
+              new FormSpec(
+                  Form.EMAIL,
+                  "An item in your order was unavailable",
+                  "We could not include {{qty}} × {{item}} in your order {{order}}.{{#refund}}\n"
+                      + "{{refund}} goes back to the way you paid.{{/refund}}\n\n— {{shop}}",
+                  List.of(Set.of("order"), Set.of("item"))),
+              new FormSpec(
+                  Form.PUSH,
+                  "Item unavailable",
+                  "{{item}} was unavailable for order {{order}}{{#refund}} — {{refund}}"
+                      + " refunded{{/refund}}",
+                  List.of(Set.of("order")))),
+          () ->
+              Values.of()
+                  .text("order", "01a0c42a-11a0-76f6-a69f-c3297150342e")
+                  .text("item", "Braeburn apples 1kg")
+                  .text("qty", "2")
+                  .money("refund", new BigDecimal("3.80"), "GBP")
+                  .text("shop", "Hollins Grocers"));
+
+  /** Substitutions for out-of-stock online lines: a stand-in went in the bag. */
+  static final MessageType ORDER_LINE_SUBSTITUTED =
+      new MessageType(
+          "ORDER_LINE_SUBSTITUTED",
+          "Item substituted",
+          Audience.CUSTOMER,
+          "Sent to a shopper with an account when the store puts a substitute in their online"
+              + " order for a line it could not fill: what was swapped for what, that they pay no"
+              + " more, and what goes back when the substitute cost less.",
+          List.of(
+              v("order", "TEXT", "The order's reference"),
+              v("item", "TEXT", "The product that was unavailable"),
+              v("substitute", "TEXT", "What went in the bag instead"),
+              v("qty", "TEXT", "How many"),
+              v("refund", "MONEY", "The difference going back, when the substitute cost less"),
+              SHOP),
+          List.of(
+              new FormSpec(
+                  Form.EMAIL,
+                  "We substituted an item in your order",
+                  "{{item}} was unavailable, so your order {{order}} has {{qty}} × {{substitute}}"
+                      + " instead. You pay no more than you did{{#refund}}, and {{refund}} goes"
+                      + " back to the way you paid{{/refund}}.\n\nIf you would rather not keep it,"
+                      + " hand it back when you collect or to the driver and it is refunded.\n\n—"
+                      + " {{shop}}",
+                  List.of(Set.of("order"), Set.of("item"), Set.of("substitute"))),
+              new FormSpec(
+                  Form.PUSH,
+                  "Item substituted",
+                  "{{substitute}} replaces {{item}} in order {{order}}{{#refund}} — {{refund}}"
+                      + " refunded{{/refund}}",
+                  List.of(Set.of("order")))),
+          () ->
+              Values.of()
+                  .text("order", "01a0c42a-11a0-76f6-a69f-c3297150342e")
+                  .text("item", "Braeburn apples 1kg")
+                  .text("substitute", "Gala apples 1kg")
+                  .text("qty", "2")
+                  .money("refund", new BigDecimal("0.40"), "GBP")
+                  .text("shop", "Hollins Grocers"));
+
   /** GPSR (EU) 2023/988 art.36(2): the parts a recall notice to a buyer must have. */
   private static final Set<String> RECALL_REMEDY =
       Set.of("remedies", "remedy_refund", "remedy_replacement", "remedy_repair");
@@ -736,6 +812,8 @@ public final class Catalogue {
             ORDER_CONFIRMED,
             ORDER_READY_FOR_COLLECTION,
             ORDER_DISPATCHED,
+            ORDER_LINE_SHORT,
+            ORDER_LINE_SUBSTITUTED,
             RECALL_NOTICE,
             SUPPLIER_REMITTANCE,
             STOCK_BELOW_THRESHOLD,

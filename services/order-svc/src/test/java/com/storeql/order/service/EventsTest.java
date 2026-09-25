@@ -351,4 +351,77 @@ class EventsTest {
     assertEquals(true, quiet.isNull("collectedBy"));
     assertEquals(true, quiet.isNull("loginId"));
   }
+
+  // ── substitutions for out-of-stock online lines ────────────────────────────
+
+  @Test
+  void aLineClosedShortOrSubstitutedNamesTheOrderTheBuyerAndTheMoney() {
+    UUID customer = Ids.newId();
+    UUID login = Ids.newId();
+    var order =
+        new com.storeql.order.domain.Domain.Order(
+            ORDER,
+            TENANT,
+            STORE,
+            customer,
+            login,
+            "ONLINE",
+            "DELIVERY",
+            "PARTIALLY_FULFILLED",
+            new BigDecimal("8.00"),
+            new BigDecimal("1.60"),
+            BigDecimal.ZERO,
+            new BigDecimal("9.60"),
+            "GBP",
+            null,
+            null,
+            Instant.now(),
+            Instant.now(),
+            false,
+            null,
+            null,
+            null,
+            null,
+            null,
+            null,
+            null,
+            null,
+            null,
+            BigDecimal.ZERO,
+            null,
+            true);
+    var closed =
+        Events.orderLineShortClosed(
+            order, VARIANT, "Apples", new BigDecimal("1"), new BigDecimal("2.40"));
+    assertEquals("OrderLineShortClosed", closed.eventType());
+    assertEquals("storeql.order.order-line-short-closed", closed.topic());
+    JsonObject c = Json.createReader(new StringReader(closed.payload())).readObject();
+    assertDoesNotThrow(() -> Ids.parse(c.getString("eventId")));
+    assertEquals(customer.toString(), c.getString("customerId"));
+    assertEquals(login.toString(), c.getString("loginId"));
+    assertEquals(VARIANT.toString(), c.getString("variantId"));
+    assertEquals("Apples", c.getString("variantName"));
+    assertEquals("2.40", c.getJsonNumber("refundAmount").toString());
+    assertEquals("9.60", c.getJsonNumber("orderTotal").toString());
+    assertEquals("GBP", c.getString("currency"));
+    assertEquals("DELIVERY", c.getString("fulfilmentType"));
+
+    UUID pears = Ids.newId();
+    var swapped =
+        Events.orderLineSubstituted(
+            order,
+            VARIANT,
+            "Apples",
+            pears,
+            null,
+            new BigDecimal("2"),
+            new BigDecimal("4.80"),
+            BigDecimal.ZERO);
+    assertEquals("storeql.order.order-line-substituted", swapped.topic());
+    JsonObject w = Json.createReader(new StringReader(swapped.payload())).readObject();
+    assertEquals(pears.toString(), w.getString("toVariantId"));
+    assertEquals(true, w.isNull("toName"));
+    assertEquals("4.80", w.getJsonNumber("chargedAmount").toString());
+    assertEquals("0", w.getJsonNumber("refundAmount").toString());
+  }
 }

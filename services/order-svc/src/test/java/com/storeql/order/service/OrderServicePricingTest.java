@@ -113,6 +113,7 @@ class OrderServicePricingTest {
         null,
         null,
         null,
+        null,
         null);
   }
 
@@ -347,6 +348,7 @@ class OrderServicePricingTest {
         null,
         null,
         "USD",
+        null,
         null,
         null,
         null,

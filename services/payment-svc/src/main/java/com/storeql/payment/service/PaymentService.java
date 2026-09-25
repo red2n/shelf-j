@@ -496,6 +496,22 @@ public class PaymentService {
       UUID orderId,
       BigDecimal requestedAmount,
       String reason) {
+    refundForOrderEvent(eventId, consumer, tenantId, orderId, requestedAmount, reason, null);
+  }
+
+  /**
+   * As above, naming the refund's {@code kind} on the event: {@code ORDER_ADJUSTMENT} for a line
+   * closed short or substituted (substitutions for out-of-stock online lines), so order-svc records
+   * the money without moving the order's status; null for a return or a cancellation.
+   */
+  public void refundForOrderEvent(
+      UUID eventId,
+      String consumer,
+      UUID tenantId,
+      UUID orderId,
+      BigDecimal requestedAmount,
+      String reason,
+      String kind) {
     UUID refundBatchId = Ids.newId();
     repo.refundOrderOnce(
         eventId,
@@ -504,6 +520,7 @@ public class PaymentService {
         orderId,
         requestedAmount,
         reason,
-        (amt, shares) -> Events.paymentRefunded(tenantId, refundBatchId, orderId, amt, shares));
+        (amt, shares) ->
+            Events.paymentRefunded(tenantId, refundBatchId, orderId, amt, shares, kind));
   }
 }

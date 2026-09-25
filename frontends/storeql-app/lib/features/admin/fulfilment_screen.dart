@@ -1,8 +1,10 @@
+import 'package:dio/dio.dart';
 import 'package:flutter/material.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:flutter_riverpod/legacy.dart';
 import '../../core/constants.dart';
 import '../../core/format.dart';
+import '../../core/ids.dart';
 import '../../core/network/api_client.dart';
 import '../../core/network/api_error.dart';
 import '../../core/spacing.dart';
@@ -19,6 +21,9 @@ import 'providers/admin_providers.dart';
 // ready and waiting for its shopper, and what was handed over today. A pick
 // leaves an order FULFILLED — picked and packed; the handover after it is
 // recorded here: Dispatch (carrier, reference, parcels) or Collected.
+// Substitutions for out-of-stock online lines: what a confirmed order still
+// owes is listed too, and a picker who finds a line short either puts a
+// substitute in the bag (where the shopper allowed it) or closes the line short.
 // ---------------------------------------------------------------------------
 
 const _orders = '/${ApiConstants.order}/orders';
@@ -89,8 +94,118 @@ class QueuedOrder {
   }
 }
 
+/// A line an online order still owes (substitutions for out-of-stock online lines).
+class OwingLine {
+  final String variantId;
+  final double qty;
+  final double fulfilledQty;
+  final double shortQty;
+  final double outstandingQty;
+
+  const OwingLine({
+    required this.variantId,
+    required this.qty,
+    required this.fulfilledQty,
+    required this.shortQty,
+    required this.outstandingQty,
+  });
+
+  factory OwingLine.fromJson(Map<String, dynamic> j) => OwingLine(
+        variantId: j['variantId'] as String? ?? '',
+        qty: (j['qty'] as num?)?.toDouble() ?? 0,
+        fulfilledQty: (j['fulfilledQty'] as num?)?.toDouble() ?? 0,
+        shortQty: (j['shortQty'] as num?)?.toDouble() ?? 0,
+        outstandingQty: (j['outstandingQty'] as num?)?.toDouble() ?? 0,
+      );
+}
+
+/// A confirmed or part-picked online order with the lines it still owes.
+class OwingOrder {
+  final String id;
+  final String status;
+  final String fulfilmentType;
+  final bool allowSubstitutions;
+  final String createdAt;
+  final List<OwingLine> lines;
+
+  const OwingOrder({
+    required this.id,
+    required this.status,
+    required this.fulfilmentType,
+    required this.allowSubstitutions,
+    required this.createdAt,
+    required this.lines,
+  });
+
+  factory OwingOrder.fromJson(Map<String, dynamic> j) => OwingOrder(
+        id: j['orderId'] as String? ?? '',
+        status: j['status'] as String? ?? '',
+        fulfilmentType: j['fulfilmentType'] as String? ?? '',
+        allowSubstitutions: j['allowSubstitutions'] as bool? ?? true,
+        createdAt: j['createdAt'] as String? ?? '',
+        lines: ((j['lines'] as List?) ?? const [])
+            .map((e) => OwingLine.fromJson(e as Map<String, dynamic>))
+            .toList(),
+      );
+}
+
+/// A stand-in the business declared for a line's product, with what the store has of it.
+class SubstituteSuggestion {
+  final String variantId;
+  final String productName;
+  final String sku;
+  final double available;
+
+  const SubstituteSuggestion({
+    required this.variantId,
+    required this.productName,
+    required this.sku,
+    required this.available,
+  });
+
+  factory SubstituteSuggestion.fromJson(Map<String, dynamic> j) => SubstituteSuggestion(
+        variantId: j['variantId'] as String? ?? '',
+        productName: j['productName'] as String? ?? '',
+        sku: j['sku'] as String? ?? '',
+        available: (j['available'] as num?)?.toDouble() ?? 0,
+      );
+}
+
 /// The store whose queue is shown; null until the stores are known.
 final fulfilmentStoreProvider = StateProvider<String?>((ref) => null);
+
+/// What the store's confirmed online orders still owe, oldest first.
+final owingProvider =
+    FutureProvider.autoDispose.family<List<OwingOrder>, String>((ref, storeId) async {
+  final resp = await ref
+      .read(apiClientProvider)
+      .dio
+      .get('$_orders/owing', queryParameters: {'store': storeId});
+  return ((resp.data['data'] as List?) ?? const [])
+      .map((e) => OwingOrder.fromJson(e as Map<String, dynamic>))
+      .toList();
+});
+
+/// The declared stand-ins for a line, most available first; none when product-svc lists none.
+Future<List<SubstituteSuggestion>> _suggestions(
+    WidgetRef ref, String orderId, String variantId) async {
+  try {
+    final resp = await ref
+        .read(apiClientProvider)
+        .dio
+        .get('$_orders/$orderId/lines/$variantId/substitutes');
+    return ((resp.data['data'] as List?) ?? const [])
+        .map((e) => SubstituteSuggestion.fromJson(e as Map<String, dynamic>))
+        .toList();
+  } catch (_) {
+    return const [];
+  }
+}
+
+/// A quantity as a person writes it: 2, not 2.0; 1.5 stays 1.5.
+String qtyText(double q) => q == q.roundToDouble() ? q.toStringAsFixed(0) : q.toString();
+
+num _qtyNumber(double q) => q == q.roundToDouble() ? q.toInt() : q;
 
 Future<List<QueuedOrder>> _queue(Ref ref, Map<String, dynamic> query) async {
   final resp = await ref
@@ -194,6 +309,8 @@ class FulfilmentScreen extends ConsumerWidget {
             const SizedBox(height: AppSpacing.lg),
             _ToPick(storeId: store.id),
             const SizedBox(height: AppSpacing.lg),
+            _Outstanding(storeId: store.id),
+            const SizedBox(height: AppSpacing.lg),
             _Stage(
               title: 'Packed — awaiting courier',
               icon: Icons.inventory_2_outlined,
@@ -238,6 +355,7 @@ class FulfilmentScreen extends ConsumerWidget {
 
   static void _refresh(WidgetRef ref, String storeId) {
     ref.invalidate(awaitingPickCountProvider(storeId));
+    ref.invalidate(owingProvider(storeId));
     ref.invalidate(packedProvider(storeId));
     ref.invalidate(readyProvider(storeId));
     ref.invalidate(handedOverTodayProvider(storeId));
@@ -266,20 +384,327 @@ class FulfilmentScreen extends ConsumerWidget {
         {if (who.trim().isNotEmpty) 'collectedBy': who.trim()}, 'Collected.', o.storeId);
   }
 
-  Future<void> _post(BuildContext context, WidgetRef ref, String path, Map<String, dynamic> body,
-      String done, String storeId) async {
+  static Future<void> _post(BuildContext context, WidgetRef ref, String path,
+      Map<String, dynamic> body, String done, String storeId,
+      {String fallback = 'Could not record the handover.'}) async {
     final messenger = ScaffoldMessenger.of(context);
     final errorColor = Theme.of(context).colorScheme.error;
     try {
-      await ref.read(apiClientProvider).dio.post(path, data: body);
+      // Once per attempt: a retried tap must not close or substitute a line twice.
+      await ref.read(apiClientProvider).dio.post(path,
+          data: body, options: Options(headers: {'Idempotency-Key': newId()}));
       _refresh(ref, storeId);
       messenger.showSnackBar(SnackBar(content: Text(done)));
     } catch (e) {
       messenger.showSnackBar(SnackBar(
-        content: Text(friendlyError(e, fallback: 'Could not record the handover.')),
+        content: Text(friendlyError(e, fallback: fallback)),
         backgroundColor: errorColor,
       ));
     }
+  }
+}
+
+/// What the store's confirmed online orders still owe, line by line, and what a picker does about
+/// a line the shelf cannot fill: a substitute where the shopper allowed one, else closing it short.
+class _Outstanding extends ConsumerWidget {
+  final String storeId;
+  const _Outstanding({required this.storeId});
+
+  @override
+  Widget build(BuildContext context, WidgetRef ref) {
+    final cs = Theme.of(context).colorScheme;
+    final owing = ref.watch(owingProvider(storeId));
+    final ids = owing.value?.expand((o) => o.lines.map((l) => l.variantId)) ?? const <String>[];
+    final labels = ref.watch(variantLabelsProvider(variantIdsKey(ids))).value ?? const {};
+    return Column(
+      crossAxisAlignment: CrossAxisAlignment.stretch,
+      children: [
+        Row(children: [
+          Icon(Icons.rule_outlined, size: 18, color: cs.onSurfaceVariant),
+          const SizedBox(width: AppSpacing.sm),
+          Text('Outstanding lines', style: Theme.of(context).textTheme.titleMedium),
+          const SizedBox(width: AppSpacing.sm),
+          if (owing.value != null)
+            Text('${owing.value!.length}',
+                key: const Key('owing-count'), style: TextStyle(color: cs.onSurfaceVariant)),
+        ]),
+        const SizedBox(height: AppSpacing.sm),
+        owing.when(
+          loading: () => const LoadingView(),
+          error: (e, _) => ErrorView(
+            message: friendlyError(e, fallback: 'Could not load what is owed.'),
+            onRetry: () => ref.invalidate(owingProvider(storeId)),
+          ),
+          data: (list) => list.isEmpty
+              ? Text('Nothing is owed: every confirmed order is picked or closed.',
+                  style: TextStyle(color: cs.onSurfaceVariant))
+              : Column(
+                  children: [
+                    for (final o in list)
+                      Card(
+                        key: Key('owing-${o.id}'),
+                        child: Column(
+                          crossAxisAlignment: CrossAxisAlignment.stretch,
+                          children: [
+                            ListTile(
+                              title: Text('Order #${shortRef(o.id)}'),
+                              subtitle: Text(
+                                '${o.fulfilmentType == 'DELIVERY' ? 'Delivery' : 'Collection'} · '
+                                'placed ${AppFormat.dateTime(o.createdAt)} · '
+                                '${o.allowSubstitutions ? 'substitutions allowed' : 'no substitutions'}',
+                              ),
+                            ),
+                            for (final l in o.lines)
+                              ListTile(
+                                dense: true,
+                                title: Text(variantDisplayName(l.variantId, labels)),
+                                subtitle: Text(
+                                    '${qtyText(l.outstandingQty)} of ${qtyText(l.qty)} outstanding'),
+                                trailing: Wrap(spacing: AppSpacing.sm, children: [
+                                  if (o.allowSubstitutions)
+                                    OutlinedButton(
+                                      key: Key('substitute-${o.id}-${l.variantId}'),
+                                      onPressed: () => _substitute(context, ref, o, l),
+                                      child: const Text('Substitute'),
+                                    ),
+                                  TextButton(
+                                    key: Key('short-${o.id}-${l.variantId}'),
+                                    onPressed: () => _short(context, ref, o, l),
+                                    child: const Text('Short'),
+                                  ),
+                                ]),
+                              ),
+                          ],
+                        ),
+                      ),
+                  ],
+                ),
+        ),
+      ],
+    );
+  }
+
+  Future<void> _substitute(
+      BuildContext context, WidgetRef ref, OwingOrder o, OwingLine l) async {
+    final suggestions = await _suggestions(ref, o.id, l.variantId);
+    if (!context.mounted) return;
+    final result = await showDialog<_SubstituteInput>(
+      context: context,
+      builder: (_) => _SubstituteDialog(outstanding: l.outstandingQty, suggestions: suggestions),
+    );
+    if (result == null || !context.mounted) return;
+    await FulfilmentScreen._post(
+      context,
+      ref,
+      '$_orders/${o.id}/lines/${l.variantId}/substitute',
+      {
+        'substituteVariantId': result.variantId,
+        'qty': _qtyNumber(result.qty),
+        if (result.reason.isNotEmpty) 'reason': result.reason,
+      },
+      'Substituted. The shopper is told and pays no more.',
+      storeId,
+      fallback: 'Could not substitute the line.',
+    );
+  }
+
+  Future<void> _short(BuildContext context, WidgetRef ref, OwingOrder o, OwingLine l) async {
+    final result = await showDialog<_ShortInput>(
+      context: context,
+      builder: (_) => _ShortDialog(outstanding: l.outstandingQty),
+    );
+    if (result == null || !context.mounted) return;
+    await FulfilmentScreen._post(
+      context,
+      ref,
+      '$_orders/${o.id}/lines/${l.variantId}/short',
+      {'qty': _qtyNumber(result.qty), if (result.reason.isNotEmpty) 'reason': result.reason},
+      'Closed short. The shopper is told and refunded.',
+      storeId,
+      fallback: 'Could not close the line short.',
+    );
+  }
+}
+
+class _SubstituteInput {
+  final String variantId;
+  final double qty;
+  final String reason;
+  const _SubstituteInput(this.variantId, this.qty, this.reason);
+}
+
+/// Which stand-in went in the bag, and how many: a declared one from the list, or any variant
+/// the picker names; at most what the line still owes.
+class _SubstituteDialog extends StatefulWidget {
+  final double outstanding;
+  final List<SubstituteSuggestion> suggestions;
+  const _SubstituteDialog({required this.outstanding, required this.suggestions});
+
+  @override
+  State<_SubstituteDialog> createState() => _SubstituteDialogState();
+}
+
+class _SubstituteDialogState extends State<_SubstituteDialog> {
+  final _variant = TextEditingController();
+  late final _qty = TextEditingController(text: qtyText(widget.outstanding));
+  final _reason = TextEditingController();
+  String? _chosen;
+  String? _error;
+
+  @override
+  void dispose() {
+    _variant.dispose();
+    _qty.dispose();
+    _reason.dispose();
+    super.dispose();
+  }
+
+  @override
+  Widget build(BuildContext context) {
+    final cs = Theme.of(context).colorScheme;
+    return AlertDialog(
+      title: const Text('Substitute'),
+      content: SingleChildScrollView(
+        child: Column(mainAxisSize: MainAxisSize.min, children: [
+          if (widget.suggestions.isEmpty)
+            Text(
+              'No stand-ins are declared for this product. Enter the variant id of what you packed.',
+              style: TextStyle(color: cs.onSurfaceVariant),
+            ),
+          for (final s in widget.suggestions)
+            ListTile(
+              key: Key('suggestion-${s.variantId}'),
+              dense: true,
+              contentPadding: EdgeInsets.zero,
+              selected: _chosen == s.variantId,
+              leading: Icon(_chosen == s.variantId
+                  ? Icons.radio_button_checked
+                  : Icons.radio_button_off),
+              title: Text(s.productName.isEmpty ? '…${shortRef(s.variantId)}' : s.productName),
+              subtitle: Text('${s.sku.isEmpty ? '' : '${s.sku} · '}${qtyText(s.available)} available'),
+              onTap: () => setState(() {
+                _chosen = s.variantId;
+                _variant.text = s.variantId;
+              }),
+            ),
+          TextField(
+            key: const Key('substitute-variant'),
+            controller: _variant,
+            decoration: const InputDecoration(labelText: 'Variant id of what you packed'),
+            onChanged: (_) => setState(() => _chosen = null),
+          ),
+          TextField(
+            key: const Key('substitute-qty'),
+            controller: _qty,
+            keyboardType: const TextInputType.numberWithOptions(decimal: true),
+            decoration: InputDecoration(
+                labelText: 'Quantity', helperText: '${qtyText(widget.outstanding)} outstanding'),
+          ),
+          TextField(
+            key: const Key('substitute-reason'),
+            controller: _reason,
+            decoration: const InputDecoration(labelText: 'Reason (optional)'),
+          ),
+          if (_error != null) ...[
+            const SizedBox(height: AppSpacing.sm),
+            Text(_error!, key: const Key('substitute-error'), style: TextStyle(color: cs.error)),
+          ],
+        ]),
+      ),
+      actions: [
+        TextButton(onPressed: () => Navigator.pop(context), child: const Text('Cancel')),
+        FilledButton(
+          key: const Key('substitute-save'),
+          onPressed: () {
+            final variant = _variant.text.trim();
+            final qty = double.tryParse(_qty.text.trim());
+            if (variant.isEmpty) {
+              setState(() => _error = 'Say what you packed.');
+              return;
+            }
+            if (qty == null || qty <= 0 || qty > widget.outstanding) {
+              setState(() => _error =
+                  'Between 0 and ${qtyText(widget.outstanding)}, what the line still owes.');
+              return;
+            }
+            Navigator.pop(context, _SubstituteInput(variant, qty, _reason.text.trim()));
+          },
+          child: const Text('Substituted'),
+        ),
+      ],
+    );
+  }
+}
+
+class _ShortInput {
+  final double qty;
+  final String reason;
+  const _ShortInput(this.qty, this.reason);
+}
+
+/// How much of the line will never be handed over, and why.
+class _ShortDialog extends StatefulWidget {
+  final double outstanding;
+  const _ShortDialog({required this.outstanding});
+
+  @override
+  State<_ShortDialog> createState() => _ShortDialogState();
+}
+
+class _ShortDialogState extends State<_ShortDialog> {
+  late final _qty = TextEditingController(text: qtyText(widget.outstanding));
+  final _reason = TextEditingController();
+  String? _error;
+
+  @override
+  void dispose() {
+    _qty.dispose();
+    _reason.dispose();
+    super.dispose();
+  }
+
+  @override
+  Widget build(BuildContext context) {
+    final cs = Theme.of(context).colorScheme;
+    return AlertDialog(
+      title: const Text('Close short'),
+      content: Column(mainAxisSize: MainAxisSize.min, children: [
+        Text('The shopper is refunded for what they will not get.',
+            style: TextStyle(color: cs.onSurfaceVariant)),
+        TextField(
+          key: const Key('short-qty'),
+          controller: _qty,
+          keyboardType: const TextInputType.numberWithOptions(decimal: true),
+          decoration: InputDecoration(
+              labelText: 'Quantity', helperText: '${qtyText(widget.outstanding)} outstanding'),
+        ),
+        TextField(
+          key: const Key('short-reason'),
+          controller: _reason,
+          decoration: const InputDecoration(labelText: 'Reason (optional)'),
+        ),
+        if (_error != null) ...[
+          const SizedBox(height: AppSpacing.sm),
+          Text(_error!, key: const Key('short-error'), style: TextStyle(color: cs.error)),
+        ],
+      ]),
+      actions: [
+        TextButton(onPressed: () => Navigator.pop(context), child: const Text('Cancel')),
+        FilledButton(
+          key: const Key('short-save'),
+          onPressed: () {
+            final qty = double.tryParse(_qty.text.trim());
+            if (qty == null || qty <= 0 || qty > widget.outstanding) {
+              setState(() => _error =
+                  'Between 0 and ${qtyText(widget.outstanding)}, what the line still owes.');
+              return;
+            }
+            Navigator.pop(context, _ShortInput(qty, _reason.text.trim()));
+          },
+          child: const Text('Close short'),
+        ),
+      ],
+    );
   }
 }
 

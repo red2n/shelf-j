@@ -5,6 +5,7 @@ import static com.storeql.events.EventPayload.esc;
 import com.storeql.ids.Ids;
 import com.storeql.order.domain.Domain.GiftCard;
 import com.storeql.order.domain.Domain.GiftCardTransaction;
+import com.storeql.order.domain.Domain.Order;
 import com.storeql.order.domain.Domain.OrderItem;
 import com.storeql.order.domain.Domain.ReturnItem;
 import com.storeql.order.domain.RecallNotice.Line;
@@ -377,6 +378,92 @@ public final class Events {
         + (customerId == null ? "null" : "\"" + customerId + "\"")
         + ",\"loginId\":"
         + (loginId == null ? "null" : "\"" + loginId + "\"");
+  }
+
+  /**
+   * A line of an online order closed short by the store (substitutions for out-of-stock online
+   * lines): the quantity that will never be handed over, what goes back to the shopper, and the
+   * order's total now. inventory-svc releases the hold and shortens the waiting line, payment-svc
+   * refunds, notification-svc tells the shopper.
+   */
+  static OutboxRow orderLineShortClosed(
+      Order order, UUID variantId, String variantName, BigDecimal qty, BigDecimal refund) {
+    return new OutboxRow(
+        "OrderLineShortClosed",
+        "storeql.order.order-line-short-closed",
+        order.tenantId(),
+        order.id(),
+        adjustmentPayload("OrderLineShortClosed", order)
+            + ",\"variantId\":\""
+            + variantId
+            + "\",\"variantName\":"
+            + jsonText(variantName)
+            + ",\"qty\":"
+            + qty.toPlainString()
+            + ",\"refundAmount\":"
+            + refund.toPlainString()
+            + "}");
+  }
+
+  /**
+   * A line of an online order replaced by a substitute the store put in the bag: what was swapped
+   * for what, how much, what the substitute is charged (never more than the original) and what goes
+   * back. The substitute's own deduction rides an {@code OrderFulfilled} beside this.
+   */
+  static OutboxRow orderLineSubstituted(
+      Order order,
+      UUID fromVariantId,
+      String fromName,
+      UUID toVariantId,
+      String toName,
+      BigDecimal qty,
+      BigDecimal charged,
+      BigDecimal refund) {
+    return new OutboxRow(
+        "OrderLineSubstituted",
+        "storeql.order.order-line-substituted",
+        order.tenantId(),
+        order.id(),
+        adjustmentPayload("OrderLineSubstituted", order)
+            + ",\"fromVariantId\":\""
+            + fromVariantId
+            + "\",\"fromName\":"
+            + jsonText(fromName)
+            + ",\"toVariantId\":\""
+            + toVariantId
+            + "\",\"toName\":"
+            + jsonText(toName)
+            + ",\"qty\":"
+            + qty.toPlainString()
+            + ",\"chargedAmount\":"
+            + charged.toPlainString()
+            + ",\"refundAmount\":"
+            + refund.toPlainString()
+            + "}");
+  }
+
+  private static String adjustmentPayload(String type, Order order) {
+    return "{\"eventId\":\""
+        + Ids.newId()
+        + "\",\"eventType\":\""
+        + type
+        + "\",\"occurredAt\":\""
+        + Instant.now()
+        + "\",\"tenantId\":\""
+        + order.tenantId()
+        + "\",\"orderId\":\""
+        + order.id()
+        + "\",\"storeId\":\""
+        + order.storeId()
+        + "\",\"customerId\":"
+        + (order.customerId() == null ? "null" : "\"" + order.customerId() + "\"")
+        + ",\"loginId\":"
+        + (order.loginId() == null ? "null" : "\"" + order.loginId() + "\"")
+        + ",\"currency\":"
+        + jsonText(order.currency())
+        + ",\"orderTotal\":"
+        + (order.total() == null ? "0" : order.total().toPlainString())
+        + kind(order.channel(), order.fulfilmentType());
   }
 
   static OutboxRow orderCancelled(UUID tenantId, UUID orderId, String reason) {

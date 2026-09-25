@@ -446,6 +446,155 @@ public class OrderResource {
   }
 
   /**
+   * Closes a line short (substitutions for out-of-stock online lines).
+   *
+   * @param id the confirmed or part-picked online order
+   * @param variantId the line's product
+   * @param req how much, and why; an empty body closes everything the line still owes
+   * @return the order as it now stands
+   */
+  @Operation(
+      summary = "Close a line short",
+      description =
+          "The quantity a store cannot fill comes off a confirmed or part-picked online order: its"
+              + " charge and VAT shrink pro rata, the shopper is refunded the difference, and the"
+              + " order becomes FULFILLED once every line is picked or closed. Any member of staff"
+              + " at the order's store; once per Idempotency-Key.")
+  @APIResponse(responseCode = "200", description = "Closed; the order as it stands")
+  @APIResponse(responseCode = "400", description = "ORDER_LINE_UNKNOWN, or a bad quantity")
+  @APIResponse(responseCode = "403", description = "Not assigned to the order's store")
+  @APIResponse(responseCode = "404", description = "Order not found")
+  @APIResponse(
+      responseCode = "409",
+      description = "ORDER_LINE_NOT_ADJUSTABLE, ORDER_LINE_QTY_EXCEEDS_OUTSTANDING")
+  @POST
+  @Path("/{id}/lines/{variantId}/short")
+  public Response shortClose(
+      @PathParam("id") String id,
+      @PathParam("variantId") String variantId,
+      @jakarta.ws.rs.HeaderParam(com.storeql.web.HttpHeaders.IDEMPOTENCY_KEY) String idempotencyKey,
+      com.storeql.order.dto.Dtos.ShortCloseRequest req) {
+    ctx.requireAnyRole("CASHIER", "STOREKEEPER", "MANAGER", "OWNER");
+    if (req != null) Validations.validate(req);
+    var order =
+        svc.shortClose(
+            ctx.requireTenantId(),
+            Parsing.uuid(id, "id"),
+            Parsing.uuid(variantId, "variantId"),
+            req,
+            ctx,
+            IdempotencyKeys.effective(idempotencyKey, null));
+    return orderAnswer(order);
+  }
+
+  /**
+   * Puts a substitute in the bag for a line the store cannot fill.
+   *
+   * @param id the confirmed or part-picked online order
+   * @param variantId the line's product
+   * @param req the substitute, how much, and — with server-side pricing off — its unit price
+   * @return the order as it now stands, the substitute among its lines
+   */
+  @Operation(
+      summary = "Substitute a line",
+      description =
+          "Where the shopper allowed substitutions: a new line for the substitute, priced at the"
+              + " store and charged at no more than the original, picked at once; the original"
+              + " closed short for the quantity; the difference refunded; the shopper told. Any"
+              + " member of staff at the order's store; once per Idempotency-Key.")
+  @APIResponse(responseCode = "200", description = "Substituted; the order as it stands")
+  @APIResponse(
+      responseCode = "400",
+      description = "ORDER_LINE_UNKNOWN, ORDER_SUBSTITUTE_SAME_VARIANT, ORDER_PRICE_REQUIRED")
+  @APIResponse(responseCode = "403", description = "Not assigned to the order's store")
+  @APIResponse(responseCode = "404", description = "Order not found")
+  @APIResponse(
+      responseCode = "409",
+      description =
+          "ORDER_LINE_NOT_ADJUSTABLE, ORDER_LINE_QTY_EXCEEDS_OUTSTANDING,"
+              + " ORDER_SUBSTITUTION_NOT_ALLOWED, ORDER_SUBSTITUTE_NOT_SELLABLE")
+  @POST
+  @Path("/{id}/lines/{variantId}/substitute")
+  public Response substitute(
+      @PathParam("id") String id,
+      @PathParam("variantId") String variantId,
+      @jakarta.ws.rs.HeaderParam(com.storeql.web.HttpHeaders.IDEMPOTENCY_KEY) String idempotencyKey,
+      com.storeql.order.dto.Dtos.SubstituteRequest req) {
+    ctx.requireAnyRole("CASHIER", "STOREKEEPER", "MANAGER", "OWNER");
+    Validations.validate(req);
+    var order =
+        svc.substitute(
+            ctx.requireTenantId(),
+            Parsing.uuid(id, "id"),
+            Parsing.uuid(variantId, "variantId"),
+            req,
+            ctx,
+            IdempotencyKeys.effective(idempotencyKey, null));
+    return orderAnswer(order);
+  }
+
+  @Operation(
+      summary = "Stand-ins for a line",
+      description =
+          "The substitutes the business declared for the line's product (product-svc), each with"
+              + " what the order's store has of it, most available first.")
+  @APIResponse(responseCode = "200", description = "The suggestions, possibly none")
+  @GET
+  @Path("/{id}/lines/{variantId}/substitutes")
+  public Response substitutes(
+      @PathParam("id") String id, @PathParam("variantId") String variantId) {
+    ctx.requireAnyRole("CASHIER", "STOREKEEPER", "MANAGER", "OWNER");
+    return Response.ok(
+            ApiResponse.ok(
+                svc
+                    .substituteSuggestions(
+                        ctx.requireTenantId(),
+                        Parsing.uuid(id, "id"),
+                        Parsing.uuid(variantId, "variantId"),
+                        ctx)
+                    .stream()
+                    .map(Mappers::toDto)
+                    .toList()))
+        .build();
+  }
+
+  @Operation(
+      summary = "The store's orders still owing something",
+      description =
+          "Confirmed and part-picked online orders at the store with the lines each still owes and"
+              + " whether the shopper allows substitutions — the Fulfilment screen's outstanding"
+              + " lines. Staff at the store.")
+  @APIResponse(responseCode = "200", description = "The orders, oldest first")
+  @APIResponse(responseCode = "400", description = "store is required")
+  @GET
+  @Path("/owing")
+  public Response owing(@QueryParam("store") String store) {
+    ctx.requireAnyRole("CASHIER", "STOREKEEPER", "MANAGER", "OWNER");
+    if (store == null || store.isBlank()) {
+      throw ApiException.badRequest("VALIDATION_FAILED", "store: is required");
+    }
+    return Response.ok(
+            ApiResponse.ok(
+                svc.owingLines(ctx.requireTenantId(), Parsing.uuid(store, "store"), ctx).stream()
+                    .map(Mappers::toDto)
+                    .toList()))
+        .build();
+  }
+
+  private Response orderAnswer(com.storeql.order.domain.Domain.Order order) {
+    var items = svc.getOrderItems(order.tenantId(), order.id());
+    return Response.ok(
+            ApiResponse.ok(
+                Mappers.toDto(
+                    order,
+                    items,
+                    svc.depositsOf(order.tenantId(), order.id()),
+                    svc.groupOf(order.tenantId(), order.id()).orElse(null),
+                    svc.handoverOf(order.tenantId(), order.id()).orElse(null))))
+        .build();
+  }
+
+  /**
    * Hands a picked delivery order to a carrier (ship-from-store and dark-store picking).
    *
    * @param id the FULFILLED delivery order

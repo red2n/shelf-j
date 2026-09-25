@@ -960,6 +960,37 @@ public class InventoryService {
     return repo.release(tenantId, reservationId, event);
   }
 
+  /**
+   * A line of an online order closed short or substituted (substitutions for out-of-stock online
+   * lines): {@code qty} of the order's hold on the variant goes back to the shelf and the order
+   * waits for that much less, once per event; a hold released in full publishes {@code
+   * StockReleased} as a cancellation's would.
+   *
+   * @return false when the event was already applied
+   */
+  public boolean lineClosedOnce(
+      UUID eventId,
+      String consumerName,
+      UUID tenantId,
+      UUID orderId,
+      UUID variantId,
+      BigDecimal qty) {
+    return repo.lineClosedOnce(
+        eventId,
+        consumerName,
+        tenantId,
+        orderId,
+        variantId,
+        qty,
+        reservationId ->
+            new OutboxRow(
+                "StockReleased",
+                "storeql.inventory.stock-released",
+                tenantId,
+                reservationId,
+                Events.reservationEvent("StockReleased", tenantId, reservationId)));
+  }
+
   // ---- reads ----
   /**
    * On-hand levels per variant for a store.

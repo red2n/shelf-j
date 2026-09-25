@@ -270,6 +270,46 @@ class WaveIT {
         + "]}";
   }
 
+  /** A line of an online order closed short by the store (substitutions for out-of-stock lines). */
+  private static String lineClosed(
+      String eventId, String tenant, String orderId, String variant, int qty) {
+    return "{\"eventId\":\""
+        + eventId
+        + "\",\"eventType\":\"OrderLineShortClosed\",\"tenantId\":\""
+        + tenant
+        + "\",\"orderId\":\""
+        + orderId
+        + "\",\"storeId\":\""
+        + STORE
+        + "\",\"customerId\":null,\"loginId\":null,\"currency\":\"GBP\",\"orderTotal\":5.00,"
+        + "\"channel\":\"ONLINE\",\"fulfilmentType\":\"DELIVERY\",\"variantId\":\""
+        + variant
+        + "\",\"variantName\":\"Apples\",\"qty\":"
+        + qty
+        + ",\"refundAmount\":2.50}";
+  }
+
+  /** A line of an online order replaced by a substitute the store put in the bag. */
+  private static String lineSubstituted(
+      String eventId, String orderId, String from, String to, int qty) {
+    return "{\"eventId\":\""
+        + eventId
+        + "\",\"eventType\":\"OrderLineSubstituted\",\"tenantId\":\""
+        + T
+        + "\",\"orderId\":\""
+        + orderId
+        + "\",\"storeId\":\""
+        + STORE
+        + "\",\"customerId\":null,\"loginId\":null,\"currency\":\"GBP\",\"orderTotal\":5.00,"
+        + "\"channel\":\"ONLINE\",\"fulfilmentType\":\"DELIVERY\",\"fromVariantId\":\""
+        + from
+        + "\",\"fromName\":\"Apples\",\"toVariantId\":\""
+        + to
+        + "\",\"toName\":\"Pears\",\"qty\":"
+        + qty
+        + ",\"chargedAmount\":5.00,\"refundAmount\":0.00}";
+  }
+
   private static String cancelled(String orderId) {
     return "{\"eventType\":\"OrderCancelled\",\"tenantId\":\""
         + T
@@ -974,6 +1014,94 @@ class WaveIT {
         Envelopes.scalar(
             PG, "SELECT count(*) FROM inventory.sale_revenue WHERE order_id = '" + ids[1] + "'"),
         is("2"));
+  }
+
+  // ── a line closed short or substituted gives its hold back and waits for less ──
+
+  /**
+   * Substitutions for out-of-stock online lines: the store closes one of three apples short — the
+   * hold shrinks to two, a RELEASE movement says so, and the waiting line needs two; a substitute
+   * for the other two releases the rest and the apples wait no more, the pears still do; a
+   * redelivered event changes nothing; and another business's event for the same order id touches
+   * nothing of ours.
+   */
+  @Test
+  void aLineClosedShortOrSubstitutedGivesBackItsHoldAndWaitsForLess() {
+    receive(APPLES, 20, ZONE_A, "A-1", null);
+    receive(PEARS, 8, ZONE_A, "P-1", null);
+    String order = Ids.newId().toString();
+    hold(order, APPLES, 3);
+    hold(order, PEARS, 2);
+    orders.handle(
+        confirmed(
+            Ids.newId().toString(),
+            T,
+            order,
+            STORE,
+            "DELIVERY",
+            line(APPLES, 3) + "," + line(PEARS, 2)));
+    String applesHold =
+        "FROM inventory.reservations WHERE order_id = '"
+            + order
+            + "' AND variant_id = '"
+            + APPLES
+            + "'";
+    String applesWait =
+        "FROM inventory.awaiting_order_lines WHERE order_id = '"
+            + order
+            + "' AND variant_id = '"
+            + APPLES
+            + "'";
+
+    String closed = lineClosed(Ids.newId().toString(), T, order, APPLES, 1);
+    orders.handle(closed);
+    orders.handle(closed); // redelivered
+    assertThat(Envelopes.scalar(PG, "SELECT qty || ' ' || status " + applesHold), is("2.000 HELD"));
+    assertThat(Envelopes.scalar(PG, "SELECT qty_outstanding " + applesWait), is("2.000"));
+    assertThat(
+        Envelopes.scalar(
+            PG,
+            "SELECT count(*) FROM inventory.stock_movements WHERE type = 'RELEASE' AND ref_type ="
+                + " 'RESERVATION' AND ref_id = (SELECT id "
+                + applesHold
+                + ")"),
+        is("1"));
+    assertThat(onHand(APPLES), comparesEqualTo(new BigDecimal("20")));
+
+    // Another business's event naming our order id: nothing of ours moves.
+    orders.handle(lineClosed(Ids.newId().toString(), T2, order, APPLES, 2));
+    assertThat(Envelopes.scalar(PG, "SELECT qty || ' ' || status " + applesHold), is("2.000 HELD"));
+    assertThat(Envelopes.scalar(PG, "SELECT qty_outstanding " + applesWait), is("2.000"));
+
+    // The other two apples are replaced by pears: the apples' hold is released in full and told,
+    // the apples wait no more, the pears still do.
+    orders.handle(lineSubstituted(Ids.newId().toString(), order, APPLES, PEARS, 2));
+    assertThat(
+        Envelopes.scalar(PG, "SELECT qty || ' ' || status " + applesHold), is("2.000 RELEASED"));
+    assertThat(Envelopes.scalar(PG, "SELECT qty_outstanding " + applesWait), is("0.000"));
+    assertThat(
+        Envelopes.scalar(
+            PG,
+            "SELECT count(*) FROM inventory.outbox WHERE event_type = 'StockReleased' AND"
+                + " aggregate_id = (SELECT id "
+                + applesHold
+                + ")"),
+        is("1"));
+    assertThat(
+        Envelopes.scalar(
+            PG,
+            "SELECT qty_outstanding FROM inventory.awaiting_order_lines WHERE order_id = '"
+                + order
+                + "' AND variant_id = '"
+                + PEARS
+                + "'"),
+        is("2.000"));
+    assertThat(
+        Envelopes.scalar(
+            PG, "SELECT count(*) FROM inventory.awaiting_orders WHERE order_id = '" + order + "'"),
+        is("1"));
+    JsonArray awaiting = Envelopes.okArray(get("/admin/inventory/waves/awaiting?storeId=" + STORE));
+    assertThat(awaiting.toString(), containsString(order));
   }
 
   // ── a part handover keeps the holds of the lines still waiting ─────────────

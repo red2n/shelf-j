@@ -65,7 +65,10 @@ public final class Mappers {
         str(i.weighingInstrumentId()),
         i.fulfilledQty(),
         i.vatAmount(),
-        str(i.markdownId()));
+        str(i.markdownId()),
+        i.shortQty(),
+        i.remainingQty(),
+        str(i.substitutesItemId()));
   }
 
   /**
@@ -251,7 +254,36 @@ public final class Mappers {
         deposits == null ? null : deposits.stream().map(Mappers::toDto).toList(),
         str(o.sellerUserId()),
         group == null ? null : toDto(group),
-        handover == null ? null : toDto(handover));
+        handover == null ? null : toDto(handover),
+        o.allowSubstitutions());
+  }
+
+  /** A stand-in suggested for a line (substitutions for out-of-stock online lines). */
+  public static com.storeql.order.dto.Dtos.SubstituteSuggestionResponse toDto(
+      com.storeql.order.service.OrderService.SubstituteSuggestion s) {
+    return new com.storeql.order.dto.Dtos.SubstituteSuggestionResponse(
+        str(s.variantId()), s.productName(), s.sku(), s.available());
+  }
+
+  /** An order the store still owes something on, with the lines it owes. */
+  public static com.storeql.order.dto.Dtos.OwingOrderResponse toDto(
+      com.storeql.order.service.OrderService.OwingOrder o) {
+    return new com.storeql.order.dto.Dtos.OwingOrderResponse(
+        str(o.order().id()),
+        o.order().status(),
+        o.order().fulfilmentType(),
+        o.order().allowSubstitutions(),
+        ts(o.order().createdAt()),
+        o.lines().stream()
+            .map(
+                l ->
+                    new com.storeql.order.dto.Dtos.OwingLineResponse(
+                        str(l.variantId()),
+                        l.qty(),
+                        l.fulfilledQty(),
+                        l.shortQty(),
+                        l.remainingQty()))
+            .toList());
   }
 
   /** Converts a handover (ship-from-store and dark-store picking). */
@@ -364,7 +396,8 @@ public final class Mappers {
         ts(o.updatedAt()),
         o.paymentMethod(),
         str(groupId),
-        handover == null ? null : toDto(handover));
+        handover == null ? null : toDto(handover),
+        o.allowSubstitutions());
   }
 
   /**

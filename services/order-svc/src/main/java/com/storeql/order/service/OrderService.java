@@ -28,6 +28,7 @@ import com.storeql.order.domain.Domain.SpecialOrderItem;
 import com.storeql.order.domain.Handover;
 import com.storeql.order.domain.OrderSplit;
 import com.storeql.order.domain.Routing;
+import com.storeql.order.domain.SubstitutePrice;
 import com.storeql.order.dto.Dtos.AddDepositRequest;
 import com.storeql.order.dto.Dtos.CreateLayawayRequest;
 import com.storeql.order.dto.Dtos.CreateReturnRequest;
@@ -84,6 +85,7 @@ public class OrderService {
   @Inject SalesInvoiceService salesInvoices;
   @Inject com.storeql.service.Jurisdictions jurisdictions;
   @Inject com.storeql.order.client.ProductClient products;
+  @Inject com.storeql.order.client.StockClient stock;
   @Inject com.storeql.order.repo.DepositRepository depositRepo;
   @Inject OrderRouter router;
 
@@ -585,7 +587,10 @@ public class OrderService {
             req.contactPhone(),
             paymentMethod,
             promoDiscount,
-            seller);
+            seller,
+            // The shopper's choice at checkout: substitutions welcome unless they said no
+            // (substitutions for out-of-stock online lines).
+            req.allowSubstitutions() == null || req.allowSubstitutions());
 
     try {
       Order placed =
@@ -641,6 +646,310 @@ public class OrderService {
           storeId);
       return false;
     }
+  }
+
+  // ── Short closes and substitutions (substitutions for out-of-stock online lines) ──
+
+  /** A stand-in the business declared for a line's product, with what the store has of it. */
+  public record SubstituteSuggestion(
+      UUID variantId, String productName, String sku, BigDecimal available) {}
+
+  /** An order the store still owes something on, and the lines it owes. */
+  public record OwingOrder(Order order, List<OrderItem> lines) {
+    public OwingOrder {
+      lines = List.copyOf(lines);
+    }
+  }
+
+  /**
+   * Closes a line short: the quantity (all still outstanding, when none is given) will never be
+   * handed over, the order owes less, and what the shopper paid for it goes back. Any member of
+   * staff at the order's store; once per Idempotency-Key.
+   *
+   * @throws ApiException 404 {@code ORDER_NOT_FOUND}; 403 {@code STORE_ACCESS_DENIED}; 409 {@code
+   *     ORDER_LINE_NOT_ADJUSTABLE}, {@code ORDER_LINE_QTY_EXCEEDS_OUTSTANDING}; 400 {@code
+   *     ORDER_LINE_UNKNOWN}
+   */
+  public Order shortClose(
+      UUID tenantId,
+      UUID orderId,
+      UUID variantId,
+      com.storeql.order.dto.Dtos.ShortCloseRequest req,
+      TenantContext ctx,
+      String idempotencyKey) {
+    Order order = getOrder(tenantId, orderId);
+    ctx.requireStoreAccess(order.storeId());
+    if (idempotencyKey != null && repo.findAdjustmentByKey(tenantId, idempotencyKey).isPresent()) {
+      return getOrder(tenantId, orderId);
+    }
+    BigDecimal qty =
+        req == null || req.qty() == null ? outstandingOf(tenantId, orderId, variantId) : req.qty();
+    String reason = req == null || isBlank(req.reason()) ? null : req.reason().trim();
+    String name = variantName(tenantId, variantId);
+    try {
+      return repo.adjustLine(
+              tenantId,
+              orderId,
+              variantId,
+              qty,
+              null,
+              reason,
+              ctx.userId(),
+              idempotencyKey,
+              a ->
+                  List.of(
+                      Events.orderLineShortClosed(
+                          a.order(), variantId, name, qty, a.adjustment().refundAmount())))
+          .order();
+    } catch (ApiException e) {
+      if ("ORDER_DUPLICATE_KEY".equals(e.code())) return getOrder(tenantId, orderId);
+      throw e;
+    }
+  }
+
+  /**
+   * Puts a substitute in the bag for a line the store cannot fill, where the shopper allowed it: a
+   * new line at the store's price for the substitute, capped at the original line's gross unit
+   * price, its VAT within it; the original closed short for the quantity; the substitute picked at
+   * once. Any member of staff at the order's store; once per Idempotency-Key.
+   *
+   * @throws ApiException as {@link #shortClose}, plus 409 {@code ORDER_SUBSTITUTION_NOT_ALLOWED},
+   *     400 {@code ORDER_SUBSTITUTE_SAME_VARIANT}, 409 {@code ORDER_SUBSTITUTE_NOT_SELLABLE} (no
+   *     price, or none on the shelf), 503 {@code ORDER_PRICING_UNAVAILABLE}
+   */
+  public Order substitute(
+      UUID tenantId,
+      UUID orderId,
+      UUID variantId,
+      com.storeql.order.dto.Dtos.SubstituteRequest req,
+      TenantContext ctx,
+      String idempotencyKey) {
+    Order order = getOrder(tenantId, orderId);
+    ctx.requireStoreAccess(order.storeId());
+    if (idempotencyKey != null && repo.findAdjustmentByKey(tenantId, idempotencyKey).isPresent()) {
+      return getOrder(tenantId, orderId);
+    }
+    if (!order.allowSubstitutions()) {
+      throw ApiException.conflict(
+          "ORDER_SUBSTITUTION_NOT_ALLOWED",
+          "the shopper asked for no substitutions on this order; close the line short instead");
+    }
+    UUID sub = Parsing.uuid(req.substituteVariantId(), "substituteVariantId");
+    if (sub.equals(variantId)) {
+      throw ApiException.badRequest(
+          "ORDER_SUBSTITUTE_SAME_VARIANT", "a substitute is another product than the one short");
+    }
+    List<OrderItem> items = repo.findOrderItems(tenantId, orderId);
+    OrderItem original =
+        items.stream()
+            .filter(i -> i.variantId().equals(variantId) && i.remainingQty().signum() > 0)
+            .findFirst()
+            .or(() -> items.stream().filter(i -> i.variantId().equals(variantId)).findFirst())
+            .orElseThrow(
+                () ->
+                    ApiException.badRequest(
+                        "ORDER_LINE_UNKNOWN", "variant " + variantId + " is not on this order"));
+    BigDecimal qty = req.qty() != null ? req.qty() : outstandingOf(tenantId, orderId, variantId);
+    int scale = java.util.Currency.getInstance(order.currency()).getDefaultFractionDigits();
+    // What a unit of the original is worth, gross, as it stands — the most a substitute costs.
+    BigDecimal standing = original.standingQty();
+    BigDecimal originalGrossUnit =
+        standing.signum() > 0
+            ? original
+                .lineTotal()
+                .add(original.vatAmount() == null ? BigDecimal.ZERO : original.vatAmount())
+                .divide(standing, 6, RoundingMode.HALF_UP)
+            : original.unitPrice();
+    // On the shelf at the order's store, when the shelf can be read; a supplier-shipped product is
+    // held nowhere and passes.
+    stock
+        .stockByStore(tenantId, List.of(sub))
+        .ifPresent(
+            st -> {
+              BigDecimal available =
+                  st.available()
+                      .getOrDefault(order.storeId(), Map.of())
+                      .getOrDefault(sub, BigDecimal.ZERO);
+              if (available.compareTo(qty) < 0 && !st.dropship().contains(sub)) {
+                throw ApiException.conflict(
+                    "ORDER_SUBSTITUTE_NOT_SELLABLE",
+                    "the store has "
+                        + available.stripTrailingZeros().toPlainString()
+                        + " of "
+                        + sub
+                        + ", not "
+                        + qty.stripTrailingZeros().toPlainString());
+              }
+            });
+    // Its price at the store, from pricing-svc as at checkout; the given unit price when
+    // server-side
+    // pricing is off.
+    BigDecimal net;
+    BigDecimal vat;
+    BigDecimal rate = null;
+    String code = null;
+    if (config.pricingEnforce()) {
+      try {
+        var quoted =
+            pricing.quoteBasket(
+                tenantId,
+                List.of(new com.storeql.order.client.PricingClient.LineRequest(sub, qty)),
+                order.storeId(),
+                order.channel(),
+                order.customerId(),
+                null);
+        var line = quoted.lines().get(0);
+        net = line.lineNet();
+        vat = line.lineVat();
+        rate = line.vatRate();
+        code = line.vatCode();
+      } catch (org.eclipse.microprofile.faulttolerance.exceptions.CircuitBreakerOpenException e) {
+        throw new ApiException(
+            503,
+            "ORDER_PRICING_UNAVAILABLE",
+            "pricing-svc circuit open — too many recent failures",
+            List.of(),
+            e);
+      } catch (ApiException e) {
+        if (e.status() >= 500) throw e;
+        throw new ApiException(
+            409,
+            "ORDER_SUBSTITUTE_NOT_SELLABLE",
+            "no price for " + sub + " at this store: " + e.getMessage(),
+            List.of(),
+            e);
+      }
+    } else {
+      if (req.unitPrice() == null) {
+        throw ApiException.badRequest(
+            "ORDER_PRICE_REQUIRED", "unitPrice is required for the substitute " + sub);
+      }
+      net = req.unitPrice().multiply(qty).setScale(scale, RoundingMode.HALF_UP);
+      vat = original.vatAmount() == null ? null : BigDecimal.ZERO.setScale(scale);
+    }
+    var charge = SubstitutePrice.charge(originalGrossUnit, net, vat, rate, qty, scale);
+    var priced =
+        new OrderRepository.Substitute(
+            sub,
+            qty,
+            charge.unitPrice(),
+            charge.lineNet(),
+            vat == null ? null : charge.lineVat(),
+            code,
+            rate);
+    String fromName = variantName(tenantId, variantId);
+    String toName = variantName(tenantId, sub);
+    String reason = isBlank(req.reason()) ? null : req.reason().trim();
+    try {
+      return repo.adjustLine(
+              tenantId,
+              orderId,
+              variantId,
+              qty,
+              priced,
+              reason,
+              ctx.userId(),
+              idempotencyKey,
+              a ->
+                  List.of(
+                      // The substitute is in the picker's hand: deducted and its revenue recorded
+                      // as any picked line is, the original's waiting line set to what it still
+                      // owes.
+                      Events.orderFulfilled(
+                          tenantId,
+                          orderId,
+                          a.order().storeId(),
+                          List.of(a.substituteItem()),
+                          com.storeql.order.domain.LineRevenue.unitNet(a.order(), a.items()),
+                          scale,
+                          a.outstanding(),
+                          a.order().status(),
+                          a.order().channel(),
+                          a.order().fulfilmentType(),
+                          a.order().customerId(),
+                          a.order().loginId()),
+                      Events.orderLineSubstituted(
+                          a.order(),
+                          variantId,
+                          fromName,
+                          sub,
+                          toName,
+                          qty,
+                          a.adjustment().chargedAmount(),
+                          a.adjustment().refundAmount())))
+          .order();
+    } catch (ApiException e) {
+      if ("ORDER_DUPLICATE_KEY".equals(e.code())) return getOrder(tenantId, orderId);
+      throw e;
+    }
+  }
+
+  /**
+   * The stand-ins the business declared for a line's product, each with what the order's store has
+   * of it, most available first; nothing when none is declared.
+   */
+  public List<SubstituteSuggestion> substituteSuggestions(
+      UUID tenantId, UUID orderId, UUID variantId, TenantContext ctx) {
+    Order order = getOrder(tenantId, orderId);
+    ctx.requireStoreAccess(order.storeId());
+    List<UUID> ids = products.substitutes(tenantId, variantId, ctx);
+    if (ids.isEmpty()) return List.of();
+    Map<UUID, com.storeql.order.client.ProductClient.VariantName> names =
+        products.names(tenantId, ids, ctx).orElse(Map.of());
+    Map<UUID, BigDecimal> available =
+        stock
+            .stockByStore(tenantId, ids)
+            .map(s -> s.available().getOrDefault(order.storeId(), Map.of()))
+            .orElse(Map.of());
+    return ids.stream()
+        .map(
+            v -> {
+              var n = names.get(v);
+              return new SubstituteSuggestion(
+                  v,
+                  n == null ? null : n.productName(),
+                  n == null ? null : n.sku(),
+                  available.getOrDefault(v, BigDecimal.ZERO));
+            })
+        .sorted(java.util.Comparator.comparing(SubstituteSuggestion::available).reversed())
+        .toList();
+  }
+
+  /** The store's online orders still owing something, oldest first, each with the lines it owes. */
+  public List<OwingOrder> owingLines(UUID tenantId, UUID storeId, TenantContext ctx) {
+    ctx.requireStoreAccess(storeId);
+    List<Order> orders = repo.findOwingOrders(tenantId, storeId);
+    Map<UUID, List<OrderItem>> items =
+        repo.findOrderItems(tenantId, orders.stream().map(Order::id).toList());
+    List<OwingOrder> out = new ArrayList<>();
+    for (Order o : orders) {
+      List<OrderItem> owing =
+          items.getOrDefault(o.id(), List.of()).stream()
+              .filter(i -> i.remainingQty().signum() > 0)
+              .toList();
+      if (!owing.isEmpty()) out.add(new OwingOrder(o, owing));
+    }
+    return out;
+  }
+
+  private BigDecimal outstandingOf(UUID tenantId, UUID orderId, UUID variantId) {
+    List<OrderItem> items = repo.findOrderItems(tenantId, orderId);
+    if (items.stream().noneMatch(i -> i.variantId().equals(variantId))) {
+      throw ApiException.badRequest(
+          "ORDER_LINE_UNKNOWN", "variant " + variantId + " is not on this order");
+    }
+    // Possibly nothing: the repository then says why — a picked order has no line to close, a
+    // confirmed one owes nothing on this line.
+    return items.stream()
+        .filter(i -> i.variantId().equals(variantId))
+        .map(OrderItem::remainingQty)
+        .reduce(BigDecimal.ZERO, BigDecimal::add);
+  }
+
+  /** The product's name for a message, or null when product-svc cannot say. */
+  private String variantName(UUID tenantId, UUID variantId) {
+    var n = products.namesAsSystem(tenantId, List.of(variantId)).orElse(Map.of()).get(variantId);
+    return n == null ? null : n.productName();
   }
 
   // ── Handover (ship-from-store and dark-store picking) ─────────────────────
@@ -915,7 +1224,8 @@ public class OrderService {
                 req.contactPhone(),
                 co.paymentMethod(),
                 BigDecimal.ZERO,
-                null);
+                null,
+                req.allowSubstitutions() == null || req.allowSubstitutions());
         placed.add(
             new OrderRepository.NewOrder(
                 child,
@@ -2723,10 +3033,23 @@ public class OrderService {
       java.util.UUID tenantId,
       java.util.UUID orderId,
       java.math.BigDecimal amount) {
+    applyRefund(eventId, tenantId, orderId, amount, false);
+  }
+
+  /**
+   * As above; an {@code adjustment} refund (a line closed short or substituted) records the money
+   * and moves no status — the goods are still to be handed over.
+   */
+  public void applyRefund(
+      java.util.UUID eventId,
+      java.util.UUID tenantId,
+      java.util.UUID orderId,
+      java.math.BigDecimal amount,
+      boolean adjustment) {
     if (eventId == null || amount == null || amount.signum() <= 0) {
       return;
     }
-    repo.applyRefundOnce(eventId, tenantId, orderId, amount);
+    repo.applyRefundOnce(eventId, tenantId, orderId, amount, adjustment);
   }
 
   /**

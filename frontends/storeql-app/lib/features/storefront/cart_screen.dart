@@ -33,6 +33,9 @@ class _StorefrontCartScreenState extends ConsumerState<StorefrontCartScreen> {
   // happens before [_placing] flips the button's loading spinner on).
   bool _checkoutInFlight = false;
   String _fulfilment = 'PICKUP'; // PICKUP | DELIVERY
+  // Substitutions for out-of-stock online lines: the shopper's choice at checkout, on unless they
+  // turn it off. A substitute is never charged more than the original and can be handed back.
+  bool _allowSubstitutions = true;
   // Selected payment option key: CARD | UPI | WALLET (pay online now) or CASH (pay in person at
   // handover). '' = pay later with no declared method (only when the store disabled every online
   // tender). Which keys are offered comes from the store's enabledPaymentMethods config.
@@ -358,6 +361,17 @@ class _StorefrontCartScreenState extends ConsumerState<StorefrontCartScreen> {
                                   color: Theme.of(context).colorScheme.onSurfaceVariant)),
                         ],
                       ),
+                    const SizedBox(height: 4),
+                    SwitchListTile(
+                      key: const Key('allow-substitutions'),
+                      contentPadding: EdgeInsets.zero,
+                      title: const Text('Allow substitutions'),
+                      subtitle: const Text(
+                          'If something is out of stock, the shop may pack a similar item. '
+                          'You never pay more, and you can hand it back for a refund.'),
+                      value: _allowSubstitutions,
+                      onChanged: (v) => setState(() => _allowSubstitutions = v),
+                    ),
                     if (_fulfilment == 'DELIVERY') ...[
                       const SizedBox(height: 12),
                       // The shopper's address book at this shop, when they keep one (12.10).
@@ -737,6 +751,7 @@ class _StorefrontCartScreenState extends ConsumerState<StorefrontCartScreen> {
           'storeId': storeId,
           'channel': 'ONLINE',
           'fulfilmentType': _fulfilment,
+          'allowSubstitutions': _allowSubstitutions,
           if (currency.isNotEmpty) 'currency': currency,
           'items': [
             for (final l in cart)
