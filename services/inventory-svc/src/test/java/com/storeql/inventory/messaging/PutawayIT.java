@@ -2,6 +2,7 @@ package com.storeql.inventory.messaging;
 
 import static org.hamcrest.MatcherAssert.assertThat;
 import static org.hamcrest.Matchers.is;
+import static org.hamcrest.Matchers.notNullValue;
 import static org.hamcrest.Matchers.nullValue;
 
 import com.storeql.ids.Ids;
@@ -124,6 +125,10 @@ class PutawayIT {
   }
 
   private static String goodsReceivedEvent(String variant, int qty) {
+    return goodsReceivedEvent(variant, qty, null);
+  }
+
+  private static String goodsReceivedEvent(String variant, int qty, String batchNo) {
     return "{\"eventId\":\""
         + Ids.newId()
         + "\",\"tenantId\":\""
@@ -139,6 +144,7 @@ class PutawayIT {
         + variant
         + "\",\"qty\":"
         + qty
+        + (batchNo == null ? "" : ",\"batchNo\":\"" + batchNo + "\"")
         + ",\"costPrice\":2.00}]}";
   }
 
@@ -292,5 +298,93 @@ class PutawayIT {
                 "STOREKEEPER")
             .getStatus(),
         is(403));
+  }
+
+  @Test
+  void aTaskNamesItsBatchByNumberAndNoOtherBusinessSeesIt() {
+    // No rule at all: both arrivals wait on the list. The supplier's lot number rides with one; the
+    // other came with none, and a purchase receipt makes none up.
+    goodsReceived.handle(goodsReceivedEvent(ODDITY, 3, "LOT-ODD-7"));
+    goodsReceived.handle(goodsReceivedEvent(AMBIENT, 5));
+    String oddBatch =
+        Envelopes.scalar(
+            PG,
+            "SELECT id::text FROM inventory.inventory_batches WHERE variant_id = '" + ODDITY + "'");
+    assertThat(
+        Envelopes.scalar(
+            PG,
+            "SELECT batch_no FROM inventory.inventory_batches WHERE variant_id = '" + ODDITY + "'"),
+        is("LOT-ODD-7"));
+    assertThat(
+        Envelopes.scalar(
+            PG,
+            "SELECT batch_no FROM inventory.inventory_batches WHERE variant_id = '"
+                + AMBIENT
+                + "'"),
+        is(nullValue()));
+
+    JsonArray tasks =
+        Envelopes.okArray(
+            call("GET", "/admin/inventory/putaway/tasks?storeId=" + STORE, null, T, "STOREKEEPER"));
+    assertThat(tasks.size(), is(2));
+    JsonObject odd = null;
+    JsonObject ambient = null;
+    for (int i = 0; i < tasks.size(); i++) {
+      JsonObject t = tasks.getJsonObject(i);
+      if (ODDITY.equals(t.getString("variantId"))) odd = t;
+      if (AMBIENT.equals(t.getString("variantId"))) ambient = t;
+    }
+    assertThat(odd.getString("batchId"), is(oddBatch));
+    assertThat(odd.getString("batchNo"), is("LOT-ODD-7"));
+    assertThat(ambient.getString("batchId"), is(notNullValue()));
+    assertThat(ambient.containsKey("batchNo"), is(false));
+
+    // Another business's staff of every role, even naming our store, see no task and place none;
+    // our own shopper is refused.
+    for (String role : new String[] {"OWNER", "MANAGER", "STOREKEEPER", "CASHIER"}) {
+      assertThat(
+          Envelopes.okArray(
+                  call(
+                      "GET",
+                      "/admin/inventory/putaway/tasks?storeId=" + STORE,
+                      null,
+                      T2,
+                      role,
+                      STORE))
+              .size(),
+          is(0));
+      assertThat(
+          Envelopes.okArray(call("GET", "/admin/inventory/putaway/tasks", null, T2, role, STORE))
+              .size(),
+          is(0));
+    }
+    assertThat(
+        code(
+            call(
+                "POST",
+                "/admin/inventory/putaway/tasks/" + odd.getString("id") + "/place",
+                "{\"zoneId\":\"" + AISLE_3 + "\"}",
+                T2,
+                "OWNER",
+                STORE),
+            404),
+        is("INVENTORY_PUTAWAY_TASK_NOT_FOUND"));
+    assertThat(batchZone(oddBatch), is(nullValue()));
+    assertThat(
+        call("GET", "/admin/inventory/putaway/tasks?storeId=" + STORE, null, T, "CUSTOMER")
+            .getStatus(),
+        is(403));
+
+    // The placement answers with the batch's number too.
+    JsonObject done =
+        Envelopes.ok(
+            call(
+                "POST",
+                "/admin/inventory/putaway/tasks/" + odd.getString("id") + "/place",
+                "{\"zoneId\":\"" + AISLE_3 + "\"}",
+                T,
+                "STOREKEEPER"));
+    assertThat(done.getString("batchNo"), is("LOT-ODD-7"));
+    assertThat(batchZone(oddBatch), is(AISLE_3));
   }
 }

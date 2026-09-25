@@ -172,17 +172,22 @@ public class PutawayRepository extends BaseJdbcRepository {
 
   // ── Tasks ──────────────────────────────────────────────────────────────────
 
-  private static final String TASK_COLUMNS =
-      "id, tenant_id, store_id, batch_id, variant_id, qty, suggested_zone_id, status,"
-          + " placed_zone_id, placed_by, placed_at, created_at";
+  /**
+   * A task with its batch's number, read in the one statement; the batch is this service's own, and
+   * the join is pinned to the task's tenant. Callers continue with {@code WHERE t.tenant_id = ?}.
+   */
+  private static final String TASK_SELECT =
+      "SELECT t.id, t.tenant_id, t.store_id, t.batch_id, b.batch_no, t.variant_id, t.qty,"
+          + " t.suggested_zone_id, t.status, t.placed_zone_id, t.placed_by, t.placed_at,"
+          + " t.created_at FROM putaway_tasks t LEFT JOIN inventory_batches b"
+          + " ON b.tenant_id = t.tenant_id AND b.id = t.batch_id";
 
   public List<PutawayTask> openTasks(UUID tenantId, UUID storeId) {
     return query(
-        "SELECT "
-            + TASK_COLUMNS
-            + " FROM putaway_tasks WHERE tenant_id = ? AND status = 'OPEN'"
-            + (storeId == null ? "" : " AND store_id = ?")
-            + " ORDER BY created_at, id LIMIT 500",
+        TASK_SELECT
+            + " WHERE t.tenant_id = ? AND t.status = 'OPEN'"
+            + (storeId == null ? "" : " AND t.store_id = ?")
+            + " ORDER BY t.created_at, t.id LIMIT 500",
         ps -> {
           ps.setObject(1, tenantId);
           if (storeId != null) ps.setObject(2, storeId);
@@ -194,7 +199,7 @@ public class PutawayRepository extends BaseJdbcRepository {
   public Optional<PutawayTask> findTask(UUID tenantId, UUID id) {
     List<PutawayTask> rows =
         query(
-            "SELECT " + TASK_COLUMNS + " FROM putaway_tasks WHERE tenant_id = ? AND id = ?",
+            TASK_SELECT + " WHERE t.tenant_id = ? AND t.id = ?",
             ps -> {
               ps.setObject(1, tenantId);
               ps.setObject(2, id);
@@ -216,9 +221,7 @@ public class PutawayRepository extends BaseJdbcRepository {
           PutawayTask t;
           try (PreparedStatement ps =
               c.prepareStatement(
-                  "SELECT "
-                      + TASK_COLUMNS
-                      + " FROM putaway_tasks WHERE tenant_id = ? AND id = ? FOR UPDATE")) {
+                  TASK_SELECT + " WHERE t.tenant_id = ? AND t.id = ? FOR UPDATE OF t")) {
             ps.setObject(1, tenantId);
             ps.setObject(2, taskId);
             try (ResultSet rs = ps.executeQuery()) {
@@ -256,6 +259,7 @@ public class PutawayRepository extends BaseJdbcRepository {
               t.tenantId(),
               t.storeId(),
               t.batchId(),
+              t.batchNo(),
               t.variantId(),
               t.qty(),
               t.suggestedZoneId(),
@@ -275,6 +279,7 @@ public class PutawayRepository extends BaseJdbcRepository {
         rs.getObject("tenant_id", UUID.class),
         rs.getObject("store_id", UUID.class),
         rs.getObject("batch_id", UUID.class),
+        rs.getString("batch_no"),
         rs.getObject("variant_id", UUID.class),
         rs.getBigDecimal("qty"),
         rs.getObject("suggested_zone_id", UUID.class),

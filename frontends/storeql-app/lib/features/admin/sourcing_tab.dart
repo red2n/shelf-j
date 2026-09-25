@@ -8,10 +8,12 @@ import '../../core/constants.dart';
 import '../../core/format.dart';
 import '../../core/network/api_client.dart';
 import '../../core/network/api_error.dart';
+import '../../core/spacing.dart';
 import '../../shared/util/short_ref.dart';
 import '../../shared/widgets/empty_state.dart';
 import '../../shared/widgets/error_view.dart';
 import '../../shared/widgets/loading_view.dart';
+import '../../shared/widgets/status_badge.dart';
 import 'procurement_providers.dart';
 import 'providers/admin_providers.dart';
 import 'supplier_scorecards.dart';
@@ -315,7 +317,8 @@ class SourcingTab extends ConsumerWidget {
     return Column(
       children: [
         Padding(
-          padding: const EdgeInsets.fromLTRB(16, 12, 16, 4),
+          padding: EdgeInsetsDirectional.fromSTEB(
+              context.pageGutter, AppSpacing.md, context.pageGutter, AppSpacing.xs),
           child: Row(
             children: [
               Expanded(
@@ -361,7 +364,7 @@ class SourcingTab extends ConsumerWidget {
                     detail: 'Raise one when several suppliers could supply the same lines.',
                   )
                 : ListView.separated(
-                    padding: const EdgeInsets.all(16),
+                    padding: context.pagePadding,
                     itemCount: list.length,
                     separatorBuilder: (_, _) => const SizedBox(height: 4),
                     itemBuilder: (_, i) {
@@ -374,7 +377,7 @@ class SourcingTab extends ConsumerWidget {
                               style: const TextStyle(fontWeight: FontWeight.w600)),
                           subtitle: Text(
                             '${r.lines} lines · ${r.quotes} of ${r.suppliers} suppliers quoted'
-                            '${r.neededBy == null ? '' : ' · needed by ${r.neededBy}'}',
+                            '${r.neededBy == null ? '' : ' · needed by ${AppFormat.date(r.neededBy)}'}',
                           ),
                           trailing: const Icon(Icons.chevron_right),
                           onTap: () => showDialog<void>(
@@ -392,26 +395,21 @@ class SourcingTab extends ConsumerWidget {
   }
 }
 
+/// A request's status as the shared badge, in words.
 class _StatusChip extends StatelessWidget {
   const _StatusChip(this.status);
   final String status;
 
   @override
   Widget build(BuildContext context) {
-    final cs = Theme.of(context).colorScheme;
-    final (Color bg, Color fg) = switch (status) {
-      'ISSUED' => (cs.secondaryContainer, cs.onSecondaryContainer),
-      'AWARDED' => (cs.primaryContainer, cs.onPrimaryContainer),
-      'CANCELLED' => (cs.errorContainer, cs.onErrorContainer),
-      _ => (cs.surfaceContainerHighest, cs.onSurfaceVariant),
+    final (words, tone) = switch (status) {
+      'DRAFT' => ('Draft', StatusTone.neutral),
+      'ISSUED' => ('Out for quotes', StatusTone.info),
+      'AWARDED' => ('Awarded', StatusTone.success),
+      'CANCELLED' => ('Cancelled', StatusTone.neutral),
+      _ => (humanizeCode(status), StatusTone.neutral),
     };
-    return Chip(
-      key: Key('rfq-status-$status'),
-      label: Text(status, style: TextStyle(color: fg, fontSize: 11, fontWeight: FontWeight.w600)),
-      backgroundColor: bg,
-      visualDensity: VisualDensity.compact,
-      padding: EdgeInsets.zero,
-    );
+    return StatusBadge(words, key: Key('rfq-status-$status'), tone: tone);
   }
 }
 
@@ -625,6 +623,13 @@ class RfqDetailDialog extends ConsumerWidget {
   Widget build(BuildContext context, WidgetRef ref) {
     final detail = ref.watch(rfqDetailProvider(id));
     final mayBuy = _mayBuy(ref.watch(authNotifierProvider).value);
+    // Each line by its product's name; the end of its id only while it loads.
+    final labels = ref
+            .watch(variantLabelsProvider(variantIdsKey([
+              for (final l in detail.value?.lines ?? const <RfqLine>[]) l.variantId,
+            ])))
+            .value ??
+        const <String, VariantLabel>{};
     final cs = Theme.of(context).colorScheme;
     final text = Theme.of(context).textTheme;
     return AlertDialog(
@@ -653,8 +658,8 @@ class RfqDetailDialog extends ConsumerWidget {
                 children: [
                   Text(
                     [
-                      if (d.neededBy != null) 'needed by ${d.neededBy}',
-                      if (d.closesOn != null) 'quotes due ${d.closesOn}',
+                      if (d.neededBy != null) 'needed by ${AppFormat.date(d.neededBy)}',
+                      if (d.closesOn != null) 'quotes due ${AppFormat.date(d.closesOn)}',
                       'compared in ${d.homeCurrency}',
                       if (d.cancelledReason != null) 'cancelled: ${d.cancelledReason}',
                     ].join(' · '),
@@ -683,7 +688,7 @@ class RfqDetailDialog extends ConsumerWidget {
                       rows: [
                         for (final lc in d.comparison)
                           DataRow(cells: [
-                            DataCell(Text('${shortRef(lc.variantId)} × ${_qty(lc.qty)}')),
+                            DataCell(Text('${variantDisplayName(lc.variantId, labels)} × ${_qty(lc.qty)}')),
                             for (final b in quoted)
                               DataCell(Builder(builder: (_) {
                                 final p = lc.of(b.supplierId);
@@ -729,7 +734,7 @@ class RfqDetailDialog extends ConsumerWidget {
                       subtitle: Text(
                         switch (b.status) {
                           'QUOTED' =>
-                            'Quoted in ${b.currency ?? '?'}${b.leadTimeDays == null ? '' : ' · ${b.leadTimeDays} days'}${b.validUntil == null ? '' : ' · valid until ${b.validUntil}'}',
+                            'Quoted in ${b.currency ?? '?'}${b.leadTimeDays == null ? '' : ' · ${b.leadTimeDays} days'}${b.validUntil == null ? '' : ' · valid until ${AppFormat.date(b.validUntil)}'}',
                           'DECLINED' => 'Declined to quote',
                           _ => 'Invited, nothing back yet',
                         },
@@ -761,7 +766,7 @@ class RfqDetailDialog extends ConsumerWidget {
                         dense: true,
                         contentPadding: EdgeInsets.zero,
                         title: Text(
-                          '${shortRef(a.variantId)} → ${d.bids.where((b) => b.supplierId == a.supplierId).map((b) => b.supplierName).firstOrNull ?? shortRef(a.supplierId)}'
+                          '${variantDisplayName(a.variantId, labels)} → ${d.bids.where((b) => b.supplierId == a.supplierId).map((b) => b.supplierName).firstOrNull ?? shortRef(a.supplierId)}'
                           ' at ${AppFormat.money(a.unitPrice, currencyCode: a.currency)}',
                         ),
                         subtitle: Text('Draft order ${shortRef(a.poId)}'),
@@ -930,6 +935,11 @@ class _RecordQuoteDialogState extends ConsumerState<RecordQuoteDialog> {
   @override
   Widget build(BuildContext context) {
     final cs = Theme.of(context).colorScheme;
+    final labels = ref
+            .watch(variantLabelsProvider(
+                variantIdsKey(widget.rfq.lines.map((l) => l.variantId))))
+            .value ??
+        const <String, VariantLabel>{};
     return AlertDialog(
       title: Text('Quote from ${widget.bid.supplierName}'),
       content: SizedBox(
@@ -971,7 +981,7 @@ class _RecordQuoteDialogState extends ConsumerState<RecordQuoteDialog> {
                     key: Key('quote-price-${l.variantId}'),
                     controller: _prices[l.variantId],
                     decoration: InputDecoration(
-                      labelText: 'Unit price · ${shortRef(l.variantId)} × ${_qty(l.qty)}',
+                      labelText: 'Unit price · ${variantDisplayName(l.variantId, labels)} × ${_qty(l.qty)}',
                       helperText: 'Blank: not priced',
                     ),
                     keyboardType: const TextInputType.numberWithOptions(decimal: true),
@@ -1053,6 +1063,10 @@ class _AwardDialogState extends ConsumerState<AwardDialog> {
   Widget build(BuildContext context) {
     final cs = Theme.of(context).colorScheme;
     final d = widget.rfq;
+    final labels = ref
+            .watch(variantLabelsProvider(variantIdsKey(d.lines.map((l) => l.variantId))))
+            .value ??
+        const <String, VariantLabel>{};
     String name(String id) => d.bids.where((b) => b.supplierId == id).map((b) => b.supplierName).firstOrNull ?? shortRef(id);
     return AlertDialog(
       title: Text('Award ${d.reference}'),
@@ -1075,7 +1089,7 @@ class _AwardDialogState extends ConsumerState<AwardDialog> {
                     key: Key('award-${lc.variantId}'),
                     initialValue: _choice[lc.variantId],
                     isExpanded: true,
-                    decoration: InputDecoration(labelText: '${shortRef(lc.variantId)} × ${_qty(lc.qty)}'),
+                    decoration: InputDecoration(labelText: '${variantDisplayName(lc.variantId, labels)} × ${_qty(lc.qty)}'),
                     items: [
                       const DropdownMenuItem<String?>(value: null, child: Text('Not awarded')),
                       for (final p in lc.prices)

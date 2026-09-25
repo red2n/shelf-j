@@ -4,6 +4,7 @@ import 'package:dio/dio.dart';
 import 'package:flutter/material.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:flutter_test/flutter_test.dart';
+import 'package:intl/date_symbol_data_local.dart';
 import 'package:storeql_app/core/network/api_client.dart';
 import 'package:storeql_app/features/admin/fx_rates_card.dart';
 
@@ -72,6 +73,8 @@ Future<_Server> _pump(WidgetTester tester, {bool hasRates = true, bool managemen
 }
 
 void main() {
+  // A rate's day is written through AppFormat (en_GB here).
+  setUpAll(initializeDateFormatting);
   testWidgets('a business with no rates is told what a rate would do, in its home currency', (tester) async {
     await _pump(tester, hasRates: false);
     expect(find.textContaining('Prices are in GBP'), findsOneWidget);

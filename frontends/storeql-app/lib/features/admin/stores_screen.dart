@@ -6,12 +6,27 @@ import '../../core/auth/auth_state.dart';
 import '../../core/constants.dart';
 import '../../core/network/api_client.dart';
 import '../../core/network/api_error.dart';
+import '../../core/spacing.dart';
 import '../../core/theme.dart';
+import '../../shared/widgets/empty_state.dart';
 import '../../shared/widgets/reference_fields.dart';
 import '../../shared/widgets/error_view.dart';
 import '../../shared/widgets/loading_view.dart';
+import '../../shared/widgets/page_header.dart';
+import '../../shared/widgets/status_badge.dart';
 import 'providers/admin_providers.dart';
 import 'store_instruments_dialog.dart';
+
+/// A store's status in words: *Open* while it trades, *Closed* when switched
+/// off; a status this screen does not know yet reads as words too.
+String _storeStatusLabel(String status) => switch (status.toUpperCase()) {
+      'ACTIVE' => 'Open',
+      'INACTIVE' => 'Closed',
+      _ => humanizeCode(status),
+    };
+
+/// What a store's ⋮ menu offers on a narrow list.
+enum _StoreAction { edit, zones, instruments, delivery, toggle }
 
 class StoresScreen extends ConsumerWidget {
   const StoresScreen({super.key});
@@ -21,7 +36,7 @@ class StoresScreen extends ConsumerWidget {
     final storesAsync = ref.watch(storesProvider);
     final auth = ref.watch(authNotifierProvider).value;
     final isManager = auth is AuthAuthenticated && auth.isManager;
-    final cs = Theme.of(context).colorScheme;
+    final gutter = context.pageGutter;
 
     return Scaffold(
       floatingActionButton: FloatingActionButton.extended(
@@ -30,14 +45,11 @@ class StoresScreen extends ConsumerWidget {
         label: const Text('Add Store'),
       ),
       body: Column(
-      crossAxisAlignment: CrossAxisAlignment.start,
-      children: [
-        Padding(
-          padding: const EdgeInsets.fromLTRB(24, 24, 24, 0),
-          child: Row(
-            children: [
-              Text('Stores', style: Theme.of(context).textTheme.headlineMedium),
-              const Spacer(),
+        crossAxisAlignment: CrossAxisAlignment.stretch,
+        children: [
+          PageHeader(
+            title: 'Stores',
+            actions: [
               IconButton(
                 icon: const Icon(Icons.refresh),
                 tooltip: 'Refresh stores',
@@ -45,141 +57,77 @@ class StoresScreen extends ConsumerWidget {
               ),
             ],
           ),
-        ),
-        const SizedBox(height: 16),
-        Expanded(
-          child: storesAsync.when(
-            loading: () => const LoadingView(label: 'Loading stores…'),
-            error: (e, _) => ErrorView(
-              message: friendlyError(e, fallback: 'Could not load stores.'),
-              onRetry: () => ref.invalidate(storesProvider),
-            ),
-            data: (stores) {
-              if (stores.isEmpty) {
-                return Center(
-                  child: Column(
-                    mainAxisSize: MainAxisSize.min,
-                    children: [
-                      Icon(Icons.store_outlined, size: 64, color: cs.outlineVariant),
-                      const SizedBox(height: 16),
-                      Text('No stores yet',
-                          style: Theme.of(context).textTheme.titleMedium),
-                      const SizedBox(height: 8),
-                      Text('Add a store or warehouse to start managing inventory.',
-                          style: Theme.of(context)
-                              .textTheme
-                              .bodyMedium
-                              ?.copyWith(color: cs.outline)),
-                      const SizedBox(height: 24),
-                      OutlinedButton.icon(
-                        onPressed: () => _showAddStoreDialog(context, ref),
-                        icon: const Icon(Icons.add_business),
-                        label: const Text('Add Store'),
-                      ),
-                    ],
-                  ),
-                );
-              }
-              return ListView.separated(
-                padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 8),
-                itemCount: stores.length,
-                separatorBuilder: (_, _) => const SizedBox(height: 4),
-                itemBuilder: (context, i) {
-                  final s = stores[i];
-                  final isWarehouse = s.type.toUpperCase() == 'WAREHOUSE';
-                  final isDark = s.type.toUpperCase() == 'DARK_STORE';
-                  final active = s.status.toUpperCase() == 'ACTIVE';
-                  final location = [s.city, s.country]
-                      .where((e) => e != null && e.isNotEmpty)
-                      .join(', ');
-                  return Card(
-                    child: ListTile(
-                      onTap: () => _showEditStoreDialog(context, ref, s),
-                      leading: CircleAvatar(
-                        backgroundColor: cs.primaryContainer,
-                        child: Icon(
-                          isWarehouse
-                              ? Icons.warehouse_outlined
-                              : isDark
-                                  ? Icons.nightlight_outlined
-                                  : Icons.store_outlined,
-                          color: cs.onPrimaryContainer,
-                        ),
-                      ),
-                      title: Text(s.name,
-                          style: const TextStyle(fontWeight: FontWeight.bold)),
-                      subtitle: Text([
-                        s.code,
-                        if (location.isNotEmpty) location,
-                        if (isDark) 'Dark store · delivery only, no till',
-                        s.showPrices ? 'Prices shown' : 'Catalog mode',
-                      ].join(' · ')),
-                      trailing: Row(
-                        mainAxisSize: MainAxisSize.min,
-                        children: [
-                          TextButton.icon(
-                            onPressed: () => _showZonesDialog(context, ref, s),
-                            icon: const Icon(Icons.grid_view_outlined, size: 18),
-                            label: const Text('Zones'),
-                          ),
-                          TextButton.icon(
-                            onPressed: () => showDialog<void>(
-                              context: context,
-                              builder: (_) => StoreInstrumentsDialog(
-                                  store: s, isManager: isManager),
-                            ),
-                            icon: const Icon(Icons.scale_outlined, size: 18),
-                            label: const Text('Instruments'),
-                          ),
-                          TextButton.icon(
-                            onPressed: () =>
-                                _showDeliveryAreasDialog(context, ref, s),
-                            icon: const Icon(Icons.local_shipping_outlined,
-                                size: 18),
-                            label: const Text('Delivery'),
-                          ),
-                          const SizedBox(width: 4),
-                          Tooltip(
-                            message:
-                                active ? 'Tap to deactivate' : 'Tap to activate',
-                            child: InkWell(
-                              borderRadius: AppRadius.badge,
-                              onTap: () =>
-                                  _toggleStoreStatus(context, ref, s, active),
-                              child: Container(
-                                padding: const EdgeInsets.symmetric(
-                                    horizontal: 8, vertical: 3),
-                                decoration: BoxDecoration(
-                                  color: active
-                                      ? cs.secondaryContainer
-                                      : cs.errorContainer,
-                                  borderRadius: AppRadius.badge,
-                                ),
-                                child: Text(
-                                  s.status,
-                                  style: TextStyle(
-                                    fontSize: 11,
-                                    fontWeight: FontWeight.bold,
-                                    color: active
-                                        ? cs.onSecondaryContainer
-                                        : cs.onErrorContainer,
-                                  ),
-                                ),
-                              ),
-                            ),
-                          ),
-                          const SizedBox(width: 8),
-                          Icon(Icons.edit_outlined, size: 18, color: cs.outline),
-                        ],
-                      ),
+          Expanded(
+            child: storesAsync.when(
+              loading: () => const LoadingView(label: 'Loading stores…'),
+              error: (e, _) => ErrorView(
+                message: friendlyError(e, fallback: 'Could not load stores.'),
+                onRetry: () => ref.invalidate(storesProvider),
+              ),
+              data: (stores) {
+                if (stores.isEmpty) {
+                  return EmptyState(
+                    icon: Icons.store_outlined,
+                    title: 'No stores yet',
+                    message:
+                        'Add a store or warehouse to start managing inventory.',
+                    action: OutlinedButton.icon(
+                      onPressed: () => _showAddStoreDialog(context, ref),
+                      icon: const Icon(Icons.add_business),
+                      label: const Text('Add Store'),
                     ),
                   );
-                },
-              );
-            },
+                }
+                return LayoutBuilder(builder: (context, constraints) {
+                  // Zones, Instruments and Delivery sit on the row only where
+                  // they leave the name its room: from the expanded class,
+                  // measured in text units, so large text folds them into the
+                  // menu sooner. Below it they would take the whole tile.
+                  final textScale =
+                      MediaQuery.textScalerOf(context).scale(16) / 16;
+                  final inline = AppBreakpoints.classOf(
+                          constraints.maxWidth / textScale) >=
+                      WindowClass.expanded;
+                  return ListView.separated(
+                    // The end is padded by the FAB's height, so Add Store never
+                    // covers the last store's status and menu.
+                    padding: EdgeInsetsDirectional.fromSTEB(
+                        gutter, 0, gutter, AppSpacing.fabClearance),
+                    itemCount: stores.length,
+                    separatorBuilder: (_, _) =>
+                        const SizedBox(height: AppSpacing.xs),
+                    itemBuilder: (context, i) {
+                      final s = stores[i];
+                      final active = s.status.toUpperCase() == 'ACTIVE';
+                      return _StoreCard(
+                        store: s,
+                        inline: inline,
+                        onAction: (action) {
+                          switch (action) {
+                            case _StoreAction.edit:
+                              _showEditStoreDialog(context, ref, s);
+                            case _StoreAction.zones:
+                              _showZonesDialog(context, ref, s);
+                            case _StoreAction.instruments:
+                              showDialog<void>(
+                                context: context,
+                                builder: (_) => StoreInstrumentsDialog(
+                                    store: s, isManager: isManager),
+                              );
+                            case _StoreAction.delivery:
+                              _showDeliveryAreasDialog(context, ref, s);
+                            case _StoreAction.toggle:
+                              _toggleStoreStatus(context, ref, s, active);
+                          }
+                        },
+                      );
+                    },
+                  );
+                });
+              },
+            ),
           ),
-        ),
-      ],
+        ],
       ),
     );
   }
@@ -227,17 +175,17 @@ class StoresScreen extends ConsumerWidget {
       final ok = await showDialog<bool>(
         context: context,
         builder: (ctx) => AlertDialog(
-          title: Text('Deactivate ${store.name}?'),
+          title: Text('Close ${store.name}?'),
           content: const Text(
-              'The store will stop accepting online orders and POS sales until '
-              'reactivated. Existing data is kept.'),
+              'It stops taking online orders and till sales until it is opened '
+              'again. Nothing is deleted.'),
           actions: [
             TextButton(
                 onPressed: () => Navigator.pop(ctx, false),
                 child: const Text('Cancel')),
             FilledButton(
                 onPressed: () => Navigator.pop(ctx, true),
-                child: const Text('Deactivate')),
+                child: const Text('Close store')),
           ],
         ),
       );
@@ -251,7 +199,9 @@ class StoresScreen extends ConsumerWidget {
       ref.invalidate(storesProvider);
       if (!context.mounted) return;
       ScaffoldMessenger.of(context).showSnackBar(
-        SnackBar(content: Text('Store ${next == 'ACTIVE' ? 'activated' : 'deactivated'}.')),
+        SnackBar(
+            content: Text(
+                '${store.name} is ${next == 'ACTIVE' ? 'open' : 'closed'}.')),
       );
     } catch (e) {
       if (!context.mounted) return;
@@ -262,6 +212,152 @@ class StoresScreen extends ConsumerWidget {
       );
     }
   }
+}
+
+/// One store. Wide, its tools and a labelled Open/Closed switch sit on the
+/// row. Narrow, the row keeps only the name, the details and the status in
+/// words underneath, and everything else — the switch included, as *Close
+/// store* / *Open store* — is in one ⋮ menu.
+class _StoreCard extends StatelessWidget {
+  const _StoreCard({
+    required this.store,
+    required this.inline,
+    required this.onAction,
+  });
+
+  final StoreInfo store;
+  final bool inline;
+  final void Function(_StoreAction action) onAction;
+
+  @override
+  Widget build(BuildContext context) {
+    final theme = Theme.of(context);
+    final cs = theme.colorScheme;
+    final type = store.type.toUpperCase();
+    final isWarehouse = type == 'WAREHOUSE';
+    final isDark = type == 'DARK_STORE';
+    final open = store.status.toUpperCase() == 'ACTIVE';
+    final status = _storeStatusLabel(store.status);
+    final location = [store.city, store.country]
+        .where((e) => e != null && e.isNotEmpty)
+        .join(', ');
+    final details = Text([
+      store.code,
+      if (location.isNotEmpty) location,
+      if (isDark) 'Dark store · delivery only, no till',
+      store.showPrices ? 'Prices shown' : 'Catalog mode',
+    ].join(' · '));
+
+    return Card(
+      child: ListTile(
+        onTap: () => onAction(_StoreAction.edit),
+        leading: CircleAvatar(
+          backgroundColor: cs.primaryContainer,
+          child: Icon(
+            isWarehouse
+                ? Icons.warehouse_outlined
+                : isDark
+                    ? Icons.nightlight_outlined
+                    : Icons.store_outlined,
+            color: cs.onPrimaryContainer,
+          ),
+        ),
+        title: Text(store.name,
+            style: const TextStyle(fontWeight: FontWeight.bold)),
+        subtitle: inline
+            ? details
+            : Column(
+                crossAxisAlignment: CrossAxisAlignment.start,
+                mainAxisSize: MainAxisSize.min,
+                children: [
+                  details,
+                  Padding(
+                    padding: const EdgeInsetsDirectional.only(top: AppSpacing.xs),
+                    child: StatusBadge(
+                      status,
+                      key: Key('store-status-${store.id}'),
+                      tone: open ? StatusTone.success : StatusTone.neutral,
+                    ),
+                  ),
+                ],
+              ),
+        trailing: inline
+            ? Row(
+                mainAxisSize: MainAxisSize.min,
+                children: [
+                  TextButton.icon(
+                    onPressed: () => onAction(_StoreAction.zones),
+                    icon: const Icon(Icons.grid_view_outlined, size: 18),
+                    label: const Text('Zones'),
+                  ),
+                  TextButton.icon(
+                    onPressed: () => onAction(_StoreAction.instruments),
+                    icon: const Icon(Icons.scale_outlined, size: 18),
+                    label: const Text('Instruments'),
+                  ),
+                  TextButton.icon(
+                    onPressed: () => onAction(_StoreAction.delivery),
+                    icon: const Icon(Icons.local_shipping_outlined, size: 18),
+                    label: const Text('Delivery'),
+                  ),
+                  const SizedBox(width: AppSpacing.sm),
+                  // The store's on/off switch, labelled with what it is now.
+                  MergeSemantics(
+                    child: Row(
+                      mainAxisSize: MainAxisSize.min,
+                      children: [
+                        Text(status, style: theme.textTheme.labelLarge),
+                        const SizedBox(width: AppSpacing.xs),
+                        Tooltip(
+                          message: open ? 'Close this store' : 'Open this store',
+                          child: Switch(
+                            key: Key('store-status-${store.id}'),
+                            value: open,
+                            onChanged: (_) => onAction(_StoreAction.toggle),
+                          ),
+                        ),
+                      ],
+                    ),
+                  ),
+                  const SizedBox(width: AppSpacing.sm),
+                  Icon(Icons.edit_outlined, size: 18, color: cs.outline),
+                ],
+              )
+            : PopupMenuButton<_StoreAction>(
+                key: Key('store-menu-${store.id}'),
+                tooltip: 'Actions for ${store.name}',
+                onSelected: onAction,
+                itemBuilder: (_) => [
+                  _item(_StoreAction.edit, Icons.edit_outlined, 'Edit store'),
+                  _item(_StoreAction.zones, Icons.grid_view_outlined, 'Zones'),
+                  _item(_StoreAction.instruments, Icons.scale_outlined,
+                      'Instruments'),
+                  _item(_StoreAction.delivery, Icons.local_shipping_outlined,
+                      'Delivery'),
+                  const PopupMenuDivider(),
+                  _item(
+                    _StoreAction.toggle,
+                    open ? Icons.storefront_outlined : Icons.store_outlined,
+                    open ? 'Close store' : 'Open store',
+                  ),
+                ],
+              ),
+      ),
+    );
+  }
+
+  static PopupMenuItem<_StoreAction> _item(
+          _StoreAction value, IconData icon, String label) =>
+      PopupMenuItem<_StoreAction>(
+        value: value,
+        child: Row(
+          children: [
+            Icon(icon, size: 20),
+            const SizedBox(width: AppSpacing.md),
+            Flexible(child: Text(label)),
+          ],
+        ),
+      );
 }
 
 /// Lists, creates, edits and activates/deactivates the zones (aisles/racks)
@@ -323,31 +419,53 @@ class _ZonesDialog extends ConsumerWidget {
                   leading: Icon(Icons.shelves, color: cs.primary),
                   title: Text(z.name,
                       style: const TextStyle(fontWeight: FontWeight.bold)),
-                  subtitle: Text('${z.code} · ${z.type}'),
-                  trailing: Row(
-                    mainAxisSize: MainAxisSize.min,
+                  // The kind in words and the status as a badge under the
+                  // name; edit and switch on or off in one menu on a phone,
+                  // so the name keeps the width.
+                  subtitle: Column(
+                    crossAxisAlignment: CrossAxisAlignment.start,
                     children: [
-                      Text(z.status,
-                          style: TextStyle(
-                            fontSize: 11,
-                            fontWeight: FontWeight.bold,
-                            color: active ? context.status.success : cs.error,
-                          )),
-                      IconButton(
-                        tooltip: 'Edit',
-                        icon: const Icon(Icons.edit_outlined, size: 18),
-                        onPressed: () => _showZoneForm(context, ref, z),
-                      ),
-                      IconButton(
-                        tooltip: active ? 'Deactivate' : 'Activate',
-                        icon: Icon(
-                          active ? Icons.toggle_on : Icons.toggle_off_outlined,
-                          color: active ? context.status.success : cs.outline,
-                        ),
-                        onPressed: () => _toggleStatus(context, ref, z, active),
+                      Text('${z.code} · ${humanizeCode(z.type)}'),
+                      const SizedBox(height: AppSpacing.xs),
+                      StatusBadge(
+                        humanizeCode(z.status),
+                        tone: active ? StatusTone.success : StatusTone.neutral,
                       ),
                     ],
                   ),
+                  trailing: context.isCompact
+                      ? PopupMenuButton<String>(
+                          key: Key('zone-actions-${z.id}'),
+                          tooltip: 'Edit or ${active ? 'deactivate' : 'activate'}',
+                          onSelected: (a) => a == 'edit'
+                              ? _showZoneForm(context, ref, z)
+                              : _toggleStatus(context, ref, z, active),
+                          itemBuilder: (_) => [
+                            const PopupMenuItem(value: 'edit', child: Text('Edit')),
+                            PopupMenuItem(
+                              value: 'toggle',
+                              child: Text(active ? 'Deactivate' : 'Activate'),
+                            ),
+                          ],
+                        )
+                      : Row(
+                          mainAxisSize: MainAxisSize.min,
+                          children: [
+                            IconButton(
+                              tooltip: 'Edit',
+                              icon: const Icon(Icons.edit_outlined, size: 18),
+                              onPressed: () => _showZoneForm(context, ref, z),
+                            ),
+                            IconButton(
+                              tooltip: active ? 'Deactivate' : 'Activate',
+                              icon: Icon(
+                                active ? Icons.toggle_on : Icons.toggle_off_outlined,
+                                color: active ? context.status.success : cs.outline,
+                              ),
+                              onPressed: () => _toggleStatus(context, ref, z, active),
+                            ),
+                          ],
+                        ),
                 );
               },
             );
@@ -723,7 +841,7 @@ class _ZoneFormDialogState extends ConsumerState<_ZoneFormDialog> {
                 decoration: const InputDecoration(labelText: 'Type'),
                 items: _types
                     .map((t) => DropdownMenuItem(
-                        value: t, child: Text(t.replaceAll('_', ' '))))
+                        value: t, child: Text(humanizeCode(t))))
                     .toList(),
                 onChanged: (v) => setState(() => _type = v!),
               ),
@@ -880,7 +998,7 @@ class _EditStoreDialogState extends ConsumerState<_EditStoreDialog> {
                     border: OutlineInputBorder(),
                     isDense: true,
                   ),
-                  child: Text('${s.code} · ${s.type}'),
+                  child: Text('${s.code} · ${storeTypeLabel(s.type)}'),
                 ),
                 const SizedBox(height: 12),
                 TextFormField(
@@ -1161,10 +1279,9 @@ class _AddStoreDialogState extends ConsumerState<_AddStoreDialog> {
         body: Form(
         key: _formKey,
         child: SingleChildScrollView(
-          padding: const EdgeInsets.all(24),
+          padding: context.pagePadding,
           child: Center(
-            child: ConstrainedBox(
-              constraints: const BoxConstraints(maxWidth: 480),
+            child: ContentBounds.form(
               child: Column(
               crossAxisAlignment: CrossAxisAlignment.stretch,
               mainAxisSize: MainAxisSize.min,
@@ -1303,3 +1420,11 @@ class _AddStoreDialogState extends ConsumerState<_AddStoreDialog> {
     );
   }
 }
+
+/// A store's type in words: a shop, a warehouse, a dark store.
+String storeTypeLabel(String type) => switch (type.toUpperCase()) {
+      'STORE' => 'Shop',
+      'WAREHOUSE' => 'Warehouse',
+      'DARK_STORE' => 'Dark store',
+      _ => humanizeCode(type),
+    };

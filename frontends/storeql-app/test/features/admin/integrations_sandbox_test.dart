@@ -115,8 +115,9 @@ class _Server implements HttpClientAdapter {
   }
 }
 
-Future<_Server> _pump(WidgetTester tester, String role, {bool hasSandbox = true, bool inside = false}) async {
-  tester.view.physicalSize = const Size(1400, 2600);
+Future<_Server> _pump(WidgetTester tester, String role,
+    {bool hasSandbox = true, bool inside = false, Size size = const Size(1400, 2600), double textScale = 1}) async {
+  tester.view.physicalSize = size;
   tester.view.devicePixelRatio = 1;
   addTearDown(tester.view.reset);
   final server = _Server(hasSandbox: hasSandbox);
@@ -127,7 +128,13 @@ Future<_Server> _pump(WidgetTester tester, String role, {bool hasSandbox = true,
         apiClientProvider.overrideWithValue(FakeApiClient(dio)),
         authNotifierProvider.overrideWith(() => RoleAuth(role, sandbox: inside)),
       ],
-      child: const MaterialApp(home: IntegrationsScreen()),
+      child: MaterialApp(
+        builder: (context, child) => MediaQuery(
+          data: MediaQuery.of(context).copyWith(textScaler: TextScaler.linear(textScale)),
+          child: child!,
+        ),
+        home: const IntegrationsScreen(),
+      ),
     ),
   );
   await tester.pumpAndSettle();
@@ -156,7 +163,8 @@ void main() {
     final server = await _pump(tester, 'OWNER');
     expect(find.byKey(const Key('sandbox-card')), findsOneWidget);
     expect(find.text('Hollins Grocers (sandbox)'), findsOneWidget);
-    expect(find.textContaining('SANDBOX plan'), findsOneWidget);
+    expect(find.textContaining('Sandbox plan'), findsOneWidget);
+    expect(find.textContaining('SANDBOX'), findsNothing);
     expect(find.byKey(const Key('sandbox-enter')), findsOneWidget);
 
     await tester.tap(find.byKey(const Key('sandbox-delete')));
@@ -234,4 +242,14 @@ void main() {
     expect(live.sandbox, isFalse);
     expect(live.mode, 'LIVE');
   });
+
+  for (final scale in [1.0, 2.0]) {
+    testWidgets('on a phone at ${scale}x text the section headings and key tiles fit', (tester) async {
+      await _pump(tester, 'OWNER', size: const Size(390, 3200), textScale: scale);
+      expect(tester.takeException(), isNull);
+      expect(find.byKey(const Key('sandbox-enter')), findsOneWidget);
+      // Inset by the phone's gutter.
+      expect(tester.getTopLeft(find.text('Integrations')).dx, 16);
+    });
+  }
 }

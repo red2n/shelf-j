@@ -67,8 +67,9 @@ void main() {
   testWidgets('a proposed draft wears its badge; an order a person typed does not', (tester) async {
     await _pump(tester);
     expect(find.text('Proposed'), findsOneWidget);
-    expect(find.text('DRAFT'), findsOneWidget);
-    expect(find.text('SUBMITTED'), findsOneWidget);
+    // The status badge says a word, not the code.
+    expect(find.text('Draft'), findsOneWidget);
+    expect(find.text('Submitted'), findsOneWidget);
   });
 
   testWidgets('each proposed line shows the arithmetic that produced it', (tester) async {

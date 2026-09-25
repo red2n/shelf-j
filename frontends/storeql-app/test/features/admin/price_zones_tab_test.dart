@@ -4,6 +4,7 @@ import 'package:dio/dio.dart';
 import 'package:flutter/material.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:flutter_test/flutter_test.dart';
+import 'package:intl/date_symbol_data_local.dart';
 import 'package:storeql_app/core/network/api_client.dart';
 import 'package:storeql_app/features/admin/price_zones_tab.dart';
 
@@ -40,6 +41,9 @@ class _Server implements HttpClientAdapter {
   Future<ResponseBody> fetch(RequestOptions o, Stream<List<int>>? s, Future<void>? c) async {
     requests.add(o);
     final path = o.path;
+    if (path.endsWith('/variants/resolve')) {
+      return _json('{"data":[{"variantId":"$_variant","productName":"Oat milk 1L","sku":"OAT-1"}]}', 200);
+    }
     if (path.endsWith('/admin/stores')) {
       return _json(
           '{"data":[{"id":"$_store1","name":"Leeds","code":"LDS","type":"STORE","status":"ACTIVE"},'
@@ -101,10 +105,15 @@ Future<_Server> _pump(WidgetTester tester, {bool management = true, bool refuse 
     child: MaterialApp(home: Scaffold(body: PriceZonesTab(management: management))),
   ));
   await tester.pumpAndSettle();
+  // The product names are asked for once the lists are in, with no spinner
+  // to keep pumpAndSettle going.
+  await tester.pump(const Duration(milliseconds: 50));
+  await tester.pumpAndSettle();
   return server;
 }
 
 void main() {
+  setUpAll(initializeDateFormatting);
   testWidgets('zones show their stores by name, a rule reads as a sentence, a proposal shows its figures',
       (tester) async {
     await _pump(tester);
@@ -113,9 +122,11 @@ void main() {
     expect(find.text('Brighton'), findsNothing);
     expect(find.textContaining('undercut the lowest rival by 1%, to a .99, never below 80%'), findsOneWidget);
     expect(find.textContaining('North prices'), findsOneWidget);
-    expect(find.text('9.00 GBP → 7.99 GBP'), findsOneWidget);
-    expect(find.textContaining('Rival A at 8.50 GBP, seen 2026-09-24'), findsOneWidget);
-    expect(find.text('Rival A · 8.50 GBP'), findsOneWidget);
+    expect(find.text('£9.00 → £7.99'), findsOneWidget);
+    expect(find.textContaining('Oat milk 1L · Rival A at £8.50, seen 24 Sept 2026'), findsOneWidget);
+    expect(find.textContaining('Oat milk 1L · seen 24 Sept 2026'), findsOneWidget);
+    expect(find.textContaining('variant '), findsNothing);
+    expect(find.text('Rival A · £8.50'), findsOneWidget);
   });
 
   testWidgets('New zone posts the name and description and the list refreshes', (tester) async {
@@ -141,7 +152,7 @@ void main() {
     await tester.pumpAndSettle();
     final post = server.requests.lastWhere((r) => r.method == 'POST');
     expect(post.path, endsWith('/admin/repricing/proposals/$_proposal/apply'));
-    expect(find.textContaining('Applied: 7.99 GBP against Rival A'), findsOneWidget);
+    expect(find.textContaining('Applied: £7.99 against Rival A'), findsOneWidget);
 
     await _pump(tester, management: false);
     expect(find.byKey(const Key('zone-new')), findsNothing);

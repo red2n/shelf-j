@@ -177,7 +177,7 @@ void main() {
       expect(find.text('Rioja 75cl'), findsOneWidget);
       expect(find.text('Alcohol'), findsOneWidget);
       expect(find.text('The customer must be 18 or over.'), findsOneWidget);
-      expect(find.text('Legal minimum in GB.'), findsOneWidget);
+      expect(find.text('Legal minimum in the United Kingdom.'), findsOneWidget);
     });
 
     testWidgets('a stricter store policy is shown as policy, not as law',
@@ -191,7 +191,7 @@ void main() {
                       minimumAge: 25,
                       country: 'GB',
                       storePolicy: true)))));
-      expect(find.textContaining('Store policy in GB'), findsOneWidget);
+      expect(find.textContaining('Store policy in the United Kingdom'), findsOneWidget);
       expect(find.text('Checked — 25+'), findsOneWidget);
     });
 

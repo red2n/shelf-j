@@ -1,5 +1,6 @@
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 import '../../core/constants.dart';
+import '../../core/format.dart';
 import '../../core/network/api_client.dart';
 
 // ── Models ───────────────────────────────────────────────────────────────────
@@ -158,9 +159,10 @@ class LoyaltyAccount {
     return parts.join(' · ');
   }
 
-  /// `20 pts expire 2026-10-23`, or empty when nothing is about to.
-  String get expiringLine =>
-      expiringSoon == null ? '' : '${_pts(expiringSoon!.points)} expire ${expiringSoon!.day}';
+  /// `20 pts expire 23 Oct 2026`, or empty when nothing is about to.
+  String get expiringLine => expiringSoon == null
+      ? ''
+      : '${_pts(expiringSoon!.points)} expire ${AppFormat.date(expiringSoon!.on)}';
 
   static String _pts(double v) => '${_trim(v)} pts';
   static String _trim(double v) => v == v.roundToDouble()

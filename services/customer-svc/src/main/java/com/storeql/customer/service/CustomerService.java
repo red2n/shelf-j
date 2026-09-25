@@ -1,5 +1,6 @@
 package com.storeql.customer.service;
 
+import com.storeql.customer.domain.CustomerSearch;
 import com.storeql.customer.domain.Domain.Customer;
 import com.storeql.customer.domain.Domain.CustomerAddress;
 import com.storeql.customer.domain.Domain.Expired;
@@ -34,6 +35,7 @@ import com.storeql.customer.repo.LoyaltyProgrammeRepository;
 import com.storeql.ids.Ids;
 import com.storeql.service.OutboxRow;
 import com.storeql.web.ApiException;
+import com.storeql.web.ErrorCodes;
 import com.storeql.web.TenantContext;
 import jakarta.enterprise.context.ApplicationScoped;
 import jakarta.inject.Inject;
@@ -378,16 +380,30 @@ public class CustomerService {
   }
 
   /**
-   * Lists a tenant's customers, one cursor page at a time.
+   * Lists a tenant's customers, one cursor page at a time, optionally narrowed to those whose name,
+   * email or phone holds {@code q}.
    *
    * @param tenantId owning tenant
+   * @param q text to find, case-insensitively, anywhere in the first, last or full name, the email
+   *     or the phone — a phone-shaped {@code q} of four digits or more on its digits alone,
+   *     whatever the spacing; trimmed, and {@code null} or blank lists every customer as before
    * @param afterId cursor — the last id from the previous page, or {@code null} to start
    * @param limit page size; silently capped at 100
    * @return the page of customers
+   * @throws ApiException {@code VALIDATION_FAILED} (400) when {@code q} is over 100 characters once
+   *     trimmed
    */
-  public List<Customer> list(UUID tenantId, String afterId, int limit) {
+  public List<Customer> list(UUID tenantId, String q, String afterId, int limit) {
+    String term = CustomerSearch.term(q);
+    if (CustomerSearch.tooLong(term)) {
+      throw new ApiException(
+          400,
+          ErrorCodes.VALIDATION_FAILED,
+          "Request validation failed",
+          List.of("q: at most " + CustomerSearch.MAX_LENGTH + " characters"));
+    }
     int cap = Math.min(limit, 100);
-    return repo.listCustomers(tenantId, afterId, cap);
+    return repo.listCustomers(tenantId, term, afterId, cap);
   }
 
   /**

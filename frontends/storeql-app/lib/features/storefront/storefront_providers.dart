@@ -6,6 +6,7 @@ import 'package:dio/dio.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:flutter_riverpod/legacy.dart';
 import '../../core/constants.dart';
+import '../../core/format.dart';
 import '../../core/storage/app_storage.dart';
 import '../../shared/util/image_byte_cache.dart';
 
@@ -247,11 +248,11 @@ class ResolvedPrice {
     this.display,
   });
 
-  /// `≈ USD 15.00` when the shopper sees another currency; empty otherwise.
+  /// `≈ US$15.00` when the shopper sees another currency; empty otherwise.
   String get shownLine {
     final d = display;
     if (d == null || d.currency == currency) return '';
-    return '≈ ${d.currency} ${d.totalWithVat.toStringAsFixed(2)}';
+    return '≈ ${AppFormat.money(d.totalWithVat, currencyCode: d.currency)}';
   }
 
   factory ResolvedPrice.fromJson(Map<String, dynamic> j) => ResolvedPrice(
@@ -448,12 +449,19 @@ class StoreSummary {
   /// Whether a shopper may collect here. A dark store — a shop with no shop
   /// floor — sells delivery-only (ship-from-store and dark-store picking).
   final bool pickupOffered;
+
+  /// The business the store belongs to (the tenant's legal name, else its
+  /// name), when tenant-svc sends it; null otherwise. The accessibility
+  /// statement speaks for the business, never for one of its stores.
+  final String? businessName;
+
   const StoreSummary(
       {required this.id,
       required this.name,
       required this.showPrices,
       this.type = 'STORE',
-      this.pickupOffered = true});
+      this.pickupOffered = true,
+      this.businessName});
 
   factory StoreSummary.fromJson(Map<String, dynamic> j) => StoreSummary(
         id: j['storeId'] as String? ?? '',
@@ -461,7 +469,16 @@ class StoreSummary {
         showPrices: j['showPrices'] as bool? ?? true,
         type: j['type'] as String? ?? 'STORE',
         pickupOffered: j['pickupOffered'] as bool? ?? true,
+        businessName: _knownName(j['businessName']),
       );
+}
+
+/// A name as sent, trimmed; null when missing, blank, or the '-' the
+/// storefront sends for a name it does not have.
+String? _knownName(Object? raw) {
+  if (raw is! String) return null;
+  final trimmed = raw.trim();
+  return trimmed.isEmpty || trimmed == '-' ? null : trimmed;
 }
 
 /// True when the storefront's tenant has been deactivated (gateway returns 403
@@ -571,10 +588,14 @@ class StorePromotion {
         reductionAnnounceable: j['reductionAnnounceable'] == true,
       );
 
-  /// Short headline, e.g. "20% off" or "£5 off".
-  String get headline => type == 'PERCENT'
-      ? '${value.toStringAsFixed(value % 1 == 0 ? 0 : 2)}% off'
-      : '${value.toStringAsFixed(2)} off';
+  /// Short headline, e.g. "20% off" or "£5.00 off", in the shop's
+  /// [currency] (the amount alone, grouped, while it is not known).
+  String headlineIn(String? currency) => type == 'PERCENT'
+      ? '${AppFormat.count(value)}% off'
+      : '${AppFormat.money(value, currencyCode: currency)} off';
+
+  /// [headlineIn] with the currency not known.
+  String get headline => headlineIn(null);
 }
 
 /// The promotions the banner may show (03.12): only those pricing-svc says may be
@@ -779,6 +800,11 @@ final productCardOfferProvider =
 
 class CartLine {
   final String variantId;
+
+  /// The product the variant belongs to, so the cart shows the same picture
+  /// (and placeholder colour) as the shop. Null for a line added before lines
+  /// knew their product.
+  final String? productId;
   final String productName;
   final String sku;
   final double unitPrice;
@@ -787,6 +813,7 @@ class CartLine {
 
   CartLine({
     required this.variantId,
+    this.productId,
     required this.productName,
     required this.sku,
     required this.unitPrice,
@@ -821,6 +848,7 @@ class CartNotifier extends StateNotifier<List<CartLine>> {
         if (l.variantId == variantId)
           (CartLine(
             variantId: l.variantId,
+            productId: l.productId,
             productName: l.productName,
             sku: l.sku,
             unitPrice: l.unitPrice,
@@ -834,6 +862,13 @@ class CartNotifier extends StateNotifier<List<CartLine>> {
 
   void remove(String variantId) =>
       state = state.where((l) => l.variantId != variantId).toList();
+
+  /// Puts [line] back at [index] (the end, past it) — *Undo* after a removal —
+  /// unless its variant is in the cart again already.
+  void insert(int index, CartLine line) {
+    if (state.any((l) => l.variantId == line.variantId)) return;
+    state = [...state]..insert(index.clamp(0, state.length), line);
+  }
 
   void clear() => state = [];
 
@@ -1050,6 +1085,9 @@ String splitSummary(List<CheckoutPart> parts, Map<String, String> storeNames) {
 /// network fetch of the customer's whole order history. Staying alive lets that reuse the
 /// already-fetched list; `ref.watch(storefrontAuthProvider)` below still recomputes it on
 /// sign-in/sign-out, and call sites already `ref.invalidate` it after placing or refreshing.
+///
+/// Never retried behind the page: a refused read shows its error at once, with
+/// Retry and Refresh, instead of grey cards through half a minute of retries.
 final serverOrdersProvider = FutureProvider<List<ServerOrderSummary>?>((ref) async {
   final auth = ref.watch(storefrontAuthProvider);
   if (!auth.isSignedIn) return null;
@@ -1060,7 +1098,7 @@ final serverOrdersProvider = FutureProvider<List<ServerOrderSummary>?>((ref) asy
   return data
       .map((e) => ServerOrderSummary.fromJson(e as Map<String, dynamic>))
       .toList();
-});
+}, retry: (_, _) => null);
 
 // ── Product safety recalls (05.10) ───────────────────────────────────────────
 
@@ -1169,7 +1207,7 @@ final myRecallNoticesProvider =
     for (final e in data)
       if (e is Map) MyRecallNotice.fromJson(e.cast<String, dynamic>()),
   ];
-});
+}, retry: (_, _) => null);
 
 /// The shopper chooses their remedy, once.
 Future<MyRecallNotice> chooseMyRecallRemedy(

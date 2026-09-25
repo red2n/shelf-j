@@ -8,8 +8,12 @@ import '../../core/network/api_error.dart';
 import '../../core/spacing.dart';
 import '../../core/theme.dart';
 import '../../shared/widgets/barcode_scanner_sheet.dart';
+import '../../shared/widgets/empty_state.dart';
 import '../../shared/widgets/error_view.dart';
 import '../../shared/widgets/loading_view.dart';
+import '../../shared/widgets/page_header.dart';
+import '../../shared/widgets/scrollable_table.dart';
+import '../../shared/widgets/status_badge.dart';
 import 'providers/admin_providers.dart';
 import 'providers/inventory_levels_pagination.dart';
 import 'inventory_forecast_tab.dart';
@@ -33,36 +37,31 @@ class InventoryScreen extends ConsumerStatefulWidget {
 class _InventoryScreenState extends ConsumerState<InventoryScreen> {
   @override
   Widget build(BuildContext context) {
+    final gutter = context.pageGutter;
     return DefaultTabController(
       length: 11,
       child: Column(
         crossAxisAlignment: CrossAxisAlignment.start,
         children: [
-          Padding(
-            padding: const EdgeInsets.fromLTRB(
-              AppSpacing.xl,
-              AppSpacing.xl,
-              AppSpacing.xl,
-              0,
-            ),
-            child: Row(
-              children: [
-                Text(
-                  'Inventory',
-                  style: Theme.of(context).textTheme.headlineMedium,
-                ),
-                const Spacer(),
-                FilledButton.icon(
-                  onPressed: () => _showReceiveDialog(context, ref),
-                  icon: const Icon(Icons.add),
-                  label: const Text('Receive Stock'),
-                ),
-              ],
-            ),
+          // The tabs follow straight under the title, so no bottom inset.
+          PageHeader(
+            title: 'Inventory',
+            padding: EdgeInsetsDirectional.fromSTEB(gutter, gutter, gutter, 0),
+            actions: [
+              FilledButton.icon(
+                onPressed: () => _showReceiveDialog(context, ref),
+                icon: const Icon(Icons.add),
+                label: const Text('Receive Stock'),
+              ),
+            ],
           ),
-          const TabBar(
+          // Start-aligned at the page gutter, under the title, rather than at
+          // Material's 52px scrollable offset.
+          TabBar(
             isScrollable: true,
-            tabs: [
+            tabAlignment: TabAlignment.start,
+            padding: EdgeInsetsDirectional.only(start: gutter),
+            tabs: const [
               Tab(text: 'Levels'),
               Tab(text: 'Batches'),
               Tab(text: 'Transfers'),
@@ -122,14 +121,45 @@ class _LevelsTab extends ConsumerStatefulWidget {
 }
 
 class _LevelsTabState extends ConsumerState<_LevelsTab> {
+  final _searchCtrl = TextEditingController();
   String _search = '';
   bool _lowOnly = false;
 
-  void _refreshLevels() {
-    ref.read(inventoryLevelsPaginationProvider.notifier).refresh();
+  @override
+  void dispose() {
+    _searchCtrl.dispose();
+    super.dispose();
+  }
+
+  /// Back to every loaded row — the search box emptied too, so it never shows
+  /// a search that no longer applies.
+  void _clearFilters() {
+    _searchCtrl.clear();
+    setState(() {
+      _search = '';
+      _lowOnly = false;
+    });
+  }
+
+  /// What the filters found nothing of, in words: *No items match “teapot”*,
+  /// *No items are low on stock*.
+  String _noMatchTitle(bool moreToLoad) {
+    final items = moreToLoad ? 'loaded items' : 'items';
+    if (_search.isEmpty) return 'No $items are low on stock';
+    final low = _lowOnly ? 'low-stock ' : '';
+    return 'No $low$items match “$_search”';
+  }
+
+  /// Reloads the levels and what they are judged against. Completes when the
+  /// first page is back, so a pull on the phone list can wait for it.
+  Future<void> _refreshLevels() {
+    final reload = ref
+        .read(inventoryLevelsPaginationProvider.notifier)
+        .refresh();
     ref.invalidate(inventoryLevelsSummaryProvider);
     ref.invalidate(thresholdsMapProvider);
     ref.invalidate(thresholdsProvider(''));
+    return reload;
   }
 
   @override
@@ -141,47 +171,77 @@ class _LevelsTabState extends ConsumerState<_LevelsTab> {
         const <String, VariantLabel>{};
     final thresholds =
         ref.watch(thresholdsMapProvider).value ?? const <String, double>{};
+    // Store names for the Store column and the phone rows.
+    final storeNames = {
+      for (final s in ref.watch(storesProvider).value ?? const <StoreInfo>[])
+        s.id: s.name,
+    };
     final cs = Theme.of(context).colorScheme;
+    final gutter = context.pageGutter;
 
     return Column(
       crossAxisAlignment: CrossAxisAlignment.start,
       children: [
         // Search + filter bar
         Padding(
-          padding: const EdgeInsets.fromLTRB(
-            AppSpacing.xl,
+          padding: EdgeInsetsDirectional.fromSTEB(
+            gutter,
             AppSpacing.lg,
-            AppSpacing.xl,
+            gutter,
             0,
           ),
-          child: Row(
-            children: [
-              Expanded(
-                child: SearchBar(
-                  hintText: 'Search product, SKU or ID…',
-                  leading: const Icon(Icons.search),
-                  onChanged: (v) => setState(() => _search = v.trim()),
-                ),
-              ),
-              const SizedBox(width: 12),
-              FilterChip(
+          child: Builder(
+            builder: (context) {
+              final search = SearchBar(
+                controller: _searchCtrl,
+                hintText: 'Search product, SKU or ID…',
+                leading: const Icon(Icons.search),
+                onChanged: (v) => setState(() => _search = v.trim()),
+              );
+              final lowStock = FilterChip(
                 label: const Text('Low stock'),
                 avatar: Icon(
                   Icons.warning_amber_outlined,
                   size: 14,
-                  color: _lowOnly ? cs.onError : null,
+                  color: _lowOnly ? cs.onErrorContainer : null,
                 ),
                 selected: _lowOnly,
                 selectedColor: cs.errorContainer,
                 onSelected: (v) => setState(() => _lowOnly = v),
-              ),
-              const SizedBox(width: 8),
-              IconButton(
+              );
+              final refresh = IconButton(
                 icon: const Icon(Icons.refresh),
                 tooltip: 'Refresh inventory',
                 onPressed: _refreshLevels,
-              ),
-            ],
+              );
+              // On a phone the search gets the whole row (its hint was cut to a
+              // few words); the filter and refresh go on the row under it.
+              if (context.isCompact) {
+                return Column(
+                  crossAxisAlignment: CrossAxisAlignment.stretch,
+                  children: [
+                    search,
+                    const SizedBox(height: AppSpacing.sm),
+                    // The filter at the start, refresh at the end; with large
+                    // text the icon drops to a line of its own, never off-screen.
+                    Wrap(
+                      alignment: WrapAlignment.spaceBetween,
+                      crossAxisAlignment: WrapCrossAlignment.center,
+                      children: [lowStock, refresh],
+                    ),
+                  ],
+                );
+              }
+              return Row(
+                children: [
+                  Expanded(child: search),
+                  const SizedBox(width: 12),
+                  lowStock,
+                  const SizedBox(width: 8),
+                  refresh,
+                ],
+              );
+            },
           ),
         ),
         const SizedBox(height: 16),
@@ -193,7 +253,7 @@ class _LevelsTabState extends ConsumerState<_LevelsTab> {
           error: (_, _) => const SizedBox.shrink(),
           data: (summary) {
             return Padding(
-              padding: const EdgeInsets.symmetric(horizontal: 24),
+              padding: EdgeInsets.symmetric(horizontal: gutter),
               child: Row(
                 children: [
                   _SummaryChip(
@@ -225,7 +285,10 @@ class _LevelsTabState extends ConsumerState<_LevelsTab> {
               }
               if (page.error != null && page.levels.isEmpty) {
                 return ErrorView(
-                  message: 'Could not load inventory levels.',
+                  message: friendlyError(
+                    page.error!,
+                    fallback: 'Could not load inventory levels.',
+                  ),
                   onRetry: () => ref
                       .read(inventoryLevelsPaginationProvider.notifier)
                       .refresh(),
@@ -269,32 +332,28 @@ class _LevelsTabState extends ConsumerState<_LevelsTab> {
                 return Column(
                   children: [
                     Expanded(
-                      child: Center(
-                        child: Column(
-                          mainAxisSize: MainAxisSize.min,
-                          children: [
-                            Icon(
-                              Icons.inventory_2_outlined,
-                              size: 64,
-                              color: cs.outlineVariant,
-                            ),
-                            const SizedBox(height: 16),
-                            Text(
-                              filtering
-                                  ? 'No matches on loaded items'
-                                  : 'No items found',
-                              style: Theme.of(context).textTheme.titleMedium,
-                            ),
-                            if (filtering)
-                              TextButton(
-                                onPressed: () => setState(() {
-                                  _search = '';
-                                  _lowOnly = false;
-                                }),
-                                child: const Text('Clear filters'),
+                      child: _Roomy(
+                        child: filtering
+                            ? EmptyState(
+                                icon: Icons.search_off,
+                                title: _noMatchTitle(page.hasMore),
+                                // The search runs over the rows loaded so far;
+                                // say so rather than imply it searched them all.
+                                message: page.hasMore
+                                    ? 'Only the items loaded so far are searched.'
+                                    : null,
+                                action: TextButton(
+                                  onPressed: _clearFilters,
+                                  child: const Text('Clear filters'),
+                                ),
+                              )
+                            : const EmptyState(
+                                icon: Icons.inventory_2_outlined,
+                                title: 'No stock recorded yet',
+                                message:
+                                    'Stock shows here, store by store, once it '
+                                    'is received.',
                               ),
-                          ],
-                        ),
                       ),
                     ),
                     ?loadMore,
@@ -307,11 +366,14 @@ class _LevelsTabState extends ConsumerState<_LevelsTab> {
                   Expanded(
                     child: LayoutBuilder(
                       builder: (context, bc) {
-                        final wide = bc.maxWidth >= AppBreakpoints.medium;
+                        final wide =
+                            AppBreakpoints.classOf(bc.maxWidth) !=
+                            WindowClass.compact;
                         if (wide) {
                           return _WideTable(
                             levels: filtered,
                             labels: labels,
+                            storeNames: storeNames,
                             thresholds: thresholds,
                             onChanged: _refreshLevels,
                           );
@@ -319,8 +381,10 @@ class _LevelsTabState extends ConsumerState<_LevelsTab> {
                         return _NarrowList(
                           levels: filtered,
                           labels: labels,
+                          storeNames: storeNames,
                           thresholds: thresholds,
                           onChanged: _refreshLevels,
+                          onRefresh: _refreshLevels,
                         );
                       },
                     ),
@@ -353,261 +417,294 @@ class _BatchesTabState extends ConsumerState<_BatchesTab> {
   Widget build(BuildContext context) {
     final cs = Theme.of(context).colorScheme;
     final storesAsync = ref.watch(storesProvider);
+    final gutter = context.pageGutter;
 
-    return Column(
-      crossAxisAlignment: CrossAxisAlignment.start,
-      children: [
-        Padding(
-          padding: const EdgeInsets.fromLTRB(
-            AppSpacing.xl,
-            AppSpacing.lg,
-            AppSpacing.xl,
-            0,
+    final filters = Padding(
+      padding: EdgeInsetsDirectional.fromSTEB(gutter, AppSpacing.lg, gutter, 0),
+      child: Wrap(
+        spacing: 12,
+        runSpacing: 12,
+        children: [
+          SizedBox(
+            width: 220,
+            child: storesAsync.when(
+              loading: () => const LinearProgressIndicator(),
+              error: (e, _) => Text(
+                'Could not load stores',
+                style: TextStyle(color: cs.error),
+              ),
+              data: (stores) => DropdownButtonFormField<String>(
+                initialValue: _storeId,
+                isExpanded: true,
+                decoration: const InputDecoration(
+                  labelText: 'Store',
+                  isDense: true,
+                  prefixIcon: Icon(Icons.store_outlined),
+                ),
+                items: stores
+                    .map(
+                      (s) => DropdownMenuItem(
+                        value: s.id,
+                        child: Text(
+                          '${s.name} (${s.code})',
+                          overflow: TextOverflow.ellipsis,
+                        ),
+                      ),
+                    )
+                    .toList(),
+                onChanged: (v) => setState(() {
+                  _storeId = v;
+                  _zoneId = null;
+                }),
+              ),
+            ),
           ),
-          child: Wrap(
-            spacing: 12,
-            runSpacing: 12,
-            children: [
-              SizedBox(
-                width: 220,
-                child: storesAsync.when(
-                  loading: () => const LinearProgressIndicator(),
-                  error: (e, _) => Text(
-                    'Could not load stores',
-                    style: TextStyle(color: cs.error),
-                  ),
-                  data: (stores) => DropdownButtonFormField<String>(
-                    initialValue: _storeId,
-                    isExpanded: true,
-                    decoration: const InputDecoration(
-                      labelText: 'Store',
-                      isDense: true,
-                      prefixIcon: Icon(Icons.store_outlined),
-                    ),
-                    items: stores
-                        .map(
-                          (s) => DropdownMenuItem(
-                            value: s.id,
+          if (_storeId != null)
+            SizedBox(
+              width: 200,
+              child: Consumer(
+                builder: (context, ref, _) {
+                  final zonesAsync = ref.watch(zonesProvider(_storeId!));
+                  return zonesAsync.when(
+                    loading: () => const LinearProgressIndicator(),
+                    error: (_, _) => const SizedBox.shrink(),
+                    data: (zones) => DropdownButtonFormField<String?>(
+                      initialValue: _zoneId,
+                      isExpanded: true,
+                      decoration: const InputDecoration(
+                        labelText: 'Zone',
+                        isDense: true,
+                        prefixIcon: Icon(Icons.grid_view_outlined),
+                      ),
+                      items: [
+                        const DropdownMenuItem(
+                          value: null,
+                          child: Text('All zones'),
+                        ),
+                        ...zones.map(
+                          (z) => DropdownMenuItem(
+                            value: z.id,
                             child: Text(
-                              '${s.name} (${s.code})',
+                              '${z.name} (${z.code})',
                               overflow: TextOverflow.ellipsis,
                             ),
                           ),
-                        )
-                        .toList(),
-                    onChanged: (v) => setState(() {
-                      _storeId = v;
-                      _zoneId = null;
-                    }),
-                  ),
-                ),
-              ),
-              if (_storeId != null)
-                SizedBox(
-                  width: 200,
-                  child: Consumer(
-                    builder: (context, ref, _) {
-                      final zonesAsync = ref.watch(zonesProvider(_storeId!));
-                      return zonesAsync.when(
-                        loading: () => const LinearProgressIndicator(),
-                        error: (_, _) => const SizedBox.shrink(),
-                        data: (zones) => DropdownButtonFormField<String?>(
-                          initialValue: _zoneId,
-                          isExpanded: true,
-                          decoration: const InputDecoration(
-                            labelText: 'Zone',
-                            isDense: true,
-                            prefixIcon: Icon(Icons.grid_view_outlined),
-                          ),
-                          items: [
-                            const DropdownMenuItem(
-                              value: null,
-                              child: Text('All zones'),
-                            ),
-                            ...zones.map(
-                              (z) => DropdownMenuItem(
-                                value: z.id,
-                                child: Text(
-                                  '${z.name} (${z.code})',
-                                  overflow: TextOverflow.ellipsis,
-                                ),
-                              ),
-                            ),
-                          ],
-                          onChanged: (v) => setState(() => _zoneId = v),
                         ),
-                      );
-                    },
-                  ),
-                ),
-              SizedBox(
-                width: 190,
-                child: DropdownButtonFormField<String?>(
-                  initialValue: _materialStatus,
-                  isExpanded: true,
-                  decoration: const InputDecoration(
-                    labelText: 'Material status',
-                    isDense: true,
-                  ),
-                  items: const [
-                    DropdownMenuItem(value: null, child: Text('Any status')),
-                    DropdownMenuItem(
-                      value: 'AVAILABLE',
-                      child: Text('Available'),
+                      ],
+                      onChanged: (v) => setState(() => _zoneId = v),
                     ),
-                    DropdownMenuItem(
-                      value: 'QUARANTINE',
-                      child: Text('Quarantine'),
-                    ),
-                    DropdownMenuItem(
-                      value: 'REJECTED',
-                      child: Text('Rejected'),
-                    ),
-                    DropdownMenuItem(value: 'HOLD', child: Text('Hold')),
-                  ],
-                  onChanged: (v) => setState(() => _materialStatus = v),
-                ),
+                  );
+                },
               ),
-              SizedBox(
-                width: 240,
-                child: SearchBar(
-                  hintText: 'Search batch no. / variant…',
-                  leading: const Icon(Icons.search),
-                  onChanged: (v) => setState(() => _search = v.trim()),
-                ),
+            ),
+          SizedBox(
+            width: 190,
+            child: DropdownButtonFormField<String?>(
+              initialValue: _materialStatus,
+              isExpanded: true,
+              decoration: const InputDecoration(
+                labelText: 'Material status',
+                isDense: true,
               ),
-              if (_storeId != null)
-                IconButton(
-                  icon: const Icon(Icons.refresh),
-                  tooltip: 'Refresh batches',
-                  onPressed: () => ref.invalidate(batchesProvider(_storeId!)),
-                ),
-            ],
+              items: [
+                const DropdownMenuItem(value: null, child: Text('Any status')),
+                // The same words the rows' badges use.
+                for (final m in batchMaterialStatuses)
+                  DropdownMenuItem(
+                    value: m,
+                    child: Text(materialStatusLabel(m)),
+                  ),
+              ],
+              onChanged: (v) => setState(() => _materialStatus = v),
+            ),
           ),
-        ),
-        if (_storeId != null) ...[
-          const SizedBox(height: 8),
-          _ExpiringBanner(storeId: _storeId!),
+          SizedBox(
+            width: 240,
+            child: SearchBar(
+              hintText: 'Search batch or product…',
+              leading: const Icon(Icons.search),
+              onChanged: (v) => setState(() => _search = v.trim()),
+            ),
+          ),
+          if (_storeId != null)
+            IconButton(
+              icon: const Icon(Icons.refresh),
+              tooltip: 'Refresh batches',
+              onPressed: () => ref.invalidate(batchesProvider(_storeId!)),
+            ),
         ],
+      ),
+    );
+    final header = <Widget>[
+      filters,
+      if (_storeId != null) ...[
         const SizedBox(height: 8),
-        Expanded(
-          child: _storeId == null
-              ? Center(
-                  child: Column(
-                    mainAxisSize: MainAxisSize.min,
-                    children: [
-                      Icon(
-                        Icons.inventory_outlined,
-                        size: 64,
-                        color: cs.outlineVariant,
-                      ),
-                      const SizedBox(height: 16),
-                      Text(
-                        'Select a store to view its batches',
-                        style: Theme.of(context).textTheme.titleMedium,
-                      ),
-                    ],
-                  ),
-                )
-              : Consumer(
-                  builder: (context, ref, _) {
-                    final batchesAsync = ref.watch(batchesProvider(_storeId!));
-                    final zonesAsync = ref.watch(zonesProvider(_storeId!));
-                    final zoneNames = <String, String>{
-                      for (final z in zonesAsync.value ?? const <ZoneInfo>[])
-                        z.id: '${z.name} (${z.code})',
-                    };
-                    return batchesAsync.when(
-                      loading: () =>
-                          const LoadingView(label: 'Loading batches…'),
-                      error: (e, _) => ErrorView(
-                        message: 'Could not load batches.',
-                        onRetry: () =>
-                            ref.invalidate(batchesProvider(_storeId!)),
-                      ),
-                      data: (batches) {
-                        var filtered = batches.where((b) {
-                          if (_zoneId != null && b.zoneId != _zoneId) {
-                            return false;
-                          }
-                          if (_materialStatus != null &&
-                              b.materialStatus != _materialStatus) {
-                            return false;
-                          }
-                          if (_search.isNotEmpty &&
-                              !b.batchNo.toLowerCase().contains(
-                                _search.toLowerCase(),
-                              ) &&
-                              !b.variantId.toLowerCase().contains(
-                                _search.toLowerCase(),
-                              )) {
-                            return false;
-                          }
-                          return true;
-                        }).toList();
-
-                        if (filtered.isEmpty) {
-                          return Center(
-                            child: Column(
-                              mainAxisSize: MainAxisSize.min,
-                              children: [
-                                Icon(
-                                  Icons.inventory_outlined,
-                                  size: 64,
-                                  color: cs.outlineVariant,
-                                ),
-                                const SizedBox(height: 16),
-                                Text(
-                                  'No batches found',
-                                  style: Theme.of(
-                                    context,
-                                  ).textTheme.titleMedium,
-                                ),
-                              ],
-                            ),
-                          );
-                        }
-
-                        void refresh() =>
-                            ref.invalidate(batchesProvider(_storeId!));
-
-                        return LayoutBuilder(
-                          builder: (context, bc) {
-                            final wide = bc.maxWidth >= 700;
-                            if (wide) {
-                              return _BatchWideTable(
-                                batches: filtered,
-                                zoneNames: zoneNames,
-                                onMaterialStatus: (b) =>
-                                    showMaterialStatusDialog(
-                                      context,
-                                      ref,
-                                      batch: b,
-                                      onChanged: refresh,
-                                    ),
-                              );
-                            }
-                            return _BatchNarrowList(
-                              batches: filtered,
-                              zoneNames: zoneNames,
-                              onMaterialStatus: (b) => showMaterialStatusDialog(
-                                context,
-                                ref,
-                                batch: b,
-                                onChanged: refresh,
-                              ),
-                            );
-                          },
-                        );
-                      },
-                    );
-                  },
-                ),
-        ),
+        _ExpiringBanner(storeId: _storeId!),
       ],
+      const SizedBox(height: 8),
+    ];
+
+    return LayoutBuilder(
+      builder: (context, tab) {
+        // Under the table's width the batches are cards, and the filters and
+        // the expiring banner scroll away with them: on a phone at large text
+        // the fixed rows alone are taller than the screen.
+        if (tab.maxWidth < _batchTableWidth) {
+          return CustomScrollView(
+            slivers: [
+              SliverToBoxAdapter(
+                child: Column(
+                  crossAxisAlignment: CrossAxisAlignment.start,
+                  children: header,
+                ),
+              ),
+              _batchesBody(sliver: true),
+            ],
+          );
+        }
+        return Column(
+          crossAxisAlignment: CrossAxisAlignment.start,
+          children: [
+            ...header,
+            Expanded(child: _batchesBody(sliver: false)),
+          ],
+        );
+      },
     );
   }
+
+  /// The batches under the filters: a box to fill the rest of the tab beside
+  /// the table, or a sliver under the scrolling filters on a narrow screen.
+  Widget _batchesBody({required bool sliver}) {
+    Widget roomy(Widget child) => sliver
+        ? SliverToBoxAdapter(
+            child: Padding(
+              padding: const EdgeInsetsDirectional.only(top: AppSpacing.xl),
+              child: child,
+            ),
+          )
+        : _Roomy(child: child);
+    Widget box(Widget child) =>
+        sliver ? SliverToBoxAdapter(child: child) : child;
+    return _storeId == null
+        ? roomy(
+            const EmptyState(
+              icon: Icons.store_outlined,
+              title: 'Choose a store',
+              message:
+                  'Its batches show here, with their expiry and '
+                  'material status.',
+            ),
+          )
+        : Consumer(
+            builder: (context, ref, _) {
+              final batchesAsync = ref.watch(batchesProvider(_storeId!));
+              final zonesAsync = ref.watch(zonesProvider(_storeId!));
+              final zoneNames = <String, String>{
+                for (final z in zonesAsync.value ?? const <ZoneInfo>[])
+                  z.id: '${z.name} (${z.code})',
+              };
+              return batchesAsync.when(
+                loading: () =>
+                    box(const LoadingView(label: 'Loading batches…')),
+                error: (e, _) => box(
+                  ErrorView(
+                    message: friendlyError(
+                      e,
+                      fallback: 'Could not load batches.',
+                    ),
+                    onRetry: () => ref.invalidate(batchesProvider(_storeId!)),
+                  ),
+                ),
+                data: (batches) {
+                  // Each batch by its product's name; a short handle
+                  // only while the names load.
+                  final labels =
+                      ref
+                          .watch(
+                            variantLabelsProvider(
+                              variantIdsKey(batches.map((b) => b.variantId)),
+                            ),
+                          )
+                          .value ??
+                      const <String, VariantLabel>{};
+                  final q = _search.toLowerCase();
+                  final filtered = batches.where((b) {
+                    if (_zoneId != null && b.zoneId != _zoneId) {
+                      return false;
+                    }
+                    if (_materialStatus != null &&
+                        b.materialStatus != _materialStatus) {
+                      return false;
+                    }
+                    if (q.isNotEmpty) {
+                      final hay =
+                          '${b.batchNo} '
+                                  '${labels[b.variantId]?.productName ?? ''} '
+                                  '${labels[b.variantId]?.sku ?? ''} '
+                                  '${b.variantId}'
+                              .toLowerCase();
+                      if (!hay.contains(q)) return false;
+                    }
+                    return true;
+                  }).toList();
+
+                  if (filtered.isEmpty) {
+                    return roomy(
+                      batches.isEmpty
+                          ? const EmptyState(
+                              icon: Icons.inventory_outlined,
+                              title: 'No batches at this store yet',
+                              message:
+                                  'Stock received here is kept '
+                                  'batch by batch.',
+                            )
+                          : const EmptyState(
+                              icon: Icons.search_off,
+                              title: 'No batches match',
+                              message:
+                                  'Try another zone, status or '
+                                  'search.',
+                            ),
+                    );
+                  }
+
+                  void refresh() => ref.invalidate(batchesProvider(_storeId!));
+
+                  if (sliver) {
+                    return _BatchNarrowList(
+                      batches: filtered,
+                      labels: labels,
+                      zoneNames: zoneNames,
+                      onMaterialStatus: (b) => showMaterialStatusDialog(
+                        context,
+                        ref,
+                        batch: b,
+                        onChanged: refresh,
+                      ),
+                    );
+                  }
+                  return _BatchWideTable(
+                    batches: filtered,
+                    labels: labels,
+                    zoneNames: zoneNames,
+                    onMaterialStatus: (b) => showMaterialStatusDialog(
+                      context,
+                      ref,
+                      batch: b,
+                      onChanged: refresh,
+                    ),
+                  );
+                },
+              );
+            },
+          );
+  }
 }
+
+/// From this width the Batches tab shows a table under pinned filters;
+/// narrower, cards that scroll with the filters.
+const double _batchTableWidth = 700;
 
 /// Banner of batches expiring within 30 days for the selected store.
 class _ExpiringBanner extends ConsumerStatefulWidget {
@@ -633,19 +730,22 @@ class _ExpiringBannerState extends ConsumerState<_ExpiringBanner> {
         if (rows.isEmpty || _dismissed) return const SizedBox.shrink();
         final cs = Theme.of(context).colorScheme;
         return Padding(
-          padding: const EdgeInsets.symmetric(horizontal: AppSpacing.xl),
+          padding: EdgeInsets.symmetric(horizontal: context.pageGutter),
           child: MaterialBanner(
             backgroundColor: cs.errorContainer.withValues(alpha: 0.45),
-            padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 8),
+            padding: const EdgeInsetsDirectional.symmetric(
+              horizontal: AppSpacing.md,
+              vertical: AppSpacing.sm,
+            ),
             leading: Icon(
               Icons.event_busy,
               size: 18,
               color: cs.onErrorContainer,
             ),
             content: Text(
-              '${rows.length} batch(es) expiring within 30 days'
-              ' — e.g. ${rows.first.batchNo}'
-              '${rows.first.expiryDate != null ? ' (${rows.first.expiryDate})' : ''}',
+              '${rows.length == 1 ? '1 batch expires' : '${rows.length} batches expire'}'
+              ' within 30 days — e.g. ${rows.first.batchNo}'
+              '${rows.first.expiryDate != null ? ', on ${AppFormat.date(rows.first.expiryDate)}' : ''}',
               style: Theme.of(
                 context,
               ).textTheme.bodySmall?.copyWith(color: cs.onErrorContainer),
@@ -689,6 +789,9 @@ class _ReceiveStockDialogState extends ConsumerState<_ReceiveStockDialog> {
   final _qtyCtrl = TextEditingController();
   final _costCtrl = TextEditingController();
   final _batchCtrl = TextEditingController();
+  /// The expiry as inventory-svc takes it (`2026-10-04`), or null. The field
+  /// shows it as a date (*4 Oct 2026*); the request carries this.
+  String? _expiry;
   final _expiryCtrl = TextEditingController();
 
   /// What the last scanned label filled in, so the operator can see that the lot
@@ -734,8 +837,10 @@ class _ReceiveStockDialogState extends ConsumerState<_ReceiveStockDialog> {
       final resp = await ref
           .read(apiClientProvider)
           .dio
-          .get('/${ApiConstants.product}/catalog/scan',
-              queryParameters: {'code': code});
+          .get(
+            '/${ApiConstants.product}/catalog/scan',
+            queryParameters: {'code': code},
+          );
       final d = resp.data['data'] as Map<String, dynamic>;
       final v = d['item'] as Map<String, dynamic>? ?? const {};
       final scanned = d['code'] as Map<String, dynamic>?;
@@ -753,8 +858,9 @@ class _ReceiveStockDialogState extends ConsumerState<_ReceiveStockDialog> {
         if (batch != null && _batchCtrl.text.trim().isEmpty) {
           _batchCtrl.text = batch;
         }
-        if (expiry != null && _expiryCtrl.text.trim().isEmpty) {
-          _expiryCtrl.text = expiry;
+        if (expiry != null && _expiry == null) {
+          _expiry = expiry;
+          _expiryCtrl.text = AppFormat.date(expiry);
         }
         _fromLabel = [
           if (batch != null) 'lot $batch',
@@ -775,7 +881,9 @@ class _ReceiveStockDialogState extends ConsumerState<_ReceiveStockDialog> {
       return;
     }
     if (_ownership == 'CONSIGNMENT' && _supplierId == null) {
-      setState(() => _error = 'Consignment stock belongs to a supplier: pick one.');
+      setState(
+        () => _error = 'Consignment stock belongs to a supplier: pick one.',
+      );
       return;
     }
     setState(() {
@@ -796,8 +904,7 @@ class _ReceiveStockDialogState extends ConsumerState<_ReceiveStockDialog> {
                 'batchNo': _batchCtrl.text.trim(),
               if (_costCtrl.text.trim().isNotEmpty)
                 'costPrice': double.parse(_costCtrl.text.trim()),
-              if (_expiryCtrl.text.trim().isNotEmpty)
-                'expiryDate': _expiryCtrl.text.trim(),
+              'expiryDate': ?_expiry,
               if (_zoneId != null) 'zoneId': _zoneId,
               if (_ownership != 'OWNED') 'ownership': _ownership,
               if (_ownership == 'CONSIGNMENT') 'supplierId': _supplierId,
@@ -1001,7 +1108,9 @@ class _ReceiveStockDialogState extends ConsumerState<_ReceiveStockDialog> {
                         key: const Key('receive-ownership'),
                         initialValue: _ownership,
                         isExpanded: true,
-                        decoration: const InputDecoration(labelText: 'Whose stock'),
+                        decoration: const InputDecoration(
+                          labelText: 'Whose stock',
+                        ),
                         items: const [
                           DropdownMenuItem(value: 'OWNED', child: Text('Ours')),
                           DropdownMenuItem(
@@ -1018,26 +1127,38 @@ class _ReceiveStockDialogState extends ConsumerState<_ReceiveStockDialog> {
                     if (_ownership == 'CONSIGNMENT') ...[
                       const SizedBox(width: 12),
                       Expanded(
-                        child: ref.watch(suppliersProvider).when(
+                        child: ref
+                            .watch(suppliersProvider)
+                            .when(
                               loading: () => const LinearProgressIndicator(),
                               error: (e, _) => Text(
-                                friendlyError(e, fallback: 'Could not load suppliers.'),
+                                friendlyError(
+                                  e,
+                                  fallback: 'Could not load suppliers.',
+                                ),
                                 style: TextStyle(color: cs.error),
                               ),
-                              data: (suppliers) => DropdownButtonFormField<String>(
-                                key: const Key('receive-supplier'),
-                                initialValue: _supplierId,
-                                isExpanded: true,
-                                decoration: const InputDecoration(labelText: 'Supplier *'),
-                                items: [
-                                  for (final s in suppliers)
-                                    DropdownMenuItem(
-                                      value: s.id,
-                                      child: Text(s.name, overflow: TextOverflow.ellipsis),
+                              data: (suppliers) =>
+                                  DropdownButtonFormField<String>(
+                                    key: const Key('receive-supplier'),
+                                    initialValue: _supplierId,
+                                    isExpanded: true,
+                                    decoration: const InputDecoration(
+                                      labelText: 'Supplier *',
                                     ),
-                                ],
-                                onChanged: (v) => setState(() => _supplierId = v),
-                              ),
+                                    items: [
+                                      for (final s in suppliers)
+                                        DropdownMenuItem(
+                                          value: s.id,
+                                          child: Text(
+                                            s.name,
+                                            overflow: TextOverflow.ellipsis,
+                                          ),
+                                        ),
+                                    ],
+                                    onChanged: (v) =>
+                                        setState(() => _supplierId = v),
+                                  ),
                             ),
                       ),
                     ],
@@ -1050,14 +1171,22 @@ class _ReceiveStockDialogState extends ConsumerState<_ReceiveStockDialog> {
                   isExpanded: true,
                   decoration: const InputDecoration(
                     labelText: 'Duty',
-                    helperText: 'Duty-suspended stock goes only into a store approved as a bonded warehouse',
+                    helperText:
+                        'Duty-suspended stock goes only into a store approved as a bonded warehouse',
                     helperMaxLines: 2,
                   ),
                   items: const [
-                    DropdownMenuItem(value: 'DUTY_PAID', child: Text('Duty paid')),
-                    DropdownMenuItem(value: 'DUTY_SUSPENDED', child: Text('Duty suspended (in bond)')),
+                    DropdownMenuItem(
+                      value: 'DUTY_PAID',
+                      child: Text('Duty paid'),
+                    ),
+                    DropdownMenuItem(
+                      value: 'DUTY_SUSPENDED',
+                      child: Text('Duty suspended (in bond)'),
+                    ),
                   ],
-                  onChanged: (v) => setState(() => _dutyStatus = v ?? 'DUTY_PAID'),
+                  onChanged: (v) =>
+                      setState(() => _dutyStatus = v ?? 'DUTY_PAID'),
                 ),
                 const SizedBox(height: 12),
                 if (_fromLabel.isNotEmpty)
@@ -1101,15 +1230,16 @@ class _ReceiveStockDialogState extends ConsumerState<_ReceiveStockDialog> {
                           final picked = await showDatePicker(
                             context: context,
                             initialDate:
-                                DateTime.tryParse(_expiryCtrl.text) ?? now,
+                                DateTime.tryParse(_expiry ?? '') ?? now,
                             firstDate: DateTime(now.year - 5),
                             lastDate: DateTime(now.year + 20),
                           );
                           if (picked != null) {
-                            _expiryCtrl.text =
+                            _expiry =
                                 '${picked.year.toString().padLeft(4, '0')}-'
                                 '${picked.month.toString().padLeft(2, '0')}-'
                                 '${picked.day.toString().padLeft(2, '0')}';
+                            _expiryCtrl.text = AppFormat.date(_expiry);
                           }
                         },
                       ),
@@ -1154,6 +1284,11 @@ String _productNameOf(String variantId, Map<String, VariantLabel> labels) {
 String _skuOf(String variantId, Map<String, VariantLabel> labels) =>
     labels[variantId]?.sku ?? '';
 
+/// A store's name, falling back to a short handle cut from the end of its id
+/// while the store list loads (or for a store the list does not have).
+String _storeNameOf(String storeId, Map<String, String> storeNames) =>
+    storeNames[storeId] ?? '…${shortRef(storeId)}';
+
 void _showAdjustDialog(
   BuildContext context,
   InventoryLevel level,
@@ -1183,11 +1318,13 @@ void _showSetThresholdDialog(
 class _WideTable extends StatelessWidget {
   final List<InventoryLevel> levels;
   final Map<String, VariantLabel> labels;
+  final Map<String, String> storeNames;
   final Map<String, double> thresholds;
   final VoidCallback onChanged;
   const _WideTable({
     required this.levels,
     required this.labels,
+    required this.storeNames,
     required this.thresholds,
     required this.onChanged,
   });
@@ -1195,129 +1332,135 @@ class _WideTable extends StatelessWidget {
   @override
   Widget build(BuildContext context) {
     final cs = Theme.of(context).colorScheme;
-    return SingleChildScrollView(
-      padding: const EdgeInsets.symmetric(horizontal: 16),
+    final gutter = context.pageGutter;
+    return Padding(
+      // The page gutter, so the table lines up with the title and the search.
+      padding: EdgeInsetsDirectional.fromSTEB(gutter, 0, gutter, AppSpacing.lg),
       child: Card(
-        child: DataTable(
-          headingRowColor: WidgetStatePropertyAll(cs.surfaceContainerHigh),
-          columnSpacing: 24,
-          columns: const [
-            DataColumn(label: Text('Product')),
-            DataColumn(label: Text('Store')),
-            DataColumn(label: Text('On-Hand'), numeric: true),
-            DataColumn(label: Text('Reserved'), numeric: true),
-            DataColumn(label: Text('Available'), numeric: true),
-            DataColumn(label: Text('Status')),
-            DataColumn(label: Text('')),
-          ],
-          rows: levels.map((l) {
-            final isLow = l.isLowAgainst(thresholds);
-            final sku = _skuOf(l.variantId, labels);
-            final threshold = thresholds['${l.storeId}:${l.variantId}'];
-            return DataRow(
-              color: isLow
-                  ? WidgetStatePropertyAll(cs.errorContainer.withAlpha(80))
-                  : null,
-              cells: [
-                DataCell(
-                  Column(
-                    mainAxisSize: MainAxisSize.min,
-                    crossAxisAlignment: CrossAxisAlignment.start,
-                    children: [
-                      Text(
-                        _productNameOf(l.variantId, labels),
-                        style: const TextStyle(
-                          fontWeight: FontWeight.w600,
-                          fontSize: 13,
-                        ),
-                      ),
-                      if (sku.isNotEmpty)
-                        Text(
-                          sku,
-                          style: TextStyle(fontSize: 11, color: cs.outline),
-                        ),
-                    ],
-                  ),
-                ),
-                DataCell(
-                  Text(
-                    shortRef(l.storeId),
-                    style: const TextStyle(
-                      fontFamily: 'monospace',
-                      fontSize: 12,
-                    ),
-                  ),
-                ),
-                DataCell(Text(l.onHand.toStringAsFixed(0))),
-                DataCell(Text(l.reserved.toStringAsFixed(0))),
-                DataCell(
-                  Text(
-                    l.available.toStringAsFixed(0),
-                    style: TextStyle(
-                      color: isLow ? cs.error : cs.onSurface,
-                      fontWeight: isLow ? FontWeight.bold : null,
-                    ),
-                  ),
-                ),
-                DataCell(
-                  Semantics(
-                    label: isLow ? 'Low stock' : 'Stock OK',
-                    child: isLow
-                        ? Row(
-                            mainAxisSize: MainAxisSize.min,
-                            children: [
-                              Icon(
-                                Icons.warning_amber_outlined,
-                                size: 14,
-                                color: cs.error,
-                              ),
-                              const SizedBox(width: 4),
-                              Text(
-                                threshold != null
-                                    ? 'Low (≤${threshold.toStringAsFixed(0)})'
-                                    : 'Low',
-                                style: TextStyle(
-                                  color: cs.error,
-                                  fontWeight: FontWeight.bold,
-                                  fontSize: 12,
-                                ),
-                              ),
-                            ],
-                          )
-                        : Text(
-                            'OK',
-                            style: TextStyle(
-                              color: context.status.success,
-                              fontSize: 12,
+        // Scrolls both ways inside the card, so on a tablet the Available,
+        // Status and actions columns are a swipe away instead of cut off.
+        child: ScrollableTable(
+          child: DataTable(
+            headingRowColor: WidgetStatePropertyAll(cs.surfaceContainerHigh),
+            columnSpacing: 24,
+            // Rows grow with their text (product and SKU, larger text sizes)
+            // instead of clipping at the default 48.
+            dataRowMaxHeight: double.infinity,
+            columns: const [
+              DataColumn(label: Text('Product')),
+              DataColumn(label: Text('Store')),
+              DataColumn(label: Text('On-Hand'), numeric: true),
+              DataColumn(label: Text('Reserved'), numeric: true),
+              DataColumn(label: Text('Available'), numeric: true),
+              DataColumn(label: Text('Status')),
+              DataColumn(label: Text('')),
+            ],
+            rows: levels.map((l) {
+              final isLow = l.isLowAgainst(thresholds);
+              final sku = _skuOf(l.variantId, labels);
+              final threshold = thresholds['${l.storeId}:${l.variantId}'];
+              return DataRow(
+                color: isLow
+                    ? WidgetStatePropertyAll(cs.errorContainer.withAlpha(80))
+                    : null,
+                cells: [
+                  // Capped, so one long name wraps instead of widening the
+                  // column until the whole table scrolls sideways on desktop.
+                  DataCell(
+                    ConstrainedBox(
+                      constraints: const BoxConstraints(maxWidth: 280),
+                      child: Column(
+                        mainAxisSize: MainAxisSize.min,
+                        crossAxisAlignment: CrossAxisAlignment.start,
+                        children: [
+                          Text(
+                            _productNameOf(l.variantId, labels),
+                            style: const TextStyle(
+                              fontWeight: FontWeight.w600,
+                              fontSize: 13,
                             ),
                           ),
-                  ),
-                ),
-                DataCell(
-                  PopupMenuButton<String>(
-                    tooltip: 'Actions',
-                    onSelected: (v) {
-                      if (v == 'adjust') {
-                        _showAdjustDialog(context, l, onChanged);
-                      } else if (v == 'threshold') {
-                        _showSetThresholdDialog(context, l, onChanged);
-                      }
-                    },
-                    itemBuilder: (_) => const [
-                      PopupMenuItem(
-                        value: 'adjust',
-                        child: Text('Adjust stock'),
+                          if (sku.isNotEmpty)
+                            Text(
+                              sku,
+                              style: TextStyle(fontSize: 11, color: cs.outline),
+                            ),
+                        ],
                       ),
-                      PopupMenuItem(
-                        value: 'threshold',
-                        child: Text('Set reorder level'),
-                      ),
-                    ],
+                    ),
                   ),
-                ),
-              ],
-            );
-          }).toList(),
+                  DataCell(Text(_storeNameOf(l.storeId, storeNames))),
+                  DataCell(Text(l.onHand.toStringAsFixed(0))),
+                  DataCell(Text(l.reserved.toStringAsFixed(0))),
+                  DataCell(
+                    Text(
+                      l.available.toStringAsFixed(0),
+                      style: TextStyle(
+                        color: isLow ? cs.error : cs.onSurface,
+                        fontWeight: isLow ? FontWeight.bold : null,
+                      ),
+                    ),
+                  ),
+                  DataCell(
+                    Semantics(
+                      label: isLow ? 'Low stock' : 'Stock OK',
+                      child: isLow
+                          ? Row(
+                              mainAxisSize: MainAxisSize.min,
+                              children: [
+                                Icon(
+                                  Icons.warning_amber_outlined,
+                                  size: 14,
+                                  color: cs.error,
+                                ),
+                                const SizedBox(width: 4),
+                                Text(
+                                  threshold != null
+                                      ? 'Low (≤${threshold.toStringAsFixed(0)})'
+                                      : 'Low',
+                                  style: TextStyle(
+                                    color: cs.error,
+                                    fontWeight: FontWeight.bold,
+                                    fontSize: 12,
+                                  ),
+                                ),
+                              ],
+                            )
+                          : Text(
+                              'OK',
+                              style: TextStyle(
+                                color: context.status.success,
+                                fontSize: 12,
+                              ),
+                            ),
+                    ),
+                  ),
+                  DataCell(
+                    PopupMenuButton<String>(
+                      tooltip: 'Actions',
+                      onSelected: (v) {
+                        if (v == 'adjust') {
+                          _showAdjustDialog(context, l, onChanged);
+                        } else if (v == 'threshold') {
+                          _showSetThresholdDialog(context, l, onChanged);
+                        }
+                      },
+                      itemBuilder: (_) => const [
+                        PopupMenuItem(
+                          value: 'adjust',
+                          child: Text('Adjust stock'),
+                        ),
+                        PopupMenuItem(
+                          value: 'threshold',
+                          child: Text('Set reorder level'),
+                        ),
+                      ],
+                    ),
+                  ),
+                ],
+              );
+            }).toList(),
+          ),
         ),
       ),
     );
@@ -1327,82 +1470,122 @@ class _WideTable extends StatelessWidget {
 class _NarrowList extends StatelessWidget {
   final List<InventoryLevel> levels;
   final Map<String, VariantLabel> labels;
+  final Map<String, String> storeNames;
   final Map<String, double> thresholds;
   final VoidCallback onChanged;
+  final Future<void> Function() onRefresh;
   const _NarrowList({
     required this.levels,
     required this.labels,
+    required this.storeNames,
     required this.thresholds,
     required this.onChanged,
+    required this.onRefresh,
   });
 
   @override
   Widget build(BuildContext context) {
-    return ListView.separated(
-      padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 8),
-      itemCount: levels.length,
-      separatorBuilder: (_, _) => const SizedBox(height: 4),
-      itemBuilder: (context, i) {
-        final l = levels[i];
-        final cs = Theme.of(context).colorScheme;
-        final sku = _skuOf(l.variantId, labels);
-        final isLow = l.isLowAgainst(thresholds);
-        return Card(
-          color: isLow ? cs.errorContainer.withAlpha(80) : null,
-          child: ListTile(
-            leading: Icon(
-              Icons.inventory_2_outlined,
-              color: isLow ? cs.error : cs.primary,
-            ),
-            title: Text(
-              _productNameOf(l.variantId, labels),
-              style: const TextStyle(fontWeight: FontWeight.w600, fontSize: 14),
-            ),
-            subtitle: Text(
-              '${sku.isNotEmpty ? '$sku  ·  ' : ''}On-hand: ${l.onHand.toStringAsFixed(0)}  ·  Reserved: ${l.reserved.toStringAsFixed(0)}',
-            ),
-            trailing: Row(
-              mainAxisSize: MainAxisSize.min,
-              children: [
-                Text(
-                  'Avail: ${l.available.toStringAsFixed(0)}',
-                  style: TextStyle(
-                    color: isLow ? cs.error : cs.onSurface,
-                    fontWeight: isLow ? FontWeight.bold : null,
+    final gutter = context.pageGutter;
+    return RefreshIndicator.adaptive(
+      onRefresh: onRefresh,
+      child: ListView.separated(
+        // Scrollable even when short, so a pull always refreshes.
+        physics: const AlwaysScrollableScrollPhysics(),
+        padding: EdgeInsetsDirectional.fromSTEB(
+          gutter,
+          AppSpacing.sm,
+          gutter,
+          AppSpacing.sm,
+        ),
+        itemCount: levels.length,
+        separatorBuilder: (_, _) => const SizedBox(height: 4),
+        itemBuilder: (context, i) {
+          final l = levels[i];
+          final theme = Theme.of(context);
+          final cs = theme.colorScheme;
+          final sku = _skuOf(l.variantId, labels);
+          final isLow = l.isLowAgainst(thresholds);
+          return Card(
+            color: isLow ? cs.errorContainer.withAlpha(80) : null,
+            child: ListTile(
+              leading: Icon(
+                Icons.inventory_2_outlined,
+                color: isLow ? cs.error : cs.primary,
+              ),
+              title: Text(
+                _productNameOf(l.variantId, labels),
+                style: const TextStyle(
+                  fontWeight: FontWeight.w600,
+                  fontSize: 14,
+                ),
+              ),
+              // Which store, then the figures: under the name rather than
+              // beside it, so the name keeps most of a phone's width and the
+              // same product at two stores reads as two stores.
+              subtitle: Column(
+                crossAxisAlignment: CrossAxisAlignment.start,
+                mainAxisSize: MainAxisSize.min,
+                children: [
+                  Text(
+                    [
+                      if (sku.isNotEmpty) sku,
+                      _storeNameOf(l.storeId, storeNames),
+                    ].join('  ·  '),
                   ),
-                ),
-                PopupMenuButton<String>(
-                  tooltip: 'Actions',
-                  onSelected: (v) {
-                    if (v == 'adjust') {
-                      _showAdjustDialog(context, l, onChanged);
-                    } else if (v == 'threshold') {
-                      _showSetThresholdDialog(context, l, onChanged);
-                    }
-                  },
-                  itemBuilder: (_) => const [
-                    PopupMenuItem(value: 'adjust', child: Text('Adjust stock')),
-                    PopupMenuItem(
-                      value: 'threshold',
-                      child: Text('Set reorder level'),
+                  const SizedBox(height: AppSpacing.xs),
+                  Text.rich(
+                    TextSpan(
+                      children: [
+                        // The figure that matters, in on-surface ink.
+                        TextSpan(
+                          text: 'Avail: ${l.available.toStringAsFixed(0)}',
+                          style: theme.textTheme.titleSmall?.copyWith(
+                            color: isLow ? cs.error : cs.onSurface,
+                            fontWeight: isLow ? FontWeight.bold : null,
+                          ),
+                        ),
+                        TextSpan(
+                          text:
+                              '  ·  On-hand: ${l.onHand.toStringAsFixed(0)}  ·  Reserved: ${l.reserved.toStringAsFixed(0)}',
+                        ),
+                      ],
                     ),
-                  ],
-                ),
-              ],
+                  ),
+                ],
+              ),
+              trailing: PopupMenuButton<String>(
+                tooltip: 'Actions',
+                onSelected: (v) {
+                  if (v == 'adjust') {
+                    _showAdjustDialog(context, l, onChanged);
+                  } else if (v == 'threshold') {
+                    _showSetThresholdDialog(context, l, onChanged);
+                  }
+                },
+                itemBuilder: (_) => const [
+                  PopupMenuItem(value: 'adjust', child: Text('Adjust stock')),
+                  PopupMenuItem(
+                    value: 'threshold',
+                    child: Text('Set reorder level'),
+                  ),
+                ],
+              ),
             ),
-          ),
-        );
-      },
+          );
+        },
+      ),
     );
   }
 }
 
 class _BatchWideTable extends StatelessWidget {
   final List<BatchInfo> batches;
+  final Map<String, VariantLabel> labels;
   final Map<String, String> zoneNames;
   final void Function(BatchInfo batch) onMaterialStatus;
   const _BatchWideTable({
     required this.batches,
+    required this.labels,
     required this.zoneNames,
     required this.onMaterialStatus,
   });
@@ -1411,16 +1594,19 @@ class _BatchWideTable extends StatelessWidget {
   Widget build(BuildContext context) {
     final cs = Theme.of(context).colorScheme;
     return SingleChildScrollView(
-      padding: const EdgeInsets.symmetric(horizontal: 16),
+      padding: EdgeInsetsDirectional.symmetric(horizontal: context.pageGutter),
       child: Card(
         child: SingleChildScrollView(
           scrollDirection: Axis.horizontal,
           child: DataTable(
             headingRowColor: WidgetStatePropertyAll(cs.surfaceContainerHigh),
-            columnSpacing: 24,
+            columnSpacing: AppSpacing.xl,
+            // Rows grow with the product name and SKU, and with larger text,
+            // instead of clipping at the default 48.
+            dataRowMaxHeight: double.infinity,
             columns: const [
               DataColumn(label: Text('Batch No.')),
-              DataColumn(label: Text('Variant ID')),
+              DataColumn(label: Text('Product')),
               DataColumn(label: Text('Remaining'), numeric: true),
               DataColumn(label: Text('Zone')),
               DataColumn(label: Text('Expiry')),
@@ -1437,15 +1623,7 @@ class _BatchWideTable extends StatelessWidget {
                     Text(b.batchNo, style: const TextStyle(fontSize: 12)),
                   ),
                   DataCell(
-                    Text(
-                      b.variantId.length > 16
-                          ? '…${shortRef(b.variantId)}'
-                          : b.variantId,
-                      style: const TextStyle(
-                        fontFamily: 'monospace',
-                        fontSize: 12,
-                      ),
-                    ),
+                    _BatchProduct(variantId: b.variantId, labels: labels),
                   ),
                   DataCell(
                     Text(
@@ -1459,12 +1637,14 @@ class _BatchWideTable extends StatelessWidget {
                           : zoneNames[b.zoneId] ?? 'Unassigned',
                     ),
                   ),
-                  DataCell(Text(b.expiryDate ?? '—')),
+                  DataCell(Text(_expiry(b.expiryDate) ?? '—')),
                   DataCell(Text(b.grade ?? '—')),
-                  DataCell(_MaterialStatusChip(status: b.materialStatus)),
+                  DataCell(_MaterialStatusBadge(status: b.materialStatus)),
                   DataCell(
                     Text(
-                      b.ownership == 'CONSIGNMENT' ? 'Supplier (consignment)' : 'Ours',
+                      b.ownership == 'CONSIGNMENT'
+                          ? 'Supplier (consignment)'
+                          : 'Ours',
                       style: const TextStyle(fontSize: 12),
                     ),
                   ),
@@ -1493,97 +1673,148 @@ class _BatchWideTable extends StatelessWidget {
 
 class _BatchNarrowList extends StatelessWidget {
   final List<BatchInfo> batches;
+  final Map<String, VariantLabel> labels;
   final Map<String, String> zoneNames;
   final void Function(BatchInfo batch) onMaterialStatus;
   const _BatchNarrowList({
     required this.batches,
+    required this.labels,
     required this.zoneNames,
     required this.onMaterialStatus,
   });
 
   @override
   Widget build(BuildContext context) {
-    return ListView.separated(
-      padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 8),
-      itemCount: batches.length,
-      separatorBuilder: (_, _) => const SizedBox(height: 4),
-      itemBuilder: (context, i) {
-        final b = batches[i];
-        return Card(
-          child: ListTile(
-            leading: const Icon(Icons.inventory_outlined),
-            title: Text(b.batchNo, style: const TextStyle(fontSize: 13)),
-            subtitle: Text(
-              '${b.variantId.length > 20 ? '…${shortRef(b.variantId, length: 20)}' : b.variantId}\n'
-              'Zone: ${b.zoneId == null ? '—' : zoneNames[b.zoneId] ?? 'Unassigned'}'
-              '${b.expiryDate != null ? '  ·  Exp: ${b.expiryDate}' : ''}',
-              style: const TextStyle(fontFamily: 'monospace', fontSize: 12),
+    // A sliver: the cards scroll on from the filters above them.
+    return SliverPadding(
+      padding: EdgeInsetsDirectional.symmetric(
+        horizontal: context.pageGutter,
+        vertical: AppSpacing.sm,
+      ),
+      sliver: SliverList.separated(
+        itemCount: batches.length,
+        separatorBuilder: (_, _) => const SizedBox(height: AppSpacing.xs),
+        itemBuilder: (context, i) {
+          final b = batches[i];
+          final expiry = _expiry(b.expiryDate);
+          final zone = b.zoneId == null
+              ? '—'
+              : zoneNames[b.zoneId] ?? 'Unassigned';
+          return Card(
+            child: ListTile(
+              leading: const Icon(Icons.inventory_outlined),
+              title: Text(
+                _productNameOf(b.variantId, labels),
+                style: Theme.of(context).textTheme.titleSmall,
+              ),
+              // The batch, where it sits, when it expires, its status and what
+              // is left, all under the name: the trailing slot keeps only the
+              // action, so the name has the width and the badge a line of its
+              // own at any text size.
+              subtitle: Column(
+                crossAxisAlignment: CrossAxisAlignment.start,
+                children: [
+                  Text(b.batchNo),
+                  Text(
+                    'Zone: $zone'
+                    '${expiry != null ? '  ·  Expires $expiry' : ''}',
+                  ),
+                  const SizedBox(height: AppSpacing.xs),
+                  Wrap(
+                    spacing: AppSpacing.sm,
+                    runSpacing: AppSpacing.xs,
+                    crossAxisAlignment: WrapCrossAlignment.center,
+                    children: [
+                      _MaterialStatusBadge(status: b.materialStatus),
+                      Text(
+                        '${AppFormat.count(b.remainingQty)} of '
+                        '${AppFormat.count(b.receivedQty)} left',
+                      ),
+                    ],
+                  ),
+                ],
+              ),
+              trailing: IconButton(
+                icon: const Icon(Icons.tune, size: 18),
+                tooltip: 'Change material status',
+                onPressed: () => onMaterialStatus(b),
+              ),
             ),
-            isThreeLine: true,
-            trailing: Row(
-              mainAxisSize: MainAxisSize.min,
-              children: [
-                Column(
-                  mainAxisSize: MainAxisSize.min,
-                  crossAxisAlignment: CrossAxisAlignment.end,
-                  children: [
-                    Text(
-                      '${b.remainingQty.toStringAsFixed(0)} / ${b.receivedQty.toStringAsFixed(0)}',
-                    ),
-                    const SizedBox(height: 4),
-                    _MaterialStatusChip(status: b.materialStatus),
-                  ],
-                ),
-                IconButton(
-                  icon: const Icon(Icons.tune, size: 18),
-                  tooltip: 'Change material status',
-                  onPressed: () => onMaterialStatus(b),
-                ),
-              ],
-            ),
-          ),
-        );
-      },
+          );
+        },
+      ),
     );
   }
 }
 
-class _MaterialStatusChip extends StatelessWidget {
+/// A batch's expiry as a date (*4 Oct 2026*), or null when it has none.
+String? _expiry(String? iso) =>
+    iso == null || iso.isEmpty ? null : AppFormat.date(iso);
+
+/// Centres an [EmptyState] in the space under a tab's filters, and scrolls it
+/// when that space is shorter than it — a phone with large text — rather than
+/// overflowing.
+class _Roomy extends StatelessWidget {
+  final Widget child;
+  const _Roomy({required this.child});
+
+  @override
+  Widget build(BuildContext context) => LayoutBuilder(
+    builder: (context, bc) => SingleChildScrollView(
+      child: ConstrainedBox(
+        constraints: BoxConstraints(minHeight: bc.maxHeight),
+        child: child,
+      ),
+    ),
+  );
+}
+
+/// A batch's material status as the shared badge, in words.
+class _MaterialStatusBadge extends StatelessWidget {
   final String status;
-  const _MaterialStatusChip({required this.status});
+  const _MaterialStatusBadge({required this.status});
 
   @override
   Widget build(BuildContext context) {
-    final cs = Theme.of(context).colorScheme;
-    final statusColors = context.status;
-    Color color;
-    switch (status) {
-      case 'AVAILABLE':
-        color = statusColors.success;
-        break;
-      case 'QUARANTINE':
-      case 'HOLD':
-        color = statusColors.warning;
-        break;
-      case 'REJECTED':
-        color = cs.error;
-        break;
-      default:
-        color = cs.outline;
-    }
-    return Container(
-      padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 3),
-      decoration: BoxDecoration(
-        color: color.withAlpha(30),
-        borderRadius: AppRadius.badge,
-      ),
-      child: Text(
-        status,
-        style: TextStyle(
-          color: color,
-          fontSize: 11,
-          fontWeight: FontWeight.w600,
-        ),
+    final words = materialStatusLabel(status);
+    return StatusBadge(
+      words.isEmpty ? 'Unknown' : words,
+      tone: materialStatusTone(status),
+    );
+  }
+}
+
+/// A batch's product: its name, and its SKU under it when known.
+class _BatchProduct extends StatelessWidget {
+  final String variantId;
+  final Map<String, VariantLabel> labels;
+  const _BatchProduct({required this.variantId, required this.labels});
+
+  @override
+  Widget build(BuildContext context) {
+    final theme = Theme.of(context);
+    final sku = _skuOf(variantId, labels);
+    // Capped, so one long name wraps instead of widening the column.
+    return ConstrainedBox(
+      constraints: const BoxConstraints(maxWidth: 240),
+      child: Column(
+        mainAxisSize: MainAxisSize.min,
+        crossAxisAlignment: CrossAxisAlignment.start,
+        children: [
+          Text(
+            _productNameOf(variantId, labels),
+            style: theme.textTheme.bodyMedium?.copyWith(
+              fontWeight: FontWeight.w600,
+            ),
+          ),
+          if (sku.isNotEmpty)
+            Text(
+              sku,
+              style: theme.textTheme.bodySmall?.copyWith(
+                color: theme.colorScheme.onSurfaceVariant,
+              ),
+            ),
+        ],
       ),
     );
   }
@@ -1604,10 +1835,7 @@ class _SummaryChip extends StatelessWidget {
   Widget build(BuildContext context) {
     return Container(
       padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 6),
-      decoration: BoxDecoration(
-        color: color,
-        borderRadius: AppRadius.badge,
-      ),
+      decoration: BoxDecoration(color: color, borderRadius: AppRadius.badge),
       child: Row(
         mainAxisSize: MainAxisSize.min,
         children: [
@@ -2016,17 +2244,21 @@ class _ThresholdsTabState extends ConsumerState<_ThresholdsTab> {
   Widget build(BuildContext context) {
     final cs = Theme.of(context).colorScheme;
     final storesAsync = ref.watch(storesProvider);
+    final storeNames = {
+      for (final s in storesAsync.value ?? const <StoreInfo>[]) s.id: s.name,
+    };
     final storeKey = _storeId ?? '';
     final async = ref.watch(thresholdsProvider(storeKey));
+    final gutter = context.pageGutter;
 
     return Column(
       crossAxisAlignment: CrossAxisAlignment.start,
       children: [
         Padding(
-          padding: const EdgeInsets.fromLTRB(
-            AppSpacing.xl,
+          padding: EdgeInsetsDirectional.fromSTEB(
+            gutter,
             AppSpacing.lg,
-            AppSpacing.xl,
+            gutter,
             0,
           ),
           child: Row(
@@ -2108,22 +2340,13 @@ class _ThresholdsTabState extends ConsumerState<_ThresholdsTab> {
             ),
             data: (rows) {
               if (rows.isEmpty) {
-                return Center(
-                  child: Column(
-                    mainAxisSize: MainAxisSize.min,
-                    children: [
-                      Icon(Icons.tune, size: 64, color: cs.outlineVariant),
-                      const SizedBox(height: 16),
-                      Text(
-                        'No reorder thresholds set',
-                        style: Theme.of(context).textTheme.titleMedium,
-                      ),
-                      const SizedBox(height: 8),
-                      Text(
-                        'Set a reorder level on a stock row, or use the button above.',
-                        style: TextStyle(color: cs.outline),
-                      ),
-                    ],
+                return const _Roomy(
+                  child: EmptyState(
+                    icon: Icons.tune,
+                    title: 'No reorder levels set',
+                    message:
+                        'Set a reorder level on a stock row, or use the '
+                        'button above.',
                   ),
                 );
               }
@@ -2137,9 +2360,9 @@ class _ThresholdsTabState extends ConsumerState<_ThresholdsTab> {
                       .value ??
                   const <String, VariantLabel>{};
               return ListView.separated(
-                padding: const EdgeInsets.symmetric(
-                  horizontal: 16,
-                  vertical: 8,
+                padding: EdgeInsets.symmetric(
+                  horizontal: gutter,
+                  vertical: AppSpacing.sm,
                 ),
                 itemCount: rows.length,
                 separatorBuilder: (_, _) => const SizedBox(height: 4),
@@ -2159,7 +2382,8 @@ class _ThresholdsTabState extends ConsumerState<_ThresholdsTab> {
                       subtitle: Text(
                         [
                           if (sku.isNotEmpty) sku,
-                          'Store ${shortRef(t.storeId)}',
+                          storeNames[t.storeId] ??
+                              'Store ${shortRef(t.storeId)}',
                           if (t.maxQty != null)
                             'max ${t.maxQty!.toStringAsFixed(0)}',
                         ].join(' · '),

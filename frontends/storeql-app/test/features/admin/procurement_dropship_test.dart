@@ -4,6 +4,7 @@ import 'package:dio/dio.dart';
 import 'package:flutter/material.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:flutter_test/flutter_test.dart';
+import 'package:intl/date_symbol_data_local.dart';
 import 'package:storeql_app/core/auth/auth_notifier.dart';
 import 'package:storeql_app/core/network/api_client.dart';
 import 'package:storeql_app/features/admin/consignment_tab.dart';
@@ -75,6 +76,8 @@ Future<_Server> _pumpTab(WidgetTester tester, {String role = 'MANAGER'}) async {
 }
 
 void main() {
+  // Dates are written with AppFormat, in the app's en_GB locale.
+  setUpAll(initializeDateFormatting);
   testWidgets('an arrangement names the supplier and its cost; End posts and the row says ended',
       (tester) async {
     final server = await _pumpTab(tester);
@@ -124,7 +127,7 @@ void main() {
     ));
     await tester.pumpAndSettle();
     expect(find.text('Dropship'), findsOneWidget);
-    await tester.tap(find.text('DRAFT'));
+    await tester.tap(find.text('Draft')); // the status badge's word
     await tester.pumpAndSettle();
     expect(find.byKey(const Key('po-ship-to')), findsOneWidget);
     expect(find.textContaining('Chris Carter'), findsOneWidget);

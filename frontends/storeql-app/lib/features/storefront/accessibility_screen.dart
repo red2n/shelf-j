@@ -1,8 +1,27 @@
 import 'package:flutter/material.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
+
+import '../../core/spacing.dart';
 import 'storefront_providers.dart';
 import 'survey_widgets.dart' show showFeedbackSheet;
-import '../../core/spacing.dart';
+
+/// The business behind the online shop, by name: the service provider the European Accessibility
+/// Act puts the statement's duty on. That is the business (*Corner Stores Ltd*), never one of its
+/// stores (*Leeds Road*), so the store name the storefront config carries is not a stand-in for it.
+///
+/// Taken from the storefront's store list ([StoreSummary.businessName]), which needs no store to
+/// have been chosen yet and is already read for the store switcher — no request of its own. Null
+/// while the list does not carry it, or cannot be read; the statement then says *This shop*,
+/// which names no one wrongly.
+final storefrontBusinessNameProvider =
+    FutureProvider.autoDispose<String?>((ref) async {
+  final stores = ref.watch(storefrontStoresProvider).value ?? const <StoreSummary>[];
+  for (final store in stores) {
+    final name = store.businessName;
+    if (name != null) return name;
+  }
+  return null;
+});
 
 /// The shop's accessibility statement (12.11): what the European Accessibility Act, Directive (EU)
 /// 2019/882 art.13 and Annex V, asks a service provider to publish, and what the UK's Equality Act
@@ -16,25 +35,21 @@ class StorefrontAccessibilityScreen extends ConsumerWidget {
 
   @override
   Widget build(BuildContext context, WidgetRef ref) {
-    final storeName = ref.watch(storefrontConfigProvider).value?.storeName;
     final text = Theme.of(context).textTheme;
-    // The config falls back to a '-' name when it cannot be read; never open the statement with it.
-    final shop =
-        (storeName == null || storeName.trim().isEmpty || storeName == '-')
-            ? 'This shop'
-            : storeName;
+    final shop = ref.watch(storefrontBusinessNameProvider).value ?? 'This shop';
 
     Widget heading(String s) => Padding(
-          padding: const EdgeInsets.only(top: 24, bottom: 8),
+          padding: const EdgeInsetsDirectional.only(
+              top: AppSpacing.xl, bottom: AppSpacing.sm),
           child:
               Semantics(header: true, child: Text(s, style: text.titleMedium)),
         );
     Widget para(String s) => Padding(
-          padding: const EdgeInsets.only(bottom: 8),
+          padding: const EdgeInsetsDirectional.only(bottom: AppSpacing.sm),
           child: Text(s, style: text.bodyMedium),
         );
     Widget bullet(String s) => Padding(
-          padding: const EdgeInsets.only(bottom: 6),
+          padding: const EdgeInsetsDirectional.only(bottom: AppSpacing.sm),
           child: Row(
             crossAxisAlignment: CrossAxisAlignment.start,
             children: [
@@ -44,7 +59,8 @@ class StorefrontAccessibilityScreen extends ConsumerWidget {
           ),
         );
 
-    return ContentBounds(
+    // About 80 characters a line (WCAG 1.4.8), on the page that promises readable text.
+    return ContentBounds.reading(
       child: ListView(
         padding: context.pagePadding,
         children: [
@@ -52,7 +68,7 @@ class StorefrontAccessibilityScreen extends ConsumerWidget {
             header: true,
             child: Text('Accessibility statement', style: text.headlineSmall),
           ),
-          const SizedBox(height: 12),
+          const SizedBox(height: AppSpacing.md),
           para(
               '$shop wants everyone to be able to browse, buy and track an order here, '
               'including people who use a screen reader, a keyboard, magnification or '
@@ -91,7 +107,7 @@ class StorefrontAccessibilityScreen extends ConsumerWidget {
               'If something here stops you, or you need information in another format, tell '
               'us and we will reply.'),
           Align(
-            alignment: Alignment.centerLeft,
+            alignment: AlignmentDirectional.centerStart,
             child: FilledButton.tonalIcon(
               key: const Key('accessibility-feedback'),
               icon: const Icon(Icons.feedback_outlined),

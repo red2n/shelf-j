@@ -4,6 +4,7 @@ import 'package:dio/dio.dart';
 import 'package:flutter/material.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:flutter_test/flutter_test.dart';
+import 'package:intl/date_symbol_data_local.dart';
 import 'package:storeql_app/core/network/api_client.dart';
 import 'package:storeql_app/features/admin/inventory_forecast_tab.dart';
 import 'package:storeql_app/features/admin/providers/admin_providers.dart';
@@ -81,6 +82,7 @@ Future<_Server> _pump(WidgetTester tester, {bool hasForecasts = true}) async {
 }
 
 void main() {
+  setUpAll(initializeDateFormatting);
   testWidgets('a store with no forecasts says so and offers the run', (tester) async {
     await _pump(tester, hasForecasts: false);
     expect(find.textContaining('No forecasts for this store yet'), findsOneWidget);
@@ -89,8 +91,10 @@ void main() {
 
   testWidgets('each item shows its method and accuracy, with a dash where the server had none', (tester) async {
     await _pump(tester);
-    expect(find.text('SES'), findsOneWidget);
-    expect(find.text('CROSTON_SBA'), findsOneWidget);
+    // Methods in words, not their codes.
+    expect(find.text('Smoothing (SES)'), findsOneWidget);
+    expect(find.text('Croston (SBA)'), findsOneWidget);
+    expect(find.text('CROSTON_SBA'), findsNothing);
     expect(find.text('196.0'), findsNWidgets(2), reason: 'expected demand over 28 days, both rows');
     expect(find.text('12.5'), findsOneWidget, reason: 'the steady seller\'s MAPE');
     expect(find.text('—'), findsOneWidget, reason: 'the intermittent row cannot compute a MAPE: a dash, never a zero');
@@ -117,10 +121,11 @@ void main() {
 
   testWidgets('a row opens the forecast day by day with its weekday profile', (tester) async {
     await _pump(tester);
-    await tester.tap(find.text('SES'));
+    await tester.tap(find.text('Smoothing (SES)'));
     await tester.pumpAndSettle();
     expect(find.textContaining('Weekday profile'), findsOneWidget);
-    expect(find.text('2026-09-26'), findsOneWidget);
+    expect(find.text('26 Sept 2026'), findsOneWidget);
+    expect(find.text('2026-09-26'), findsNothing);
     expect(find.text('9.1'), findsOneWidget);
     expect(find.textContaining('MAPE 12.5%'), findsOneWidget);
   });

@@ -387,12 +387,16 @@ public final class Domain {
       UUID createdBy,
       Instant createdAt) {}
 
-  /** A batch that arrived with no zone and no rule to place it. */
+  /**
+   * A batch that arrived with no zone and no rule to place it; {@code batchNo} is the batch's own
+   * number, read with the task.
+   */
   public record PutawayTask(
       UUID id,
       UUID tenantId,
       UUID storeId,
       UUID batchId,
+      String batchNo,
       UUID variantId,
       BigDecimal qty,
       UUID suggestedZoneId,

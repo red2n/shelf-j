@@ -1,4 +1,6 @@
 import 'package:flutter/material.dart';
+import '../../shared/util/status_labels.dart';
+import '../../core/format.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 
 import '../../core/constants.dart';
@@ -77,11 +79,11 @@ class StoreInstrumentsDialog extends ConsumerWidget {
                     w.certified ? Icons.verified_outlined : Icons.report_problem_outlined,
                     color: w.certified ? cs.primary : cs.error,
                   ),
-                  title: Text('${w.identifier} · ${w.kind.toLowerCase()}'),
+                  title: Text('${w.identifier} · ${instrumentKindLabel(w.kind)}'),
                   subtitle: Text([
                     'S/N ${w.serialNumber}',
                     standingLabel(w.standing),
-                    if (w.nextDue != null) 'due ${w.nextDue}',
+                    if (w.nextDue != null) 'due ${AppFormat.date(w.nextDue)}',
                     if (w.certificateRef != null) 'cert. ${w.certificateRef}',
                   ].join(' · ')),
                   trailing: isManager
@@ -474,11 +476,11 @@ class _HistoryDialog extends ConsumerWidget {
                               ? Icons.build_outlined
                               : (r['passed'] == true ? Icons.check_circle_outline : Icons.cancel_outlined),
                         ),
-                        title: Text('${r['kind']} · ${r['performedOn']}'),
+                        title: Text('${verificationKindLabel(r['kind'] as String?)} · ${AppFormat.date(r['performedOn'] as String?)}'),
                         subtitle: Text([
                           r['performedBy'],
                           if (r['certificateRef'] != null) 'cert. ${r['certificateRef']}',
-                          if (r['nextDue'] != null) 'due ${r['nextDue']}',
+                          if (r['nextDue'] != null) 'due ${AppFormat.date(r['nextDue'] as String?)}',
                           if (r['notes'] != null) r['notes'],
                         ].join(' · ')),
                       ),
@@ -499,3 +501,21 @@ final _historyProvider =
       .map((e) => Map<String, dynamic>.from(e as Map))
       .toList();
 });
+
+/// A weighing instrument's kind in words, as the form offers it.
+String instrumentKindLabel(String kind) => switch (kind.toUpperCase()) {
+      'COUNTER' => 'counter scale',
+      'LABELLING' => 'labelling scale',
+      'PLATFORM' => 'platform scale',
+      'HANGING' => 'hanging scale',
+      _ => humanizeCode(kind).toLowerCase(),
+    };
+
+/// What was done to an instrument, in the form's own words.
+String verificationKindLabel(String? kind) => switch ((kind ?? '').toUpperCase()) {
+      'INITIAL' => 'Initial verification',
+      'RE_VERIFICATION' => 'Re-verification',
+      'INSPECTION' => 'Trading-standards inspection',
+      'REPAIR' => 'Repair',
+      _ => humanizeCode(kind),
+    };

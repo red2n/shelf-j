@@ -2,7 +2,9 @@ import 'package:dio/dio.dart';
 import 'package:flutter/material.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:go_router/go_router.dart';
+import '../../core/format.dart';
 import '../../core/network/api_error.dart';
+import '../../core/spacing.dart';
 import '../../shared/widgets/adaptive_nav_shell.dart';
 import 'storefront_providers.dart';
 import 'survey_widgets.dart';
@@ -92,8 +94,14 @@ class StorefrontShell extends ConsumerWidget {
               children: [
                 Expanded(child: child),
                 // Sticky cart bar — a constant, low-friction path to checkout
-                // while browsing. Hidden on the cart screen (it has its own CTA).
-                if (!currentLocation.startsWith('/store/cart')) const _CartBar(),
+                // while browsing. Hidden on the cart screen (it has its own CTA),
+                // and on a product page on a phone, where the page's own Add bar
+                // sits above it and the two would stack over the bottom bar (the
+                // cart stays one tap away in the app bar and the bottom bar).
+                if (!currentLocation.startsWith('/store/cart') &&
+                    !(context.isCompact &&
+                        currentLocation.startsWith('/store/products/')))
+                  const _CartBar(),
               ],
             ),
     );
@@ -142,6 +150,7 @@ class _CartBar extends ConsumerWidget {
     final count = cart.fold<int>(0, (s, l) => s + l.qty);
     final total = cart.fold<double>(0, (s, l) => s + l.lineTotal);
     final currency = cart.first.currency;
+    final money = AppFormat.money(total, currencyCode: currency);
 
     return Material(
       color: cs.primary,
@@ -151,7 +160,7 @@ class _CartBar extends ConsumerWidget {
         child: Semantics(
           button: true,
           label: showPrices
-              ? '$count item${count == 1 ? '' : 's'} in the cart, $currency ${total.toStringAsFixed(2)}. View cart'
+              ? '$count item${count == 1 ? '' : 's'} in the cart, $money. View cart'
               : '$count item${count == 1 ? '' : 's'} in the cart. View cart',
           excludeSemantics: true,
           onTap: () => context.go('/store/cart'),
@@ -170,7 +179,7 @@ class _CartBar extends ConsumerWidget {
                   Expanded(
                     child: Text(
                       showPrices
-                          ? '$currency ${total.toStringAsFixed(2)}'
+                          ? money
                           : '$count item${count == 1 ? '' : 's'}',
                       style: TextStyle(
                         color: cs.onPrimary,
@@ -525,8 +534,14 @@ class _StorefrontAuthDialogState extends ConsumerState<StorefrontAuthDialog> {
                 obscureText: true,
                 decoration: const InputDecoration(
                     labelText: 'Password', prefixIcon: Icon(Icons.lock_outline)),
-                validator: (v) =>
-                    v == null || v.length < 15 ? 'At least 15 characters — a phrase of a few words is easiest' : null,
+                // A sign-in asks only that a password is typed — the server says
+                // whether it is the right one; a new password is held to
+                // iam-svc's fifteen characters before anything is sent.
+                validator: (v) => v == null || v.isEmpty
+                    ? 'Enter your password'
+                    : _register && v.length < 15
+                        ? 'At least 15 characters — a phrase of a few words is easiest'
+                        : null,
               ),
               if (_register) ...[
                 const SizedBox(height: 12),

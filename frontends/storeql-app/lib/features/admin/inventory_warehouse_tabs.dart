@@ -1,9 +1,11 @@
 import 'package:flutter/material.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 import '../../core/constants.dart';
+import '../../core/format.dart';
 import '../../core/network/api_client.dart';
 import '../../core/network/api_error.dart';
 import '../../core/spacing.dart';
+import '../../shared/util/status_labels.dart';
 import '../../shared/widgets/error_view.dart';
 import '../../shared/widgets/loading_view.dart';
 import 'providers/admin_providers.dart';
@@ -35,9 +37,14 @@ class _InventoryTransfersTabState extends ConsumerState<InventoryTransfersTab> {
       crossAxisAlignment: CrossAxisAlignment.start,
       children: [
         Padding(
-          padding: const EdgeInsets.fromLTRB(
-              AppSpacing.xl, AppSpacing.lg, AppSpacing.xl, 0),
-          child: Row(
+          padding: EdgeInsetsDirectional.fromSTEB(
+              context.pageGutter, AppSpacing.lg, context.pageGutter, 0),
+          // A wrapping row: on a phone the button moves under the filter
+          // rather than running off the screen.
+          child: Wrap(
+            spacing: AppSpacing.md,
+            runSpacing: AppSpacing.sm,
+            crossAxisAlignment: WrapCrossAlignment.center,
             children: [
               SizedBox(
                 width: 220,
@@ -70,7 +77,6 @@ class _InventoryTransfersTabState extends ConsumerState<InventoryTransfersTab> {
                 onPressed: () => ref.invalidate(
                     transferOrdersProvider(_storeFilter ?? '')),
               ),
-              const Spacer(),
               FilledButton.icon(
                 onPressed: () => _showCreateDialog(context),
                 icon: const Icon(Icons.swap_horiz),
@@ -96,19 +102,19 @@ class _InventoryTransfersTabState extends ConsumerState<InventoryTransfersTab> {
                 );
               }
               return ListView.separated(
-                padding: const EdgeInsets.symmetric(
-                    horizontal: AppSpacing.xl, vertical: 8),
+                padding: EdgeInsetsDirectional.symmetric(
+                    horizontal: context.pageGutter, vertical: AppSpacing.sm),
                 itemCount: orders.length,
                 separatorBuilder: (_, _) => const Divider(height: 1),
                 itemBuilder: (context, i) {
                   final o = orders[i];
-                  final from = storeNames[o.fromStoreId] ?? o.fromStoreId;
-                  final to = storeNames[o.toStoreId] ?? o.toStoreId;
+                  final from = storeNames[o.fromStoreId] ?? '…${shortRef(o.fromStoreId)}';
+                  final to = storeNames[o.toStoreId] ?? '…${shortRef(o.toStoreId)}';
                   return ListTile(
                     leading: Icon(_statusIcon(o.status)),
                     title: Text('$from → $to'),
                     subtitle: Text(
-                      '${o.status} · ${o.lines.length} line(s)'
+                      '${transferStatusLabel(o.status)} · ${o.lines.length} line${o.lines.length == 1 ? '' : 's'}'
                       '${o.source == 'CROSSDOCK' ? ' · cross-docked from order ${shortRef(o.purchaseOrderId ?? '')}' : o.source == 'PROPOSAL' ? ' · proposed by the warehouse' : ''}'
                       '${o.notes != null && o.notes!.isNotEmpty && o.source != 'CROSSDOCK' ? ' · ${o.notes}' : ''}',
                     ),
@@ -385,8 +391,8 @@ class _InventoryMovementsTabState extends ConsumerState<InventoryMovementsTab> {
     return Column(
       children: [
         Padding(
-          padding: const EdgeInsets.fromLTRB(
-              AppSpacing.xl, AppSpacing.lg, AppSpacing.xl, 0),
+          padding: EdgeInsetsDirectional.fromSTEB(
+              context.pageGutter, AppSpacing.lg, context.pageGutter, 0),
           child: Row(
             children: [
               SizedBox(
@@ -439,21 +445,28 @@ class _InventoryMovementsTabState extends ConsumerState<InventoryMovementsTab> {
                       style: Theme.of(context).textTheme.titleMedium),
                 );
               }
+              // Each movement by its product's name; the end of its id only
+              // while the names load.
+              final labels = ref
+                      .watch(variantLabelsProvider(
+                          variantIdsKey(rows.map((m) => m.variantId))))
+                      .value ??
+                  const <String, VariantLabel>{};
               return ListView.separated(
-                padding: const EdgeInsets.symmetric(
-                    horizontal: AppSpacing.xl, vertical: 8),
+                padding: EdgeInsetsDirectional.symmetric(
+                    horizontal: context.pageGutter, vertical: AppSpacing.sm),
                 itemCount: rows.length,
                 separatorBuilder: (_, _) => const Divider(height: 1),
                 itemBuilder: (context, i) {
                   final m = rows[i];
-                  final store = storeNames[m.storeId] ?? m.storeId;
+                  final store = storeNames[m.storeId] ?? '…${shortRef(m.storeId)}';
                   final sign = m.qty >= 0 ? '+' : '';
                   return ListTile(
                     dense: true,
-                    title: Text('${m.type}  $sign${m.qty}'),
+                    title: Text('${movementTypeLabel(m.type)}  $sign${AppFormat.count(m.qty)}'),
                     subtitle: Text(
-                      '$store · variant …${shortRef(m.variantId)}'
-                      '${m.createdAt != null ? ' · ${m.createdAt}' : ''}',
+                      '$store · ${variantDisplayName(m.variantId, labels)}'
+                      '${m.createdAt != null ? ' · ${AppFormat.dateTime(m.createdAt)}' : ''}',
                     ),
                   );
                 },
@@ -465,6 +478,29 @@ class _InventoryMovementsTabState extends ConsumerState<InventoryMovementsTab> {
     );
   }
 }
+
+/// A transfer's status in words.
+String transferStatusLabel(String status) => switch (status.toUpperCase()) {
+      'DRAFT' => 'Proposed',
+      'PENDING' => 'Pending',
+      'SHIPPED' => 'Shipped',
+      'RECEIVED' => 'Received',
+      'CANCELLED' => 'Cancelled',
+      _ => humanizeCode(status),
+    };
+
+/// A stock movement's kind in words.
+String movementTypeLabel(String type) => switch (type.toUpperCase()) {
+      'SALE' => 'Sale',
+      'RECEIPT' => 'Receipt',
+      'ADJUST' => 'Adjustment',
+      'TRANSFER_OUT' => 'Transfer out',
+      'TRANSFER_IN' => 'Transfer in',
+      'RETURN' => 'Return',
+      'YIELD' => 'Breakdown',
+      'BOND_RELEASE' => 'Released from bond',
+      _ => humanizeCode(type),
+    };
 
 // ── Material status dialog ───────────────────────────────────────────────────
 
@@ -492,11 +528,10 @@ Future<void> showMaterialStatusDialog(
               DropdownButtonFormField<String>(
                 initialValue: status,
                 decoration: const InputDecoration(labelText: 'Status'),
-                items: const [
-                  DropdownMenuItem(value: 'AVAILABLE', child: Text('Available')),
-                  DropdownMenuItem(value: 'QUARANTINE', child: Text('Quarantine')),
-                  DropdownMenuItem(value: 'HOLD', child: Text('Hold')),
-                  DropdownMenuItem(value: 'REJECTED', child: Text('Rejected')),
+                // The words the Batches badges and filter use.
+                items: [
+                  for (final m in batchMaterialStatuses)
+                    DropdownMenuItem(value: m, child: Text(materialStatusLabel(m))),
                 ],
                 onChanged: (v) => setLocal(() => status = v ?? status),
               ),

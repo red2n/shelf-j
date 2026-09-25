@@ -5,6 +5,9 @@ import 'package:flutter_riverpod/flutter_riverpod.dart';
 import '../../core/auth/auth_notifier.dart';
 import '../../core/auth/auth_state.dart';
 import '../../core/format.dart';
+import '../../core/spacing.dart';
+import '../../shared/widgets/page_header.dart';
+import '../../shared/widgets/status_badge.dart';
 import '../../core/network/api_error.dart';
 import '../../shared/widgets/error_view.dart';
 import '../../shared/widgets/loading_view.dart';
@@ -34,26 +37,30 @@ class IntegrationsScreen extends ConsumerWidget {
     final owner = auth is AuthAuthenticated && auth.roles.contains('OWNER');
     final inSandbox = auth is AuthAuthenticated && auth.sandbox;
     final keys = ref.watch(apiKeysProvider);
-    final theme = Theme.of(context);
 
+    // The page's gutter, and a measure its paragraphs can be read at on a
+    // desktop (they ran edge to edge on a wide window).
     return Scaffold(
       body: ListView(
-        padding: const EdgeInsets.all(24),
+        padding: context.pagePadding,
         children: [
-          Text('Integrations', style: theme.textTheme.headlineSmall?.copyWith(fontWeight: FontWeight.bold)),
-          const SizedBox(height: 4),
-          Text(
-            'API keys let your own systems — an ERP, an accounting package, an integrator — '
-            'use the platform without a person signing in. A key acts as staff, never as an owner.',
-            style: theme.textTheme.bodyMedium,
+          ContentBounds(
+            maxWidth: AppBreakpoints.expanded,
+            child: Column(
+              crossAxisAlignment: CrossAxisAlignment.stretch,
+              children: [
+          const PageHeader(
+            title: 'Integrations',
+            subtitle: 'API keys let your own systems — an ERP, an accounting package, an integrator — '
+                'use the platform without a person signing in. A key acts as staff, never as an owner.',
+            padding: EdgeInsets.zero,
           ),
           const SizedBox(height: 24),
           _SandboxSection(owner: owner, inSandbox: inSandbox),
           const SizedBox(height: 32),
-          Row(
-            children: [
-              Text('API keys', style: theme.textTheme.titleLarge?.copyWith(fontWeight: FontWeight.bold)),
-              const Spacer(),
+          SectionHeading(
+            title: 'API keys',
+            actions: [
               if (owner)
                 FilledButton.icon(
                   key: const Key('mint-key'),
@@ -86,6 +93,9 @@ class IntegrationsScreen extends ConsumerWidget {
           _WebhooksSection(owner: owner),
           const SizedBox(height: 32),
           AccountingSection(owner: owner),
+              ],
+            ),
+          ),
         ],
       ),
     );
@@ -159,35 +169,80 @@ class _KeyTile extends StatelessWidget {
       child: ListTile(
         leading: Icon(k.sandbox ? Icons.science_outlined : Icons.vpn_key_outlined, color: active ? cs.primary : cs.outline),
         title: Text(k.name),
-        subtitle: Text('${k.prefix}… · ${k.role} · $where · $used$until'),
-        trailing: Row(
-          mainAxisSize: MainAxisSize.min,
+        // Its state as badges under the details, and one action at the end,
+        // so the key's name keeps the width on a phone.
+        subtitle: Column(
+          crossAxisAlignment: CrossAxisAlignment.start,
           children: [
-            if (k.sandbox) ...[
-              Chip(
-                key: Key('sandbox-key-${k.id}'),
-                label: const Text('Sandbox'),
-                backgroundColor: cs.tertiaryContainer,
-              ),
-              const SizedBox(width: 8),
-            ],
-            Chip(
-              label: Text(k.status),
-              backgroundColor: active ? cs.primaryContainer : cs.surfaceContainerHighest,
+            Text('${k.prefix}… · ${humanizeCode(k.role)} · $where · $used$until'),
+            const SizedBox(height: AppSpacing.xs),
+            Wrap(
+              spacing: AppSpacing.sm,
+              runSpacing: AppSpacing.xs,
+              children: [
+                StatusBadge(
+                  humanizeCode(k.status),
+                  tone: active ? StatusTone.success : StatusTone.neutral,
+                ),
+                if (k.sandbox)
+                  StatusBadge(
+                    'Sandbox',
+                    key: Key('sandbox-key-${k.id}'),
+                    tone: StatusTone.accent,
+                  ),
+              ],
             ),
-            if (owner && active) ...[
-              const SizedBox(width: 8),
-              IconButton(
+          ],
+        ),
+        trailing: owner && active
+            ? IconButton(
                 key: Key('revoke-${k.id}'),
                 tooltip: 'Revoke',
                 icon: const Icon(Icons.delete_outline),
                 onPressed: onRevoke,
-              ),
-            ],
-          ],
-        ),
+              )
+            : null,
       ),
     );
+  }
+}
+
+/// A section's heading on the Integrations page, with its actions: one row
+/// where there is room, and — on a phone, or with large text — the actions
+/// wrap under the title rather than running off the screen.
+class SectionHeading extends StatelessWidget {
+  const SectionHeading({super.key, required this.title, this.actions = const []});
+
+  final String title;
+  final List<Widget> actions;
+
+  @override
+  Widget build(BuildContext context) {
+    final style = Theme.of(context).textTheme.titleLarge?.copyWith(fontWeight: FontWeight.bold);
+    return LayoutBuilder(builder: (context, constraints) {
+      final largeText = MediaQuery.textScalerOf(context).scale(16) > 16 * 1.3;
+      final stacked = constraints.maxWidth < PageHeader.defaultStackBelow ||
+          (largeText && constraints.maxWidth < AppBreakpoints.expanded);
+      final heading = Text(title, style: style);
+      if (actions.isEmpty) return heading;
+      if (stacked) {
+        return Column(
+          crossAxisAlignment: CrossAxisAlignment.start,
+          children: [
+            heading,
+            const SizedBox(height: AppSpacing.sm),
+            Wrap(spacing: AppSpacing.sm, runSpacing: AppSpacing.sm, children: actions),
+          ],
+        );
+      }
+      return Row(
+        children: [
+          Expanded(child: heading),
+          const SizedBox(width: AppSpacing.md),
+          Wrap(spacing: AppSpacing.sm, runSpacing: AppSpacing.sm, children: actions),
+        ],
+      );
+    });
   }
 }
 
@@ -414,10 +469,9 @@ class _SandboxSection extends ConsumerWidget {
     return Column(
       crossAxisAlignment: CrossAxisAlignment.stretch,
       children: [
-        Row(
-          children: [
-            Text('Sandbox', style: theme.textTheme.titleLarge?.copyWith(fontWeight: FontWeight.bold)),
-            const Spacer(),
+        SectionHeading(
+          title: 'Sandbox',
+          actions: [
             if (owner)
               sandbox.when(
                 loading: () => const SizedBox.shrink(),
@@ -429,14 +483,15 @@ class _SandboxSection extends ConsumerWidget {
                         icon: const Icon(Icons.science_outlined),
                         label: const Text('Create a sandbox'),
                       )
-                    : Row(
+                    : Wrap(
+                        spacing: AppSpacing.sm,
+                        runSpacing: AppSpacing.sm,
                         children: [
                           TextButton(
                             key: const Key('sandbox-delete'),
                             onPressed: () => _remove(context, ref, s),
                             child: const Text('Remove the sandbox'),
                           ),
-                          const SizedBox(width: 8),
                           FilledButton.icon(
                             key: const Key('sandbox-enter'),
                             onPressed: () => _enter(context, ref),
@@ -472,8 +527,17 @@ class _SandboxSection extends ConsumerWidget {
                   child: ListTile(
                     leading: Icon(Icons.science_outlined, color: cs.primary),
                     title: Text(s.name),
-                    subtitle: Text('SANDBOX plan · made ${AppFormat.date(s.createdAt)} · tenant ${s.id}'),
-                    trailing: Chip(label: Text(s.active ? 'Active' : s.status), backgroundColor: cs.primaryContainer),
+                    subtitle: Column(
+                      crossAxisAlignment: CrossAxisAlignment.start,
+                      children: [
+                        Text('Sandbox plan · made ${AppFormat.date(s.createdAt)} · tenant ${s.id}'),
+                        const SizedBox(height: AppSpacing.xs),
+                        StatusBadge(
+                          s.active ? 'Active' : humanizeCode(s.status),
+                          tone: s.active ? StatusTone.success : StatusTone.neutral,
+                        ),
+                      ],
+                    ),
                   ),
                 ),
         ),
@@ -601,10 +665,9 @@ class _WebhooksSection extends ConsumerWidget {
     return Column(
       crossAxisAlignment: CrossAxisAlignment.stretch,
       children: [
-        Row(
-          children: [
-            Text('Webhooks', style: theme.textTheme.titleLarge?.copyWith(fontWeight: FontWeight.bold)),
-            const Spacer(),
+        SectionHeading(
+          title: 'Webhooks',
+          actions: [
             if (owner)
               FilledButton.icon(
                 key: const Key('add-webhook'),

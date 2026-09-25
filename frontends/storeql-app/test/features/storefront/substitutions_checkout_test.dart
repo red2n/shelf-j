@@ -100,7 +100,8 @@ Future<_Server> _checkout(WidgetTester tester, {required bool allow}) async {
   await tester.ensureVisible(find.text('Review order'));
   await tester.tap(find.text('Review order'));
   await tester.pumpAndSettle();
-  await tester.tap(find.textContaining('Pay GBP').last);
+  // Money reads with the symbol, not the code.
+  await tester.tap(find.textContaining('Pay £').last);
   await tester.pumpAndSettle();
   return server;
 }

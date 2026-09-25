@@ -49,6 +49,20 @@ public final class Domain {
     public boolean isSandbox() {
       return MODE_SANDBOX.equals(mode);
     }
+
+    /**
+     * The name the business answers to in public: its legal name, else the name it signed up with,
+     * trimmed. The storefront's accessibility statement speaks for this business — the European
+     * Accessibility Act's service provider — never for one of its stores.
+     *
+     * @return the legal name when it is not blank, else the name; null only when both are blank
+     */
+    public String businessName() {
+      if (legalName != null && !legalName.isBlank()) {
+        return legalName.strip();
+      }
+      return name == null || name.isBlank() ? null : name.strip();
+    }
   }
 
   public record Store(

@@ -4,6 +4,7 @@ import 'package:dio/dio.dart';
 import 'package:flutter/material.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:flutter_test/flutter_test.dart';
+import 'package:intl/date_symbol_data_local.dart';
 import 'package:storeql_app/core/auth/auth_notifier.dart';
 import 'package:storeql_app/core/network/api_client.dart';
 import 'package:storeql_app/features/admin/inventory_waves_tab.dart';
@@ -14,8 +15,8 @@ import '../../support/fake_api.dart';
 // The Inventory screen's "Picking & putaway" tab: the orders waiting at the
 // store and the waves; Build wave posting the store with an idempotency key;
 // the wave's lines in walk order under their zone names, the picks saved and
-// the wave completed; a batch on the putaway list placed in a zone; a cashier
-// reading without the buttons.
+// the wave completed; a batch on the putaway list named by its number and
+// placed in a zone; a cashier reading without the buttons.
 // ---------------------------------------------------------------------------
 
 const _store = '01a0b400-0000-7000-8000-000000000001';
@@ -25,6 +26,7 @@ const _wave = '01a0b400-0000-7000-8000-0000000000w1';
 const _line1 = '01a0b400-0000-7000-8000-0000000000l1';
 const _line2 = '01a0b400-0000-7000-8000-0000000000l2';
 const _task = '01a0b400-0000-7000-8000-0000000000t1';
+const _task2 = '01a0b400-0000-7000-8000-0000000000t2';
 const _order1 = '01a0b400-0000-7000-8000-0000000000o1';
 
 class _Server implements HttpClientAdapter {
@@ -72,7 +74,8 @@ class _Server implements HttpClientAdapter {
     }
     if (path.endsWith('/putaway/tasks')) {
       return jsonResponse(
-          '{"data":[{"id":"$_task","storeId":"$_store","batchId":"01a0b400-0000-7000-8000-0000000000b9","variantId":"01a0b400-0000-7000-8000-0000000000v2","qty":3,"status":"OPEN"}]}');
+          '{"data":[{"id":"$_task","storeId":"$_store","batchId":"01a0b400-0000-7000-8000-0000000000b9","batchNo":"LOT-ODD-7","variantId":"01a0b400-0000-7000-8000-0000000000v2","qty":3,"status":"OPEN"},'
+          '{"id":"$_task2","storeId":"$_store","batchId":"01a0b400-0000-7000-8000-0000000000b8","variantId":"01a0b400-0000-7000-8000-0000000000v2","qty":1,"status":"OPEN"}]}');
     }
     if (path.endsWith('/putaway/tasks/$_task/place')) {
       return jsonResponse('{"data":{"id":"$_task","status":"PLACED","placedZoneId":"$_zoneB"}}');
@@ -102,13 +105,24 @@ Future<_Server> _pump(WidgetTester tester, {String role = 'STOREKEEPER'}) async 
 }
 
 void main() {
+  setUpAll(initializeDateFormatting);
   testWidgets('the orders waiting at the store and its waves are listed', (tester) async {
     await _pump(tester);
     expect(find.byKey(const Key('awaiting-$_order1')), findsOneWidget);
     expect(find.textContaining('· delivery'), findsOneWidget);
     expect(find.byKey(const Key('wave-$_wave')), findsOneWidget);
     expect(find.textContaining('1 orders'), findsOneWidget);
+    // The wave's status in words, its day as a date.
+    expect(find.text('To pick'), findsOneWidget);
+    expect(find.textContaining('OPEN'), findsNothing);
+    expect(find.textContaining('2026-09-25'), findsNothing);
     expect(find.byKey(const Key('putaway-task-$_task')), findsOneWidget);
+    // A task names its batch by number; the id's tail stands in only when the batch has none.
+    final named = tester.widget<Text>(find.byKey(const Key('putaway-task-title-$_task'))).data!;
+    expect(named, endsWith(' · batch LOT-ODD-7'));
+    expect(named, isNot(contains('000000b9')));
+    expect(tester.widget<Text>(find.byKey(const Key('putaway-task-title-$_task2'))).data,
+        endsWith(' · batch …000000b8'));
     expect(find.text('Anything else'), findsOneWidget);
     expect(find.text('→ Cold room'), findsOneWidget);
   });

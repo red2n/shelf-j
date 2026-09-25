@@ -2,6 +2,7 @@ import 'package:dio/dio.dart';
 import 'package:flutter/material.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:flutter_test/flutter_test.dart';
+import 'package:intl/date_symbol_data_local.dart';
 import 'package:storeql_app/core/auth/auth_notifier.dart';
 import 'package:storeql_app/core/network/api_client.dart';
 import 'package:storeql_app/features/admin/supplier_scorecards.dart';
@@ -70,6 +71,7 @@ Future<_Server> _pump(WidgetTester tester) async {
 }
 
 void main() {
+  setUpAll(initializeDateFormatting);
   testWidgets('suppliers are ranked with a grade and the figures the score is made from',
       (tester) async {
     await _pump(tester);
@@ -91,7 +93,7 @@ void main() {
     await _pump(tester);
     await tester.tap(find.byKey(const Key('scorecard-$_butcher')));
     await tester.pumpAndSettle();
-    expect(find.text('2026-06-26 to 2026-09-24'), findsOneWidget);
+    expect(find.text('26 Jun 2026 to 24 Sept 2026'), findsOneWidget);
     expect(find.byKey(const Key('scorecard-score')), findsOneWidget);
     expect(find.text('1 of 2 (50 %)'), findsOneWidget);
     expect(find.text('3.5 d average, 3.5 d median, 5 d longest · quoted 3 d'), findsOneWidget);

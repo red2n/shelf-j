@@ -1,6 +1,7 @@
 import 'package:flutter/material.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:flutter_test/flutter_test.dart';
+import 'package:storeql_app/core/format.dart';
 import 'package:storeql_app/features/storefront/storefront_providers.dart';
 import 'package:storeql_app/features/storefront/storefront_shell.dart';
 
@@ -54,6 +55,16 @@ void main() {
     expect(container.read(displayCurrencyProvider), isNull);
   });
 
+  test('a flat promotion is an amount of money in the shop currency', () {
+    const flat = StorePromotion(name: 'Autumn', type: 'FLAT', value: 5);
+    expect(flat.headlineIn('GBP'), '£5.00 off');
+    expect(flat.headlineIn('JPY'), '¥5 off');
+    // Currency not known yet: the amount alone, never a code in front of it.
+    expect(flat.headline, '5.00 off');
+    const percent = StorePromotion(name: 'Autumn', type: 'PERCENT', value: 20);
+    expect(percent.headlineIn('GBP'), '20% off');
+  });
+
   test('a resolved price carries what the shopper sees beside what they pay', () {
     final p = ResolvedPrice.fromJson({
       'unitPrice': 100.0,
@@ -62,7 +73,10 @@ void main() {
       'display': {'currency': 'USD', 'rate': 0.8, 'unitPrice': 125.0, 'totalWithVat': 150.0},
     });
     expect(p.display!.rate, 0.8);
-    expect(p.shownLine, '≈ USD 150.00');
+    // Money as the locale writes it (US\$150.00 in en_GB, \$150.00 in en_US),
+    // never a code and a bare number.
+    expect(p.shownLine, '≈ ${AppFormat.money(150, currencyCode: 'USD')}');
+    expect(p.shownLine, isNot(contains('USD')));
     final plain = ResolvedPrice.fromJson({'unitPrice': 1, 'totalWithVat': 1.2, 'currency': 'GBP'});
     expect(plain.display, isNull);
     expect(plain.shownLine, '');

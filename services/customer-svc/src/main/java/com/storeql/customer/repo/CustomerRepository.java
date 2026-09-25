@@ -1,5 +1,6 @@
 package com.storeql.customer.repo;
 
+import com.storeql.customer.domain.CustomerSearch;
 import com.storeql.customer.domain.Domain.Customer;
 import com.storeql.customer.domain.Domain.CustomerAddress;
 import com.storeql.customer.domain.Domain.LoyaltyAccount;
@@ -568,37 +569,61 @@ public class CustomerRepository extends BaseOutboxRepository {
    * <p>The extra row is the caller's next-page signal, not data to render: whoever calls this must
    * trim to {@code limit} before returning it.
    *
+   * <p>A search term matches, case-insensitively, anywhere in the full name (so in the first or the
+   * last name too), the email or the phone. It is bound as a pattern with its wildcards escaped,
+   * never written into the SQL, and narrows the same tenant-first, cursor-paged query as the plain
+   * list, so a search pages exactly as the list does. A phone-shaped term of four digits or more
+   * also matches the phone reduced to its digits ({@link CustomerSearch#phonePattern}), so the
+   * spacing and punctuation of neither the term nor the stored number stand in the way.
+   *
    * @param tenantId owning tenant; the first condition of the query
+   * @param term trimmed text to find, or {@code null} to list every customer
    * @param afterId cursor — the last id from the previous page, or {@code null} to start
    * @param limit page size; one extra row is fetched beyond it
    * @return up to {@code limit + 1} customers, newest first; anonymized customers are excluded
    */
-  public List<Customer> listCustomers(UUID tenantId, String afterId, int limit) {
-    if (afterId == null) {
-      return query(
-          "SELECT id, tenant_id, login_id, email, phone, first_name, last_name, dob, gender,"
-              + " status, gdpr_consent_at, anonymized_at, created_at, updated_at, preferred_language"
-              + " FROM customers WHERE tenant_id = ? AND status != 'ANONYMIZED'"
-              + " ORDER BY created_at DESC, id LIMIT ?",
-          ps -> {
-            ps.setObject(1, tenantId);
-            ps.setInt(2, limit + 1);
-          },
-          CustomerRepository::mapCustomer,
-          "list customers");
+  public List<Customer> listCustomers(UUID tenantId, String term, String afterId, int limit) {
+    StringBuilder sql =
+        new StringBuilder(
+            "SELECT id, tenant_id, login_id, email, phone, first_name, last_name, dob, gender,"
+                + " status, gdpr_consent_at, anonymized_at, created_at, updated_at,"
+                + " preferred_language FROM customers WHERE tenant_id = ?"
+                + " AND status != 'ANONYMIZED'");
+    UUID after = afterId == null ? null : Ids.parse(afterId);
+    if (after != null) sql.append(" AND id < ?");
+    String pattern = term == null ? null : CustomerSearch.pattern(term);
+    String digits = term == null ? null : CustomerSearch.phonePattern(term);
+    if (pattern != null) {
+      // concat_ws skips a null half, so a record with only a first or a last name still matches.
+      sql.append(
+          " AND (concat_ws(' ', first_name, last_name) ILIKE ? ESCAPE '\\'"
+              + " OR email ILIKE ? ESCAPE '\\' OR phone ILIKE ? ESCAPE '\\'");
+      // The stored phone as its ASCII digits, against the term's digits — both bound, so however
+      // either was spaced or punctuated, the same number is found.
+      if (digits != null) sql.append(" OR regexp_replace(phone, '[^0-9]', '', 'g') LIKE ?");
+      sql.append(')');
     }
+    sql.append(" ORDER BY created_at DESC, id LIMIT ?");
+    String label =
+        pattern != null
+            ? "search customers"
+            : after != null ? "list customers paged" : "list customers";
     return query(
-        "SELECT id, tenant_id, login_id, email, phone, first_name, last_name, dob, gender,"
-            + " status, gdpr_consent_at, anonymized_at, created_at, updated_at, preferred_language"
-            + " FROM customers WHERE tenant_id = ? AND status != 'ANONYMIZED'"
-            + " AND id < ? ORDER BY created_at DESC, id LIMIT ?",
+        sql.toString(),
         ps -> {
-          ps.setObject(1, tenantId);
-          ps.setObject(2, Ids.parse(afterId));
-          ps.setInt(3, limit + 1);
+          int i = 1;
+          ps.setObject(i++, tenantId);
+          if (after != null) ps.setObject(i++, after);
+          if (pattern != null) {
+            ps.setString(i++, pattern);
+            ps.setString(i++, pattern);
+            ps.setString(i++, pattern);
+            if (digits != null) ps.setString(i++, digits);
+          }
+          ps.setInt(i, limit + 1);
         },
         CustomerRepository::mapCustomer,
-        "list customers paged");
+        label);
   }
 
   /**

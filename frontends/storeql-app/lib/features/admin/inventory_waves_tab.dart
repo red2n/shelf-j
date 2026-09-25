@@ -1,6 +1,9 @@
 import 'package:dio/dio.dart';
 import 'package:flutter/material.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
+import '../../core/format.dart';
+import '../../core/spacing.dart';
+import '../../shared/widgets/status_badge.dart';
 import 'package:flutter_riverpod/legacy.dart';
 
 import '../../core/auth/auth_notifier.dart';
@@ -140,6 +143,8 @@ class PutawayTask {
   final String id;
   final String storeId;
   final String batchId;
+  /// The batch's number as printed on its label; null if it has none.
+  final String? batchNo;
   final String variantId;
   final double qty;
   final String? suggestedZoneId;
@@ -148,6 +153,7 @@ class PutawayTask {
     required this.id,
     required this.storeId,
     required this.batchId,
+    this.batchNo,
     required this.variantId,
     required this.qty,
     this.suggestedZoneId,
@@ -157,6 +163,7 @@ class PutawayTask {
         id: j['id'] as String? ?? '',
         storeId: j['storeId'] as String? ?? '',
         batchId: j['batchId'] as String? ?? '',
+        batchNo: j['batchNo'] as String?,
         variantId: j['variantId'] as String? ?? '',
         qty: (j['qty'] as num?)?.toDouble() ?? 0,
         suggestedZoneId: j['suggestedZoneId'] as String?,
@@ -224,6 +231,19 @@ String _q(num v) => v == v.roundToDouble() ? v.toStringAsFixed(0) : v.toStringAs
 bool _mayPick(AuthState? auth) => auth is AuthAuthenticated && (auth.isManager || auth.isStorekeeper);
 
 /// The Inventory screen's "Picking & putaway" tab.
+/// A wave's status in words and tone.
+(String, StatusTone) _waveStatus(String status) => switch (status) {
+      'OPEN' => ('To pick', StatusTone.info),
+      'COMPLETED' => ('Picked', StatusTone.success),
+      'CANCELLED' => ('Cancelled', StatusTone.neutral),
+      _ => (humanizeCode(status), StatusTone.neutral),
+    };
+
+/// The product names of [ids], read once for the list.
+Map<String, VariantLabel> _names(WidgetRef ref, Iterable<String> ids) =>
+    ref.watch(variantLabelsProvider(variantIdsKey(ids))).value ??
+    const <String, VariantLabel>{};
+
 class InventoryWavesTab extends ConsumerWidget {
   const InventoryWavesTab({super.key});
 
@@ -315,9 +335,12 @@ class InventoryWavesTab extends ConsumerWidget {
                   message: friendlyError(e, fallback: 'Could not load the waiting orders.'),
                   onRetry: () => ref.invalidate(awaitingOrdersProvider(chosen)),
                 ),
-                data: (list) => list.isEmpty
-                    ? const EmptyState(icon: Icons.inbox_outlined, title: 'Nothing waiting to be picked')
-                    : Column(
+                data: (list) {
+                  if (list.isEmpty) {
+                    return const EmptyState(icon: Icons.inbox_outlined, title: 'Nothing waiting to be picked');
+                  }
+                  final labels = _names(ref, [for (final o in list) ...o.lines.map((l) => l.variantId)]);
+                  return Column(
                         children: [
                           for (final o in list)
                             ListTile(
@@ -326,12 +349,13 @@ class InventoryWavesTab extends ConsumerWidget {
                               leading: Icon(o.fulfilmentType == 'DELIVERY' ? Icons.local_shipping_outlined : Icons.storefront_outlined),
                               title: Text('Order ${shortRef(o.orderId)} · ${o.fulfilmentType.toLowerCase()}'),
                               subtitle: Text(
-                                '${o.lines.map((l) => '${_q(l.qtyOutstanding)} × ${shortRef(l.variantId)}').join(', ')}'
+                                '${o.lines.map((l) => '${_q(l.qtyOutstanding)} × ${variantDisplayName(l.variantId, labels)}').join(', ')}'
                                 '${o.waveId == null ? '' : ' · in wave ${shortRef(o.waveId!)}'}',
                               ),
                             ),
                         ],
-                      ),
+                      );
+                },
               ),
           const SizedBox(height: 24),
           header('Waves', 'Newest first. Open a wave to record the picks and complete it.', null),
@@ -350,9 +374,19 @@ class InventoryWavesTab extends ConsumerWidget {
                             Card(
                               child: ListTile(
                                 key: Key('wave-${w.id}'),
-                                title: Text('Wave ${shortRef(w.id)} · ${w.status}',
+                                title: Text('Wave ${shortRef(w.id)}',
                                     style: const TextStyle(fontWeight: FontWeight.w600)),
-                                subtitle: Text('${w.orderCount} orders · ${w.createdAt.split('T').first}'),
+                                subtitle: Column(
+                                  crossAxisAlignment: CrossAxisAlignment.start,
+                                  children: [
+                                    Text('${w.orderCount} orders · ${AppFormat.dateTime(w.createdAt)}'),
+                                    const SizedBox(height: AppSpacing.xs),
+                                    Builder(builder: (context) {
+                                      final (words, tone) = _waveStatus(w.status);
+                                      return StatusBadge(words, tone: tone);
+                                    }),
+                                  ],
+                                ),
                                 trailing: const Icon(Icons.chevron_right),
                                 onTap: () => showDialog<void>(
                                   context: context,
@@ -441,13 +475,19 @@ class _PutawayTasksState extends ConsumerState<_PutawayTasks> {
           ),
           data: (tasks) => tasks.isEmpty
               ? const EmptyState(icon: Icons.check_circle_outline, title: 'Everything has a zone')
-              : Column(
+              : Builder(builder: (context) {
+                  final labels = _names(ref, tasks.map((t) => t.variantId));
+                  return Column(
                   children: [
                     for (final t in tasks)
                       ListTile(
                         key: Key('putaway-task-${t.id}'),
                         dense: true,
-                        title: Text('${_q(t.qty)} × ${shortRef(t.variantId)} · batch ${shortRef(t.batchId)}'),
+                        title: Text(
+                          '${_q(t.qty)} × ${variantDisplayName(t.variantId, labels)}'
+                          ' · batch ${t.batchNo ?? '…${shortRef(t.batchId)}'}',
+                          key: Key('putaway-task-title-${t.id}'),
+                        ),
                         trailing: widget.mayPlace
                             ? Row(mainAxisSize: MainAxisSize.min, children: [
                                 SizedBox(
@@ -474,7 +514,8 @@ class _PutawayTasksState extends ConsumerState<_PutawayTasks> {
                             : null,
                       ),
                   ],
-                ),
+                );
+                }),
         );
   }
 }
@@ -495,13 +536,15 @@ class _PutawayRules extends ConsumerWidget {
           ),
           data: (rules) => rules.isEmpty
               ? const EmptyState(icon: Icons.alt_route_outlined, title: 'No putaway rules', detail: 'Everything arriving with no zone waits to be placed.')
-              : Column(
+              : Builder(builder: (context) {
+                  final labels = _names(ref, [for (final r in rules) ?r.variantId]);
+                  return Column(
                   children: [
                     for (final r in rules)
                       ListTile(
                         key: Key('putaway-rule-${r.id}'),
                         dense: true,
-                        title: Text(r.variantId == null ? 'Anything else' : 'Variant ${shortRef(r.variantId!)}'),
+                        title: Text(r.variantId == null ? 'Anything else' : variantDisplayName(r.variantId!, labels)),
                         subtitle: Text('→ ${zoneName(zones, r.zoneId)}'),
                         trailing: management
                             ? IconButton(
@@ -516,7 +559,8 @@ class _PutawayRules extends ConsumerWidget {
                             : null,
                       ),
                   ],
-                ),
+                );
+                }),
         );
   }
 }
@@ -581,6 +625,7 @@ class _WaveDialogState extends ConsumerState<WaveDialog> {
   Widget build(BuildContext context) {
     final wave = ref.watch(pickWaveProvider(widget.id));
     final zones = ref.watch(zonesProvider(widget.storeId)).value ?? const <ZoneInfo>[];
+    final labels = _names(ref, [for (final l in wave.value?.lines ?? const []) l.variantId as String]);
     final mayPick = _mayPick(ref.watch(authNotifierProvider).value);
     final cs = Theme.of(context).colorScheme;
     return AlertDialog(
@@ -598,7 +643,7 @@ class _WaveDialogState extends ConsumerState<WaveDialog> {
               mainAxisSize: MainAxisSize.min,
               crossAxisAlignment: CrossAxisAlignment.stretch,
               children: [
-                Text('${w.status} · ${w.orderCount} orders · ${w.lines.length} lines, walked in order',
+                Text('${_waveStatus(w.status).$1} · ${w.orderCount} orders · ${w.lines.length} lines, walked in order',
                     style: TextStyle(color: cs.onSurfaceVariant, fontSize: 12)),
                 const SizedBox(height: 8),
                 for (final l in w.lines)
@@ -608,7 +653,7 @@ class _WaveDialogState extends ConsumerState<WaveDialog> {
                     contentPadding: EdgeInsets.zero,
                     leading: CircleAvatar(radius: 14, child: Text('${l.walkOrder}', style: const TextStyle(fontSize: 12))),
                     title: Text(
-                      '${zoneName(zones, l.zoneId)} · ${l.batchNo ?? shortRef(l.batchId)} · ${shortRef(l.variantId)} × ${_q(l.directedQty)}',
+                      '${zoneName(zones, l.zoneId)} · ${l.batchNo ?? '…${shortRef(l.batchId)}'} · ${variantDisplayName(l.variantId, labels)} × ${_q(l.directedQty)}',
                       key: Key('wave-line-title-${l.id}'),
                     ),
                     subtitle: Text('for ${l.orders.map((o) => '${shortRef(o.orderId)} (${_q(o.qty)})').join(', ')}'),

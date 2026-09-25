@@ -4,6 +4,7 @@ import 'package:dio/dio.dart';
 import 'package:flutter/material.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:flutter_test/flutter_test.dart';
+import 'package:storeql_app/shared/widgets/status_badge.dart';
 import 'package:storeql_app/core/auth/auth_notifier.dart';
 import 'package:storeql_app/core/auth/auth_state.dart';
 import 'package:storeql_app/core/network/api_client.dart';
@@ -49,6 +50,9 @@ class _Server implements HttpClientAdapter {
       body = '{"data":[$store],"meta":{}}';
     } else if (o.path.contains('/admin/stores/') && o.method == 'PUT') {
       body = '{"data":$store}';
+    } else if (o.path.endsWith('/zones') && o.method == 'GET') {
+      body = '{"data":[{"id":"z-1","storeId":"store-1","name":"Dairy chiller","code":"CR1",'
+          '"type":"COLD_ROOM","status":"ACTIVE"}],"meta":{}}';
     } else if (o.path.endsWith('/admin/tenant')) {
       body = '{"data":{"id":"tenant-1","name":"Shop","status":"ACTIVE","currency":"USD","country":"US"}}';
     }
@@ -64,22 +68,29 @@ class _Server implements HttpClientAdapter {
   }
 }
 
-String _store({String? timezone}) => jsonEncode({
-      'id': 'store-1',
-      'name': 'Main',
+String _store(
+        {String? timezone,
+        String id = 'store-1',
+        String name = 'Main',
+        String status = 'ACTIVE'}) =>
+    jsonEncode({
+      'id': id,
+      'name': name,
       'code': 'MAIN',
       'type': 'STORE',
-      'status': 'ACTIVE',
+      'status': status,
       'country': 'US',
       'timezone': ?timezone,
       'showPrices': true,
       'enabledPaymentMethods': ['CASH', 'CARD'],
     });
 
-Future<_Server> _pump(WidgetTester tester, String store) async {
+/// [store] is one store's JSON, or several joined by commas.
+Future<_Server> _pump(WidgetTester tester, String store,
+    {Size size = const Size(1400, 1600)}) async {
   final server = _Server(store);
   final dio = Dio(BaseOptions(baseUrl: 'http://test'))..httpClientAdapter = server;
-  tester.view.physicalSize = const Size(1400, 1600);
+  tester.view.physicalSize = size;
   tester.view.devicePixelRatio = 1;
   addTearDown(tester.view.reset);
   await tester.pumpWidget(ProviderScope(
@@ -117,5 +128,109 @@ void main() {
 
     // Nothing is sent, so nothing is filled in on the store's behalf.
     expect(server.saved, isNull);
+  });
+
+  group('the store list', () {
+    const phone = Size(390, 844);
+
+    List<Map<String, dynamic>> patches(_Server server) => [
+          for (final r in server.requests)
+            if (r.method == 'PATCH')
+              (r.data is String ? jsonDecode(r.data as String) : r.data)
+                  as Map<String, dynamic>,
+        ];
+
+    testWidgets('on a phone the row keeps its text and the tools are in one menu',
+        (tester) async {
+      await _pump(tester, _store(timezone: 'UTC'), size: phone);
+
+      // The trailing row no longer takes the whole tile (a debug build threw
+      // "Trailing widget consumes the entire tile width").
+      expect(tester.takeException(), isNull);
+      expect(find.text('Zones'), findsNothing);
+      expect(find.text('Instruments'), findsNothing);
+      final card = tester.getSize(find.byType(Card).first).width;
+      final room = tester.renderObject<RenderBox>(find.text('Main')).constraints.maxWidth;
+      expect(room, greaterThan(card / 2));
+
+      await tester.tap(find.byKey(const Key('store-menu-store-1')));
+      await tester.pumpAndSettle();
+      for (final item in ['Edit store', 'Zones', 'Instruments', 'Delivery', 'Close store']) {
+        expect(find.text(item), findsOneWidget, reason: item);
+      }
+    });
+
+    testWidgets('a store\'s zones read in words, the edit tools in one menu on a phone',
+        (tester) async {
+      await _pump(tester, _store(timezone: 'UTC'), size: phone);
+      await tester.tap(find.byKey(const Key('store-menu-store-1')));
+      await tester.pumpAndSettle();
+      await tester.tap(find.text('Zones'));
+      await tester.pumpAndSettle();
+      expect(tester.takeException(), isNull);
+      expect(find.text('CR1 · Cold room'), findsOneWidget);
+      expect(find.widgetWithText(StatusBadge, 'Active'), findsOneWidget);
+      expect(find.textContaining('COLD_ROOM'), findsNothing);
+      expect(find.byKey(const Key('zone-actions-z-1')), findsOneWidget);
+      expect(find.byTooltip('Deactivate'), findsNothing);
+    });
+
+    testWidgets('the status is a labelled switch in words, not a raw constant',
+        (tester) async {
+      final server = await _pump(tester, _store(timezone: 'UTC'));
+
+      expect(find.text('ACTIVE'), findsNothing);
+      expect(find.text('Open'), findsOneWidget);
+      final toggle = find.byKey(const Key('store-status-store-1'));
+      expect(tester.widget<Switch>(toggle).value, isTrue);
+
+      // Closing is consequential, so it is confirmed first.
+      await tester.tap(toggle);
+      await tester.pumpAndSettle();
+      expect(find.text('Close Main?'), findsOneWidget);
+      await tester.tap(find.text('Close store'));
+      await tester.pumpAndSettle();
+      expect(patches(server).single['status'], 'INACTIVE');
+    });
+
+    testWidgets('a closed store reads Closed and opens from its menu on a phone',
+        (tester) async {
+      final server =
+          await _pump(tester, _store(timezone: 'UTC', status: 'INACTIVE'), size: phone);
+
+      expect(find.text('Closed'), findsOneWidget);
+      expect(find.text('INACTIVE'), findsNothing);
+      await tester.tap(find.byKey(const Key('store-menu-store-1')));
+      await tester.pumpAndSettle();
+      await tester.tap(find.text('Open store'));
+      await tester.pumpAndSettle();
+      expect(patches(server).single['status'], 'ACTIVE');
+    });
+
+    testWidgets('the last store\'s controls stay clear of the Add Store button',
+        (tester) async {
+      await _pump(
+        tester,
+        [for (var i = 0; i < 12; i++) _store(timezone: 'UTC', id: 'store-$i', name: 'Shop $i')]
+            .join(','),
+        size: phone,
+      );
+      await tester.drag(find.byType(ListView), const Offset(0, -5000));
+      await tester.pumpAndSettle();
+
+      final last = tester.getRect(find.ancestor(
+          of: find.text('Shop 11'), matching: find.byType(Card)));
+      final fab = tester.getRect(find.byType(FloatingActionButton));
+      expect(last.bottom, lessThanOrEqualTo(fab.top));
+    });
+
+    testWidgets('on a phone at 200% text the row still lays out', (tester) async {
+      tester.platformDispatcher.textScaleFactorTestValue = 2;
+      addTearDown(tester.platformDispatcher.clearTextScaleFactorTestValue);
+      await _pump(tester, _store(timezone: 'UTC'), size: phone);
+      expect(tester.takeException(), isNull);
+      expect(find.byKey(const Key('store-menu-store-1')), findsOneWidget);
+      expect(find.text('Open'), findsOneWidget);
+    });
   });
 }

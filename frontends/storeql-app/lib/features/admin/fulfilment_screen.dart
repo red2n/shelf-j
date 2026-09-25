@@ -275,7 +275,7 @@ class FulfilmentScreen extends ConsumerWidget {
         final chosen = ref.watch(fulfilmentStoreProvider) ?? stores.first.id;
         final store = stores.firstWhere((s) => s.id == chosen, orElse: () => stores.first);
         return ListView(
-          padding: AppSpacing.pagePadding,
+          padding: context.pagePadding,
           children: [
             Row(
               children: [
@@ -455,25 +455,41 @@ class _Outstanding extends ConsumerWidget {
                               ),
                             ),
                             for (final l in o.lines)
-                              ListTile(
-                                dense: true,
-                                title: Text(variantDisplayName(l.variantId, labels)),
-                                subtitle: Text(
-                                    '${qtyText(l.outstandingQty)} of ${qtyText(l.qty)} outstanding'),
-                                trailing: Wrap(spacing: AppSpacing.sm, children: [
-                                  if (o.allowSubstitutions)
-                                    OutlinedButton(
-                                      key: Key('substitute-${o.id}-${l.variantId}'),
-                                      onPressed: () => _substitute(context, ref, o, l),
-                                      child: const Text('Substitute'),
+                              Builder(builder: (context) {
+                                final actions = Wrap(
+                                  spacing: AppSpacing.sm,
+                                  runSpacing: AppSpacing.xs,
+                                  children: [
+                                    if (o.allowSubstitutions)
+                                      OutlinedButton(
+                                        key: Key('substitute-${o.id}-${l.variantId}'),
+                                        onPressed: () => _substitute(context, ref, o, l),
+                                        child: const Text('Substitute'),
+                                      ),
+                                    TextButton(
+                                      key: Key('short-${o.id}-${l.variantId}'),
+                                      onPressed: () => _short(context, ref, o, l),
+                                      child: const Text('Short'),
                                     ),
-                                  TextButton(
-                                    key: Key('short-${o.id}-${l.variantId}'),
-                                    onPressed: () => _short(context, ref, o, l),
-                                    child: const Text('Short'),
-                                  ),
-                                ]),
-                              ),
+                                  ],
+                                );
+                                final outstanding = Text(
+                                    '${qtyText(l.outstandingQty)} of ${qtyText(l.qty)} outstanding');
+                                // On a phone the actions go under the line, so the
+                                // product's name keeps the width.
+                                final compact = context.isCompact;
+                                return ListTile(
+                                  dense: true,
+                                  title: Text(variantDisplayName(l.variantId, labels)),
+                                  subtitle: compact
+                                      ? Column(
+                                          crossAxisAlignment: CrossAxisAlignment.start,
+                                          children: [outstanding, actions],
+                                        )
+                                      : outstanding,
+                                  trailing: compact ? null : actions,
+                                );
+                              }),
                           ],
                         ),
                       ),
@@ -763,7 +779,8 @@ class _Stage extends StatelessWidget {
         Row(children: [
           Icon(icon, size: 18, color: cs.onSurfaceVariant),
           const SizedBox(width: AppSpacing.sm),
-          Text(title, style: Theme.of(context).textTheme.titleMedium),
+          // The title wraps on a phone rather than running off it.
+          Flexible(child: Text(title, style: Theme.of(context).textTheme.titleMedium)),
           const SizedBox(width: AppSpacing.sm),
           if (orders.value != null)
             Text('${orders.value!.length}', style: TextStyle(color: cs.onSurfaceVariant)),
@@ -782,19 +799,38 @@ class _Stage extends StatelessWidget {
                     for (final o in list)
                       Card(
                         key: Key('queued-${o.id}'),
-                        child: ListTile(
-                          title: Text('Order #${shortRef(o.id)}'),
-                          subtitle: Text(
+                        child: Builder(builder: (context) {
+                          final says = Text(
                             '${o.fulfilmentType == 'DELIVERY' ? 'Delivery' : 'Collection'} · '
-                            '${o.currency} ${o.total.toStringAsFixed(2)} · placed ${AppFormat.dateTime(o.createdAt)}'
+                            '${AppFormat.money(o.total, currencyCode: o.currency)} · placed ${AppFormat.dateTime(o.createdAt)}'
                             '${o.handoverAt == null ? '' : ' · handed over ${AppFormat.dateTime(o.handoverAt)}'}',
-                          ),
-                          trailing: action != null
+                          );
+                          final end = action != null
                               ? action!(o)
                               : trailing != null
                                   ? trailing!(o)
-                                  : null,
-                        ),
+                                  : null;
+                          // On a phone the action goes under the order, so its
+                          // three-part line keeps the width.
+                          final compact = context.isCompact && end != null;
+                          return ListTile(
+                            title: Text('Order #${shortRef(o.id)}'),
+                            subtitle: compact
+                                ? Column(
+                                    crossAxisAlignment: CrossAxisAlignment.start,
+                                    children: [
+                                      says,
+                                      const SizedBox(height: AppSpacing.xs),
+                                      Align(
+                                        alignment: AlignmentDirectional.centerStart,
+                                        child: end,
+                                      ),
+                                    ],
+                                  )
+                                : says,
+                            trailing: compact ? null : end,
+                          );
+                        }),
                       ),
                   ],
                 ),

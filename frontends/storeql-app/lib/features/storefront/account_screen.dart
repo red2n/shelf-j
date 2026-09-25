@@ -3,12 +3,14 @@ import 'package:flutter/material.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 
 import '../../core/constants.dart';
+import '../../core/format.dart';
 import '../../core/l10n/message_languages.dart';
 import '../../core/network/api_error.dart';
-import 'storefront_providers.dart';
-import 'storefront_shell.dart' show StorefrontAuthDialog;
 import '../../core/spacing.dart';
 import '../../core/theme.dart';
+import '../../shared/widgets/status_badge.dart';
+import 'storefront_providers.dart';
+import 'storefront_shell.dart' show StorefrontAuthDialog;
 
 // The shopper's own account at this shop (12.10): the profile the shop holds
 // for them and the addresses they keep here. Everything is keyed on the login
@@ -326,7 +328,8 @@ class _StorefrontAccountScreenState extends ConsumerState<StorefrontAccountScree
 
     return RefreshIndicator(
       onRefresh: () async => _refresh(),
-      child: ContentBounds(
+      // A single column of fields and addresses: a form's width on a big screen, not 1200px.
+      child: ContentBounds.form(
         child: ListView(
           padding: context.pagePadding,
           children: [
@@ -369,11 +372,16 @@ class _StorefrontAccountScreenState extends ConsumerState<StorefrontAccountScree
                                 ),
                           orElse: () => const SizedBox.shrink(),
                         ),
-                        const SizedBox(height: 24),
-                        Row(
+                        const SizedBox(height: AppSpacing.xl),
+                        // The button shares the heading's line while both fit, and goes under it
+                        // on a phone with large text rather than running off the edge.
+                        Wrap(
+                          alignment: WrapAlignment.spaceBetween,
+                          crossAxisAlignment: WrapCrossAlignment.center,
+                          spacing: AppSpacing.sm,
+                          runSpacing: AppSpacing.sm,
                           children: [
-                            Expanded(
-                                child: Text('My addresses', style: theme.textTheme.titleLarge)),
+                            Text('My addresses', style: theme.textTheme.titleLarge),
                             FilledButton.tonalIcon(
                               key: const Key('account-add-address'),
                               onPressed: _busy ? null : _addAddress,
@@ -382,7 +390,7 @@ class _StorefrontAccountScreenState extends ConsumerState<StorefrontAccountScree
                             ),
                           ],
                         ),
-                        const SizedBox(height: 8),
+                        const SizedBox(height: AppSpacing.sm),
                         addresses.when(
                           loading: () => const Padding(
                             padding: EdgeInsets.symmetric(vertical: 24),
@@ -410,33 +418,40 @@ class _StorefrontAccountScreenState extends ConsumerState<StorefrontAccountScree
                                               ? Icons.work_outline
                                               : Icons.home_outlined),
                                           title: Text(a.oneLine),
-                                          subtitle: Text(addressTypes[a.type] ?? a.type),
-                                          trailing: Row(
-                                            mainAxisSize: MainAxisSize.min,
-                                            children: [
-                                              if (a.isDefault)
-                                                const Chip(
-                                                    label: Text('Default'),
-                                                    visualDensity: VisualDensity.compact),
-                                              PopupMenuButton<String>(
-                                                key: Key('address-menu-${a.id}'),
-                                                tooltip: 'Address actions',
-                                                onSelected: (v) => switch (v) {
-                                                  'edit' => _editAddress(a),
-                                                  'default' => _makeDefault(a),
-                                                  _ => _removeAddress(a),
-                                                },
-                                                itemBuilder: (_) => [
-                                                  const PopupMenuItem(
-                                                      value: 'edit', child: Text('Edit')),
-                                                  if (!a.isDefault)
-                                                    const PopupMenuItem(
-                                                        value: 'default',
-                                                        child: Text('Make default')),
-                                                  const PopupMenuItem(
-                                                      value: 'remove', child: Text('Remove')),
-                                                ],
-                                              ),
+                                          // Default is said beside the type, so on a phone the
+                                          // address keeps the row but for the menu.
+                                          subtitle: Padding(
+                                            padding: const EdgeInsetsDirectional.only(
+                                                top: AppSpacing.xs),
+                                            child: Wrap(
+                                              spacing: AppSpacing.sm,
+                                              runSpacing: AppSpacing.xs,
+                                              crossAxisAlignment: WrapCrossAlignment.center,
+                                              children: [
+                                                Text(addressTypes[a.type] ?? humanizeCode(a.type)),
+                                                if (a.isDefault)
+                                                  const StatusBadge('Default',
+                                                      tone: StatusTone.accent),
+                                              ],
+                                            ),
+                                          ),
+                                          trailing: PopupMenuButton<String>(
+                                            key: Key('address-menu-${a.id}'),
+                                            tooltip: 'Address actions',
+                                            onSelected: (v) => switch (v) {
+                                              'edit' => _editAddress(a),
+                                              'default' => _makeDefault(a),
+                                              _ => _removeAddress(a),
+                                            },
+                                            itemBuilder: (_) => [
+                                              const PopupMenuItem(
+                                                  value: 'edit', child: Text('Edit')),
+                                              if (!a.isDefault)
+                                                const PopupMenuItem(
+                                                    value: 'default',
+                                                    child: Text('Make default')),
+                                              const PopupMenuItem(
+                                                  value: 'remove', child: Text('Remove')),
                                             ],
                                           ),
                                         ),
@@ -509,7 +524,7 @@ class LoyaltyCard extends StatelessWidget {
               Row(children: [
                 Icon(Icons.hourglass_bottom_outlined, size: 16, color: context.status.warning),
                 const SizedBox(width: 6),
-                Text('${MyLoyalty.pts(l.expiringPoints!)} expire on ${l.expiringOn}.',
+                Text('${MyLoyalty.pts(l.expiringPoints!)} expire on ${AppFormat.date(l.expiringOn)}.',
                     key: const Key('my-loyalty-expiring'),
                     style: TextStyle(color: context.status.warning, fontWeight: FontWeight.w600)),
               ]),
@@ -538,30 +553,75 @@ class _ProfileCardState extends State<ProfileCard> {
   late final _first = TextEditingController(text: widget.customer.firstName);
   late final _last = TextEditingController(text: widget.customer.lastName);
   late final _phone = TextEditingController(text: widget.customer.phone ?? '');
-  late final _dob = TextEditingController(text: widget.customer.dob ?? '');
   late String _language = widget.customer.preferredLanguage ?? '';
+
+  /// The date of birth as the server keeps it (`1990-05-14`), or null for none. Kept as it came
+  /// until the shopper picks another, so a value the calendar cannot read is never lost on save.
+  late String? _dob = _blankToNull(widget.customer.dob);
+
+  /// What the field shows: the date in words (*14 May 1990*), never the ISO the server keeps.
+  late final _dobShown = TextEditingController(text: _shown(_dob));
+
+  static String? _blankToNull(String? v) =>
+      v == null || v.trim().isEmpty ? null : v.trim();
+
+  static String _shown(String? iso) => iso == null ? '' : AppFormat.date(iso);
+
+  /// A calendar day as the server takes it: `1990-05-20`.
+  static String _isoDay(DateTime d) => '${d.year.toString().padLeft(4, '0')}-'
+      '${d.month.toString().padLeft(2, '0')}-${d.day.toString().padLeft(2, '0')}';
+
+  void _setDob(String? iso) => setState(() {
+        _dob = iso;
+        _dobShown.text = _shown(iso);
+      });
+
+  /// A birthday is chosen, not typed: the calendar opens on the years, the long way round to one,
+  /// and offers no day after today.
+  Future<void> _pickDob() async {
+    final today = DateUtils.dateOnly(DateTime.now());
+    final first = DateTime(1900);
+    final held = _dob == null ? null : DateTime.tryParse(_dob!);
+    final initial = held != null && !held.isAfter(today) && !held.isBefore(first)
+        ? DateUtils.dateOnly(held)
+        : DateTime(today.year - 30, today.month, today.day);
+    final picked = await showDatePicker(
+      context: context,
+      initialDate: initial,
+      firstDate: first,
+      lastDate: today,
+      initialDatePickerMode: DatePickerMode.year,
+      helpText: 'Date of birth',
+      fieldLabelText: 'Date of birth',
+    );
+    if (picked == null || !mounted) return;
+    _setDob(_isoDay(picked));
+  }
 
   @override
   void dispose() {
     _first.dispose();
     _last.dispose();
     _phone.dispose();
-    _dob.dispose();
+    _dobShown.dispose();
     super.dispose();
   }
 
   @override
   Widget build(BuildContext context) {
+    // Fields sit a 12px gap apart: with no counter row under them they would touch outline to
+    // outline.
+    const gap = SizedBox(height: AppSpacing.md);
     return Card(
       child: Padding(
-        padding: const EdgeInsets.all(16),
+        padding: AppSpacing.cardPadding,
         child: Form(
           key: _form,
           child: Column(
             crossAxisAlignment: CrossAxisAlignment.stretch,
             children: [
               Text('My details', style: Theme.of(context).textTheme.titleMedium),
-              const SizedBox(height: 8),
+              const SizedBox(height: AppSpacing.md),
               TextFormField(
                 key: const Key('profile-first'),
                 controller: _first,
@@ -569,6 +629,7 @@ class _ProfileCardState extends State<ProfileCard> {
                 decoration: const InputDecoration(labelText: 'First name', counterText: ''),
                 validator: (v) => (v ?? '').trim().isEmpty ? 'Required' : null,
               ),
+              gap,
               TextFormField(
                 key: const Key('profile-last'),
                 controller: _last,
@@ -576,6 +637,7 @@ class _ProfileCardState extends State<ProfileCard> {
                 decoration: const InputDecoration(labelText: 'Last name', counterText: ''),
                 validator: (v) => (v ?? '').trim().isEmpty ? 'Required' : null,
               ),
+              gap,
               TextFormField(
                 key: const Key('profile-phone'),
                 controller: _phone,
@@ -583,28 +645,46 @@ class _ProfileCardState extends State<ProfileCard> {
                 keyboardType: TextInputType.phone,
                 decoration: const InputDecoration(labelText: 'Phone', counterText: ''),
               ),
+              gap,
               TextFormField(
                 key: const Key('profile-dob'),
-                controller: _dob,
-                maxLength: 10,
-                keyboardType: TextInputType.datetime,
-                decoration: const InputDecoration(
-                  labelText: 'Date of birth (YYYY-MM-DD)',
-                  counterText: '',
+                controller: _dobShown,
+                readOnly: true,
+                onTap: widget.busy ? null : _pickDob,
+                decoration: InputDecoration(
+                  labelText: 'Date of birth',
+                  hintText: 'Not given',
                   helperText: 'Under 18, a parent or guardian consents for you.',
+                  helperMaxLines: 2,
+                  suffixIcon: Row(
+                    mainAxisSize: MainAxisSize.min,
+                    children: [
+                      if (_dob != null)
+                        IconButton(
+                          tooltip: 'Clear date of birth',
+                          icon: const Icon(Icons.close),
+                          onPressed: widget.busy ? null : () => _setDob(null),
+                        ),
+                      // The way in from a keyboard: a read-only field takes no Enter.
+                      IconButton(
+                        key: const Key('profile-dob-pick'),
+                        tooltip: 'Choose date of birth',
+                        icon: const Icon(Icons.calendar_today_outlined),
+                        onPressed: widget.busy ? null : _pickDob,
+                      ),
+                    ],
+                  ),
                 ),
-                validator: (v) {
-                  final t = (v ?? '').trim();
-                  if (t.isEmpty) return null;
-                  return RegExp(r'^\d{4}-\d{2}-\d{2}$').hasMatch(t) ? null : 'YYYY-MM-DD';
-                },
               ),
+              gap,
               DropdownButtonFormField<String>(
                 key: const Key('profile-language'),
                 initialValue: _language,
+                isExpanded: true,
                 decoration: const InputDecoration(
                   labelText: 'Messages in',
                   helperText: 'The language of the emails and texts this shop sends you, where it has written them.',
+                  helperMaxLines: 3,
                 ),
                 items: [
                   const DropdownMenuItem(value: '', child: Text("The shop's language")),
@@ -614,18 +694,19 @@ class _ProfileCardState extends State<ProfileCard> {
                 ],
                 onChanged: widget.busy ? null : (v) => setState(() => _language = v ?? ''),
               ),
-              const SizedBox(height: 8),
+              gap,
               TextField(
                 enabled: false,
                 controller: TextEditingController(text: widget.customer.email),
                 decoration: const InputDecoration(
                   labelText: 'Email',
                   helperText: 'Your email is your sign-in and cannot be changed here.',
+                  helperMaxLines: 2,
                 ),
               ),
-              const SizedBox(height: 12),
+              const SizedBox(height: AppSpacing.md),
               Align(
-                alignment: Alignment.centerRight,
+                alignment: AlignmentDirectional.centerEnd,
                 child: FilledButton(
                   key: const Key('profile-save'),
                   onPressed: widget.busy
@@ -633,12 +714,11 @@ class _ProfileCardState extends State<ProfileCard> {
                       : () {
                           if (!(_form.currentState?.validate() ?? false)) return;
                           final phone = _phone.text.trim();
-                          final dob = _dob.text.trim();
                           widget.onSave({
                             'firstName': _first.text.trim(),
                             'lastName': _last.text.trim(),
                             'phone': phone.isEmpty ? null : phone,
-                            'dob': dob.isEmpty ? null : dob,
+                            'dob': _dob,
                             // Empty is the shop's own language: the server clears the choice.
                             'preferredLanguage': _language,
                           });

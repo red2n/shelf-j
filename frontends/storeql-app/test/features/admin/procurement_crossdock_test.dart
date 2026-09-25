@@ -84,7 +84,7 @@ Future<_Server> _openOrder(WidgetTester tester, String storeOfOrder) async {
     child: const MaterialApp(home: ProcurementScreen()),
   ));
   await tester.pumpAndSettle();
-  await tester.tap(find.text('DRAFT'));
+  await tester.tap(find.text('Draft')); // the status badge's word
   await tester.pumpAndSettle();
   return server;
 }

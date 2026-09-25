@@ -140,7 +140,8 @@ Future<_Server> _checkout(WidgetTester tester, _Server server) async {
   await tester.ensureVisible(find.text('Review order'));
   await tester.tap(find.text('Review order'));
   await tester.pumpAndSettle();
-  await tester.tap(find.textContaining('Pay GBP').last);
+  // Money reads with the symbol, not the code.
+  await tester.tap(find.textContaining('Pay £').last);
   await tester.pumpAndSettle();
   return server;
 }
@@ -156,7 +157,7 @@ void main() {
     expect(find.byKey(const Key('split-part-$_p1')), findsOneWidget);
     expect(find.byKey(const Key('split-part-$_p2')), findsOneWidget);
     expect(find.text('York'), findsOneWidget);
-    expect(find.text('GBP 1.68'), findsOneWidget);
+    expect(find.text('£1.68'), findsOneWidget);
     expect(server.payments, isEmpty, reason: 'nothing is charged before the shopper agrees');
 
     await tester.tap(find.byKey(const Key('split-pay')));
@@ -167,7 +168,7 @@ void main() {
     expect(body['amount'], 5.05);
     expect(body.containsKey('orderId'), isFalse);
     expect(find.text('Arrives in 2 parts: 2 items from Leeds, 3 from York'), findsOneWidget);
-    expect(find.text('GBP 5.05 paid'), findsOneWidget);
+    expect(find.text('£5.05 paid'), findsOneWidget);
   });
 
   testWidgets('declining the parts charges nothing', (tester) async {

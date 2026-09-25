@@ -23,7 +23,8 @@ import org.eclipse.microprofile.openapi.annotations.responses.APIResponse;
 import org.eclipse.microprofile.openapi.annotations.tags.Tag;
 
 /**
- * N4: sales revenue reporting, built from the OrderConfirmed / PaymentRefunded projection. {@code
+ * N4: sales revenue reporting, built from the OrderConfirmed / PaymentRefunded / OrderVoided
+ * projection; a till sale voided after the fact is left out of every report here. {@code
  * from}/{@code to} are inclusive calendar dates (ISO {@code yyyy-MM-dd}); {@code to} covers the
  * whole day. tenant comes from the JWT.
  */
@@ -42,7 +43,8 @@ public class SalesReportResource {
       description =
           "Gross/refunded/net revenue and order count, grouped by currency, over the given"
               + " inclusive date range. Optionally filtered by store and/or channel"
-              + " (ONLINE/POS).")
+              + " (ONLINE/POS). A till sale voided after the fact (OrderVoided) is left out,"
+              + " its refunds with it.")
   @APIResponse(responseCode = "200", description = "Sales summary rows, one per currency")
   @APIResponse(
       responseCode = "400",
@@ -65,7 +67,8 @@ public class SalesReportResource {
       summary = "Daily sales revenue buckets",
       description =
           "Daily revenue buckets (per currency), newest day first, over the given inclusive date"
-              + " range. Optionally filtered by store and/or channel (ONLINE/POS).")
+              + " range. Optionally filtered by store and/or channel (ONLINE/POS). A voided till"
+              + " sale is left out.")
   @APIResponse(responseCode = "200", description = "Daily sales rows")
   @APIResponse(
       responseCode = "400",
@@ -118,7 +121,8 @@ public class SalesReportResource {
               + " place — a product with no category, or a variant the catalogue has not announced"
               + " (product-svc's re-announce fills that) — shown rather than dropped, because takings"
               + " that cannot be placed are still takings. Gross is before refunds: a refund is known"
-              + " by order, not by line. Names are the catalogue's; this report answers in ids.")
+              + " by order, not by line. The lines of a voided till sale are left out. Names are the"
+              + " catalogue's; this report answers in ids.")
   @APIResponse(responseCode = "200", description = "One row per category and currency")
   @APIResponse(
       responseCode = "400",
@@ -158,7 +162,8 @@ public class SalesReportResource {
               + " is as real as a day with hours and no sales, and both appear. Where some of a day's"
               + " hours had no pay rate in force the cost is **null rather than zero**, and"
               + " `uncostedHours` says how much could not be costed: a Saturday shown as free labour"
-              + " would be worse than one that says it does not know.")
+              + " would be worse than one that says it does not know. A voided till sale is not"
+              + " takings and is left out.")
   @APIResponse(responseCode = "200", description = "One row per day, newest first")
   @APIResponse(
       responseCode = "400",

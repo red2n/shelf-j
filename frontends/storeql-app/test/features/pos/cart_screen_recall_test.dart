@@ -3,6 +3,7 @@ import 'package:flutter/material.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:flutter_riverpod/misc.dart';
 import 'package:flutter_test/flutter_test.dart';
+import 'package:intl/date_symbol_data_local.dart';
 import 'package:storeql_app/core/network/api_client.dart';
 import 'package:storeql_app/features/admin/providers/admin_providers.dart';
 import 'package:storeql_app/features/pos/cart_screen.dart';
@@ -113,6 +114,9 @@ List<PosLine> _basket(WidgetTester tester) =>
         .read(posCartProvider);
 
 void main() {
+  // Dates are written through AppFormat in the app's locale (en_GB here); the
+  // app loads intl's date data through flutter_localizations, a test loads it here.
+  setUpAll(initializeDateFormatting);
   testWidgets('an item under an every-pack recall cannot be sold at all', (tester) async {
     await _pump(tester, recalls: (200, _everyPack));
     await _scan(tester, 'PEANUT');

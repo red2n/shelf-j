@@ -1,10 +1,12 @@
 import 'package:flutter/material.dart';
+import '../../core/format.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 
 import '../../core/constants.dart';
 import '../../core/network/api_client.dart';
 import '../../core/network/api_error.dart';
 import '../../core/theme.dart';
+import '../../core/spacing.dart';
 import '../../shared/util/short_ref.dart';
 import '../../shared/widgets/empty_state.dart';
 import '../../shared/widgets/error_view.dart';
@@ -257,10 +259,11 @@ class SupplierScorecardsCard extends ConsumerWidget {
     final cs = Theme.of(context).colorScheme;
     final text = Theme.of(context).textTheme;
     return Padding(
-      padding: const EdgeInsets.fromLTRB(16, 4, 16, 8),
+      padding: EdgeInsetsDirectional.fromSTEB(
+          context.pageGutter, AppSpacing.xs, context.pageGutter, AppSpacing.sm),
       child: Card(
         child: Padding(
-          padding: const EdgeInsets.all(16),
+          padding: AppSpacing.cardPadding,
           child: Column(
             crossAxisAlignment: CrossAxisAlignment.start,
             children: [
@@ -373,7 +376,7 @@ class SupplierScorecardDialog extends ConsumerWidget {
             mainAxisSize: MainAxisSize.min,
             crossAxisAlignment: CrossAxisAlignment.stretch,
             children: [
-              Text('${card.from} to ${card.to}', style: text.bodySmall?.copyWith(color: cs.onSurfaceVariant)),
+              Text('${AppFormat.date(card.from)} to ${AppFormat.date(card.to)}', style: text.bodySmall?.copyWith(color: cs.onSurfaceVariant)),
               line('Score', card.score == null ? 'Nothing to judge yet' : _n(card.score),
                   key: const Key('scorecard-score')),
               section('Deliveries'),
@@ -410,7 +413,7 @@ class SupplierScorecardDialog extends ConsumerWidget {
                               dense: true,
                               contentPadding: EdgeInsets.zero,
                               title: Text(
-                                'Order ${shortRef(x.poId)} · ${_n(x.receivedQty)} received ${x.receivedAt.split('T').first}'
+                                'Order ${shortRef(x.poId)} · ${_n(x.receivedQty)} received ${AppFormat.date(x.receivedAt)}'
                                 '${x.complete ? '' : ' (part)'}',
                               ),
                               subtitle: Text(

@@ -86,7 +86,7 @@ final routerProvider = Provider<GoRouter>((ref) {
         if (loc.startsWith('/admin') &&
             auth.isStorekeeper &&
             !auth.isManager &&
-            !_storekeeperAdminAllowed(loc)) {
+            !storekeeperAdminAllowed(loc)) {
           return auth.homeRoute;
         }
         // POS: cashiers and managers. Storekeepers stay on admin inventory.
@@ -148,6 +148,20 @@ final routerProvider = Provider<GoRouter>((ref) {
               libraryLoader: platform_lib.loadLibrary,
               builder: (_) => platform_lib.SecurityIncidentsScreen(),
             ),
+            // One incident has its own address inside the shell, above the
+            // register: a reload or a shared link opens it, and back (the
+            // browser's, or the page's) returns to the register as it was left.
+            routes: [
+              GoRoute(
+                path: ':id',
+                builder: (_, state) => DeferredWidget(
+                  libraryLoader: platform_lib.loadLibrary,
+                  builder: (_) => platform_lib.SecurityIncidentDetailScreen(
+                    id: state.pathParameters['id']!,
+                  ),
+                ),
+              ),
+            ],
           ),
         ],
       ),
@@ -213,6 +227,19 @@ final routerProvider = Provider<GoRouter>((ref) {
               libraryLoader: admin_lib.loadLibrary,
               builder: (_) => admin_lib.MessagesScreen(),
             ),
+            // One message's editor, inside the shell (under its one app bar)
+            // and above the list, at an address a reload or a link keeps.
+            routes: [
+              GoRoute(
+                path: ':type',
+                builder: (_, state) => DeferredWidget(
+                  libraryLoader: admin_lib.loadLibrary,
+                  builder: (_) => admin_lib.MessageEditorPage(
+                    type: state.pathParameters['type']!,
+                  ),
+                ),
+              ),
+            ],
           ),
           GoRoute(
             path: '/admin/statutory-returns',
@@ -342,9 +369,12 @@ final routerProvider = Provider<GoRouter>((ref) {
           ),
           GoRoute(
             path: '/admin/pricing',
-            builder: (_, _) => DeferredWidget(
+            // `?tab=vat-return` opens that tab (PricingScreen.tabNames).
+            builder: (_, state) => DeferredWidget(
               libraryLoader: admin_lib.loadLibrary,
-              builder: (_) => admin_lib.PricingScreen(),
+              builder: (_) => admin_lib.PricingScreen(
+                initialTab: state.uri.queryParameters['tab'],
+              ),
             ),
           ),
           GoRoute(
@@ -363,9 +393,12 @@ final routerProvider = Provider<GoRouter>((ref) {
           ),
           GoRoute(
             path: '/admin/sales',
-            builder: (_, _) => DeferredWidget(
+            // `?tab=receipts` opens that tab (SalesScreen.tabNames).
+            builder: (_, state) => DeferredWidget(
               libraryLoader: admin_lib.loadLibrary,
-              builder: (_) => admin_lib.SalesScreen(),
+              builder: (_) => admin_lib.SalesScreen(
+                initialTab: state.uri.queryParameters['tab'],
+              ),
             ),
           ),
           GoRoute(
@@ -493,12 +526,15 @@ final routerProvider = Provider<GoRouter>((ref) {
   return router;
 });
 
-/// Paths a storekeeper-only user may open inside the admin shell.
-bool _storekeeperAdminAllowed(String loc) {
+/// Paths a storekeeper-only user may open inside the admin shell: the pages
+/// whose reads the services open to any member of staff. Kept in step with
+/// the menu (`storekeeperAdminRoutes`) by `test/core/storekeeper_routes_test`.
+bool storekeeperAdminAllowed(String loc) {
   return loc.startsWith('/admin/inventory') ||
       loc.startsWith('/admin/fulfilment') ||
       loc.startsWith('/admin/food-safety') ||
       loc.startsWith('/admin/recalls') ||
+      loc.startsWith('/admin/obligations') ||
       loc.startsWith('/admin/stores');
 }
 

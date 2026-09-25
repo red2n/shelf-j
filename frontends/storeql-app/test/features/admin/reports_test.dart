@@ -2,6 +2,7 @@ import 'package:dio/dio.dart';
 import 'package:flutter/material.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:flutter_test/flutter_test.dart';
+import 'package:intl/date_symbol_data_local.dart';
 import 'package:storeql_app/core/network/api_client.dart';
 import 'package:storeql_app/features/admin/providers/admin_providers.dart';
 import 'package:storeql_app/features/admin/reports_screen.dart';
@@ -70,6 +71,8 @@ class _RecordingAdapter implements HttpClientAdapter {
 }
 
 void main() {
+  // Report periods are dated with AppFormat, in the app's en_GB locale.
+  setUpAll(initializeDateFormatting);
   group('date handling — the endpoints parse instants, not dates', () {
     test('shrinkage widens the picker range to instants', () async {
       final h = _harness();
@@ -592,9 +595,30 @@ void main() {
       await tester.tap(find.text('Tender Mix').last);
       await tester.pumpAndSettle();
 
-      expect(find.text('CARD'), findsOneWidget);
+      // The method in words, never its code.
+      expect(find.text('Card'), findsOneWidget);
+      expect(find.text('CARD'), findsNothing);
       expect(find.text('50.0%'), findsOneWidget);
       expect(find.textContaining('3 tenders did not capture'), findsOneWidget);
+    });
+
+    testWidgets('amounts read as money in the business\'s currency, never bare numbers',
+        (tester) async {
+      final adapter = _RecordingAdapter()
+        ..bodyFor['/admin/tenant'] =
+            '{"data":{"id":"t","name":"Corner Shop","status":"ACTIVE","currency":"GBP","country":"GB"}}'
+        ..bodyFor['tender-mix'] = '{"data":[{"method":"GIFT_CARD",'
+            '"capturedAmount":1234.5,"capturedCount":2,"refundedAmount":40.00,'
+            '"refundedCount":1,"failedCount":0,"netAmount":1194.5,"shareOfNet":100.0}]}';
+      await pump(tester, adapter);
+      await tester.tap(find.text('Tender Mix').last);
+      await tester.pumpAndSettle();
+
+      expect(find.text('Gift card'), findsOneWidget);
+      expect(find.text('£1,234.50'), findsOneWidget);
+      expect(find.text('£40.00'), findsOneWidget);
+      expect(find.text('£1,194.50'), findsOneWidget);
+      expect(find.text('1234.50'), findsNothing);
     });
 
     testWidgets('stock turn shows a dash, not a zero, when nothing turned',

@@ -57,6 +57,16 @@ public final class Dtos {
       @Schema(description = "True if a new user was created; false if one already existed.")
           boolean created) {}
 
+  /** One of the business's staff, named: what {@code GET /auth/admin/staff-users} answers. */
+  @Schema(
+      name = "StaffUserResponse",
+      description =
+          "A login of the caller's business's staff, by id and email. Ids of another business's"
+              + " staff, of customers and of nobody are left out of the answer.")
+  public record StaffUserResponse(
+      @Schema(description = "UUID of the staff user.") String userId,
+      @Schema(description = "The login email.") String email) {}
+
   /** Login with email + password. */
   @Schema(name = "LoginRequest")
   public record LoginRequest(@Email @NotBlank String email, @NotBlank String password) {}

@@ -4,6 +4,7 @@ import 'package:dio/dio.dart';
 import 'package:flutter/material.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:flutter_test/flutter_test.dart';
+import 'package:intl/date_symbol_data_local.dart';
 import 'package:storeql_app/core/auth/auth_notifier.dart';
 import 'package:storeql_app/core/network/api_client.dart';
 import 'package:storeql_app/features/admin/consignment_tab.dart';
@@ -80,6 +81,8 @@ Future<_Server> _pump(WidgetTester tester, {String role = 'MANAGER', bool refuse
 }
 
 void main() {
+  // Dates are written with AppFormat, in the app's en_GB locale.
+  setUpAll(initializeDateFormatting);
   testWidgets('each supplier is owed the sum of its unsettled sales; statements are listed',
       (tester) async {
     await _pump(tester);

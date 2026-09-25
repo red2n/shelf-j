@@ -241,7 +241,13 @@ public final class Dtos {
               description =
                   "Whether a shopper may collect an order here. False at a dark store, which fills"
                       + " online orders for delivery only (ship-from-store and dark-store picking).")
-          boolean pickupOffered) {}
+          boolean pickupOffered,
+      @Schema(
+              description =
+                  "The business the store belongs to: the tenant's legal name, else its name. Always"
+                      + " the business whose storefront is asked. The storefront's accessibility"
+                      + " statement names it as the service provider, never a store.")
+          String businessName) {}
 
   @Schema(name = "ZoneResponse")
   public record ZoneResponse(

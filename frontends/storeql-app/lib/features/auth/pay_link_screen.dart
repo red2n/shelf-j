@@ -3,6 +3,8 @@ import 'package:flutter/material.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 
 import '../../core/constants.dart';
+import '../../core/format.dart';
+import '../../core/spacing.dart';
 
 // ---------------------------------------------------------------------------
 // The page a dunning notice's pay link opens (21.12).
@@ -67,14 +69,17 @@ class _PayLinkScreenState extends ConsumerState<PayLinkScreen> {
     final text = Theme.of(context).textTheme;
     final cs = Theme.of(context).colorScheme;
     final paid = _paid;
+    // As the sign-in card sits: the page's gutter, a form's width, and a
+    // scroll when a phone or large text leaves it too little height.
     return Scaffold(
       body: Center(
-        child: ConstrainedBox(
-          constraints: const BoxConstraints(maxWidth: 480),
+        child: SingleChildScrollView(
+          padding: context.pagePadding,
+          child: ContentBounds.form(
           child: Card(
-            margin: const EdgeInsets.all(24),
+            margin: EdgeInsets.zero,
             child: Padding(
-              padding: const EdgeInsets.all(24),
+              padding: context.pagePadding,
               child: Column(
                 mainAxisSize: MainAxisSize.min,
                 crossAxisAlignment: CrossAxisAlignment.stretch,
@@ -111,7 +116,7 @@ class _PayLinkScreenState extends ConsumerState<PayLinkScreen> {
                     const SizedBox(height: 8),
                     Text(
                       'Invoice ${paid['number'] ?? ''} is settled'
-                      '${paid['totalAmount'] != null ? ' — ${paid['totalAmount']} ${paid['currency'] ?? ''}' : ''}. '
+                      '${paid['totalAmount'] is num ? ' — ${AppFormat.money(paid['totalAmount'] as num, currencyCode: paid['currency'] as String?)}' : ''}. '
                       'If your service was interrupted, it is back: sign in as usual.',
                       style: text.bodyMedium,
                     ),
@@ -119,6 +124,7 @@ class _PayLinkScreenState extends ConsumerState<PayLinkScreen> {
                 ],
               ),
             ),
+          ),
           ),
         ),
       ),

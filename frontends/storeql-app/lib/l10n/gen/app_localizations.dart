@@ -146,11 +146,77 @@ abstract class AppLocalizations {
   /// **'Password'**
   String get fieldPassword;
 
-  /// No description provided for @fieldPasswordTooShort.
+  /// Sign-in: the only check a password gets before it is sent
   ///
   /// In en, this message translates to:
-  /// **'Minimum 8 characters'**
-  String get fieldPasswordTooShort;
+  /// **'Enter your password'**
+  String get fieldPasswordRequired;
+
+  /// Sign-up: iam-svc's PasswordPolicy minimum (PASSWORD_TOO_SHORT); also shown under the field as the rule
+  ///
+  /// In en, this message translates to:
+  /// **'Use at least {min} characters. A phrase of a few words is easiest to remember and hardest to guess; spaces are fine.'**
+  String fieldPasswordTooShort(int min);
+
+  /// Sign-up: iam-svc's PasswordPolicy maximum (PASSWORD_TOO_LONG)
+  ///
+  /// In en, this message translates to:
+  /// **'Use at most {max} characters.'**
+  String fieldPasswordTooLong(int max);
+
+  /// Sign-up refused with PASSWORD_IS_IDENTITY
+  ///
+  /// In en, this message translates to:
+  /// **'The password must not be, or contain, your email address.'**
+  String get errPasswordIsIdentity;
+
+  /// Sign-up refused with PASSWORD_BREACHED
+  ///
+  /// In en, this message translates to:
+  /// **'This password appears in known data breaches and would be guessed. Choose another.'**
+  String get errPasswordBreached;
+
+  /// Tooltip of the eye button on a password field
+  ///
+  /// In en, this message translates to:
+  /// **'Show password'**
+  String get showPassword;
+
+  /// Tooltip of the eye button on a password field
+  ///
+  /// In en, this message translates to:
+  /// **'Hide password'**
+  String get hidePassword;
+
+  /// Single sign-on through the business's identity provider: the button and its dialog's title
+  ///
+  /// In en, this message translates to:
+  /// **'Sign in with your business'**
+  String get signInWithBusiness;
+
+  /// A password refused because the business signs its staff in through its provider; the server names the business's sign-in name
+  ///
+  /// In en, this message translates to:
+  /// **'Continue with {business}'**
+  String continueWithBusiness(String business);
+
+  /// No description provided for @businessSignInNameHelp.
+  ///
+  /// In en, this message translates to:
+  /// **'Your business\'s sign-in name. Your manager has it.'**
+  String get businessSignInNameHelp;
+
+  /// No description provided for @fieldBusinessSignInName.
+  ///
+  /// In en, this message translates to:
+  /// **'Sign-in name'**
+  String get fieldBusinessSignInName;
+
+  /// No description provided for @fieldBusinessSignInNameHint.
+  ///
+  /// In en, this message translates to:
+  /// **'e.g. acme-foods'**
+  String get fieldBusinessSignInNameHint;
 
   /// No description provided for @actionSignIn.
   ///
@@ -163,6 +229,18 @@ abstract class AppLocalizations {
   /// In en, this message translates to:
   /// **'Create account'**
   String get actionCreateAccount;
+
+  /// No description provided for @actionCancel.
+  ///
+  /// In en, this message translates to:
+  /// **'Cancel'**
+  String get actionCancel;
+
+  /// No description provided for @actionContinue.
+  ///
+  /// In en, this message translates to:
+  /// **'Continue'**
+  String get actionContinue;
 
   /// No description provided for @toggleHaveAccount.
   ///
@@ -199,6 +277,96 @@ abstract class AppLocalizations {
   /// In en, this message translates to:
   /// **'Something went wrong. Please try again.'**
   String get errGeneric;
+
+  /// Sign-in: single sign-on refusal (SSO_NOT_FOUND)
+  ///
+  /// In en, this message translates to:
+  /// **'No business signs in with that name. Check it with your manager.'**
+  String get ssoErrNotFound;
+
+  /// Sign-in: single sign-on refusal (SSO_REQUIRED)
+  ///
+  /// In en, this message translates to:
+  /// **'Your business signs you in through its own sign-in page. Use \"Sign in with your business\" below.'**
+  String get ssoErrRequired;
+
+  /// Sign-in: single sign-on refusal (SSO_NO_ACCOUNT)
+  ///
+  /// In en, this message translates to:
+  /// **'You signed in with your business, but it has not added you here yet. Ask your manager to add you as staff.'**
+  String get ssoErrNoAccount;
+
+  /// Sign-in: single sign-on refusal (SSO_EMAIL_UNVERIFIED)
+  ///
+  /// In en, this message translates to:
+  /// **'Your business\'s sign-in page has not verified your email address, so it could not be matched to your login.'**
+  String get ssoErrEmailUnverified;
+
+  /// Sign-in: single sign-on refusal (SSO_EMAIL_MISSING)
+  ///
+  /// In en, this message translates to:
+  /// **'Your business\'s sign-in page did not share your email address.'**
+  String get ssoErrEmailMissing;
+
+  /// Sign-in: single sign-on refusal (SSO_ALREADY_LINKED)
+  ///
+  /// In en, this message translates to:
+  /// **'Your login is linked to someone else at your business. Ask the owner to unlink it.'**
+  String get ssoErrAlreadyLinked;
+
+  /// Sign-in: single sign-on refusal (SSO_ACCOUNT_UNAVAILABLE)
+  ///
+  /// In en, this message translates to:
+  /// **'This login can no longer sign in here.'**
+  String get ssoErrAccountUnavailable;
+
+  /// Sign-in: single sign-on refusal (SSO_CANCELLED)
+  ///
+  /// In en, this message translates to:
+  /// **'Sign-in was cancelled.'**
+  String get ssoErrCancelled;
+
+  /// Sign-in: single sign-on refusal (SSO_STATE_INVALID and SSO_TICKET_INVALID)
+  ///
+  /// In en, this message translates to:
+  /// **'That sign-in took too long or was already used. Start again.'**
+  String get ssoErrExpired;
+
+  /// Sign-in: single sign-on refusal (SSO_REAUTH_REQUIRED)
+  ///
+  /// In en, this message translates to:
+  /// **'Sign in with your business again.'**
+  String get ssoErrReauthRequired;
+
+  /// Sign-in: single sign-on refusal (SSO_NOT_READY)
+  ///
+  /// In en, this message translates to:
+  /// **'Your business\'s single sign-on is not finished. Ask its owner.'**
+  String get ssoErrNotReady;
+
+  /// Sign-in: single sign-on refusal (SSO_UNAVAILABLE)
+  ///
+  /// In en, this message translates to:
+  /// **'Signing in with your business is not available here.'**
+  String get ssoErrUnavailable;
+
+  /// Sign-in: single sign-on refusal (SSO_PROVIDER_UNREACHABLE)
+  ///
+  /// In en, this message translates to:
+  /// **'Your business\'s sign-in page could not be reached. Try again shortly.'**
+  String get ssoErrProviderUnreachable;
+
+  /// Sign-in: single sign-on refusal (TENANT_INACTIVE)
+  ///
+  /// In en, this message translates to:
+  /// **'This business account is suspended. Contact support.'**
+  String get errTenantInactive;
+
+  /// Sign-in: single sign-on refusal (any other single sign-on refusal)
+  ///
+  /// In en, this message translates to:
+  /// **'Your business\'s sign-in page could not sign you in. Ask its owner to check the settings.'**
+  String get ssoErrGeneric;
 }
 
 class _AppLocalizationsDelegate

@@ -2,6 +2,7 @@ import 'package:dio/dio.dart';
 import 'package:flutter/material.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:flutter_test/flutter_test.dart';
+import 'package:intl/date_symbol_data_local.dart';
 import 'package:storeql_app/features/storefront/recall_notice_card.dart';
 import 'package:storeql_app/features/storefront/storefront_providers.dart';
 
@@ -93,6 +94,9 @@ Future<void> _pump(WidgetTester tester, _Recorder recorder, {bool signedIn = tru
 }
 
 void main() {
+  // The card writes its dates with AppFormat, in the app's en_GB locale.
+  setUpAll(initializeDateFormatting);
+
   testWidgets('the notice, headline first, and the remedy chosen once', (tester) async {
     final recorder = _Recorder(responses: {
       'GET /order-svc/orders/recall-notices/mine': [_notice()],
@@ -102,7 +106,8 @@ void main() {
 
     expect(find.text('PRODUCT SAFETY RECALL'), findsOneWidget);
     expect(find.text('FSA-PRIN-42'), findsOneWidget);
-    expect(find.text('Crunchy peanut butter, lot L1, best before 2026-10-01 — bought 12 Sep 2026'), findsOneWidget);
+    // Both dates written the same way (en_GB abbreviates September "Sept").
+    expect(find.text('Crunchy peanut butter, lot L1, best before 1 Oct 2026 — bought 12 Sept 2026'), findsOneWidget);
     expect(find.text('Stop using this product immediately. Do not eat it. Bring it back to any store.'), findsOneWidget);
     expect(find.text('Why: Peanut not on the label'), findsOneWidget);
     expect(find.text('Contact: 0800 100 200 · https://recall.example.com'), findsOneWidget);

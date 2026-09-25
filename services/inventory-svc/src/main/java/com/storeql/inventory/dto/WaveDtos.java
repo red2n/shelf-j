@@ -93,6 +93,8 @@ public final class WaveDtos {
       UUID id,
       UUID storeId,
       UUID batchId,
+      @Schema(description = "The batch's number, as printed on its label; absent if it has none.")
+          String batchNo,
       UUID variantId,
       BigDecimal qty,
       UUID suggestedZoneId,

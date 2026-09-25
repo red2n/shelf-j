@@ -16,7 +16,8 @@ import 'spacing.dart';
 //    ~15:1 (dark) — well past WCAG AA, short of the 21:1 glare of black-on-white.
 //  • Dark mode desaturates every hue (amber, sage, sky) so nothing vibrates.
 //  • Every text role meets 4.5:1 on every surface container it can land on, in
-//    both themes; outline meets 3:1 as a control boundary.
+//    both themes. That includes `outline`: the app uses it for secondary text in
+//    about 200 places, so it is text-safe too (and well past 3:1 as a boundary).
 //  • Status is never hue alone — pair it with a word or an icon.
 // ─────────────────────────────────────────────────────────────────────────────
 
@@ -37,6 +38,30 @@ class AppRadius {
   static const BorderRadius badge = BorderRadius.all(Radius.circular(xs));
   static const BorderRadius pill = BorderRadius.all(Radius.circular(full));
   static const BorderRadius sheet = BorderRadius.vertical(top: Radius.circular(xl));
+}
+
+/// The design system's shadows (`shadow-1…3`). StoreQL is flat: cards use a
+/// hairline, not a shadow; a shadow is only for something that floats.
+class AppShadow {
+  AppShadow._();
+
+  /// `shadow-1`: an elevated button.
+  static const List<BoxShadow> level1 = [
+    BoxShadow(offset: Offset(0, 1), blurRadius: 2, color: Color(0x1F000000)),
+    BoxShadow(offset: Offset(0, 1), blurRadius: 3, spreadRadius: 1, color: Color(0x0F000000)),
+  ];
+
+  /// `shadow-2`: a FAB, the sticky checkout bar.
+  static const List<BoxShadow> level2 = [
+    BoxShadow(offset: Offset(0, 2), blurRadius: 6, spreadRadius: 2, color: Color(0x14000000)),
+    BoxShadow(offset: Offset(0, 1), blurRadius: 2, color: Color(0x1F000000)),
+  ];
+
+  /// `shadow-3`: snackbars, menus.
+  static const List<BoxShadow> level3 = [
+    BoxShadow(offset: Offset(0, 4), blurRadius: 8, spreadRadius: 3, color: Color(0x14000000)),
+    BoxShadow(offset: Offset(0, 1), blurRadius: 3, color: Color(0x24000000)),
+  ];
 }
 
 /// Named colour palette. Private to this file; widgets read colours from the
@@ -69,7 +94,7 @@ class _Light {
   static const surfaceContainerHighest = Color(0xFFE4E1D8); // skeletons
   static const surfaceDim = Color(0xFFDEDBD2);
   static const surfaceBright = Color(0xFFFAF8F3);
-  static const outline = Color(0xFF78746B);
+  static const outline = Color(0xFF6A665E); // doubles as secondary text: 4.6–5.7:1 on every text surface
   static const outlineVariant = Color(0xFFD7D3C9);
   static const inverseSurface = Color(0xFF32302C);
   static const onInverseSurface = Color(0xFFF4F1EA);
@@ -103,7 +128,7 @@ class _Dark {
   static const surfaceContainerHighest = Color(0xFF363430); // skeletons
   static const surfaceDim = Color(0xFF161513);
   static const surfaceBright = Color(0xFF3C3A35);
-  static const outline = Color(0xFF8F8A80);
+  static const outline = Color(0xFFA39E94); // doubles as secondary text: 4.7–7.2:1 on every surface
   static const outlineVariant = Color(0xFF45423C);
   static const inverseSurface = Color(0xFFECE9E2);
   static const onInverseSurface = Color(0xFF32302C);
@@ -292,9 +317,6 @@ class AppTheme {
       defaultTargetPlatform == TargetPlatform.windows ||
       defaultTargetPlatform == TargetPlatform.linux;
 
-  /// 48dp on touch (Android, iOS, phone browsers); 40dp with a mouse.
-  static double get _minTarget => _isDesktop ? 40 : 48;
-
   static const ColorScheme lightScheme = ColorScheme(
     brightness: Brightness.light,
     primary: _Light.primary,
@@ -404,13 +426,16 @@ class AppTheme {
     final text = _textTheme(base.textTheme);
     const stadium = StadiumBorder();
     const buttonPadding = EdgeInsets.symmetric(horizontal: AppSpacing.xl, vertical: AppSpacing.md);
-    final buttonMinSize = Size(64, _minTarget);
+    // 48dp everywhere. On desktop (mouse) the compact visual density takes 8dp off,
+    // so buttons land at 40dp there — never below it.
+    const buttonMinSize = Size(64, 48);
 
     return base.copyWith(
       scaffoldBackgroundColor: cs.surface,
       canvasColor: cs.surface,
       textTheme: text,
-      // Standard on phones and tablets; compact with a mouse (desktop web, admin).
+      // Standard on phones and tablets; compact with a mouse (desktop web, admin):
+      // buttons 48 → 40dp, list rows and fields 8dp shorter.
       visualDensity: _isDesktop ? VisualDensity.compact : VisualDensity.standard,
       // Visible keyboard focus on the web and desktop.
       focusColor: cs.primary.withValues(alpha: 0.12),
@@ -484,13 +509,17 @@ class AppTheme {
         style: TextButton.styleFrom(
           shape: stadium,
           padding: const EdgeInsets.symmetric(horizontal: AppSpacing.lg, vertical: AppSpacing.md),
-          minimumSize: Size(48, _minTarget),
+          minimumSize: const Size(48, 48),
           textStyle: text.labelLarge,
         ),
       ),
+      // Icon buttons keep standard density, so they stay 40dp with a mouse too.
+      iconButtonTheme: IconButtonThemeData(
+        style: IconButton.styleFrom(visualDensity: VisualDensity.standard),
+      ),
       segmentedButtonTheme: SegmentedButtonThemeData(
         style: SegmentedButton.styleFrom(
-          minimumSize: Size(48, _minTarget - 4),
+          minimumSize: const Size(48, 48),
           textStyle: text.labelLarge,
         ),
       ),
@@ -502,7 +531,8 @@ class AppTheme {
         shape: const RoundedRectangleBorder(borderRadius: AppRadius.card),
       ),
 
-      // Filled fields with no resting border; a 2px primary border on focus.
+      // Filled fields with a 1px outline at rest — a field's only visible edge, so it must
+      // reach 3:1 (WCAG 1.4.11): 5.1:1 (light) / 5.4:1 (dark) against the fill — and 2px primary on focus.
       inputDecorationTheme: InputDecorationTheme(
         filled: true,
         fillColor: fieldFill,
@@ -514,7 +544,7 @@ class AppTheme {
         border: const OutlineInputBorder(borderRadius: AppRadius.input, borderSide: BorderSide.none),
         enabledBorder: OutlineInputBorder(
           borderRadius: AppRadius.input,
-          borderSide: BorderSide(color: cs.outlineVariant),
+          borderSide: BorderSide(color: cs.outline),
         ),
         focusedBorder: OutlineInputBorder(
           borderRadius: AppRadius.input,
@@ -600,21 +630,27 @@ class AppTheme {
         subtitleTextStyle: text.bodyMedium?.copyWith(color: cs.onSurfaceVariant),
       ),
 
+      // Scrim behind dialogs, sheets and the drawer: the `scrim` role at 32%
+      // (Material 3), not Flutter's default 54% black, which reads as a
+      // blackout in light mode.
       dialogTheme: DialogThemeData(
         backgroundColor: cs.surfaceContainerHigh,
         surfaceTintColor: Colors.transparent,
         shape: const RoundedRectangleBorder(borderRadius: BorderRadius.all(Radius.circular(AppRadius.xl))),
         titleTextStyle: text.headlineSmall?.copyWith(color: cs.onSurface),
+        barrierColor: cs.scrim.withValues(alpha: 0.32),
       ),
       bottomSheetTheme: BottomSheetThemeData(
         backgroundColor: cs.surfaceContainerLow,
         surfaceTintColor: Colors.transparent,
         showDragHandle: true,
         dragHandleColor: cs.outline,
+        modalBarrierColor: cs.scrim.withValues(alpha: 0.32),
         shape: const RoundedRectangleBorder(
           borderRadius: BorderRadius.vertical(top: Radius.circular(AppRadius.xl)),
         ),
       ),
+      drawerTheme: DrawerThemeData(scrimColor: cs.scrim.withValues(alpha: 0.32)),
       popupMenuTheme: PopupMenuThemeData(
         color: cs.surfaceContainerHigh,
         surfaceTintColor: Colors.transparent,

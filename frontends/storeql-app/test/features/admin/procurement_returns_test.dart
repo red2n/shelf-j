@@ -4,6 +4,7 @@ import 'package:dio/dio.dart';
 import 'package:flutter/material.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:flutter_test/flutter_test.dart';
+import 'package:intl/date_symbol_data_local.dart';
 import 'package:storeql_app/core/network/api_client.dart';
 import 'package:storeql_app/features/admin/procurement_screen.dart';
 
@@ -96,6 +97,7 @@ Future<_Server> _openPo(WidgetTester tester) async {
 }
 
 void main() {
+  setUpAll(initializeDateFormatting);
   testWidgets('a received order shows what went back and offers a return', (
     tester,
   ) async {
@@ -206,7 +208,7 @@ void main() {
       expect(body['creditNoteDate'], '2026-09-20');
       expect(body['amount'], 9.0);
       expect(
-        find.textContaining('credit note CN-77 · 2026-09-20'),
+        find.textContaining('credit note CN-77 · 20 Sept 2026'),
         findsOneWidget,
       );
       expect(

@@ -111,15 +111,17 @@ void main() {
       ('light', AppTheme.lightScheme, Brightness.light),
       ('dark', AppTheme.darkScheme, Brightness.dark),
     ]) {
-      test('$name: every offer banner tone reads at both ends of its gradient', () {
-        for (var i = 0; i < 4; i++) {
-          final tone = bannerTone(cs, i);
-          for (final ground in tone.gradient) {
-            _atLeast(4.5, tone.fg, ground, '$name banner tone $i');
-          }
-          _atLeast(4.5, tone.fg.withValues(alpha: 0.85).withValues(alpha: 1), tone.gradient.last,
-              '$name banner tone $i subtitle');
-        }
+      // The offer banners (`_toneColors` in product_list_screen) and the sponsored tile and its
+      // badge draw a flat container fill with its own on-container ink: every word and icon in it.
+      test('$name: every offer banner tone and the sponsored tile read on their fill', () {
+        final fills = <String, (Color, Color)>{
+          'primary banner': (cs.onPrimaryContainer, cs.primaryContainer),
+          'secondary banner': (cs.onSecondaryContainer, cs.secondaryContainer),
+          'tertiary banner': (cs.onTertiaryContainer, cs.tertiaryContainer),
+          'sponsored tile': (cs.onTertiaryContainer, cs.tertiaryContainer),
+          'sponsored badge': (cs.onSecondaryContainer, cs.secondaryContainer),
+        };
+        fills.forEach((what, pair) => _atLeast(4.5, pair.$1, pair.$2, '$name $what'));
       });
       test('$name: every product placeholder reads its initials', () {
         final tones = ProductThumb.tones(brightness);

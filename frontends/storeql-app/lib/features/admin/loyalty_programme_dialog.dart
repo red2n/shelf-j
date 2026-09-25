@@ -1,5 +1,6 @@
 import 'package:dio/dio.dart';
 import 'package:flutter/material.dart';
+import '../../core/format.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 
 import '../../core/constants.dart';
@@ -162,7 +163,7 @@ class _LoyaltyProgrammeDialogState extends ConsumerState<LoyaltyProgrammeDialog>
                     p.isDefault
                         ? "The platform's default: four tiers on lifetime points, nothing earned "
                             'above a point a pound, points that never expire. Save your own to change it.'
-                        : 'Your programme, last set ${p.setAt?.substring(0, 10) ?? ''}'
+                        : 'Your programme, last set ${AppFormat.dateTime(p.setAt)}'
                             '${p.reason == null ? '' : ' — ${p.reason}'}.',
                     style: TextStyle(color: cs.onSurfaceVariant),
                   ),

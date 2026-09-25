@@ -20,10 +20,20 @@ void main() {
   });
 
   test('a mouse gets compact density, 40dp targets and a 440dp snackbar; touch keeps 48dp', () {
+    // Buttons ask for 48dp everywhere; the density takes 8dp off with a mouse,
+    // so the target a pointer meets is 40dp and a finger's stays 48dp.
+    double target(ThemeData t) => t.visualDensity
+        .effectiveConstraints(BoxConstraints(
+            minHeight: t.filledButtonTheme.style!.minimumSize!.resolve({})!.height))
+        .minHeight;
+
     debugDefaultTargetPlatformOverride = TargetPlatform.linux;
     var t = AppTheme.dark;
     expect(t.visualDensity, VisualDensity.compact);
-    expect(t.filledButtonTheme.style!.minimumSize!.resolve({})!.height, 40);
+    expect(t.filledButtonTheme.style!.minimumSize!.resolve({})!.height, 48);
+    expect(target(t), 40);
+    // Icon buttons keep their 40dp: compact density would take them to 32dp.
+    expect(t.iconButtonTheme.style!.visualDensity, VisualDensity.standard);
     expect(t.snackBarTheme.width, 440);
     expect(t.snackBarTheme.insetPadding, isNull);
 
@@ -31,6 +41,7 @@ void main() {
     t = AppTheme.dark;
     expect(t.visualDensity, VisualDensity.standard);
     expect(t.filledButtonTheme.style!.minimumSize!.resolve({})!.height, 48);
+    expect(target(t), 48);
     expect(t.snackBarTheme.width, isNull);
     expect(t.snackBarTheme.insetPadding, isNotNull);
   });

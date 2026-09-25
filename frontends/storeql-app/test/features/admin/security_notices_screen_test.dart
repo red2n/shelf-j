@@ -78,7 +78,7 @@ void main() {
   testWidgets('a breach notice lists the DPDP duties with their clocks, and the date the Act binds from',
       (tester) async {
     await _pump(tester, (t) => t.list = '{"data":[${_breach('b1', boardDone: true)}]}');
-    expect(find.textContaining("duties under India's DPDP Act (from 2027-05-13)"), findsOneWidget);
+    expect(find.textContaining("duties under India's DPDP Act (from 13 May 2027)"), findsOneWidget);
     expect(find.byKey(const Key('duty-b1-PRINCIPALS_TOLD')), findsOneWidget);
     expect(find.textContaining('Without delay'), findsWidgets);
     expect(find.textContaining('Overdue: was due'), findsOneWidget);
@@ -86,6 +86,43 @@ void main() {
     expect(find.byKey(const Key('record-b1-BOARD_INTIMATED')), findsNothing, reason: 'done is done');
     expect(find.text('Tell customers'), findsOneWidget);
     expect(find.text('Record'), findsOneWidget);
+  });
+
+  testWidgets('the deadline of a duty is its own line in the title style, apart from the rule it cites',
+      (tester) async {
+    await _pump(tester, (t) => t.list = '{"data":[${_breach('b1')}]}');
+    final due = find.text('Overdue: was due ${AppFormat.dateTime('2026-09-17T08:00:00Z')}');
+    expect(due, findsOneWidget, reason: 'the deadline is not run into the citation');
+    final rule = find.text('Reported within seventy-two hours — DPDP Rules 2025 r.7(2)(b)');
+    expect(rule, findsOneWidget);
+    final dueStyle = tester.widget<Text>(due).style!;
+    final titleStyle =
+        tester.widget<Text>(find.text('Reported to the Board')).style!;
+    expect(dueStyle.fontSize, titleStyle.fontSize);
+    expect(dueStyle.fontSize, greaterThan(tester.widget<Text>(rule).style!.fontSize!));
+    expect(tester.getRect(due).bottom, lessThanOrEqualTo(tester.getRect(rule).top));
+    // Overdue says so in words and in the error colour.
+    final cs = Theme.of(tester.element(due)).colorScheme;
+    expect(dueStyle.color, cs.error);
+  });
+
+  testWidgets('on a phone at 200% text a breach notice and its duties still fit', (tester) async {
+    await _pump(tester, (t) => t.list = '{"data":[${_breach('b1')}]}');
+    tester.view.physicalSize = const Size(390, 844);
+    tester.platformDispatcher.textScaleFactorTestValue = 2;
+    addTearDown(tester.platformDispatcher.clearTextScaleFactorTestValue);
+    await tester.pumpAndSettle();
+    await tester.scrollUntilVisible(find.byKey(const Key('record-b1-BOARD_REPORTED')), 200,
+        scrollable: find.byType(Scrollable).first);
+    await tester.pumpAndSettle();
+    expect(tester.takeException(), isNull);
+  });
+
+  testWidgets('notice cards stand 12px apart', (tester) async {
+    await _pump(tester, (t) => t.list = '{"data":[${_notice('n1')},${_notice('n2')}]}');
+    final first = tester.getRect(find.byKey(const Key('notice-n1')));
+    final second = tester.getRect(find.byKey(const Key('notice-n2')));
+    expect(second.top - first.bottom, 12);
   });
 
   testWidgets('recording a duty posts it once with the reference and note', (tester) async {

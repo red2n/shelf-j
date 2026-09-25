@@ -129,7 +129,7 @@ void main() {
       find.widgetWithText(TextFormField, 'Business name *'),
       'Kyoto Market',
     );
-    await tester.tap(find.text('Continue  →'));
+    await tester.tap(find.text('Continue'));
     await tester.pumpAndSettle();
     expect(find.text('Choose a country'), findsOneWidget);
     expect(find.text('Choose a currency'), findsOneWidget);
@@ -152,7 +152,7 @@ void main() {
     await tester.pumpAndSettle();
     expect(find.text('JPY — Japanese Yen'), findsOneWidget);
 
-    await tester.tap(find.text('Continue  →'));
+    await tester.tap(find.text('Continue'));
     // A progress indicator spins while the request is out, so settle by time.
     await tester.pump();
     await tester.pump(const Duration(milliseconds: 500));
@@ -189,7 +189,7 @@ void main() {
     await tester.tap(find.text('Japan (JP)').last);
     await tester.pumpAndSettle();
 
-    await tester.tap(find.text('Continue  →'));
+    await tester.tap(find.text('Continue'));
     await tester.pump();
     await tester.pump(const Duration(milliseconds: 500));
     final sent = server.posts.single;
@@ -213,7 +213,7 @@ void main() {
     await tester.pumpAndSettle();
     await tester.tap(find.text('Japan (JP)').last);
     await tester.pumpAndSettle();
-    await tester.tap(find.text('Continue  →'));
+    await tester.tap(find.text('Continue'));
     await tester.pump();
     await tester.pump(const Duration(milliseconds: 500));
     final sent = server.posts.single;

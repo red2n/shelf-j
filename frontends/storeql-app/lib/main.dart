@@ -3,6 +3,7 @@ import 'package:flutter/material.dart';
 import 'package:flutter/semantics.dart';
 import 'package:flutter_localizations/flutter_localizations.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
+import 'package:intl/intl.dart' show Intl;
 import 'core/auth/sso.dart';
 import 'core/l10n/app_locales.dart';
 import 'core/router.dart';
@@ -48,12 +49,12 @@ class ShelfApp extends ConsumerWidget {
         GlobalCupertinoLocalizations.delegate,
       ],
       localeResolutionCallback: (locale, supported) {
-        if (locale != null) {
-          for (final s in supported) {
-            if (s.languageCode == locale.languageCode) return s;
-          }
-        }
-        return AppLocales.fallback;
+        final resolved = AppLocales.resolve(locale, supported);
+        // AppFormat writes money, counts and dates in the language the app
+        // runs in. Set here, before anything is formatted, so no stray
+        // formatter can pin intl to the system's en_US instead.
+        Intl.defaultLocale = AppLocales.intlName(resolved);
+        return resolved;
       },
       routerConfig: router,
       debugShowCheckedModeBanner: false,

@@ -5,14 +5,20 @@ import 'package:flutter/services.dart';
 import 'package:flutter/material.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 import '../../core/constants.dart';
+import '../../core/format.dart';
 import '../../core/network/api_client.dart';
 import '../../core/network/api_error.dart';
+import '../../core/spacing.dart';
 import '../../core/theme.dart';
+import '../../shared/util/status_labels.dart';
+import '../../shared/widgets/empty_state.dart';
 import '../../shared/widgets/error_view.dart';
 import '../../shared/widgets/loading_view.dart';
+import '../../shared/widgets/page_header.dart';
 import 'customer_providers.dart';
 import 'sales_invoices_dialog.dart';
 import 'send_text_dialog.dart';
+import 'providers/customer_search.dart';
 import 'providers/customers_pagination.dart';
 import 'guardian_consent_section.dart';
 import 'loyalty_programme_dialog.dart';
@@ -28,6 +34,7 @@ class CustomersScreen extends ConsumerStatefulWidget {
 
 class _CustomersScreenState extends ConsumerState<CustomersScreen> {
   final _scrollController = ScrollController();
+  final _searchCtrl = TextEditingController();
 
   @override
   void initState() {
@@ -38,48 +45,76 @@ class _CustomersScreenState extends ConsumerState<CustomersScreen> {
   @override
   void dispose() {
     _scrollController.dispose();
+    _searchCtrl.dispose();
     super.dispose();
   }
 
-  /// Fetch the next page once the user scrolls within 300px of the bottom.
+  /// Whether the list shows the server's search results (rather than every
+  /// customer, or the loaded ones filtered because the server would not search).
+  bool get _serverSearch {
+    final search = ref.read(customerSearchProvider);
+    return search.active && !search.localOnly;
+  }
+
+  /// Fetch the next page once the user scrolls within 300px of the bottom —
+  /// but not on a pull at the top of a short list, which is a refresh.
   void _onScroll() {
-    if (_scrollController.position.pixels >=
-        _scrollController.position.maxScrollExtent - 300) {
-      ref.read(customersPaginationProvider.notifier).loadMore();
+    final position = _scrollController.position;
+    if (position.pixels > 0 &&
+        position.pixels >= position.maxScrollExtent - 300) {
+      _loadMore();
     }
+  }
+
+  Future<void> _refresh() => _serverSearch
+      ? ref.read(customerSearchProvider.notifier).refresh()
+      : ref.read(customersPaginationProvider.notifier).refresh();
+
+  Future<void> _loadMore() => _serverSearch
+      ? ref.read(customerSearchProvider.notifier).loadMore()
+      : ref.read(customersPaginationProvider.notifier).loadMore();
+
+  /// Every keystroke goes to the search, which asks the server once typing
+  /// pauses; the field rebuilds so its clear button follows the text.
+  void _onSearchChanged(String text) {
+    setState(() {});
+    ref.read(customerSearchProvider.notifier).search(text);
+  }
+
+  void _clearSearch() {
+    _searchCtrl.clear();
+    _onSearchChanged('');
   }
 
   @override
   Widget build(BuildContext context) {
     final page = ref.watch(customersPaginationProvider);
+    final search = ref.watch(customerSearchProvider);
     final auth = ref.watch(authNotifierProvider).value;
     final management = auth is AuthAuthenticated &&
         (auth.roles.contains('OWNER') ||
             auth.roles.contains('MANAGER') ||
             auth.roles.contains('PLATFORM_ADMIN'));
-    final cs = Theme.of(context).colorScheme;
-    return Column(
-      crossAxisAlignment: CrossAxisAlignment.start,
-      children: [
-        Padding(
-          padding: const EdgeInsets.fromLTRB(24, 24, 24, 0),
-          child: Row(
-            children: [
-              Text('Customers',
-                  style: Theme.of(context).textTheme.headlineMedium),
-              const Spacer(),
+    // One inset for the title, the search box and the cards, so their edges
+    // line up: 16 on a phone, 24 from tablet width.
+    final gutter = context.pageGutter;
+    return ContentBounds(
+      child: Column(
+        crossAxisAlignment: CrossAxisAlignment.stretch,
+        children: [
+          PageHeader(
+            title: 'Customers',
+            actions: [
               FilledButton.icon(
                 onPressed: () => showDialog(
                     context: context, builder: (_) => const _AddCustomerDialog()),
                 icon: const Icon(Icons.person_add_alt),
                 label: const Text('Add customer'),
               ),
-              const SizedBox(width: 8),
               IconButton(
                 icon: const Icon(Icons.refresh),
                 tooltip: 'Refresh customers',
-                onPressed: () =>
-                    ref.read(customersPaginationProvider.notifier).refresh(),
+                onPressed: _refresh,
               ),
               // The programme is management's: the ladder, the expiry rule, the qualifying window.
               if (management)
@@ -92,78 +127,292 @@ class _CustomersScreenState extends ConsumerState<CustomersScreen> {
                 ),
             ],
           ),
-        ),
-        const SizedBox(height: 16),
-        Expanded(
-          child: Builder(builder: (context) {
-            if (page.isLoadingInitial) {
-              return const LoadingView(label: 'Loading customers…');
-            }
-            if (page.error != null && page.customers.isEmpty) {
-              return ErrorView(
-                message: 'Could not load customers.\n${page.error}',
-                onRetry: () =>
-                    ref.read(customersPaginationProvider.notifier).refresh(),
-              );
-            }
-            final customers = page.customers;
-            if (customers.isEmpty) {
-              return Center(
-                child: Column(
-                  mainAxisSize: MainAxisSize.min,
-                  children: [
-                    Icon(Icons.people_outline,
-                        size: 64, color: cs.outlineVariant),
-                    const SizedBox(height: 12),
-                    const Text('No customers yet'),
-                  ],
-                ),
-              );
-            }
-            return ListView.separated(
-              controller: _scrollController,
-              padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 8),
-              itemCount:
-                  customers.length + (page.hasMore || page.isLoadingMore ? 1 : 0),
-              separatorBuilder: (_, _) => const SizedBox(height: 4),
-              itemBuilder: (_, i) {
-                if (i >= customers.length) {
-                  return const Padding(
-                    padding: EdgeInsets.all(16),
-                    child: Center(child: CircularProgressIndicator()),
-                  );
-                }
-                final c = customers[i];
-                return Card(
-                  child: ListTile(
-                    onTap: () => showDialog(
-                      context: context,
-                      builder: (_) => _CustomerDetailDialog(customer: c),
-                    ),
-                    leading: CircleAvatar(
-                      backgroundColor: cs.primaryContainer,
-                      child: Text(
-                        (c.firstName.isNotEmpty ? c.firstName[0] : '?')
-                            .toUpperCase(),
-                        style: TextStyle(color: cs.onPrimaryContainer),
-                      ),
-                    ),
-                    title: Text(c.fullName,
-                        style: const TextStyle(fontWeight: FontWeight.bold)),
-                    subtitle: Text([
-                      c.email,
-                      if (c.phone != null && c.phone!.isNotEmpty) c.phone,
-                    ].whereType<String>().join(' · ')),
-                    trailing: const Icon(Icons.chevron_right),
+          // The search asks customer-svc, which matches every customer by
+          // name, email or phone. Only if it will not (400) does the box
+          // filter the customers loaded so far — and then it says so.
+          Padding(
+            padding: EdgeInsetsDirectional.fromSTEB(
+                gutter, 0, gutter, AppSpacing.md),
+            child: Align(
+              alignment: AlignmentDirectional.centerStart,
+              child: ConstrainedBox(
+                constraints:
+                    const BoxConstraints(maxWidth: AppBreakpoints.formMaxWidth),
+                child: TextField(
+                  key: const Key('customers-search'),
+                  controller: _searchCtrl,
+                  onChanged: _onSearchChanged,
+                  textInputAction: TextInputAction.search,
+                  decoration: InputDecoration(
+                    hintText: 'Search by name, email or phone',
+                    prefixIcon: const Icon(Icons.search),
+                    suffixIcon: _searchCtrl.text.isEmpty
+                        ? null
+                        : IconButton(
+                            icon: const Icon(Icons.close),
+                            tooltip: 'Clear search',
+                            onPressed: _clearSearch,
+                          ),
                   ),
-                );
-              },
-            );
-          }),
+                ),
+              ),
+            ),
+          ),
+          Expanded(
+            child: search.active && !search.localOnly
+                ? _searchResults(search, gutter)
+                : _loadedCustomers(page, search, gutter),
+          ),
+        ],
+      ),
+    );
+  }
+
+  /// What the server found for the search box.
+  Widget _searchResults(CustomerSearch search, double gutter) {
+    final notifier = ref.read(customerSearchProvider.notifier);
+    final error = search.error;
+    if (search.customers.isEmpty) {
+      if (search.isLoading) {
+        return const LoadingView(label: 'Searching customers…');
+      }
+      if (error != null) {
+        return ErrorView(
+          message: friendlyError(error, fallback: 'Could not search customers.'),
+          onRetry: notifier.refresh,
+        );
+      }
+      return EmptyState(
+        icon: Icons.search_off,
+        title: 'No customers match “${search.query}”',
+        message: 'The search looks at names, email addresses and phone numbers.',
+      );
+    }
+    return Column(
+      crossAxisAlignment: CrossAxisAlignment.stretch,
+      children: [
+        // The last matches stay while the next query is asked, under a thin
+        // bar, rather than the list blanking on every pause in typing.
+        SizedBox(
+          height: 2,
+          child: search.isLoading ? const LinearProgressIndicator() : null,
+        ),
+        Expanded(
+          child: _customerList(
+            key: ValueKey('search:${search.query}'),
+            customers: search.customers,
+            gutter: gutter,
+            hasMore: search.hasMore,
+            isLoadingMore: search.isLoadingMore,
+            // A page of matches may not fill the screen to scroll from.
+            offerMore: true,
+          ),
         ),
       ],
     );
   }
+
+  /// Every customer, a page at a time; or, when the server would not search,
+  /// the ones loaded so far filtered by the search box.
+  Widget _loadedCustomers(CustomersPage page, CustomerSearch search, double gutter) {
+    if (page.isLoadingInitial) {
+      return const LoadingView(label: 'Loading customers…');
+    }
+    final error = page.error;
+    if (error != null && page.customers.isEmpty) {
+      return ErrorView(
+        message: friendlyError(error, fallback: 'Could not load customers.'),
+        onRetry: _refresh,
+      );
+    }
+    if (page.customers.isEmpty) {
+      return const EmptyState(
+        icon: Icons.people_outline,
+        title: 'No customers yet',
+      );
+    }
+    final query = search.localOnly ? search.query : '';
+    final customers = query.isEmpty
+        ? page.customers
+        : page.customers.where((c) => _matchesSearch(c, query)).toList();
+    const searchedNote = 'Only the customers loaded so far are searched.';
+    if (customers.isEmpty) {
+      return EmptyState(
+        icon: Icons.search_off,
+        title: page.hasMore
+            ? 'No loaded customers match “$query”'
+            : 'No customers match “$query”',
+        message: page.hasMore ? searchedNote : null,
+        action: page.isLoadingMore
+            ? const CircularProgressIndicator()
+            : page.hasMore
+                ? OutlinedButton.icon(
+                    onPressed: _loadMore,
+                    icon: const Icon(Icons.expand_more),
+                    label: const Text('Load more customers'),
+                  )
+                : null,
+      );
+    }
+    // A next page that failed is offered again by a button, never retried by
+    // itself over and over.
+    final moreFailed = error != null;
+    return _customerList(
+      key: ValueKey('loaded:$query'),
+      customers: customers,
+      gutter: gutter,
+      hasMore: page.hasMore,
+      isLoadingMore: page.isLoadingMore,
+      // Under a filter the matches may be too few to scroll to the end, so
+      // the next page can also be asked for.
+      offerMore: query.isNotEmpty || moreFailed,
+      note: moreFailed
+          ? friendlyError(error, fallback: 'Could not load more customers.')
+          : query.isNotEmpty
+              ? searchedNote
+              : null,
+    );
+  }
+
+  /// The customers as cards, with a footer while there are more: a spinner
+  /// while the next page loads, else — when [offerMore] — a button for it.
+  Widget _customerList({
+    required Key key,
+    required List<Customer> customers,
+    required double gutter,
+    required bool hasMore,
+    required bool isLoadingMore,
+    required bool offerMore,
+    String? note,
+  }) {
+    final cs = Theme.of(context).colorScheme;
+    return RefreshIndicator.adaptive(
+      onRefresh: _refresh,
+      child: ListView.separated(
+        key: key,
+        controller: _scrollController,
+        // Scrollable even when short, so a pull always refreshes.
+        physics: const AlwaysScrollableScrollPhysics(),
+        padding: EdgeInsetsDirectional.fromSTEB(gutter, 0, gutter, AppSpacing.lg),
+        itemCount: customers.length + (hasMore || isLoadingMore ? 1 : 0),
+        separatorBuilder: (_, _) => const SizedBox(height: AppSpacing.xs),
+        itemBuilder: (_, i) {
+          if (i >= customers.length) {
+            if (offerMore && !isLoadingMore) {
+              return Padding(
+                padding: const EdgeInsets.symmetric(vertical: AppSpacing.sm),
+                child: Column(
+                  children: [
+                    if (note != null)
+                      Text(
+                        note,
+                        textAlign: TextAlign.center,
+                        style: TextStyle(color: cs.onSurfaceVariant),
+                      ),
+                    TextButton.icon(
+                      onPressed: _loadMore,
+                      icon: const Icon(Icons.expand_more),
+                      label: const Text('Load more customers'),
+                    ),
+                  ],
+                ),
+              );
+            }
+            // The footer is built: the list was scrolled to its end, or the
+            // window is taller than what has loaded, so no scroll will ever
+            // come. Either way the next page is what it waits for, so ask for
+            // it now; loadMore ignores a call while one is on its way.
+            if (!isLoadingMore) {
+              WidgetsBinding.instance.addPostFrameCallback((_) {
+                if (mounted) _loadMore();
+              });
+            }
+            return const Padding(
+              padding: EdgeInsets.all(AppSpacing.lg),
+              child: Center(child: CircularProgressIndicator()),
+            );
+          }
+          final c = customers[i];
+          return Card(
+            child: ListTile(
+              onTap: () => showDialog(
+                context: context,
+                builder: (_) => _CustomerDetailDialog(customer: c),
+              ),
+              leading: CircleAvatar(
+                backgroundColor: cs.primaryContainer,
+                child: Text(
+                  (c.firstName.isNotEmpty ? c.firstName[0] : '?').toUpperCase(),
+                  style: TextStyle(color: cs.onPrimaryContainer),
+                ),
+              ),
+              title: Text(c.fullName,
+                  style: const TextStyle(fontWeight: FontWeight.bold)),
+              subtitle: Text([
+                c.email,
+                if (c.phone != null && c.phone!.isNotEmpty) c.phone,
+              ].whereType<String>().join(' · ')),
+              trailing: const Icon(Icons.chevron_right),
+            ),
+          );
+        },
+      ),
+    );
+  }
+}
+
+/// A loyalty movement in words: what happened to the points.
+String _loyaltyEntryLabel(String type) => switch (type.toUpperCase()) {
+      'EARN' => 'Points earned',
+      'REDEEM' => 'Points redeemed',
+      'EXPIRE' => 'Points expired',
+      'ADJUST' => 'Adjusted',
+      _ => humanizeCode(type),
+    };
+
+/// Why and when a loyalty movement happened (`Till sale · 20 Sept 2026`);
+/// null when neither is known.
+Widget? _ledgerLine(LoyaltyLedgerEntry e) {
+  final parts = [
+    if (e.reason != null && e.reason!.trim().isNotEmpty) e.reason!.trim(),
+    if (e.createdAt.isNotEmpty) AppFormat.date(e.createdAt),
+  ];
+  return parts.isEmpty ? null : Text(parts.join(' · '));
+}
+
+/// What an address is for, in words.
+String _addressTypeLabel(String type) => switch (type.toUpperCase()) {
+      'HOME' => 'Home',
+      'WORK' => 'Work',
+      'BILLING' => 'Billing',
+      'SHIPPING' => 'Shipping',
+      _ => humanizeCode(type),
+    };
+
+String _genderLabel(String gender) => switch (gender.toUpperCase()) {
+      'MALE' => 'Male',
+      'FEMALE' => 'Female',
+      'OTHER' => 'Other',
+      _ => humanizeCode(gender),
+    };
+
+final _nonDigit = RegExp(r'\D');
+final _phoneLike = RegExp(r'^[\d\s()+.-]+$');
+
+/// Whether [c] matches what was typed in the search box: any part of the name,
+/// email or phone number, ignoring case, and a phone number however either
+/// side spaces it, so "07700 900 123" finds 07700900123.
+bool _matchesSearch(Customer c, String query) {
+  final q = query.toLowerCase();
+  final phone = c.phone ?? '';
+  if (c.fullName.toLowerCase().contains(q) ||
+      c.email.toLowerCase().contains(q) ||
+      phone.toLowerCase().contains(q)) {
+    return true;
+  }
+  if (!_phoneLike.hasMatch(q)) return false;
+  final digits = q.replaceAll(_nonDigit, '');
+  return digits.isNotEmpty && phone.replaceAll(_nonDigit, '').contains(digits);
 }
 
 class _AddCustomerDialog extends ConsumerStatefulWidget {
@@ -210,6 +459,8 @@ class _AddCustomerDialogState extends ConsumerState<_AddCustomerDialog> {
       );
       if (!mounted) return;
       ref.read(customersPaginationProvider.notifier).refresh();
+      // A search showing is asked again too, so the change shows there.
+      ref.read(customerSearchProvider.notifier).refresh();
       Navigator.pop(context);
     } catch (e) {
       setState(() {
@@ -345,8 +596,8 @@ class _CustomerDetailDialog extends ConsumerWidget {
               Text([
                 c.email,
                 if (c.phone != null && c.phone!.isNotEmpty) c.phone,
-                if (c.gender != null && c.gender!.isNotEmpty) c.gender,
-                if (c.dob != null && c.dob!.isNotEmpty) 'DOB ${c.dob}',
+                if (c.gender != null && c.gender!.isNotEmpty) _genderLabel(c.gender!),
+                if (c.dob != null && c.dob!.isNotEmpty) 'Born ${AppFormat.date(c.dob)}',
               ].whereType<String>().join(' · '), style: TextStyle(color: cs.outline)),
               const SizedBox(height: 16),
               Row(
@@ -374,7 +625,7 @@ class _CustomerDetailDialog extends ConsumerWidget {
                       label: 'Store credit',
                       value: creditAsync.maybeWhen(
                         data: (c) =>
-                            '${c.currency} ${c.balance.toStringAsFixed(2)}',
+                            AppFormat.money(c.balance, currencyCode: c.currency),
                         orElse: () => '…',
                       ),
                       sub: '',
@@ -389,14 +640,16 @@ class _CustomerDetailDialog extends ConsumerWidget {
                 data: (l) => l.expiringSoon == null
                     ? const SizedBox.shrink()
                     : Padding(
-                        padding: const EdgeInsets.only(top: 8),
+                        padding: const EdgeInsets.only(top: AppSpacing.sm),
                         child: Row(children: [
                           Icon(Icons.hourglass_bottom_outlined,
                               size: 16, color: context.status.warning),
-                          const SizedBox(width: 6),
-                          Text(l.expiringLine,
-                              key: const Key('loyalty-expiring'),
-                              style: TextStyle(color: context.status.warning)),
+                          const SizedBox(width: AppSpacing.xs),
+                          Flexible(
+                            child: Text(l.expiringLine,
+                                key: const Key('loyalty-expiring'),
+                                style: TextStyle(color: context.status.warning)),
+                          ),
                         ]),
                       ),
                 orElse: () => const SizedBox.shrink(),
@@ -477,9 +730,8 @@ class _CustomerDetailDialog extends ConsumerWidget {
                                     ? context.status.success
                                     : cs.error,
                               ),
-                              title: Text(e.type),
-                              subtitle:
-                                  e.reason != null ? Text(e.reason!) : null,
+                              title: Text(_loyaltyEntryLabel(e.type)),
+                              subtitle: _ledgerLine(e),
                               trailing: Text(
                                   '${e.points >= 0 ? '+' : ''}${e.points.toStringAsFixed(0)}'),
                             ),
@@ -490,17 +742,24 @@ class _CustomerDetailDialog extends ConsumerWidget {
           ),
         ),
       ),
+      // Two groups: the data requests at the start, Close at the end. Dialog
+      // actions sit in an OverflowBar, not a Row, so a Spacer can't go here
+      // (it threw "Incorrect use of ParentDataWidget" when the dialog opened).
       actions: [
-        TextButton(
-          onPressed: () => _anonymize(context, ref),
-          style: TextButton.styleFrom(foregroundColor: cs.error),
-          child: const Text('Anonymize'),
+        Wrap(
+          spacing: AppSpacing.sm,
+          children: [
+            TextButton(
+              onPressed: () => _anonymize(context, ref),
+              style: TextButton.styleFrom(foregroundColor: cs.error),
+              child: const Text('Anonymize'),
+            ),
+            TextButton(
+              onPressed: () => _export(context, ref),
+              child: const Text('Export data'),
+            ),
+          ],
         ),
-        TextButton(
-          onPressed: () => _export(context, ref),
-          child: const Text('Export data'),
-        ),
-        const Spacer(),
         TextButton(
             onPressed: () => Navigator.pop(context), child: const Text('Close')),
       ],
@@ -609,6 +868,8 @@ class _CustomerDetailDialog extends ConsumerWidget {
           .dio
           .delete('/${ApiConstants.customer}/customers/${customer.id}');
       ref.read(customersPaginationProvider.notifier).refresh();
+      // A search showing is asked again too, so the change shows there.
+      ref.read(customerSearchProvider.notifier).refresh();
       if (!context.mounted) return;
       Navigator.pop(context);
       ScaffoldMessenger.of(context).showSnackBar(
@@ -813,7 +1074,7 @@ class _AddressesSectionState extends ConsumerState<_AddressesSection> {
                             size: 20),
                         title: Row(
                           children: [
-                            Flexible(child: Text(a.type)),
+                            Flexible(child: Text(_addressTypeLabel(a.type))),
                             if (a.isDefault) ...[
                               const SizedBox(width: 6),
                               _DefaultChip(),
@@ -901,7 +1162,11 @@ class _EditCustomerDialogState extends ConsumerState<_EditCustomerDialog> {
   late final _firstCtrl = TextEditingController(text: widget.customer.firstName);
   late final _lastCtrl = TextEditingController(text: widget.customer.lastName);
   late final _phoneCtrl = TextEditingController(text: widget.customer.phone ?? '');
-  late final _dobCtrl = TextEditingController(text: widget.customer.dob ?? '');
+  /// The date of birth as customer-svc keeps it (`1990-05-14`), or null. The
+  /// field shows it as a date (*14 May 1990*); the request carries this.
+  late String? _dob = (widget.customer.dob ?? '').trim().isEmpty ? null : widget.customer.dob!.trim();
+  late final _dobCtrl =
+      TextEditingController(text: _dob == null ? '' : AppFormat.date(_dob));
   late String? _gender = widget.customer.gender;
   bool _loading = false;
   String? _error;
@@ -928,12 +1193,14 @@ class _EditCustomerDialogState extends ConsumerState<_EditCustomerDialog> {
           'firstName': _firstCtrl.text.trim(),
           'lastName': _lastCtrl.text.trim(),
           'phone': _phoneCtrl.text.trim(),
-          if (_dobCtrl.text.trim().isNotEmpty) 'dob': _dobCtrl.text.trim(),
+          'dob': ?_dob,
           if (_gender != null) 'gender': _gender,
         },
       );
       ref.invalidate(customerDetailProvider(widget.customer.id));
       ref.read(customersPaginationProvider.notifier).refresh();
+      // A search showing is asked again too, so the change shows there.
+      ref.read(customerSearchProvider.notifier).refresh();
       if (!mounted) return;
       Navigator.pop(context);
       ScaffoldMessenger.of(context).showSnackBar(
@@ -991,15 +1258,16 @@ class _EditCustomerDialogState extends ConsumerState<_EditCustomerDialog> {
                   final now = DateTime.now();
                   final picked = await showDatePicker(
                     context: context,
-                    initialDate: DateTime.tryParse(_dobCtrl.text) ??
+                    initialDate: DateTime.tryParse(_dob ?? '') ??
                         DateTime(now.year - 30),
                     firstDate: DateTime(1900),
                     lastDate: now,
                   );
                   if (picked != null) {
-                    _dobCtrl.text = '${picked.year.toString().padLeft(4, '0')}-'
+                    _dob = '${picked.year.toString().padLeft(4, '0')}-'
                         '${picked.month.toString().padLeft(2, '0')}-'
                         '${picked.day.toString().padLeft(2, '0')}';
+                    _dobCtrl.text = AppFormat.date(_dob);
                   }
                 },
               ),

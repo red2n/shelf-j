@@ -2,6 +2,9 @@ import 'package:flutter/material.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 
 import '../../core/format.dart';
+import '../../core/spacing.dart';
+import '../../shared/widgets/status_badge.dart';
+import 'integrations_screen.dart' show SectionHeading;
 import '../../core/network/api_error.dart';
 import '../../shared/widgets/error_view.dart';
 import '../../shared/widgets/loading_view.dart';
@@ -26,10 +29,9 @@ class AccountingSection extends ConsumerWidget {
     return Column(
       crossAxisAlignment: CrossAxisAlignment.stretch,
       children: [
-        Row(
-          children: [
-            Text('Accounting', style: theme.textTheme.titleLarge?.copyWith(fontWeight: FontWeight.bold)),
-            const Spacer(),
+        SectionHeading(
+          title: 'Accounting',
+          actions: [
             if (owner)
               connection.when(
                 loading: () => const SizedBox.shrink(),
@@ -41,14 +43,15 @@ class AccountingSection extends ConsumerWidget {
                         icon: const Icon(Icons.account_balance_outlined),
                         label: const Text('Connect a package'),
                       )
-                    : Row(
+                    : Wrap(
+                        spacing: AppSpacing.sm,
+                        runSpacing: AppSpacing.sm,
                         children: [
                           TextButton(
                             key: const Key('accounting-disconnect'),
                             onPressed: () => _disconnect(context, ref, c),
                             child: const Text('Disconnect'),
                           ),
-                          const SizedBox(width: 8),
                           OutlinedButton(
                             key: const Key('accounting-toggle'),
                             onPressed: () => _toggle(context, ref, c),
@@ -294,12 +297,11 @@ class _SyncTile extends ConsumerWidget {
 
   @override
   Widget build(BuildContext context, WidgetRef ref) {
-    final cs = Theme.of(context).colorScheme;
-    final color = switch (s.status) {
-      'DELIVERED' => cs.primaryContainer,
-      'FAILED' => cs.errorContainer,
-      'UNCERTAIN' => cs.tertiaryContainer,
-      _ => cs.surfaceContainerHighest,
+    final tone = switch (s.status) {
+      'DELIVERED' => StatusTone.success,
+      'FAILED' => StatusTone.error,
+      'UNCERTAIN' => StatusTone.warning,
+      _ => StatusTone.neutral,
     };
     final detail = [
       if (s.entryDate != null) AppFormat.date(s.entryDate),
@@ -313,27 +315,46 @@ class _SyncTile extends ConsumerWidget {
       margin: const EdgeInsets.only(bottom: 6),
       child: ListTile(
         title: Text(s.description ?? s.journalId),
-        subtitle: Text(detail),
-        trailing: Row(
-          mainAxisSize: MainAxisSize.min,
+        // The state as a badge under the details; the two actions at the end
+        // where there is room, one menu on a phone, so the journal's name
+        // keeps the width.
+        subtitle: Column(
+          crossAxisAlignment: CrossAxisAlignment.start,
           children: [
-            Chip(label: Text(_statusLabel(s.status)), backgroundColor: color),
-            if (s.retryable) ...[
-              IconButton(
-                key: Key('sync-retry-${s.id}'),
-                tooltip: 'Try again now',
-                icon: const Icon(Icons.replay),
-                onPressed: () => _retry(context, ref),
-              ),
-              IconButton(
-                key: Key('sync-skip-${s.id}'),
-                tooltip: 'Leave it out of the package',
-                icon: const Icon(Icons.block),
-                onPressed: () => _skip(context, ref),
-              ),
-            ],
+            if (detail.isNotEmpty) Text(detail),
+            const SizedBox(height: AppSpacing.xs),
+            StatusBadge(_statusLabel(s.status), tone: tone),
           ],
         ),
+        trailing: !s.retryable
+            ? null
+            : context.isCompact
+                ? PopupMenuButton<String>(
+                    key: Key('sync-actions-${s.id}'),
+                    tooltip: 'Try again or leave out',
+                    onSelected: (a) => a == 'retry' ? _retry(context, ref) : _skip(context, ref),
+                    itemBuilder: (_) => const [
+                      PopupMenuItem(value: 'retry', child: Text('Try again now')),
+                      PopupMenuItem(value: 'skip', child: Text('Leave it out of the package')),
+                    ],
+                  )
+                : Row(
+                    mainAxisSize: MainAxisSize.min,
+                    children: [
+                      IconButton(
+                        key: Key('sync-retry-${s.id}'),
+                        tooltip: 'Try again now',
+                        icon: const Icon(Icons.replay),
+                        onPressed: () => _retry(context, ref),
+                      ),
+                      IconButton(
+                        key: Key('sync-skip-${s.id}'),
+                        tooltip: 'Leave it out of the package',
+                        icon: const Icon(Icons.block),
+                        onPressed: () => _skip(context, ref),
+                      ),
+                    ],
+                  ),
       ),
     );
   }

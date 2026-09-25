@@ -4,6 +4,7 @@ import 'package:dio/dio.dart';
 import 'package:flutter/material.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:flutter_test/flutter_test.dart';
+import 'package:intl/date_symbol_data_local.dart';
 import 'package:storeql_app/core/auth/auth_notifier.dart';
 import 'package:storeql_app/core/network/api_client.dart';
 import 'package:storeql_app/features/admin/inventory_bond_tab.dart';
@@ -77,6 +78,8 @@ Future<_Server> _pump(WidgetTester tester, {String role = 'MANAGER'}) async {
 }
 
 void main() {
+  // Dates are written with AppFormat, in the app's en_GB locale.
+  setUpAll(initializeDateFormatting);
   testWidgets('the warehouse, its rate, what sits in bond and this month\'s duty are shown',
       (tester) async {
     await _pump(tester);

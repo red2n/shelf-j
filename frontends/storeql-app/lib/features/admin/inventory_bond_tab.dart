@@ -178,11 +178,21 @@ class InventoryBondTab extends ConsumerWidget {
     final management = auth is AuthAuthenticated && auth.isManager;
     final stores = ref.watch(storesProvider).value ?? const <StoreInfo>[];
     String storeName(String id) =>
-        stores.where((s) => s.id == id).map((s) => s.name).firstOrNull ?? shortRef(id);
+        stores.where((s) => s.id == id).map((s) => s.name).firstOrNull ?? '…${shortRef(id)}';
     final approvals = ref.watch(bondApprovalsProvider);
     final rates = ref.watch(dutyRatesProvider);
     final stock = ref.watch(bondStockProvider);
     final releases = ref.watch(bondReleasesProvider);
+    // Stock by its product's name; the end of its id only while names load.
+    final names = ref
+            .watch(variantLabelsProvider(variantIdsKey([
+              for (final r in rates.value ?? const []) r.variantId as String,
+              for (final s in stock.value ?? const []) s.variantId as String,
+              for (final x in releases.value?.releases ?? const []) x.variantId as String,
+            ])))
+            .value ??
+        const <String, VariantLabel>{};
+    String product(String id) => variantDisplayName(id, names);
     final cs = Theme.of(context).colorScheme;
     final text = Theme.of(context).textTheme;
 
@@ -292,7 +302,7 @@ class InventoryBondTab extends ConsumerWidget {
                       ListTile(
                         dense: true,
                         title: Text(
-                          'Variant ${shortRef(r.variantId)} · ${AppFormat.money(r.dutyPerUnit, currencyCode: r.currency)} per unit',
+                          '${product(r.variantId)} · ${AppFormat.money(r.dutyPerUnit, currencyCode: r.currency)} per unit',
                         ),
                         subtitle: r.note == null ? null : Text(r.note!),
                       ),
@@ -330,7 +340,7 @@ class InventoryBondTab extends ConsumerWidget {
                       ListTile(
                         key: Key('in-bond-${s.variantId}'),
                         dense: true,
-                        title: Text('${s.qty.toStringAsFixed(0)} × variant ${shortRef(s.variantId)} at ${storeName(s.storeId)}'),
+                        title: Text('${s.qty.toStringAsFixed(0)} × ${product(s.variantId)} at ${storeName(s.storeId)}'),
                         subtitle: Text(
                           s.dutyPerUnit == null
                               ? 'No duty rate set: cannot be released until one is'
@@ -360,8 +370,8 @@ class InventoryBondTab extends ConsumerWidget {
                     for (final x in r.releases)
                       ListTile(
                         dense: true,
-                        title: Text('${x.qty.toStringAsFixed(0)} × variant ${shortRef(x.variantId)} from ${storeName(x.storeId)}'),
-                        subtitle: Text('${x.releasedAt.split('T').first}${x.reference == null ? '' : ' · ${x.reference}'}'),
+                        title: Text('${x.qty.toStringAsFixed(0)} × ${product(x.variantId)} from ${storeName(x.storeId)}'),
+                        subtitle: Text('${AppFormat.dateTime(x.releasedAt)}${x.reference == null ? '' : ' · ${x.reference}'}'),
                         trailing: Text(AppFormat.money(x.dutyAmount, currencyCode: x.currency)),
                       ),
                     ListTile(

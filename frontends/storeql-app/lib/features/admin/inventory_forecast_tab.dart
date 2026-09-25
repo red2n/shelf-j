@@ -2,10 +2,12 @@ import 'package:flutter/material.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 
 import '../../core/constants.dart';
+import '../../core/format.dart';
+import '../../core/spacing.dart';
+import '../../shared/util/status_labels.dart';
 import '../../core/theme.dart';
 import '../../core/network/api_client.dart';
 import '../../core/network/api_error.dart';
-import '../../shared/util/short_ref.dart';
 import '../../shared/widgets/error_view.dart';
 import '../../shared/widgets/loading_view.dart';
 import 'providers/admin_providers.dart';
@@ -14,6 +16,14 @@ import '../../shared/widgets/empty_state.dart';
 /// The statistical demand forecast (06.x) for a store: run it, read what it
 /// expects of each item over the next week and month, and how sure it is.
 /// Accuracy the server could not honestly compute is a dash, never a zero.
+/// A forecasting method in words.
+String forecastMethodWords(String method) => switch (method.toUpperCase()) {
+      'SES' => 'Smoothing (SES)',
+      'CROSTON_SBA' => 'Croston (SBA)',
+      'AVERAGE' || 'MEAN' => 'Average',
+      _ => humanizeCode(method),
+    };
+
 class InventoryForecastTab extends ConsumerStatefulWidget {
   const InventoryForecastTab({super.key});
 
@@ -35,7 +45,8 @@ class _InventoryForecastTabState extends ConsumerState<InventoryForecastTab> {
           );
       final d = (resp.data['data'] as Map<String, dynamic>?) ?? {};
       final byMethod = (d['byMethod'] as Map<String, dynamic>?) ?? {};
-      final methods = byMethod.entries.map((e) => '${e.key} ${e.value}').join(', ');
+      final methods =
+          byMethod.entries.map((e) => '${forecastMethodWords(e.key)} ${e.value}').join(', ');
       final mape = d['meanMape'];
       messenger.showSnackBar(SnackBar(
         content: Text(d['variants'] == 0
@@ -147,10 +158,19 @@ class _ForecastTable extends ConsumerWidget {
   @override
   Widget build(BuildContext context, WidgetRef ref) {
     final cs = Theme.of(context).colorScheme;
+    // Each item by its product's name; the end of its id only while it loads.
+    final labels = ref
+            .watch(variantLabelsProvider(variantIdsKey(rows.map((r) => r.variantId))))
+            .value ??
+        const <String, VariantLabel>{};
     return SingleChildScrollView(
-      padding: const EdgeInsets.symmetric(horizontal: 16),
+      padding: EdgeInsetsDirectional.symmetric(horizontal: context.pageGutter),
       child: Card(
-        child: DataTable(
+        // Wider than the card when the names and methods are long: it scrolls
+        // sideways rather than squeezing a cell.
+        child: SingleChildScrollView(
+          scrollDirection: Axis.horizontal,
+          child: DataTable(
           headingRowColor: WidgetStatePropertyAll(cs.surfaceContainerHigh),
           columnSpacing: 20,
           showCheckboxColumn: false,
@@ -167,9 +187,9 @@ class _ForecastTable extends ConsumerWidget {
               .map((r) => DataRow(
                     onSelectChanged: (_) => _showDetail(context, r),
                     cells: [
-                      DataCell(Text('…${shortRef(r.variantId)}')),
+                      DataCell(Text(variantDisplayName(r.variantId, labels))),
                       DataCell(Row(mainAxisSize: MainAxisSize.min, children: [
-                        Text(r.method),
+                        Text(forecastMethodWords(r.method)),
                         if (r.fresh)
                           Padding(
                             padding: const EdgeInsets.only(left: 6),
@@ -246,6 +266,7 @@ class _ForecastTable extends ConsumerWidget {
                     ],
                   ))
               .toList(),
+          ),
         ),
       ),
     );
@@ -268,6 +289,9 @@ class _ForecastDetail extends ConsumerWidget {
   @override
   Widget build(BuildContext context, WidgetRef ref) {
     final async = ref.watch(forecastDetailProvider('$storeId/$variantId'));
+    final labels =
+        ref.watch(variantLabelsProvider(variantIdsKey([variantId]))).value ??
+            const <String, VariantLabel>{};
     return async.when(
       loading: () => const SizedBox(height: 240, child: LoadingView(label: 'Loading forecast…')),
       error: (e, _) => SizedBox(
@@ -280,11 +304,11 @@ class _ForecastDetail extends ConsumerWidget {
       data: (f) => ListView(
         padding: const EdgeInsets.fromLTRB(16, 0, 16, 24),
         children: [
-          Text('Variant …${shortRef(f.variantId)} · ${f.method}'
+          Text('${variantDisplayName(f.variantId, labels)} · ${forecastMethodWords(f.method)}'
               '${f.alpha == null ? '' : ' · α ${f.alpha!.toStringAsFixed(2)}'}',
               style: Theme.of(context).textTheme.titleMedium),
           const SizedBox(height: 4),
-          Text('${f.historyDays} days of history to ${f.fromDay}; ${f.horizonDays} days ahead. '
+          Text('${f.historyDays} days of history to ${AppFormat.date(f.fromDay)}; ${f.horizonDays} days ahead. '
               'Tested on the last ${f.holdoutDays} days: MAPE ${_fmt(f.mape, suffix: '%')}, '
               'bias ${_fmt(f.bias, suffix: '%')}, MASE ${_fmt(f.mase, decimals: 2)}.'
               '${f.fresh ? ' Fresh: lives ${f.shelfLifeDays} days, so an order covers no more' : ''}'
@@ -311,7 +335,7 @@ class _ForecastDetail extends ConsumerWidget {
           const SizedBox(height: 12),
           ...f.points.map((p) => Row(
                 children: [
-                  SizedBox(width: 110, child: Text(p.day)),
+                  SizedBox(width: 110, child: Text(AppFormat.date(p.day))),
                   Expanded(
                     child: LinearProgressIndicator(
                       value: f.level <= 0 ? 0 : (p.qty / (f.level * 2)).clamp(0.0, 1.0),

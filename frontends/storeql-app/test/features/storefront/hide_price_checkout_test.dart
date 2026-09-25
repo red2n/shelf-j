@@ -109,6 +109,7 @@ void main() {
 
       // No currency or price amount should appear anywhere
       expect(find.textContaining('GBP'), findsNothing);
+      expect(find.textContaining('£'), findsNothing); // money reads £, not GBP
       expect(find.textContaining('0.00'), findsNothing);
 
       // Total row must NOT be visible
@@ -269,6 +270,7 @@ void main() {
 
       // Catalog mode: no price text, but add-to-cart icon present
       expect(find.textContaining('GBP'), findsNothing);
+      expect(find.textContaining('£'), findsNothing); // money reads £, not GBP
       expect(find.byIcon(Icons.add_shopping_cart), findsOneWidget);
     });
   });

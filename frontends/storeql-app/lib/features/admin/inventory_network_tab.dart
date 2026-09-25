@@ -14,6 +14,7 @@ import '../../shared/widgets/empty_state.dart';
 import '../../shared/widgets/error_view.dart';
 import '../../shared/widgets/loading_view.dart';
 import 'providers/admin_providers.dart';
+import 'widgets/variant_names.dart';
 import 'widgets/variant_picker.dart';
 
 // ---------------------------------------------------------------------------
@@ -86,7 +87,13 @@ class InventoryNetworkTab extends ConsumerWidget {
     final chosen = ref.watch(networkWarehouseProvider) ?? (warehouses.isEmpty ? null : warehouses.first.id);
     final cs = Theme.of(context).colorScheme;
     final text = Theme.of(context).textTheme;
-    String name(String id) => names[id] ?? shortRef(id);
+    String name(String id) => names[id] ?? '…${shortRef(id)}';
+    // A product a shop buys direct, by name (the catalogue's first page); the
+    // end of its id only while it loads, or past that page.
+    final products = {
+      for (final p in ref.watch(productsProvider).value ?? const <ProductInfo>[]) p.id: p.name,
+    };
+    String productName(String id) => products[id] ?? '…${shortRef(id)}';
 
     Widget header(String title, String detail, Widget? action) => Row(
           crossAxisAlignment: CrossAxisAlignment.start,
@@ -184,7 +191,7 @@ class InventoryNetworkTab extends ConsumerWidget {
                             title: Text('${name(s.storeId)} ← ${name(s.warehouseId)}'),
                             subtitle: Text(
                               '${s.leadTimeDays} ${s.leadTimeDays == 1 ? 'day' : 'days'} from the warehouse'
-                              '${s.direct.isEmpty ? '' : ' · bought direct: ${s.direct.map(shortRef).join(', ')}'}',
+                              '${s.direct.isEmpty ? '' : ' · bought direct: ${s.direct.map(productName).join(', ')}'}',
                             ),
                             trailing: management
                                 ? Row(
@@ -255,7 +262,9 @@ class InventoryNetworkTab extends ConsumerWidget {
                   ),
                   data: (drafts) => drafts.isEmpty
                       ? const EmptyState(icon: Icons.inventory_2_outlined, title: 'No proposal waiting')
-                      : Column(
+                      : VariantNames(
+                        ids: [for (final t in drafts) ...t.lines.map((l) => l.variantId)],
+                        builder: (context, labels) => Column(
                           children: [
                             for (final t in drafts)
                               Card(
@@ -273,7 +282,7 @@ class InventoryNetworkTab extends ConsumerWidget {
                                           child: Column(
                                             crossAxisAlignment: CrossAxisAlignment.start,
                                             children: [
-                                              Text('${_q(l.requestedQty)} × ${shortRef(l.variantId)}',
+                                              Text('${_q(l.requestedQty)} × ${variantDisplayName(l.variantId, labels)}',
                                                   key: Key('draft-line-${l.id}')),
                                               if (l.reason != null)
                                                 Text(l.reason!,
@@ -316,6 +325,7 @@ class InventoryNetworkTab extends ConsumerWidget {
                               ),
                           ],
                         ),
+                      ),
                 ),
         ],
       ],

@@ -92,8 +92,8 @@ class _Server implements HttpClientAdapter {
   }
 }
 
-Future<_Server> _open(WidgetTester tester) async {
-  tester.view.physicalSize = const Size(1200, 1400);
+Future<_Server> _open(WidgetTester tester, {Size size = const Size(1200, 1400)}) async {
+  tester.view.physicalSize = size;
   tester.view.devicePixelRatio = 1;
   addTearDown(tester.view.reset);
   final server = _Server();
@@ -126,6 +126,29 @@ void main() {
     await tester.pumpAndSettle();
     expect(find.text('Online hub · dark store'), findsOneWidget);
     expect(find.text('Leeds DC'), findsNothing);
+  });
+
+  testWidgets('a queued order says its total as money', (tester) async {
+    await _open(tester);
+    expect(find.textContaining('£12.50'), findsWidgets);
+    expect(find.textContaining('GBP 12.50'), findsNothing);
+  });
+
+  testWidgets('on a phone the actions sit under the line, so the name keeps the width',
+      (tester) async {
+    await _open(tester, size: const Size(390, 2400));
+    expect(tester.takeException(), isNull);
+    final line = find.text('2 of 3 outstanding');
+    final substitute = find.byKey(const Key('substitute-$_owing-$_apples'));
+    await tester.ensureVisible(substitute);
+    expect(tester.getTopLeft(substitute).dy, greaterThanOrEqualTo(tester.getBottomLeft(line).dy));
+    final dispatch = find.byKey(const Key('dispatch-$_packed'));
+    await tester.ensureVisible(dispatch);
+    final order = find.descendant(
+        of: find.byKey(const Key('queued-$_packed')), matching: find.textContaining('£12.50'));
+    expect(tester.getTopLeft(dispatch).dy, greaterThanOrEqualTo(tester.getBottomLeft(order).dy));
+    // The page's gutter is the phone's 16.
+    expect(tester.takeException(), isNull);
   });
 
   testWidgets('Dispatch posts the carrier, reference and parcels', (tester) async {

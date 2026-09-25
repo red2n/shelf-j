@@ -263,6 +263,21 @@ public class ReportingService {
   }
 
   /**
+   * Void a sale: order-svc voided a till sale after the fact ({@code OrderVoided}). The sale's fact
+   * is marked, never deleted, and left out of every sales report from then on. Deduped on the
+   * event's id; the first void heard for an order stands, and one heard before its sale voids the
+   * sale when it lands.
+   *
+   * @param eventId the {@code OrderVoided} event id, the dedupe key
+   * @param consumer the consumer name the dedupe mark is kept under
+   * @param tenantId the business the event names, from the event itself
+   * @param orderId the voided sale
+   */
+  public void applySaleVoided(UUID eventId, String consumer, UUID tenantId, UUID orderId) {
+    repo.voidSaleOnce(eventId, consumer, tenantId, orderId);
+  }
+
+  /**
    * Aggregate sales totals over a period.
    *
    * @param tenantId owning tenant
@@ -270,7 +285,7 @@ public class ReportingService {
    * @param to exclusive end of the period, UTC
    * @param storeId restrict to one store, or {@code null} for every store in the tenant
    * @param channel restrict to {@code ONLINE} or {@code POS}, or {@code null} for both
-   * @return the summary rows, net of any refunds already projected
+   * @return the summary rows, net of any refunds already projected; voided sales left out
    */
   public List<SalesSummary> salesSummary(
       UUID tenantId, Instant from, Instant to, UUID storeId, String channel) {
@@ -285,7 +300,7 @@ public class ReportingService {
    * @param to exclusive end of the period, UTC
    * @param storeId restrict to one store, or {@code null} for every store in the tenant
    * @param channel restrict to {@code ONLINE} or {@code POS}, or {@code null} for both
-   * @return one row per day in the period that saw a sale
+   * @return one row per day in the period that saw a sale that stands (voided sales left out)
    */
   public List<SalesDayStat> salesByDay(
       UUID tenantId, Instant from, Instant to, UUID storeId, String channel) {

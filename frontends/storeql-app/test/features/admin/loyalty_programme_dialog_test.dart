@@ -4,6 +4,7 @@ import 'package:dio/dio.dart';
 import 'package:flutter/material.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:flutter_test/flutter_test.dart';
+import 'package:intl/date_symbol_data_local.dart';
 import 'package:storeql_app/core/network/api_client.dart';
 import 'package:storeql_app/features/admin/customer_providers.dart';
 import 'package:storeql_app/features/admin/loyalty_programme_dialog.dart';
@@ -93,6 +94,9 @@ Future<_Server> _pump(WidgetTester tester, {bool refuseSave = false}) async {
 }
 
 void main() {
+  // The app loads intl's date data through flutter_localizations; a plain test loads it itself.
+  setUpAll(initializeDateFormatting);
+
   testWidgets('the default programme is shown as such, with its four tiers', (tester) async {
     await _pump(tester);
     expect(find.textContaining("The platform's default"), findsOneWidget);
@@ -147,7 +151,7 @@ void main() {
       'expiryMonths': 12,
     });
     expect(a.tierLine, 'SILVER · GOLD in 23 pts · ×1.5');
-    expect(a.expiringLine, '20 pts expire 2026-10-23');
+    expect(a.expiringLine, '20 pts expire 23 Oct 2026');
     final top = LoyaltyAccount.fromJson({'pointsBalance': 0, 'tier': 'PLATINUM', 'multiplier': 1});
     expect(top.tierLine, 'PLATINUM');
     expect(top.expiringLine, '');

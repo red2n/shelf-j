@@ -1,5 +1,6 @@
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 import '../../core/constants.dart';
+import '../../shared/util/status_labels.dart';
 import '../../core/network/api_client.dart';
 
 // ── Models ───────────────────────────────────────────────────────────────────
@@ -827,3 +828,24 @@ final purchaseOrderAllocationsProvider =
       .map((e) => LineAllocation.fromJson(e as Map<String, dynamic>))
       .toList();
 });
+
+/// A purchase order's status in words, and the tone it is shown in: the same
+/// on the order list, the order and the e-invoice matching dialog.
+(String, StatusTone) purchaseOrderStatus(String status) =>
+    switch (status.toUpperCase()) {
+      'DRAFT' => ('Draft', StatusTone.neutral),
+      // Amber for the same reason PARTIALLY_RECEIVED is: this is a state
+      // somebody has to act on, not one to observe. Blue would read as "on its
+      // way" when it means "stopped".
+      'PENDING_APPROVAL' => ('Pending approval', StatusTone.warning),
+      'SUBMITTED' => ('Submitted', StatusTone.info),
+      // Something is still owed, and that is a state a buyer is meant to act
+      // on rather than merely observe.
+      'PARTIALLY_RECEIVED' => ('Part received', StatusTone.warning),
+      'RECEIVED' => ('Received', StatusTone.success),
+      // Short-closed: part arrived and the rest never will.
+      'CLOSED' => ('Closed short', StatusTone.neutral),
+      // Grey, not amber: nothing is left for anyone to do.
+      'CANCELLED' => ('Cancelled', StatusTone.neutral),
+      _ => (humanizeCode(status), StatusTone.neutral),
+    };

@@ -5,11 +5,15 @@ import 'package:go_router/go_router.dart';
 import '../../core/auth/auth_notifier.dart';
 import '../../core/auth/auth_state.dart';
 import '../../core/constants.dart';
+import '../../core/format.dart';
 import '../../core/network/api_client.dart';
 import '../../core/network/api_error.dart';
 import '../../core/offline/offline_queue.dart';
 import '../../core/offline/offline_sale.dart';
+import '../../core/spacing.dart';
 import '../../core/theme.dart';
+import '../../shared/widgets/bottom_action_bar.dart';
+import '../../shared/widgets/empty_state.dart';
 import '../admin/customer_providers.dart';
 import '../admin/providers/admin_providers.dart';
 import 'pos_fiscal_receipt.dart';
@@ -520,9 +524,9 @@ class _TenderScreenState extends ConsumerState<TenderScreen> {
             if (change > 0) ...[
               const SizedBox(height: 8),
               Text(
-                'Change due: $currency ${change.toStringAsFixed(2)}',
+                'Change due: ${AppFormat.money(change, currencyCode: currency)}',
                 style: TextStyle(
-                  color: Theme.of(ctx).colorScheme.primary,
+                  color: Theme.of(ctx).colorScheme.onSurface,
                   fontWeight: FontWeight.bold,
                   fontSize: 18,
                 ),
@@ -533,7 +537,7 @@ class _TenderScreenState extends ConsumerState<TenderScreen> {
               "The server couldn't be reached. This sale is held on this till and "
               'sent automatically when the network is back — see Pending.',
               textAlign: TextAlign.center,
-              style: TextStyle(color: Theme.of(ctx).colorScheme.outline),
+              style: TextStyle(color: Theme.of(ctx).colorScheme.onSurfaceVariant),
             ),
             const SizedBox(height: 16),
             // No "Email receipt": that needs the server this sale is waiting for.
@@ -718,9 +722,9 @@ class _TenderScreenState extends ConsumerState<TenderScreen> {
             if (change > 0) ...[
               const SizedBox(height: 8),
               Text(
-                'Change due: $currency ${change.toStringAsFixed(2)}',
+                'Change due: ${AppFormat.money(change, currencyCode: currency)}',
                 style: TextStyle(
-                  color: Theme.of(ctx).colorScheme.primary,
+                  color: Theme.of(ctx).colorScheme.onSurface,
                   fontWeight: FontWeight.bold,
                   fontSize: 18,
                 ),
@@ -782,68 +786,76 @@ class _TenderScreenState extends ConsumerState<TenderScreen> {
 
   Widget _orderOnlyView(List<PosLine> cart) {
     final qty = cart.fold<int>(0, (s, l) => s + l.itemCount);
-    return Padding(
-      padding: const EdgeInsets.all(24),
-      child: Column(
-        crossAxisAlignment: CrossAxisAlignment.stretch,
-        children: [
-          Text(
-            'Place order',
-            style: Theme.of(context).textTheme.headlineMedium,
-          ),
-          const SizedBox(height: 4),
-          Text(
-            '$qty item${qty == 1 ? '' : 's'}',
-            style: TextStyle(color: Theme.of(context).colorScheme.outline),
-          ),
-          const SizedBox(height: 16),
-          Expanded(
-            child: ListView.separated(
-              itemCount: cart.length,
-              separatorBuilder: (_, _) => const Divider(height: 1),
-              itemBuilder: (_, i) {
-                final l = cart[i];
-                return ListTile(
-                  dense: true,
-                  leading: const Icon(Icons.inventory_2_outlined),
-                  title: Text(l.name),
-                  subtitle: Text(l.sku),
-                  trailing: Text(
-                    '× ${l.qtyLabel}',
-                    style: const TextStyle(fontWeight: FontWeight.bold),
-                  ),
-                );
-              },
+    // A reading column, not a full-width bar across a desktop window.
+    return ContentBounds.form(
+      child: Padding(
+        padding: EdgeInsets.all(context.pageGutter),
+        child: Column(
+          crossAxisAlignment: CrossAxisAlignment.stretch,
+          children: [
+            Text(
+              'Place order',
+              style: Theme.of(context).textTheme.headlineMedium,
             ),
-          ),
-          FilledButton.icon(
-            style: FilledButton.styleFrom(
-              backgroundColor: context.channelAccent.color,
-              foregroundColor: context.channelAccent.onColor,
-              padding: const EdgeInsets.symmetric(vertical: 16),
+            const SizedBox(height: 4),
+            Text(
+              '$qty item${qty == 1 ? '' : 's'}',
+              style: TextStyle(
+                color: Theme.of(context).colorScheme.onSurfaceVariant,
+              ),
             ),
-            onPressed: _processing ? null : _placeOrderOnly,
-            icon: _processing
-                ? SizedBox(
-                    height: 20,
-                    width: 20,
-                    child: CircularProgressIndicator(
-                      strokeWidth: 2,
-                      color: context.channelAccent.onColor,
+            const SizedBox(height: 16),
+            Expanded(
+              child: ListView.separated(
+                itemCount: cart.length,
+                separatorBuilder: (_, _) => const Divider(height: 1),
+                itemBuilder: (_, i) {
+                  final l = cart[i];
+                  return ListTile(
+                    dense: true,
+                    contentPadding: EdgeInsets.zero,
+                    leading: const Icon(Icons.inventory_2_outlined),
+                    title: Text(l.name),
+                    subtitle: Text(l.sku),
+                    trailing: Text(
+                      '× ${l.qtyLabel}',
+                      style: Theme.of(context).textTheme.titleSmall?.copyWith(
+                        fontWeight: FontWeight.bold,
+                      ),
                     ),
-                  )
-                : const Icon(Icons.receipt_long),
-            label: Text(
-              _processing ? 'Placing…' : 'Place order',
-              style: const TextStyle(fontSize: 17),
+                  );
+                },
+              ),
             ),
-          ),
-          const SizedBox(height: 12),
-          OutlinedButton(
-            onPressed: _processing ? null : () => context.go('/pos/cart'),
-            child: const Text('Back to Sale'),
-          ),
-        ],
+            FilledButton.icon(
+              style: FilledButton.styleFrom(
+                backgroundColor: context.channelAccent.color,
+                foregroundColor: context.channelAccent.onColor,
+                padding: const EdgeInsets.symmetric(vertical: 16),
+              ),
+              onPressed: _processing ? null : _placeOrderOnly,
+              icon: _processing
+                  ? SizedBox(
+                      height: 20,
+                      width: 20,
+                      child: CircularProgressIndicator(
+                        strokeWidth: 2,
+                        color: context.channelAccent.onColor,
+                      ),
+                    )
+                  : const Icon(Icons.receipt_long),
+              label: Text(
+                _processing ? 'Placing…' : 'Place order',
+                style: const TextStyle(fontSize: 17),
+              ),
+            ),
+            const SizedBox(height: 12),
+            OutlinedButton(
+              onPressed: _processing ? null : () => context.go('/pos/cart'),
+              child: const Text('Back to Sale'),
+            ),
+          ],
+        ),
       ),
     );
   }
@@ -1007,9 +1019,44 @@ class _TenderScreenState extends ConsumerState<TenderScreen> {
     );
   }
 
+  /// One staged tender: its method, what was handed over for cash, the amount,
+  /// and a button to take it off again.
+  Widget _tenderTile(int i, String Function(double) money) {
+    final t = _tenders[i];
+    return ListTile(
+      dense: true,
+      contentPadding: EdgeInsets.zero,
+      leading: const Icon(Icons.check_circle, size: 20),
+      title: Text(t.label),
+      subtitle: t.method == 'CASH' && t.change > 0
+          ? Text('Given ${money(t.cashGiven)} · change ${money(t.change)}')
+          : (t.method == 'GIFT_CARD' ? Text('Code ${t.giftCardCode}') : null),
+      trailing: Row(
+        mainAxisSize: MainAxisSize.min,
+        children: [
+          // Its own type: the trailing slot's default is an 11px label.
+          Text(
+            money(t.amount),
+            style: Theme.of(context).textTheme.titleSmall?.copyWith(
+              fontWeight: FontWeight.bold,
+            ),
+          ),
+          IconButton(
+            icon: const Icon(Icons.delete_outline, size: 20),
+            tooltip: 'Remove tender',
+            onPressed: _processing
+                ? null
+                : () => setState(() => _tenders.removeAt(i)),
+          ),
+        ],
+      ),
+    );
+  }
+
   @override
   Widget build(BuildContext context) {
-    final cs = Theme.of(context).colorScheme;
+    final theme = Theme.of(context);
+    final cs = theme.colorScheme;
     final cart = ref.watch(posCartProvider);
     final showPrices = ref.watch(posShowPricesProvider);
     final currency = _currency;
@@ -1018,21 +1065,15 @@ class _TenderScreenState extends ConsumerState<TenderScreen> {
     final due = _due;
     final remaining = _remaining;
     final settled = remaining <= 0.001;
+    String money(double v) => AppFormat.money(v, currencyCode: currency);
 
     if (cart.isEmpty) {
-      return Center(
-        child: Column(
-          mainAxisSize: MainAxisSize.min,
-          children: [
-            Icon(Icons.point_of_sale, size: 64, color: cs.outlineVariant),
-            const SizedBox(height: 16),
-            const Text('No sale in progress'),
-            const SizedBox(height: 16),
-            OutlinedButton(
-              onPressed: () => context.go('/pos/cart'),
-              child: const Text('Back to Sale'),
-            ),
-          ],
+      return EmptyState(
+        icon: Icons.point_of_sale,
+        title: 'No sale in progress',
+        action: OutlinedButton(
+          onPressed: () => context.go('/pos/cart'),
+          child: const Text('Back to Sale'),
         ),
       );
     }
@@ -1043,163 +1084,170 @@ class _TenderScreenState extends ConsumerState<TenderScreen> {
       return _orderOnlyView(cart);
     }
 
-    return Padding(
-      padding: const EdgeInsets.all(24),
-      child: Column(
-        crossAxisAlignment: CrossAxisAlignment.stretch,
-        children: [
-          Text('Tender', style: Theme.of(context).textTheme.headlineMedium),
-          const SizedBox(height: 12),
-          _SummaryRow(
-            label: 'Total due',
-            value: '$currency ${due.toStringAsFixed(2)}',
-            bold: true,
-          ),
-          _SummaryRow(
-            label: 'Paid',
-            value: '$currency ${_paid.toStringAsFixed(2)}',
-          ),
-          _SummaryRow(
-            label: settled ? 'Change' : 'Remaining',
-            value:
-                '$currency ${(settled ? _change : remaining).toStringAsFixed(2)}',
-            bold: true,
-            color: settled ? cs.primary : cs.error,
-          ),
-          const SizedBox(height: 16),
-          Text('Add payment', style: Theme.of(context).textTheme.titleMedium),
-          const SizedBox(height: 8),
-          Builder(
-            builder: (context) {
-              // Only the tenders the owner enabled for this store (gift card and
-              // store credit are store-issued instruments — always available).
-              final enabled = ref.watch(posEnabledPaymentMethodsProvider);
-              return Wrap(
-                spacing: 8,
-                runSpacing: 8,
-                children: [
-                  if (enabled.contains('CASH'))
-                    _TenderButton(
-                      icon: Icons.payments_outlined,
-                      label: 'Cash',
-                      onTap: _processing || settled
-                          ? null
-                          : () => _addCashOrCard('CASH'),
-                    ),
-                  if (enabled.contains('CARD'))
-                    _TenderButton(
-                      icon: Icons.credit_card,
-                      label: 'Card',
-                      onTap: _processing || settled
-                          ? null
-                          : () => _addCashOrCard('CARD'),
-                    ),
-                  if (enabled.contains('UPI'))
-                    _TenderButton(
-                      icon: Icons.qr_code_2,
-                      label: 'UPI',
-                      onTap: _processing || settled
-                          ? null
-                          : () => _addCashOrCard('UPI'),
-                    ),
-                  if (enabled.contains('WALLET'))
-                    _TenderButton(
-                      icon: Icons.wallet_outlined,
-                      label: 'Wallet',
-                      onTap: _processing || settled
-                          ? null
-                          : () => _addCashOrCard('WALLET'),
-                    ),
-                  _TenderButton(
-                    icon: Icons.card_giftcard,
-                    label: 'Gift card',
-                    onTap: _processing || settled ? null : _addGiftCard,
-                  ),
-                  _TenderButton(
-                    icon: Icons.account_balance_wallet_outlined,
-                    label: 'Store credit',
-                    onTap: _processing || settled ? null : _addStoreCredit,
-                  ),
-                ],
-              );
-            },
-          ),
-          const SizedBox(height: 16),
-          Expanded(
-            child: _tenders.isEmpty
-                ? Center(
-                    child: Text(
-                      'No payments added yet',
-                      style: TextStyle(color: cs.outline),
-                    ),
-                  )
-                : ListView.separated(
-                    itemCount: _tenders.length,
-                    separatorBuilder: (_, _) => const Divider(height: 1),
-                    itemBuilder: (_, i) {
-                      final t = _tenders[i];
-                      return ListTile(
-                        dense: true,
-                        leading: const Icon(Icons.check_circle, size: 20),
-                        title: Text(t.label),
-                        subtitle: t.method == 'CASH' && t.change > 0
-                            ? Text(
-                                'Given $currency ${t.cashGiven.toStringAsFixed(2)} · change $currency ${t.change.toStringAsFixed(2)}',
-                              )
-                            : (t.method == 'GIFT_CARD'
-                                  ? Text('Code ${t.giftCardCode}')
-                                  : null),
-                        trailing: Row(
-                          mainAxisSize: MainAxisSize.min,
-                          children: [
-                            Text(
-                              '$currency ${t.amount.toStringAsFixed(2)}',
-                              style: const TextStyle(
-                                fontWeight: FontWeight.bold,
-                              ),
-                            ),
-                            IconButton(
-                              icon: const Icon(Icons.delete_outline, size: 20),
-                              tooltip: 'Remove tender',
-                              onPressed: _processing
-                                  ? null
-                                  : () => setState(() => _tenders.removeAt(i)),
-                            ),
-                          ],
-                        ),
-                      );
-                    },
-                  ),
-          ),
-          FilledButton.icon(
-            style: FilledButton.styleFrom(
-              backgroundColor: context.channelAccent.color,
-              foregroundColor: context.channelAccent.onColor,
-              padding: const EdgeInsets.symmetric(vertical: 16),
-            ),
-            onPressed: (_processing || !settled) ? null : _complete,
-            icon: _processing
-                ? SizedBox(
-                    height: 20,
-                    width: 20,
-                    child: CircularProgressIndicator(
-                      strokeWidth: 2,
-                      color: context.channelAccent.onColor,
-                    ),
-                  )
-                : const Icon(Icons.check_circle_outline),
-            label: Text(
-              _processing ? 'Processing…' : 'Complete Sale',
-              style: const TextStyle(fontSize: 17),
-            ),
-          ),
-          const SizedBox(height: 12),
-          OutlinedButton(
-            onPressed: _processing ? null : () => context.go('/pos/cart'),
-            child: const Text('Back to Sale'),
-          ),
-        ],
+    // The figures, the payment buttons and the tenders added so far scroll as
+    // one column, so large text or a long split never overflows the screen.
+    final details = <Widget>[
+      Text('Tender', style: theme.textTheme.headlineMedium),
+      const SizedBox(height: 12),
+      _SummaryRow(label: 'Total due', value: money(due), bold: true),
+      _SummaryRow(label: 'Paid', value: money(_paid)),
+      // An unpaid balance is the normal state while tendering, not a failure:
+      // bold on-surface ink like the total, never the error colour.
+      _SummaryRow(
+        label: settled ? 'Change' : 'Remaining',
+        value: money(settled ? _change : remaining),
+        bold: true,
       ),
+      const SizedBox(height: 16),
+      Text('Add payment', style: theme.textTheme.titleMedium),
+      const SizedBox(height: 8),
+      Builder(
+        builder: (context) {
+          // Only the tenders the owner enabled for this store (gift card and
+          // store credit are store-issued instruments — always available).
+          final enabled = ref.watch(posEnabledPaymentMethodsProvider);
+          return Wrap(
+            spacing: 8,
+            runSpacing: 8,
+            children: [
+              if (enabled.contains('CASH'))
+                _TenderButton(
+                  icon: Icons.payments_outlined,
+                  label: 'Cash',
+                  onTap: _processing || settled
+                      ? null
+                      : () => _addCashOrCard('CASH'),
+                ),
+              if (enabled.contains('CARD'))
+                _TenderButton(
+                  icon: Icons.credit_card,
+                  label: 'Card',
+                  onTap: _processing || settled
+                      ? null
+                      : () => _addCashOrCard('CARD'),
+                ),
+              if (enabled.contains('UPI'))
+                _TenderButton(
+                  icon: Icons.qr_code_2,
+                  label: 'UPI',
+                  onTap: _processing || settled
+                      ? null
+                      : () => _addCashOrCard('UPI'),
+                ),
+              if (enabled.contains('WALLET'))
+                _TenderButton(
+                  icon: Icons.wallet_outlined,
+                  label: 'Wallet',
+                  onTap: _processing || settled
+                      ? null
+                      : () => _addCashOrCard('WALLET'),
+                ),
+              _TenderButton(
+                icon: Icons.card_giftcard,
+                label: 'Gift card',
+                onTap: _processing || settled ? null : _addGiftCard,
+              ),
+              _TenderButton(
+                icon: Icons.account_balance_wallet_outlined,
+                label: 'Store credit',
+                onTap: _processing || settled ? null : _addStoreCredit,
+              ),
+            ],
+          );
+        },
+      ),
+      const SizedBox(height: 16),
+      if (_tenders.isEmpty)
+        Padding(
+          padding: const EdgeInsets.symmetric(vertical: AppSpacing.xl),
+          child: Text(
+            'No payments added yet',
+            textAlign: TextAlign.center,
+            style: TextStyle(color: cs.onSurfaceVariant),
+          ),
+        )
+      else
+        for (var i = 0; i < _tenders.length; i++) ...[
+          if (i > 0) const Divider(height: 1),
+          _tenderTile(i, money),
+        ],
+    ];
+
+    final complete = FilledButton.icon(
+      style: FilledButton.styleFrom(
+        backgroundColor: context.channelAccent.color,
+        foregroundColor: context.channelAccent.onColor,
+        padding: const EdgeInsets.symmetric(vertical: 16),
+      ),
+      onPressed: (_processing || !settled) ? null : _complete,
+      icon: _processing
+          ? SizedBox(
+              height: 20,
+              width: 20,
+              child: CircularProgressIndicator(
+                strokeWidth: 2,
+                color: context.channelAccent.onColor,
+              ),
+            )
+          : const Icon(Icons.check_circle_outline),
+      label: Text(
+        _processing ? 'Processing…' : 'Complete Sale',
+        style: const TextStyle(fontSize: 17),
+      ),
+    );
+    final back = OutlinedButton(
+      onPressed: _processing ? null : () => context.go('/pos/cart'),
+      child: const Text('Back to Sale'),
+    );
+    final gutter = context.pageGutter;
+
+    return LayoutBuilder(
+      builder: (context, constraints) {
+        if (AppBreakpoints.classOf(constraints.maxWidth) ==
+            WindowClass.compact) {
+          // A phone: the column scrolls, so Complete Sale stays under the
+          // thumb in a bar at the foot of the screen.
+          return Column(
+            crossAxisAlignment: CrossAxisAlignment.stretch,
+            children: [
+              Expanded(
+                child: ListView(
+                  padding: EdgeInsets.all(gutter),
+                  children: [...details, const SizedBox(height: 16), back],
+                ),
+              ),
+              BottomActionBar(child: complete),
+            ],
+          );
+        }
+        // Wider: a form-width column, so Complete Sale is not a bar across a
+        // desktop window and each amount sits by its label.
+        return ContentBounds.form(
+          child: Column(
+            crossAxisAlignment: CrossAxisAlignment.stretch,
+            children: [
+              Expanded(
+                child: ListView(
+                  padding: EdgeInsets.fromLTRB(gutter, gutter, gutter, 0),
+                  children: details,
+                ),
+              ),
+              Padding(
+                padding: EdgeInsets.fromLTRB(
+                  gutter,
+                  AppSpacing.lg,
+                  gutter,
+                  gutter,
+                ),
+                child: Column(
+                  crossAxisAlignment: CrossAxisAlignment.stretch,
+                  children: [complete, const SizedBox(height: 12), back],
+                ),
+              ),
+            ],
+          ),
+        );
+      },
     );
   }
 }
@@ -1208,26 +1256,23 @@ class _SummaryRow extends StatelessWidget {
   final String label;
   final String value;
   final bool bold;
-  final Color? color;
   const _SummaryRow({
     required this.label,
     required this.value,
     this.bold = false,
-    this.color,
   });
 
   @override
   Widget build(BuildContext context) {
+    // On-surface ink for every figure, the balance included.
     final style = Theme.of(context).textTheme.titleMedium?.copyWith(
       fontWeight: bold ? FontWeight.bold : FontWeight.normal,
-      color: color,
     );
     return Padding(
       padding: const EdgeInsets.symmetric(vertical: 2),
       child: Row(
         children: [
-          Text(label, style: style),
-          const Spacer(),
+          Expanded(child: Text(label, style: style)),
           Text(value, style: style),
         ],
       ),
@@ -1297,6 +1342,7 @@ class _AmountDialogState extends State<_AmountDialog> {
     final change = widget.allowOverpay && entered > widget.remaining
         ? entered - widget.remaining
         : 0.0;
+    final symbol = AppFormat.currencySymbol(widget.currency);
     return AlertDialog(
       title: Text('${widget.title} payment'),
       content: Column(
@@ -1310,7 +1356,7 @@ class _AmountDialogState extends State<_AmountDialog> {
             onChanged: (_) => setState(() {}),
             decoration: InputDecoration(
               labelText: 'Amount',
-              prefixText: '${widget.currency} ',
+              prefixText: symbol.isEmpty ? null : '$symbol ',
             ),
           ),
           if (widget.allowOverpay) ...[
@@ -1326,7 +1372,9 @@ class _AmountDialogState extends State<_AmountDialog> {
                 ),
                 for (final amt in _quick())
                   ActionChip(
-                    label: Text('${widget.currency} ${amt.toStringAsFixed(0)}'),
+                    label: Text(
+                      AppFormat.money(amt, currencyCode: widget.currency),
+                    ),
                     onPressed: () =>
                         setState(() => _ctrl.text = amt.toStringAsFixed(2)),
                   ),
@@ -1334,9 +1382,9 @@ class _AmountDialogState extends State<_AmountDialog> {
             ),
             const SizedBox(height: 8),
             Text(
-              'Change: ${widget.currency} ${change.toStringAsFixed(2)}',
+              'Change: ${AppFormat.money(change, currencyCode: widget.currency)}',
               style: TextStyle(
-                color: Theme.of(context).colorScheme.primary,
+                color: Theme.of(context).colorScheme.onSurface,
                 fontWeight: FontWeight.bold,
               ),
             ),
@@ -1461,9 +1509,11 @@ class _GiftCardTenderDialogState extends ConsumerState<_GiftCardTenderDialog> {
           ],
           if (_balance != null) ...[
             const SizedBox(height: 12),
-            Text('Balance: ${widget.currency} ${_balance!.toStringAsFixed(2)}'),
             Text(
-              'Applies: ${widget.currency} ${applied.toStringAsFixed(2)}',
+              'Balance: ${AppFormat.money(_balance!, currencyCode: widget.currency)}',
+            ),
+            Text(
+              'Applies: ${AppFormat.money(applied, currencyCode: widget.currency)}',
               style: const TextStyle(fontWeight: FontWeight.bold),
             ),
           ],
@@ -1530,9 +1580,11 @@ class _StoreCreditTenderDialog extends ConsumerWidget {
                       : customer.fullName,
                 ),
                 const SizedBox(height: 8),
-                Text('Balance: $currency ${acct.balance.toStringAsFixed(2)}'),
                 Text(
-                  'Applies: $currency ${applied.toStringAsFixed(2)}',
+                  'Balance: ${AppFormat.money(acct.balance, currencyCode: currency)}',
+                ),
+                Text(
+                  'Applies: ${AppFormat.money(applied, currencyCode: currency)}',
                   style: const TextStyle(fontWeight: FontWeight.bold),
                 ),
                 if (applied <= 0) ...[

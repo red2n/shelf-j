@@ -1,4 +1,5 @@
 import 'package:flutter/widgets.dart';
+import 'package:intl/intl.dart';
 
 /// Locales the app ships with.
 ///
@@ -29,4 +30,19 @@ class AppLocales {
     Locale('gu'), // Gujarati
     Locale('ar'), // Arabic (RTL)
   ];
+
+  /// The supported locale for a device's [locale]: the one in the same
+  /// language, whatever its region; else [fallback].
+  static Locale resolve(Locale? locale, Iterable<Locale> supported) {
+    if (locale != null) {
+      for (final s in supported) {
+        if (s.languageCode == locale.languageCode) return s;
+      }
+    }
+    return fallback;
+  }
+
+  /// The name intl knows [locale] by: `en_GB`, `pl`.
+  static String intlName(Locale locale) =>
+      Intl.canonicalizedLocale(locale.toLanguageTag());
 }

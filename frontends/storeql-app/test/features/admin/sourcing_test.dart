@@ -4,6 +4,7 @@ import 'package:dio/dio.dart';
 import 'package:flutter/material.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:flutter_test/flutter_test.dart';
+import 'package:intl/date_symbol_data_local.dart';
 import 'package:storeql_app/core/auth/auth_notifier.dart';
 import 'package:storeql_app/core/network/api_client.dart';
 import 'package:storeql_app/features/admin/sourcing_tab.dart';
@@ -89,11 +90,15 @@ Future<void> _openDetail(WidgetTester tester) async {
 }
 
 void main() {
+  setUpAll(initializeDateFormatting);
   testWidgets('the requests are listed with how far the asking has got', (tester) async {
     await _pump(tester);
     expect(find.text('RFQ-000001 · Autumn beef'), findsOneWidget);
-    expect(find.text('2 lines · 2 of 3 suppliers quoted · needed by 2026-10-08'), findsOneWidget);
+    expect(find.text('2 lines · 2 of 3 suppliers quoted · needed by 8 Oct 2026'), findsOneWidget);
     expect(find.byKey(const Key('rfq-status-ISSUED')), findsOneWidget);
+    // The status in words, not the code.
+    expect(find.text('Out for quotes'), findsOneWidget);
+    expect(find.text('ISSUED'), findsNothing);
     expect(find.byKey(const Key('rfq-new')), findsOneWidget);
   });
 

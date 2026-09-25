@@ -13,7 +13,9 @@ import java.util.UUID;
 /**
  * Routes order/payment events to the sales projection (N4). {@code OrderConfirmed} records a sale
  * (idempotent on the order PK); {@code PaymentRefunded} accumulates a refund against that sale
- * (deduped on eventId). One dispatcher per domain keeps each concern a single private method (SRP).
+ * (deduped on eventId); {@code OrderVoided} marks a till sale voided after the fact, so it leaves
+ * every sales report (deduped on eventId). One dispatcher per domain keeps each concern a single
+ * private method (SRP).
  *
  * <p>Malformed payloads are skipped and write failures propagate ({@link JsonEventDispatcher}).
  */
@@ -33,6 +35,7 @@ class SalesEventDispatcher extends JsonEventDispatcher {
     switch (topic) {
       case "storeql.order.order-confirmed" -> handleOrderConfirmed(obj);
       case "storeql.payment.payment-refunded" -> handleRefunded(obj);
+      case "storeql.order.order-voided" -> handleVoided(obj);
       default -> {
         return false;
       }
@@ -77,5 +80,16 @@ class SalesEventDispatcher extends JsonEventDispatcher {
     UUID orderId = Ids.parse(obj.getString("orderId"));
     BigDecimal amount = obj.getJsonNumber("amount").bigDecimalValue();
     service.applySalesRefund(eventId, CONSUMER, tenantId, orderId, amount);
+  }
+
+  /**
+   * A till sale voided after the fact no longer stands. The event's items are what inventory-svc
+   * restocks; the sales projection needs only which sale, whose, and the event to dedupe on.
+   */
+  private void handleVoided(JsonObject obj) {
+    UUID eventId = Ids.parse(obj.getString("eventId"));
+    UUID tenantId = Ids.parse(obj.getString("tenantId"));
+    UUID orderId = Ids.parse(obj.getString("orderId"));
+    service.applySaleVoided(eventId, CONSUMER, tenantId, orderId);
   }
 }

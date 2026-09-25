@@ -23,6 +23,18 @@ void main() {
     expect(tester.getSize(find.byKey(const Key('form'))).width, 640);
   });
 
+  testWidgets('ContentBounds.reading keeps running text to about 80 characters a line', (tester) async {
+    // 552 of 14px text, plus the page's 24 gutters on each side from a tablet up.
+    await _pumpAt(tester, 1600, ContentBounds.reading(child: Container(key: const Key('text'))));
+    expect(tester.getSize(find.byKey(const Key('text'))).width, AppBreakpoints.readingMeasure + 2 * AppSpacing.xl);
+    expect(AppBreakpoints.readingMeasure, 552);
+  });
+
+  testWidgets('ContentBounds.reading is a no-op on a phone', (tester) async {
+    await _pumpAt(tester, 390, ContentBounds.reading(child: Container(key: const Key('text'))));
+    expect(tester.getSize(find.byKey(const Key('text'))).width, 390);
+  });
+
   testWidgets('ContentBounds is a no-op on a phone', (tester) async {
     await _pumpAt(tester, 390, ContentBounds(child: Container(key: const Key('page'))));
     expect(tester.getSize(find.byKey(const Key('page'))).width, 390);

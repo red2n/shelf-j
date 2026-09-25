@@ -30,13 +30,28 @@ class _Api implements HttpClientAdapter {
   }
 }
 
-Future<_Api> _pump(WidgetTester tester, {String token = '9m2xKq1vT8sHc4bYw7Lp3Q', void Function(_Api)? setUp}) async {
+Future<_Api> _pump(WidgetTester tester,
+    {String token = '9m2xKq1vT8sHc4bYw7Lp3Q',
+    void Function(_Api)? setUp,
+    Size? size,
+    double textScale = 1}) async {
+  if (size != null) {
+    tester.view.physicalSize = size;
+    tester.view.devicePixelRatio = 1;
+    addTearDown(tester.view.reset);
+  }
   final api = _Api();
   setUp?.call(api);
   final dio = Dio(BaseOptions(baseUrl: 'http://test/api'))..httpClientAdapter = api;
   await tester.pumpWidget(ProviderScope(
     overrides: <Override>[payLinkDioProvider.overrideWithValue(dio)],
-    child: MaterialApp(home: PayLinkScreen(token: token)),
+    child: MaterialApp(
+      builder: (context, child) => MediaQuery(
+        data: MediaQuery.of(context).copyWith(textScaler: TextScaler.linear(textScale)),
+        child: child!,
+      ),
+      home: PayLinkScreen(token: token),
+    ),
   ));
   await tester.pumpAndSettle();
   return api;
@@ -56,7 +71,8 @@ void main() {
     expect(api.last!.path, '/tenant-svc/billing/pay/9m2xKq1vT8sHc4bYw7Lp3Q');
     expect(api.last!.headers.containsKey('Authorization'), isFalse);
     expect(find.byKey(const Key('pay-done')), findsOneWidget);
-    expect(find.textContaining('Invoice INV-2026-000041 is settled — 29.0 EUR'), findsOneWidget);
+    expect(find.textContaining('Invoice INV-2026-000041 is settled — €29.00'), findsOneWidget);
+    expect(find.textContaining('EUR'), findsNothing);
     expect(find.byKey(const Key('pay-now')), findsNothing);
   });
 
@@ -89,5 +105,14 @@ void main() {
     await _pump(tester, token: '');
     final button = tester.widget<FilledButton>(find.byKey(const Key('pay-now')));
     expect(button.onPressed, isNull);
+  });
+
+  testWidgets('on a phone at 200% text the card scrolls rather than overflowing, inset by the gutter',
+      (tester) async {
+    await _pump(tester, size: const Size(390, 700), textScale: 2);
+    expect(tester.takeException(), isNull);
+    expect(tester.getTopLeft(find.byType(Card)).dx, 16);
+    await tester.scrollUntilVisible(find.byKey(const Key('pay-now')), 100);
+    expect(find.byKey(const Key('pay-now')).hitTestable(), findsOneWidget);
   });
 }

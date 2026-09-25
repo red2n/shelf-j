@@ -8,11 +8,13 @@ import '../../core/constants.dart';
 import '../../core/format.dart';
 import '../../core/network/api_client.dart';
 import '../../core/network/api_error.dart';
+import '../../core/spacing.dart';
 import '../../shared/util/short_ref.dart';
 import '../../shared/widgets/empty_state.dart';
 import '../../shared/widgets/error_view.dart';
 import '../../shared/widgets/loading_view.dart';
 import 'procurement_providers.dart';
+import 'providers/admin_providers.dart';
 import 'widgets/variant_picker.dart';
 
 // ---------------------------------------------------------------------------
@@ -176,12 +178,12 @@ class ConsignmentTab extends ConsumerWidget {
     final arrangements = ref.watch(dropshipArrangementsProvider);
     final suppliers = ref.watch(suppliersProvider).value ?? const <Supplier>[];
     String supplierName(String id) =>
-        suppliers.where((s) => s.id == id).map((s) => s.name).firstOrNull ?? shortRef(id);
+        suppliers.where((s) => s.id == id).map((s) => s.name).firstOrNull ?? '…${shortRef(id)}';
     final cs = Theme.of(context).colorScheme;
     final text = Theme.of(context).textTheme;
 
     return ListView(
-      padding: const EdgeInsets.all(16),
+      padding: context.pagePadding,
       children: [
         // ── Dropship: stock the business never holds ──
         Row(
@@ -232,6 +234,10 @@ class ConsignmentTab extends ConsumerWidget {
                 detail: 'Arrange for a supplier to ship a product straight to customers.',
               );
             }
+            final names = ref
+                    .watch(variantLabelsProvider(variantIdsKey(list.map((a) => a.variantId))))
+                    .value ??
+                const <String, VariantLabel>{};
             return Column(
               children: [
                 for (final a in list)
@@ -243,7 +249,7 @@ class ConsignmentTab extends ConsumerWidget {
                         color: a.active ? cs.onSurfaceVariant : cs.outline,
                       ),
                       title: Text(
-                        'Variant ${shortRef(a.variantId)} from ${supplierName(a.supplierId)}',
+                        '${variantDisplayName(a.variantId, names)} from ${supplierName(a.supplierId)}',
                         style: TextStyle(
                           fontWeight: FontWeight.w600,
                           color: a.active ? null : cs.outline,
@@ -305,6 +311,10 @@ class ConsignmentTab extends ConsumerWidget {
                 detail: 'Sales of consignment stock appear here as the tills make them.',
               );
             }
+            final soldNames = ref
+                    .watch(variantLabelsProvider(variantIdsKey(list.map((s) => s.variantId))))
+                    .value ??
+                const <String, VariantLabel>{};
             final owed = <String, _Owed>{};
             for (final s in list) {
               final o = owed.putIfAbsent('${s.supplierId}|${s.currency}', () => _Owed(s.supplierId, s.currency));
@@ -351,9 +361,9 @@ class ConsignmentTab extends ConsumerWidget {
                       ListTile(
                         dense: true,
                         title: Text(
-                          '${s.qty.toStringAsFixed(0)} × variant ${shortRef(s.variantId)} at ${AppFormat.money(s.unitCost, currencyCode: s.currency)}',
+                          '${s.qty.toStringAsFixed(0)} × ${variantDisplayName(s.variantId, soldNames)} at ${AppFormat.money(s.unitCost, currencyCode: s.currency)}',
                         ),
-                        subtitle: Text('${supplierName(s.supplierId)} · sold ${s.soldOn}'),
+                        subtitle: Text('${supplierName(s.supplierId)} · sold ${AppFormat.date(s.soldOn)}'),
                         trailing: Text(AppFormat.money(s.amount, currencyCode: s.currency)),
                       ),
                   ],
@@ -393,7 +403,7 @@ class ConsignmentTab extends ConsumerWidget {
                       leading: Icon(Icons.receipt_long_outlined, color: cs.onSurfaceVariant),
                       title: Text('${s.reference} · ${supplierName(s.supplierId)}'),
                       subtitle: Text(
-                        '${s.periodFrom} to ${s.periodTo} · ${s.salesCount} sale${s.salesCount == 1 ? '' : 's'}',
+                        '${AppFormat.date(s.periodFrom)} to ${AppFormat.date(s.periodTo)} · ${s.salesCount} sale${s.salesCount == 1 ? '' : 's'}',
                       ),
                       trailing: Text(
                         AppFormat.money(s.total, currencyCode: s.currency),

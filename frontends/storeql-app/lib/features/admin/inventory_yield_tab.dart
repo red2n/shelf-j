@@ -224,9 +224,21 @@ class InventoryYieldTab extends ConsumerWidget {
     final management = auth is AuthAuthenticated && auth.isManager;
     final stores = ref.watch(storesProvider).value ?? const <StoreInfo>[];
     String storeName(String id) =>
-        stores.where((s) => s.id == id).map((s) => s.name).firstOrNull ?? shortRef(id);
+        stores.where((s) => s.id == id).map((s) => s.name).firstOrNull ?? '…${shortRef(id)}';
     final templates = ref.watch(yieldTemplatesProvider);
     final runs = ref.watch(yieldRunsProvider);
+    // Primals and cuts by their product's name; the end of an id only while
+    // names load.
+    final names = ref
+            .watch(variantLabelsProvider(variantIdsKey([
+              for (final t in templates.value ?? const []) ...[
+                t.inputVariantId as String,
+                for (final o in t.outputs) o.variantId as String,
+              ],
+            ])))
+            .value ??
+        const <String, VariantLabel>{};
+    String product(String id) => variantDisplayName(id, names);
     final cs = Theme.of(context).colorScheme;
     final text = Theme.of(context).textTheme;
 
@@ -290,8 +302,8 @@ class InventoryYieldTab extends ConsumerWidget {
                           title: Text('${t.name}${t.active ? '' : ' · ended'}',
                               style: const TextStyle(fontWeight: FontWeight.w600)),
                           subtitle: Text(
-                            'From variant ${shortRef(t.inputVariantId)}${t.unit == null ? '' : ' (${t.unit})'}: '
-                            '${t.outputs.map((o) => '${shortRef(o.variantId)} ${qtyText(o.expectedPct)} %').join(', ')}'
+                            'From ${product(t.inputVariantId)}${t.unit == null ? '' : ' (${t.unit})'}: '
+                            '${t.outputs.map((o) => '${product(o.variantId)} ${qtyText(o.expectedPct)} %').join(', ')}'
                             ' · expected loss ${qtyText(t.expectedLossPct)} %',
                           ),
                           trailing: management && t.active
@@ -348,7 +360,7 @@ class InventoryYieldTab extends ConsumerWidget {
                           '${x.templateName} · ${qtyText(x.inputQty)} in, ${qtyText(x.outputQty)} out at ${storeName(x.storeId)}',
                         ),
                         subtitle: Text(
-                          '${x.recordedAt.split('T').first}${x.reference == null ? '' : ' · ${x.reference}'}'
+                          '${AppFormat.dateTime(x.recordedAt)}${x.reference == null ? '' : ' · ${x.reference}'}'
                           ' · lost ${qtyText(x.lossQty)} (${qtyText(x.lossPct)} %) against ${qtyText(x.expectedLossQty)} expected'
                           '${x.lossVariance > 0 ? ', ${qtyText(x.lossVariance)} over' : x.lossVariance < 0 ? ', ${qtyText(-x.lossVariance)} under' : ''}',
                         ),
@@ -670,6 +682,11 @@ class _RecordYieldDialogState extends ConsumerState<RecordYieldDialog> {
   Widget build(BuildContext context) {
     final cs = Theme.of(context).colorScheme;
     final t = _template;
+    final names = ref
+            .watch(variantLabelsProvider(
+                variantIdsKey([for (final o in t?.outputs ?? const []) o.variantId as String])))
+            .value ??
+        const <String, VariantLabel>{};
     return AlertDialog(
       title: const Text('Record a breakdown'),
       content: SizedBox(
@@ -723,7 +740,7 @@ class _RecordYieldDialogState extends ConsumerState<RecordYieldDialog> {
                     key: Key('yield-out-${o.variantId}'),
                     controller: _out.putIfAbsent(o.variantId, TextEditingController.new),
                     decoration: InputDecoration(
-                      labelText: 'Variant ${shortRef(o.variantId)} came out',
+                      labelText: '${variantDisplayName(o.variantId, names)} came out',
                       helperText: 'Expected ${qtyText(o.expectedPct)} %',
                     ),
                     keyboardType: const TextInputType.numberWithOptions(decimal: true),

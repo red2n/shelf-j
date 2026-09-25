@@ -3,8 +3,34 @@ import 'package:flutter_riverpod/flutter_riverpod.dart';
 import '../../core/auth/auth_notifier.dart';
 import '../../core/auth/sso.dart';
 import '../../core/network/api_error.dart';
-import '../../l10n/gen/app_localizations.dart';
+import '../../core/spacing.dart';
 import '../../core/theme.dart';
+import '../../l10n/gen/app_localizations.dart';
+
+/// iam-svc's `PasswordPolicy` (NIST SP 800-63B-4): a new password is fifteen
+/// to a hundred and twenty-eight characters, counted as a person sees them.
+/// Only a new password is held to it — signing in asks for the password the
+/// login already has, whatever its length.
+const passwordMinLength = 15;
+const passwordMaxLength = 128;
+
+/// Why [password] would not do as a new password, in the policy's words, or
+/// null when its length is within the policy. Identity and breach checks stay
+/// with the server, which says so by code.
+///
+/// [min] and [max] are the policy's bounds: the ones this app mirrors, until
+/// the server names its own in a refusal.
+String? newPasswordProblem(
+  AppLocalizations l,
+  String? password, {
+  int min = passwordMinLength,
+  int max = passwordMaxLength,
+}) {
+  final length = (password ?? '').runes.length;
+  if (length < min) return l.fieldPasswordTooShort(min);
+  if (length > max) return l.fieldPasswordTooLong(max);
+  return null;
+}
 
 class LoginScreen extends ConsumerStatefulWidget {
   const LoginScreen({super.key});
@@ -20,6 +46,12 @@ class _LoginScreenState extends ConsumerState<LoginScreen> {
   final _phoneCtrl = TextEditingController();
   bool _obscure = true;
   bool _isRegister = false;
+
+  /// The password policy's bounds: the ones this app mirrors, until iam-svc
+  /// names its own in a refusal (its minimum is configured). Then the helper,
+  /// the check before sending and the refusal all say the server's number.
+  int _minLength = passwordMinLength;
+  int _maxLength = passwordMaxLength;
 
   @override
   void dispose() {
@@ -58,6 +90,7 @@ class _LoginScreenState extends ConsumerState<LoginScreen> {
     final l = AppLocalizations.of(context);
     final authAsync = ref.watch(authNotifierProvider);
     final isLoading = authAsync.isLoading;
+    if (authAsync.hasError) _learnPolicy(authAsync.error!);
     final error = authAsync.hasError ? _friendlyError(context, authAsync.error!) : null;
     // A password refused because the business signs its staff in through its
     // provider: the server names the business, so one press continues there.
@@ -69,12 +102,12 @@ class _LoginScreenState extends ConsumerState<LoginScreen> {
     return Scaffold(
       body: Center(
         child: SingleChildScrollView(
-          padding: const EdgeInsets.all(24),
+          padding: context.pagePadding,
           child: ConstrainedBox(
             constraints: const BoxConstraints(maxWidth: 420),
             child: Card(
               child: Padding(
-                padding: const EdgeInsets.all(32),
+                padding: const EdgeInsets.all(AppSpacing.xxl),
                 child: Form(
                   key: _formKey,
                   child: Column(
@@ -82,7 +115,7 @@ class _LoginScreenState extends ConsumerState<LoginScreen> {
                     crossAxisAlignment: CrossAxisAlignment.stretch,
                     children: [
                       Icon(Icons.storefront_rounded, size: 52, color: cs.primary),
-                      const SizedBox(height: 8),
+                      const SizedBox(height: AppSpacing.sm),
                       Text(
                         'storeql.com',
                         style: Theme.of(context)
@@ -91,7 +124,7 @@ class _LoginScreenState extends ConsumerState<LoginScreen> {
                             ?.copyWith(fontWeight: FontWeight.bold, color: cs.primary),
                         textAlign: TextAlign.center,
                       ),
-                      const SizedBox(height: 4),
+                      const SizedBox(height: AppSpacing.xs),
                       Text(
                         _isRegister ? l.createYourAccount : l.signInToContinue,
                         style: Theme.of(context)
@@ -100,10 +133,10 @@ class _LoginScreenState extends ConsumerState<LoginScreen> {
                             ?.copyWith(color: cs.outline),
                         textAlign: TextAlign.center,
                       ),
-                      const SizedBox(height: 28),
+                      const SizedBox(height: AppSpacing.xl),
                       if (error != null) ...[
                         Container(
-                          padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 10),
+                          padding: const EdgeInsets.symmetric(horizontal: AppSpacing.md, vertical: AppSpacing.sm),
                           decoration: BoxDecoration(
                             color: cs.errorContainer,
                             borderRadius: AppRadius.chip,
@@ -111,20 +144,20 @@ class _LoginScreenState extends ConsumerState<LoginScreen> {
                           child: Text(error, style: TextStyle(color: cs.onErrorContainer)),
                         ),
                         if (requiredSlug != null) ...[
-                          const SizedBox(height: 8),
+                          const SizedBox(height: AppSpacing.sm),
                           FilledButton.tonalIcon(
                             key: const Key('sso-continue'),
                             onPressed: isLoading ? null : () => _signInWithBusiness(slug: requiredSlug),
                             icon: const Icon(Icons.business_outlined),
-                            label: Text('Continue with $requiredSlug'),
+                            label: Text(l.continueWithBusiness(requiredSlug)),
                           ),
                         ],
-                        const SizedBox(height: 16),
+                        const SizedBox(height: AppSpacing.lg),
                       ],
                       TextFormField(
                         controller: _emailCtrl,
                         keyboardType: TextInputType.emailAddress,
-                        textInputAction: _isRegister ? TextInputAction.next : TextInputAction.next,
+                        textInputAction: TextInputAction.next,
                         decoration: InputDecoration(
                           labelText: l.fieldEmail,
                           prefixIcon: const Icon(Icons.email_outlined),
@@ -133,7 +166,7 @@ class _LoginScreenState extends ConsumerState<LoginScreen> {
                             v == null || !v.contains('@') ? l.fieldEmailInvalid : null,
                       ),
                       if (_isRegister) ...[
-                        const SizedBox(height: 16),
+                        const SizedBox(height: AppSpacing.lg),
                         TextFormField(
                           controller: _phoneCtrl,
                           keyboardType: TextInputType.phone,
@@ -144,8 +177,11 @@ class _LoginScreenState extends ConsumerState<LoginScreen> {
                           ),
                         ),
                       ],
-                      const SizedBox(height: 16),
+                      const SizedBox(height: AppSpacing.lg),
                       TextFormField(
+                        // A fresh field per mode, so the other mode's refusal
+                        // does not linger; the controller keeps what was typed.
+                        key: ValueKey('password-$_isRegister'),
                         controller: _passwordCtrl,
                         obscureText: _obscure,
                         textInputAction: TextInputAction.done,
@@ -153,16 +189,22 @@ class _LoginScreenState extends ConsumerState<LoginScreen> {
                         decoration: InputDecoration(
                           labelText: l.fieldPassword,
                           prefixIcon: const Icon(Icons.lock_outline),
+                          // A new password is told the rule before it is refused by it.
+                          helperText: _isRegister ? l.fieldPasswordTooShort(_minLength) : null,
+                          helperMaxLines: 3,
+                          errorMaxLines: 3,
                           suffixIcon: IconButton(
                             icon: Icon(_obscure ? Icons.visibility_off : Icons.visibility),
-                            tooltip: _obscure ? 'Show password' : 'Hide password',
+                            tooltip: _obscure ? l.showPassword : l.hidePassword,
                             onPressed: () => setState(() => _obscure = !_obscure),
                           ),
                         ),
-                        validator: (v) =>
-                            v == null || v.length < 8 ? l.fieldPasswordTooShort : null,
+                        // Signing in asks only for a password: the policy is for new ones.
+                        validator: (v) => _isRegister
+                            ? newPasswordProblem(l, v, min: _minLength, max: _maxLength)
+                            : (v == null || v.isEmpty ? l.fieldPasswordRequired : null),
                       ),
-                      const SizedBox(height: 24),
+                      const SizedBox(height: AppSpacing.xl),
                       FilledButton(
                         onPressed: isLoading ? null : _submit,
                         child: isLoading
@@ -174,15 +216,15 @@ class _LoginScreenState extends ConsumerState<LoginScreen> {
                             : Text(_isRegister ? l.actionCreateAccount : l.actionSignIn),
                       ),
                       if (!_isRegister && ssoBrowser.supported) ...[
-                        const SizedBox(height: 12),
+                        const SizedBox(height: AppSpacing.md),
                         OutlinedButton.icon(
                           key: const Key('sso-start'),
                           onPressed: isLoading ? null : _signInWithBusiness,
                           icon: const Icon(Icons.business_outlined),
-                          label: const Text('Sign in with your business'),
+                          label: Text(l.signInWithBusiness),
                         ),
                       ],
-                      const SizedBox(height: 8),
+                      const SizedBox(height: AppSpacing.sm),
                       TextButton(
                         onPressed: isLoading
                             ? null
@@ -203,10 +245,25 @@ class _LoginScreenState extends ConsumerState<LoginScreen> {
 
   String _friendlyError(BuildContext context, Object e) {
     final l = AppLocalizations.of(context);
-    if (e is SsoError) return ssoMessage(e.code);
+    if (e is SsoError) return ssoMessage(e.code, l);
     final code = apiErrorCode(e);
     if (code != null && (code.startsWith('SSO_') || code == 'TENANT_INACTIVE')) {
-      return ssoMessage(code);
+      return ssoMessage(code, l);
+    }
+    // iam-svc's PasswordPolicy refusals, each in its own words. A length is the
+    // server's own when its message names one (its configured rule), else the
+    // one this app mirrors.
+    switch (code) {
+      case 'PASSWORD_TOO_SHORT':
+        return l.fieldPasswordTooShort(_ruleLength(e, 'at least') ?? _minLength);
+      case 'PASSWORD_TOO_LONG':
+        return l.fieldPasswordTooLong(_ruleLength(e, 'at most') ?? _maxLength);
+      case 'PASSWORD_IS_IDENTITY':
+        return l.errPasswordIsIdentity;
+      case 'PASSWORD_BREACHED':
+        return l.errPasswordBreached;
+      case 'INVALID_CREDENTIALS':
+        return l.errInvalidCredentials;
     }
     final raw = e.toString();
     if (raw.contains('401') || raw.contains('INVALID_CREDENTIALS')) {
@@ -219,6 +276,24 @@ class _LoginScreenState extends ConsumerState<LoginScreen> {
       return l.errNetwork;
     }
     return l.errGeneric;
+  }
+
+  /// Takes the policy's bounds from a refusal that names them, so the card
+  /// never shows two rules.
+  void _learnPolicy(Object e) {
+    switch (apiErrorCode(e)) {
+      case 'PASSWORD_TOO_SHORT':
+        _minLength = _ruleLength(e, 'at least') ?? _minLength;
+      case 'PASSWORD_TOO_LONG':
+        _maxLength = _ruleLength(e, 'at most') ?? _maxLength;
+    }
+  }
+
+  /// The number after [bound] ("at least", "at most") in the server's message.
+  static int? _ruleLength(Object e, String bound) {
+    final message = apiErrorOf(e)?.message ?? '';
+    final match = RegExp('$bound (\\d+)').firstMatch(message);
+    return match == null ? null : int.tryParse(match.group(1)!);
   }
 }
 
@@ -243,35 +318,38 @@ class _BusinessNameDialogState extends State<_BusinessNameDialog> {
   void _go() => Navigator.of(context).pop(_ctrl.text.trim());
 
   @override
-  Widget build(BuildContext context) => AlertDialog(
-        title: const Text('Sign in with your business'),
-        content: SizedBox(
-          width: 380,
-          child: Column(
-            mainAxisSize: MainAxisSize.min,
-            crossAxisAlignment: CrossAxisAlignment.start,
-            children: [
-              const Text("Your business's sign-in name. Your manager has it."),
-              const SizedBox(height: 12),
-              TextField(
-                key: const Key('sso-slug'),
-                controller: _ctrl,
-                autofocus: true,
-                autocorrect: false,
-                textInputAction: TextInputAction.go,
-                onSubmitted: (_) => _go(),
-                decoration: const InputDecoration(
-                  labelText: 'Sign-in name',
-                  hintText: 'e.g. acme-foods',
-                  prefixIcon: Icon(Icons.business_outlined),
-                ),
+  Widget build(BuildContext context) {
+    final l = AppLocalizations.of(context);
+    return AlertDialog(
+      title: Text(l.signInWithBusiness),
+      content: SizedBox(
+        width: 380,
+        child: Column(
+          mainAxisSize: MainAxisSize.min,
+          crossAxisAlignment: CrossAxisAlignment.start,
+          children: [
+            Text(l.businessSignInNameHelp),
+            const SizedBox(height: AppSpacing.md),
+            TextField(
+              key: const Key('sso-slug'),
+              controller: _ctrl,
+              autofocus: true,
+              autocorrect: false,
+              textInputAction: TextInputAction.go,
+              onSubmitted: (_) => _go(),
+              decoration: InputDecoration(
+                labelText: l.fieldBusinessSignInName,
+                hintText: l.fieldBusinessSignInNameHint,
+                prefixIcon: const Icon(Icons.business_outlined),
               ),
-            ],
-          ),
+            ),
+          ],
         ),
-        actions: [
-          TextButton(onPressed: () => Navigator.of(context).pop(), child: const Text('Cancel')),
-          FilledButton(key: const Key('sso-go'), onPressed: _go, child: const Text('Continue')),
-        ],
-      );
+      ),
+      actions: [
+        TextButton(onPressed: () => Navigator.of(context).pop(), child: Text(l.actionCancel)),
+        FilledButton(key: const Key('sso-go'), onPressed: _go, child: Text(l.actionContinue)),
+      ],
+    );
+  }
 }

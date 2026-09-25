@@ -3,6 +3,7 @@ import 'dart:math' as math;
 
 import 'package:flutter/material.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
+import '../../core/format.dart';
 import '../../core/theme.dart';
 import '../../shared/util/image_budget.dart';
 import 'storefront_providers.dart';
@@ -206,7 +207,8 @@ class OfferPriceAdd extends ConsumerWidget {
 
   @override
   Widget build(BuildContext context, WidgetRef ref) {
-    final cs = Theme.of(context).colorScheme;
+    final theme = Theme.of(context);
+    final cs = theme.colorScheme;
     final configAsync = ref.watch(storefrontConfigProvider);
 
     // While config is still loading, show a neutral placeholder rather than
@@ -256,15 +258,18 @@ class OfferPriceAdd extends ConsumerWidget {
           crossAxisAlignment: CrossAxisAlignment.start,
           mainAxisSize: MainAxisSize.min,
           children: [
+            // The same money format as the unit and was prices under it, in the
+            // page's ink: a price is information, not an accent.
             Text(
-              '${offer.price.currency} ${offer.price.totalWithVat.toStringAsFixed(2)}',
+              AppFormat.money(
+                offer.price.totalWithVat,
+                currencyCode: offer.price.currency,
+              ),
               maxLines: 1,
               overflow: TextOverflow.ellipsis,
-              // A price is information, not an action: ink, not colour (the design system's rule).
-              style: TextStyle(
+              style: theme.textTheme.titleMedium?.copyWith(
                 color: cs.onSurface,
-                fontWeight: FontWeight.bold,
-                fontSize: 16,
+                fontWeight: FontWeight.w700,
               ),
             ),
             if (offer.price.shownLine.isNotEmpty)
@@ -287,6 +292,7 @@ class OfferPriceAdd extends ConsumerWidget {
               inStock: inStock,
               line: CartLine(
                 variantId: offer.variant.id,
+                productId: product.id,
                 productName: product.name,
                 sku: offer.variant.sku,
                 unitPrice: offer.price.totalWithVat,
@@ -334,6 +340,7 @@ class _CatalogAdd extends ConsumerWidget {
               inStock: inStock,
               line: CartLine(
                 variantId: variant.id,
+                productId: product.id,
                 productName: product.name,
                 sku: variant.sku,
                 unitPrice: 0,
@@ -393,7 +400,7 @@ class _CartControl extends ConsumerWidget {
         },
       );
     }
-    return _Stepper(
+    return QuantityStepper(
       qty: qty,
       onDec: () => notifier.setQty(line.variantId, qty - 1),
       onInc: () => notifier.setQty(line.variantId, qty + 1),
@@ -435,15 +442,34 @@ class StockBadge extends StatelessWidget {
   }
 }
 
-class _Stepper extends StatelessWidget {
+/// The amber − qty + pill: the one quantity control of the storefront, on the
+/// shop's cards and the cart's lines alike. Its buttons are named *Remove one*
+/// and *Add one* (their hover tooltips too) and the count is announced as it
+/// changes.
+///
+/// Given [onRemove], the minus becomes a bin at one — *Remove from cart* —
+/// so taking the last one off says what it does. The cart's lines use that;
+/// the shop's cards step down to the add button instead.
+class QuantityStepper extends StatelessWidget {
   final int qty;
   final VoidCallback onDec;
   final VoidCallback onInc;
-  const _Stepper({required this.qty, required this.onDec, required this.onInc});
+
+  /// Takes the line out; shown in place of the minus at one.
+  final VoidCallback? onRemove;
+
+  const QuantityStepper({
+    super.key,
+    required this.qty,
+    required this.onDec,
+    required this.onInc,
+    this.onRemove,
+  });
 
   @override
   Widget build(BuildContext context) {
     final cs = Theme.of(context).colorScheme;
+    final remove = onRemove;
     return Container(
       decoration: BoxDecoration(
         color: cs.primaryContainer,
@@ -452,7 +478,10 @@ class _Stepper extends StatelessWidget {
       child: Row(
         mainAxisSize: MainAxisSize.min,
         children: [
-          _btn(context, Icons.remove, onDec, 'Remove one'),
+          if (remove != null && qty <= 1)
+            _btn(context, Icons.delete_outline, remove, 'Remove from cart')
+          else
+            _btn(context, Icons.remove, onDec, 'Remove one'),
           Padding(
             padding: const EdgeInsets.symmetric(horizontal: 4),
             // Its own node: a live region merged into the card would re-read the whole card on every step.
@@ -476,8 +505,9 @@ class _Stepper extends StatelessWidget {
     );
   }
 
-  // An icon alone names nothing to a screen reader; the label does. 36 px across — the design
-  // system's stepper target, past WCAG 2.2's 24 px minimum (2.5.8).
+  // An icon alone names nothing to a screen reader; the label does. 30 px across, past WCAG 2.2's
+  // 24 px minimum target (2.5.8). The tooltip is for a mouse pointer only: the label already names
+  // the button, and a second name would be read out twice.
   Widget _btn(
     BuildContext context,
     IconData icon,
@@ -488,29 +518,18 @@ class _Stepper extends StatelessWidget {
     return Semantics(
       button: true,
       label: label,
-      child: InkWell(
-        onTap: onTap,
-        customBorder: const CircleBorder(),
-        child: Padding(
-          padding: const EdgeInsets.all(9),
-          child: Icon(icon, size: 18, color: cs.onPrimaryContainer),
+      child: Tooltip(
+        message: label,
+        excludeFromSemantics: true,
+        child: InkWell(
+          onTap: onTap,
+          customBorder: const CircleBorder(),
+          child: Padding(
+            padding: const EdgeInsets.all(6),
+            child: Icon(icon, size: 18, color: cs.onPrimaryContainer),
+          ),
         ),
       ),
     );
   }
-}
-
-/// A banner's colours from the scheme rather than a hard-coded gradient, so a
-/// live promotion reads the same in dark mode as in light: a container tone
-/// shading a little towards its role, with the container's own text colour on
-/// top. Four tones rotate; each is held to 4.5:1 at both ends of its gradient.
-({List<Color> gradient, Color fg}) bannerTone(ColorScheme cs, int tone) {
-  final tones = [
-    (cs.primaryContainer, cs.primary, cs.onPrimaryContainer),
-    (cs.secondaryContainer, cs.secondary, cs.onSecondaryContainer),
-    (cs.tertiaryContainer, cs.tertiary, cs.onTertiaryContainer),
-    (cs.surfaceContainerHighest, cs.onSurfaceVariant, cs.onSurface),
-  ];
-  final t = tones[tone % tones.length];
-  return (gradient: [t.$1, Color.lerp(t.$1, t.$2, 0.18)!], fg: t.$3);
 }

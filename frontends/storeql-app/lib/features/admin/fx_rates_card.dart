@@ -3,8 +3,10 @@ import 'package:flutter/material.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 
 import '../../core/constants.dart';
+import '../../core/format.dart';
 import '../../core/network/api_client.dart';
 import '../../core/network/api_error.dart';
+import '../../core/spacing.dart';
 import '../../core/theme.dart';
 
 /// One exchange rate the business keeps (03.x): home units per one unit of
@@ -64,22 +66,28 @@ class FxRatesCard extends ConsumerWidget {
   Widget build(BuildContext context, WidgetRef ref) {
     final cs = Theme.of(context).colorScheme;
     final sheet = ref.watch(fxRatesProvider);
+    // The page's gutter, so the card lines up with the Pricing title and the lists under it.
+    final gutter = context.pageGutter;
     return Padding(
-      padding: const EdgeInsets.fromLTRB(16, 12, 16, 0),
+      padding: EdgeInsetsDirectional.fromSTEB(gutter, AppSpacing.md, gutter, 0),
       child: Card(
         key: const Key('fx-rates-card'),
         child: Padding(
-          padding: const EdgeInsets.all(16),
+          padding: AppSpacing.cardPadding,
           child: sheet.when(
             // Compact states: the card sits above a list and must not claim the page.
             loading: () => Row(children: [
-              const SizedBox(width: 16, height: 16, child: CircularProgressIndicator(strokeWidth: 2)),
-              const SizedBox(width: 12),
-              Text('Loading exchange rates…', style: TextStyle(color: cs.onSurfaceVariant)),
+              const SizedBox.square(
+                  dimension: AppSpacing.lg, child: CircularProgressIndicator(strokeWidth: 2)),
+              const SizedBox(width: AppSpacing.md),
+              Expanded(
+                child: Text('Loading exchange rates…',
+                    style: TextStyle(color: cs.onSurfaceVariant)),
+              ),
             ]),
             error: (e, _) => Row(children: [
               Icon(Icons.currency_exchange_outlined, color: cs.onSurfaceVariant),
-              const SizedBox(width: 8),
+              const SizedBox(width: AppSpacing.sm),
               Expanded(
                 child: Text(
                   friendlyError(e, fallback: 'Could not load the exchange rates.'),
@@ -95,21 +103,33 @@ class FxRatesCard extends ConsumerWidget {
             data: (s) => Column(
               crossAxisAlignment: CrossAxisAlignment.start,
               children: [
-                Row(children: [
-                  Icon(Icons.currency_exchange_outlined, color: cs.onSurfaceVariant),
-                  const SizedBox(width: 8),
-                  Text('Exchange rates', style: Theme.of(context).textTheme.titleMedium),
-                  const Spacer(),
-                  if (management)
-                    FilledButton.tonalIcon(
-                      key: const Key('fx-set-rate'),
-                      onPressed: () => showDialog<void>(
-                          context: context, builder: (_) => SetFxRateDialog(home: s.home)),
-                      icon: const Icon(Icons.add, size: 18),
-                      label: const Text('Set a rate'),
-                    ),
-                ]),
-                const SizedBox(height: 4),
+                // The title at the start, Set a rate at the end; the button moves under the
+                // title when the two do not fit one line (a phone at large text).
+                Wrap(
+                  alignment: WrapAlignment.spaceBetween,
+                  crossAxisAlignment: WrapCrossAlignment.center,
+                  spacing: AppSpacing.sm,
+                  runSpacing: AppSpacing.sm,
+                  children: [
+                    Row(mainAxisSize: MainAxisSize.min, children: [
+                      Icon(Icons.currency_exchange_outlined, color: cs.onSurfaceVariant),
+                      const SizedBox(width: AppSpacing.sm),
+                      Flexible(
+                        child: Text('Exchange rates',
+                            style: Theme.of(context).textTheme.titleMedium),
+                      ),
+                    ]),
+                    if (management)
+                      FilledButton.tonalIcon(
+                        key: const Key('fx-set-rate'),
+                        onPressed: () => showDialog<void>(
+                            context: context, builder: (_) => SetFxRateDialog(home: s.home)),
+                        icon: const Icon(Icons.add, size: 18),
+                        label: const Text('Set a rate'),
+                      ),
+                  ],
+                ),
+                const SizedBox(height: AppSpacing.xs),
                 Text(
                   s.rates.isEmpty
                       ? 'Prices are in ${s.home}. Keep a rate for another currency and shoppers can '
@@ -126,7 +146,7 @@ class FxRatesCard extends ConsumerWidget {
                     children: [
                       for (final r in s.rates)
                         Tooltip(
-                          message: '${r.reason ?? ''} · from ${r.effectiveFrom}'.trim(),
+                          message: '${r.reason ?? ''} · from ${AppFormat.date(r.effectiveFrom)}'.trim(),
                           child: Container(
                             key: Key('fx-rate-${r.currency}'),
                             padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 6),

@@ -1,5 +1,6 @@
 package com.storeql.iam.repo;
 
+import com.storeql.iam.domain.StaffLogin;
 import com.storeql.iam.domain.TokenIdentity;
 import com.storeql.iam.domain.User;
 import com.storeql.ids.Ids;
@@ -88,6 +89,27 @@ public class UserRepository extends BaseOutboxRepository {
             "find user by id")
         .stream()
         .findFirst();
+  }
+
+  /**
+   * The business's staff among the ids, by email. The tenant is the first condition: a login that
+   * is another business's, a customer's (no tenant), or that nobody holds is simply not a row here.
+   *
+   * @param tenantId the caller's business, from the token
+   * @param ids the user ids to name; at most a hundred, already read as UUIDv7s
+   * @return one entry per staff login found, ordered by email
+   */
+  public List<StaffLogin> staffLogins(UUID tenantId, List<UUID> ids) {
+    return query(
+        "SELECT id, email FROM users"
+            + " WHERE tenant_id = ? AND id = ANY(?) AND type = 'STAFF' AND email IS NOT NULL"
+            + " ORDER BY lower(email), id",
+        ps -> {
+          ps.setObject(1, tenantId);
+          ps.setArray(2, ps.getConnection().createArrayOf("uuid", ids.toArray()));
+        },
+        rs -> new StaffLogin(rs.getObject("id", UUID.class), rs.getString("email")),
+        "find staff logins");
   }
 
   /**

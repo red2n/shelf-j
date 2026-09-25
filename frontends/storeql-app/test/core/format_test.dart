@@ -1,6 +1,9 @@
+import 'package:flutter/widgets.dart';
 import 'package:flutter_test/flutter_test.dart';
 import 'package:intl/date_symbol_data_local.dart';
+import 'package:intl/intl.dart';
 import 'package:storeql_app/core/format.dart';
+import 'package:storeql_app/core/l10n/app_locales.dart';
 
 void main() {
   // intl locale data is initialized by flutter_localizations at runtime; load it
@@ -50,6 +53,95 @@ void main() {
     test('empty/null become empty string', () {
       expect(AppFormat.date(''), '');
       expect(AppFormat.date(null), '');
+    });
+  });
+
+  group('AppFormat.money with finer places', () {
+    test('a unit price finer than the minor unit keeps the places it has, up to the cap', () {
+      expect(AppFormat.money(0.035, currencyCode: 'GBP', maxDecimals: 4), '£0.035');
+      expect(AppFormat.money(0.0125, currencyCode: 'GBP', maxDecimals: 4), '£0.0125');
+      // Never more than the cap: the fifth place is rounded away.
+      expect(AppFormat.money(0.01234, currencyCode: 'GBP', maxDecimals: 4), '£0.0123');
+    });
+
+    test('a price at the minor unit is exactly the plain money', () {
+      expect(AppFormat.money(11.7, currencyCode: 'GBP', maxDecimals: 4), '£11.70');
+      expect(AppFormat.money(0.07, currencyCode: 'GBP', maxDecimals: 4), '£0.07');
+      expect(AppFormat.money(3702, currencyCode: 'JPY', maxDecimals: 4),
+          AppFormat.money(3702, currencyCode: 'JPY'));
+    });
+
+    test('without a currency the amount alone keeps its places too', () {
+      expect(AppFormat.money(0.035, maxDecimals: 4), '0.035');
+      expect(AppFormat.money(5, maxDecimals: 4), '5.00');
+    });
+  });
+
+  group('AppFormat.count', () {
+    test('groups thousands and drops a ledger\'s trailing zeros', () {
+      expect(AppFormat.count(138469), '138,469');
+      expect(AppFormat.count(52.000), '52');
+      expect(AppFormat.count(0), '0');
+    });
+
+    test('a part unit keeps its fraction', () {
+      expect(AppFormat.count(2.5), '2.5');
+    });
+  });
+
+  group('AppFormat.time and dateOf', () {
+    test('a time of day on the 24-hour clock', () {
+      expect(AppFormat.time(DateTime(2026, 9, 23, 14, 5).toIso8601String()), '14:05');
+      expect(AppFormat.time(null), '');
+    });
+
+    test('a date already in hand is written as the date', () {
+      expect(AppFormat.dateOf(DateTime(2026, 10, 1)), '1 Oct 2026');
+      expect(AppFormat.dateOf(DateTime(2026, 10, 31, 23, 59)), '31 Oct 2026');
+    });
+  });
+
+  group('the locale AppFormat writes in', () {
+    tearDown(() => Intl.defaultLocale = null);
+
+    test('is the UK fallback when the app has set none', () {
+      Intl.defaultLocale = null;
+      expect(AppFormat.locale, 'en_GB');
+    });
+
+    test('is the app\'s once the app has set it', () {
+      Intl.defaultLocale = 'pl';
+      expect(AppFormat.locale, 'pl');
+    });
+
+    test('formatting never pins the process to the system locale', () {
+      Intl.defaultLocale = null;
+      AppFormat.money(1, currencyCode: 'GBP');
+      AppFormat.money(0.035, currencyCode: 'GBP', maxDecimals: 4);
+      AppFormat.count(1200);
+      AppFormat.date('2026-09-01');
+      AppFormat.dateTime('2026-09-01T10:00:00Z');
+      AppFormat.time('2026-09-01T10:00:00Z');
+      AppFormat.dateOf(DateTime(2026, 9, 1));
+      expect(Intl.defaultLocale, isNull);
+      expect(AppFormat.date('2026-09-01'), '1 Sept 2026');
+    });
+  });
+
+  group('the app locale', () {
+    test('a device language the app speaks resolves to it, whatever its region', () {
+      expect(AppLocales.resolve(const Locale('pl', 'PL'), AppLocales.supported), const Locale('pl'));
+      expect(AppLocales.resolve(const Locale('en', 'US'), AppLocales.supported), const Locale('en', 'GB'));
+    });
+
+    test('anything else, or nothing, is the UK fallback', () {
+      expect(AppLocales.resolve(const Locale('fr'), AppLocales.supported), AppLocales.fallback);
+      expect(AppLocales.resolve(null, AppLocales.supported), AppLocales.fallback);
+    });
+
+    test('is named as intl names it', () {
+      expect(AppLocales.intlName(const Locale('en', 'GB')), 'en_GB');
+      expect(AppLocales.intlName(const Locale('pl')), 'pl');
     });
   });
 }

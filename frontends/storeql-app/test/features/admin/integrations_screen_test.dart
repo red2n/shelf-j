@@ -103,7 +103,7 @@ void main() {
     await _pump(tester, 'OWNER');
     expect(find.text('Warehouse ERP'), findsOneWidget);
     expect(find.textContaining('sqk_ABCDEFGH…'), findsNWidgets(2));
-    expect(find.textContaining('STOREKEEPER · 1 store · last used'), findsOneWidget);
+    expect(find.textContaining('Storekeeper · 1 store · last used'), findsOneWidget);
     expect(find.textContaining('every store · never used'), findsOneWidget);
     expect(find.text('Active'), findsOneWidget);
     expect(find.text('Revoked'), findsOneWidget);

@@ -1,6 +1,7 @@
 import 'package:dio/dio.dart';
 import 'package:flutter/material.dart';
 import 'package:flutter_test/flutter_test.dart';
+import 'package:intl/date_symbol_data_local.dart';
 import 'package:storeql_app/features/pos/pos_providers.dart';
 import 'package:storeql_app/features/pos/pos_receipt_data.dart';
 import 'package:storeql_app/features/pos/pos_weighed_item.dart';
@@ -40,6 +41,7 @@ const _cheese = PosLine(
 );
 
 void main() {
+  setUpAll(initializeDateFormatting);
   group('fetchSaleUnit', () {
     test('an item sold by the each', () async {
       expect(await fetchSaleUnit(_dio(200, '{"data":{"soldBy":"EACH"}}'), 'v'), isA<SoldEach>());
@@ -105,7 +107,7 @@ void main() {
       final html = PosReceiptData(
         orderId: 'o-1',
         storeName: 'High Street',
-        dateTime: DateTime(2026, 9, 10),
+        dateTime: DateTime(2026, 9, 10, 14, 5),
         items: const [_cheese],
         subtotal: 4.5,
         discount: 0,
@@ -114,7 +116,11 @@ void main() {
         tenders: const [],
         change: 0,
       ).toHtml();
-      expect(html, contains('0.375 kg × GBP 12.00/kg'));
+      expect(html, contains('0.375 kg × £12.00/kg'));
+      // Money and the date as a shopper reads them, not codes and ISO digits.
+      expect(html, isNot(contains('GBP')));
+      expect(html, contains('10 Sept 2026 14:05'));
+      expect(html, isNot(contains('2026-09-10')));
     });
 
     test('a parked sale comes back with its weight, not truncated to nothing', () {
@@ -169,14 +175,14 @@ void main() {
           ),
         ),
       ));
-      expect(find.text('GBP 12.00 / kg'), findsOneWidget);
+      expect(find.text('£12.00 / kg'), findsOneWidget);
       expect(find.textContaining('approved scale shows. Do not estimate it.'), findsOneWidget);
       // Tare is the scale's to deduct, and the dialog says so rather than subtracting it.
       expect(find.textContaining('deducted by the scale'), findsOneWidget);
 
       await tester.enterText(find.byType(TextField), '0.375');
       await tester.pumpAndSettle();
-      expect(find.text('Line price: GBP 4.50'), findsOneWidget);
+      expect(find.text('Line price: £4.50'), findsOneWidget);
     });
 
     testWidgets('a usable reading is returned', (tester) async {

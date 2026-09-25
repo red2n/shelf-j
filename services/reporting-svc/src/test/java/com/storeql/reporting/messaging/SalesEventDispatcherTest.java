@@ -13,10 +13,10 @@ import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.Test;
 
 /**
- * SalesEventDispatcher routes OrderConfirmed → recordSale and PaymentRefunded → applySalesRefund,
- * and skips malformed/unknown events without throwing (so the consumer loop acks them).
- * reporting-svc has no mocking framework, so a capturing subclass stands in for {@link
- * ReportingService}.
+ * SalesEventDispatcher routes OrderConfirmed → recordSale, PaymentRefunded → applySalesRefund and
+ * OrderVoided → applySaleVoided, and skips malformed/unknown events without throwing (so the
+ * consumer loop acks them). reporting-svc has no mocking framework, so a capturing subclass stands
+ * in for {@link ReportingService}.
  */
 class SalesEventDispatcherTest {
 
@@ -38,6 +38,11 @@ class SalesEventDispatcherTest {
     List<SaleLine> lines;
     UUID refundEventId;
     BigDecimal refundAmount;
+    int voids;
+    UUID voidEventId;
+    String voidConsumer;
+    UUID voidTenantId;
+    UUID voidOrderId;
 
     @Override
     public void recordSale(
@@ -65,6 +70,15 @@ class SalesEventDispatcherTest {
       this.refunds++;
       this.refundEventId = eventId;
       this.refundAmount = amount;
+    }
+
+    @Override
+    public void applySaleVoided(UUID eventId, String consumer, UUID tenantId, UUID orderId) {
+      this.voids++;
+      this.voidEventId = eventId;
+      this.voidConsumer = consumer;
+      this.voidTenantId = tenantId;
+      this.voidOrderId = orderId;
     }
   }
 
@@ -201,6 +215,86 @@ class SalesEventDispatcherTest {
   void malformedJsonIsSkippedWithoutThrowing() {
     dispatcher.dispatch("storeql.order.order-confirmed", "{not valid json");
 
+    assertEquals(0, service.sales);
+    assertEquals(0, service.refunds);
+  }
+
+  private static String orderVoided(String eventId, String tenantId, String orderId) {
+    return "{\"eventId\":\""
+        + eventId
+        + "\",\"eventType\":\"OrderVoided\",\"tenantId\":\""
+        + tenantId
+        + "\",\"orderId\":\""
+        + orderId
+        + "\",\"storeId\":\""
+        + STORE
+        + "\",\"items\":[{\"variantId\":\""
+        + Ids.newId()
+        + "\",\"qty\":2}]}";
+  }
+
+  /**
+   * A voided till sale leaves the sales projection: the void is keyed on its own event id (so a
+   * redelivery is recognised) and names the tenant and order exactly as order-svc published them.
+   */
+  @Test
+  void orderVoidedVoidsTheSale() {
+    dispatcher.dispatch(
+        "storeql.order.order-voided",
+        orderVoided(EVENT.toString(), TENANT.toString(), ORDER.toString()));
+
+    assertEquals(1, service.voids);
+    assertEquals(EVENT, service.voidEventId);
+    assertEquals("reporting-svc/sales-events", service.voidConsumer);
+    assertEquals(TENANT, service.voidTenantId);
+    assertEquals(ORDER, service.voidOrderId);
+    assertEquals(0, service.sales, "a void records no sale");
+    assertEquals(0, service.refunds, "a void is not a refund");
+  }
+
+  /** A void that was never handed over restocks nothing, and is still a void. */
+  @Test
+  void orderVoidedWithNothingToRestockStillVoidsTheSale() {
+    String json =
+        "{\"eventId\":\""
+            + EVENT
+            + "\",\"eventType\":\"OrderVoided\",\"tenantId\":\""
+            + TENANT
+            + "\",\"orderId\":\""
+            + ORDER
+            + "\",\"storeId\":\""
+            + STORE
+            + "\",\"items\":[]}";
+
+    dispatcher.dispatch("storeql.order.order-voided", json);
+
+    assertEquals(1, service.voids);
+    assertEquals(ORDER, service.voidOrderId);
+  }
+
+  /**
+   * A void that cannot say which event it is, whose business, or which sale, is skipped rather than
+   * guessed at: it could never be recognised on redelivery, nor pinned to one business's sale.
+   */
+  @Test
+  void anUnreadableOrderVoidedIsSkippedWithoutThrowing() {
+    String noEventId =
+        "{\"eventType\":\"OrderVoided\",\"tenantId\":\""
+            + TENANT
+            + "\",\"orderId\":\""
+            + ORDER
+            + "\"}";
+    dispatcher.dispatch("storeql.order.order-voided", noEventId);
+    // Not a UUIDv7 (a v4): read with Ids.parse, refused like everywhere else.
+    dispatcher.dispatch(
+        "storeql.order.order-voided",
+        orderVoided(EVENT.toString(), TENANT.toString(), "3f2b8e1c-9a4d-4c2e-8f7a-1b2c3d4e5f60"));
+    dispatcher.dispatch(
+        "storeql.order.order-voided",
+        orderVoided(EVENT.toString(), "not-a-uuid", ORDER.toString()));
+    dispatcher.dispatch("storeql.order.order-voided", "{not valid json");
+
+    assertEquals(0, service.voids);
     assertEquals(0, service.sales);
     assertEquals(0, service.refunds);
   }

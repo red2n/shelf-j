@@ -25,6 +25,7 @@ public class ExportableData extends TenantDataSpec {
         "open_supply_lines",
         "sales_facts",
         "sales_line_facts",
+        "sales_voids",
         "catalogue_products",
         "catalogue_variants");
   }

@@ -61,6 +61,7 @@ public final class WaveMappers {
         t.id(),
         t.storeId(),
         t.batchId(),
+        t.batchNo(),
         t.variantId(),
         t.qty(),
         t.suggestedZoneId(),

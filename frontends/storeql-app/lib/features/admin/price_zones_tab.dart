@@ -3,9 +3,11 @@ import 'package:flutter/material.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 
 import '../../core/constants.dart';
+import '../../core/format.dart';
 import '../../core/network/api_client.dart';
 import '../../core/network/api_error.dart';
 import '../../core/theme.dart';
+import '../../core/spacing.dart';
 import '../../shared/widgets/error_view.dart';
 import '../../shared/util/short_ref.dart';
 import '../../shared/widgets/loading_view.dart';
@@ -169,7 +171,10 @@ String _trim(double v) {
   return t.endsWith('.') ? t.substring(0, t.length - 1) : t;
 }
 
-String _money(double v, String currency) => '${v.toStringAsFixed(2)} $currency';
+String _money(double v, String currency) => AppFormat.money(v, currencyCode: currency);
+
+/// The day a price was seen, as a date: `20 Sept 2026`.
+String _seen(String iso) => AppFormat.date(iso);
 
 final priceZonesProvider = FutureProvider.autoDispose<List<PriceZone>>((ref) async {
   final resp = await ref
@@ -222,7 +227,7 @@ class PriceZonesTab extends ConsumerWidget {
   @override
   Widget build(BuildContext context, WidgetRef ref) {
     return ListView(
-      padding: const EdgeInsets.all(16),
+      padding: context.pagePadding,
       children: [
         _ZonesSection(management: management),
         const SizedBox(height: 12),
@@ -282,7 +287,7 @@ class _ZonesSection extends ConsumerWidget {
     final cs = Theme.of(context).colorScheme;
     return Card(
       child: Padding(
-        padding: const EdgeInsets.all(16),
+        padding: AppSpacing.cardPadding,
         child: Column(
           crossAxisAlignment: CrossAxisAlignment.stretch,
           children: [
@@ -551,7 +556,7 @@ class _CompetitorSection extends ConsumerWidget {
     final cs = Theme.of(context).colorScheme;
     return Card(
       child: Padding(
-        padding: const EdgeInsets.all(16),
+        padding: AppSpacing.cardPadding,
         child: Column(
           crossAxisAlignment: CrossAxisAlignment.stretch,
           children: [
@@ -582,6 +587,13 @@ class _CompetitorSection extends ConsumerWidget {
               ),
               data: (list) {
                 if (list.isEmpty) return _compactState(context, 'No competitor prices recorded yet.');
+                // Each sighting by its product's name; the end of its id only
+                // while the names load.
+                final labels = ref
+                        .watch(variantLabelsProvider(
+                            variantIdsKey(list.take(20).map((c) => c.variantId))))
+                        .value ??
+                    const <String, VariantLabel>{};
                 return Column(
                   children: [
                     for (final c in list.take(20))
@@ -592,7 +604,7 @@ class _CompetitorSection extends ConsumerWidget {
                         leading: Icon(Icons.storefront_outlined, color: cs.onSurfaceVariant),
                         title: Text('${c.competitor} · ${_money(c.price, c.currency)}'),
                         subtitle: Text(
-                          'seen ${c.observedOn} ${zoneName(c.zoneId)} · variant ${shortRef(c.variantId)}'
+                          '${variantDisplayName(c.variantId, labels)} · seen ${_seen(c.observedOn)} ${zoneName(c.zoneId)}'
                           '${c.source == 'IMPORT' ? ' · imported' : ''}',
                         ),
                       ),
@@ -789,7 +801,7 @@ class _RepricingSection extends ConsumerWidget {
     final status = context.status;
     return Card(
       child: Padding(
-        padding: const EdgeInsets.all(16),
+        padding: AppSpacing.cardPadding,
         child: Column(
           crossAxisAlignment: CrossAxisAlignment.stretch,
           children: [
@@ -858,6 +870,11 @@ class _RepricingSection extends ConsumerWidget {
               ),
               data: (list) {
                 if (list.isEmpty) return _compactState(context, 'Nothing proposed. Run a rule after recording rival prices.');
+                final labels = ref
+                        .watch(variantLabelsProvider(
+                            variantIdsKey(list.map((p) => p.variantId))))
+                        .value ??
+                    const <String, VariantLabel>{};
                 return Column(
                   children: [
                     for (final p in list)
@@ -870,8 +887,8 @@ class _RepricingSection extends ConsumerWidget {
                           style: const TextStyle(fontWeight: FontWeight.w600),
                         ),
                         subtitle: Text(
-                          '${p.competitor} at ${_money(p.competitorPrice, p.currency)}, seen ${p.observedOn}'
-                          ' · variant ${shortRef(p.variantId)}',
+                          '${variantDisplayName(p.variantId, labels)} · ${p.competitor} at '
+                          '${_money(p.competitorPrice, p.currency)}, seen ${_seen(p.observedOn)}',
                         ),
                         trailing: management
                             ? Row(
