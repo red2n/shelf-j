@@ -296,8 +296,19 @@ public final class Events {
   }
 
   static OutboxRow orderCancelled(UUID tenantId, UUID orderId, String reason) {
+    return orderCancelled(tenantId, orderId, reason, null, null);
+  }
+
+  /**
+   * As above, saying which kind of order was cancelled ({@code channel}, {@code fulfilmentType}):
+   * inventory-svc's waiting list (wave picking) remembers a cancelled online pickup or delivery
+   * order as done, so its confirmation arriving late cannot make it wait again, and remembers
+   * nothing for a till sale.
+   */
+  static OutboxRow orderCancelled(
+      UUID tenantId, UUID orderId, String reason, String channel, String fulfilmentType) {
     // eventId lets payment-svc dedupe the automatic refund of a cancelled (paid) order; existing
-    // consumers (inventory-svc hold release) ignore the extra field.
+    // consumers (inventory-svc hold release) ignore the extra fields.
     return new OutboxRow(
         "OrderCancelled",
         "storeql.order.order-cancelled",
@@ -305,8 +316,14 @@ public final class Events {
         orderId,
         String.format(
             "{\"eventId\":\"%s\",\"eventType\":\"OrderCancelled\",\"tenantId\":\"%s\","
-                + "\"orderId\":\"%s\",\"reason\":\"%s\"}",
-            Ids.newId(), tenantId, orderId, esc(reason)));
+                + "\"orderId\":\"%s\",\"reason\":\"%s\"%s}",
+            Ids.newId(), tenantId, orderId, esc(reason), kind(channel, fulfilmentType)));
+  }
+
+  /** The {@code channel} and {@code fulfilmentType} members, when known; nothing when not. */
+  private static String kind(String channel, String fulfilmentType) {
+    return (channel == null ? "" : ",\"channel\":\"" + esc(channel) + "\"")
+        + (fulfilmentType == null ? "" : ",\"fulfilmentType\":\"" + esc(fulfilmentType) + "\"");
   }
 
   static OutboxRow orderFulfilled(
@@ -330,6 +347,34 @@ public final class Events {
       List<OrderItem> items,
       java.util.Map<UUID, BigDecimal> unitNet,
       int scale) {
+    return orderFulfilled(
+        tenantId, orderId, storeId, items, unitNet, scale, java.util.Map.of(), null, null, null);
+  }
+
+  /**
+   * As above, saying what each line still has outstanding after this handover ({@code
+   * outstandingQty}), whether the order is now {@code FULFILLED} or {@code PARTIALLY_FULFILLED}
+   * ({@code status}), and which kind of order it is ({@code channel}, {@code fulfilmentType}).
+   * inventory-svc's waiting list (wave picking) is set from these absolute figures, so a
+   * redelivered or reordered event states the same truth instead of subtracting twice, and a
+   * fulfilled online pickup or delivery order leaves the list for good; a till sale leaves nothing.
+   *
+   * @param outstanding what is still to hand over per variant, after this handover
+   * @param status the order's status after this handover, or null to say nothing
+   * @param channel the order's channel, or null to say nothing
+   * @param fulfilmentType the order's fulfilment type, or null to say nothing
+   */
+  static OutboxRow orderFulfilled(
+      UUID tenantId,
+      UUID orderId,
+      UUID storeId,
+      List<OrderItem> items,
+      java.util.Map<UUID, BigDecimal> unitNet,
+      int scale,
+      java.util.Map<UUID, BigDecimal> outstanding,
+      String status,
+      String channel,
+      String fulfilmentType) {
     // eventId is required by inventory-svc's OrderEventHandler for per-line dedupe — without it,
     // every OrderFulfilled is dropped as a malformed event and stock is never deducted.
     StringBuilder sb = new StringBuilder();
@@ -341,13 +386,18 @@ public final class Events {
         .append(orderId)
         .append("\",\"storeId\":\"")
         .append(storeId)
-        .append("\",\"items\":[");
+        .append('"');
+    if (status != null) sb.append(",\"status\":\"").append(esc(status)).append('"');
+    sb.append(kind(channel, fulfilmentType));
+    sb.append(",\"items\":[");
     for (int i = 0; i < items.size(); i++) {
       if (i > 0) sb.append(',');
       sb.append("{\"variantId\":\"")
           .append(items.get(i).variantId())
           .append("\",\"qty\":")
           .append(items.get(i).qty().toPlainString());
+      BigDecimal left = outstanding.get(items.get(i).variantId());
+      if (left != null) sb.append(",\"outstandingQty\":").append(left.toPlainString());
       BigDecimal net =
           com.storeql.order.domain.LineRevenue.forQty(
               unitNet, items.get(i).variantId(), items.get(i).qty(), scale);

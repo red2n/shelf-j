@@ -93,8 +93,14 @@ export default function ({ tenant, store, aisle, cold, apples, pears, storekeepe
   truthy('[+] order-svc fulfilled the first order in full and the second in part, from the wave alone', fulfilled >= 0, { order1: status(order1.id), order2: status(order2.id) });
   const left = awaiting();
   truthy('[+] one apple of the second order still waits for the next wave', left.length === 1 && left[0].orderId === order2.id && num(left[0].lines[0].qtyOutstanding) === 1, left);
-  const settled = poll(20, () => num(level(apples).onHand) === 9) >= 0 && num(level(apples).onHand) === 9;
-  truthy('[+] the fulfilments that followed deducted nothing twice', settled && num(level(pears).onHand) === 6, { apples: level(apples), pears: level(pears) });
+  // The fulfilments have landed in inventory-svc once the wave's lines show their revenue on the
+  // gross-margin report (the revenue is recorded when the pick is acknowledged); only then does
+  // "deducted nothing twice" mean anything.
+  const from = new Date(Date.now() - 86400000).toISOString();
+  const to = new Date(Date.now() + 86400000).toISOString();
+  const margin = () => ((data(call('GET', `${I}/admin/inventory/reports/gross-margin?from=${encodeURIComponent(from)}&to=${encodeURIComponent(to)}&storeId=${store.id}&groupBy=VARIANT`, { token: owner })) || {}).rows || []);
+  const revenueLanded = poll(60, () => margin().some((r) => r.groupKey === pears && num(r.revenue) > 0) && margin().some((r) => r.groupKey === apples && num(r.revenue) > 0)) >= 0;
+  truthy('[+] the fulfilments that followed deducted nothing twice', revenueLanded && num(level(apples).onHand) === 9 && num(level(pears).onHand) === 6, { revenueLanded, apples: level(apples), pears: level(pears), margin: margin() });
   expect(call('POST', `${I}/admin/inventory/waves/${wave.id}/complete`, { token: storekeeper.token, body: {} }), '[-] completed once', 409, 'INVENTORY_WAVE_NOT_OPEN');
 
   // ── 5. directed putaway: a rule places the pears, the apples wait to be placed ─

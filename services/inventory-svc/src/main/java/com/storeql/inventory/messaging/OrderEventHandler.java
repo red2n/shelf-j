@@ -74,7 +74,7 @@ class OrderEventHandler {
     }
     if ("OrderCancelled".equals(eventType)) {
       releaseHolds(tenantId, orderId);
-      waves.forget(tenantId, orderId);
+      waves.forget(tenantId, orderId, waits(obj));
       return;
     }
 
@@ -92,10 +92,12 @@ class OrderEventHandler {
     UUID eventId;
     UUID storeId;
     JsonArray items;
+    String orderStatus;
     try {
       eventId = Ids.parse(obj.getString("eventId"));
       storeId = Ids.parse(obj.getString("storeId"));
       items = obj.getJsonArray("items");
+      orderStatus = obj.getString("status", null);
     } catch (RuntimeException e) {
       LOG.log(Level.WARNING, "Malformed order event skipped: " + e.getMessage());
       return;
@@ -108,6 +110,8 @@ class OrderEventHandler {
     // redelivered event an already-consumed line falls to the deduct path — which the per-line
     // dedupe mark then skips.
     List<Reservation> holds = fulfil ? heldReservationsQuietly(tenantId, orderId) : List.of();
+    boolean complete = "FULFILLED".equals(orderStatus);
+    boolean partial = "PARTIALLY_FULFILLED".equals(orderStatus);
 
     for (int i = 0; i < items.size(); i++) {
       JsonObject line = items.getJsonObject(i);
@@ -115,22 +119,39 @@ class OrderEventHandler {
       BigDecimal qty = new BigDecimal(line.get("qty").toString());
       BigDecimal netAmount = netAmount(line);
       UUID dedupeId = lineDedupeId(eventId, i);
+      BigDecimal outstanding = outstanding(line);
       try {
         if (fulfil) {
-          // A line a wave already picked left the shelf when the wave completed: keep the
-          // revenue, deduct nothing twice.
-          if (waves.revenueOnlyIfPickedByWave(
-              dedupeId, CONSUMER_NAME, tenantId, storeId, variantId, qty, orderId, netAmount)) {
-            continue;
+          // The waiting list first, from what order-svc says is still outstanding: a wave
+          // completing between this and the deduction below then draws no more than that.
+          if (outstanding != null)
+            waves.outstandingKnown(tenantId, orderId, variantId, outstanding);
+          // What a wave already picked left the shelf when the wave completed: only the rest of
+          // the line leaves now, and the line's revenue is recorded with the pick, once.
+          BigDecimal picked =
+              waves.pickedByWave(
+                  dedupeId, CONSUMER_NAME, tenantId, storeId, variantId, qty, orderId, netAmount);
+          BigDecimal rest = qty.subtract(picked).max(BigDecimal.ZERO);
+          boolean deducted = false;
+          if (rest.signum() > 0) {
+            BigDecimal net = picked.signum() > 0 ? null : netAmount;
+            Reservation hold = takeMatchingHold(holds, variantId, rest);
+            deducted =
+                hold != null
+                    ? service.consumeOnce(dedupeId, CONSUMER_NAME, tenantId, hold.id(), net)
+                    : service.deductSaleFromOrderOnce(
+                        dedupeId, CONSUMER_NAME, tenantId, storeId, variantId, rest, orderId, net);
           }
-          Reservation hold = takeMatchingHold(holds, variantId, qty);
-          if (hold != null) {
-            service.consumeOnce(dedupeId, CONSUMER_NAME, tenantId, hold.id(), netAmount);
-          } else {
-            service.deductSaleFromOrderOnce(
-                dedupeId, CONSUMER_NAME, tenantId, storeId, variantId, qty, orderId, netAmount);
+          if (picked.signum() > 0 && !complete) {
+            // A hold left on a line a wave picked short still covers what waits for the next
+            // wave: not a leftover to release below, unless the order is handed over in full.
+            holds.removeIf(r -> r.variantId().equals(variantId));
           }
-          waves.fulfilledByHand(tenantId, orderId, variantId, qty);
+          // Without an outstanding figure (an older event), the waiting line is reduced by what
+          // this fulfilment actually deducted — never by a redelivery.
+          if (outstanding == null && deducted) {
+            waves.fulfilledByHand(tenantId, orderId, variantId, rest);
+          }
         } else if (voided) {
           service.receiveVoidFromOrderOnce(
               dedupeId, CONSUMER_NAME, tenantId, storeId, variantId, qty, orderId);
@@ -152,11 +173,37 @@ class OrderEventHandler {
       }
     }
     // Defensive: holds that matched no fulfilled line (order edited, qty drift) must not stay
-    // HELD forever — release them so the stock returns to availability.
-    for (Reservation leftover : holds) {
-      releaseQuietly(tenantId, leftover.id());
+    // HELD forever — release them so the stock returns to availability. Not on a part handover:
+    // the lines it did not name still wait, with their holds, for the next one.
+    if (!partial) {
+      for (Reservation leftover : holds) {
+        releaseQuietly(tenantId, leftover.id());
+      }
     }
+    // Handed over in full: the order waits no more, and a confirmation arriving late changes
+    // nothing.
+    if (fulfil && complete) waves.forget(tenantId, orderId, waits(obj));
     LOG.log(Level.INFO, "{0} {1}: processed {2} line(s)", eventType, orderId, items.size());
+  }
+
+  /** Whether the event's order is one that waits to be picked (online, pickup or delivery). */
+  private static boolean waits(JsonObject obj) {
+    String channel = obj.getString("channel", null);
+    String fulfilment =
+        obj.containsKey("fulfilmentType") && !obj.isNull("fulfilmentType")
+            ? obj.getString("fulfilmentType", null)
+            : null;
+    return com.storeql.inventory.service.WaveService.waits(channel, fulfilment);
+  }
+
+  /** What the line still has outstanding after this handover, when the event says. */
+  private static BigDecimal outstanding(JsonObject line) {
+    if (!line.containsKey("outstandingQty") || line.isNull("outstandingQty")) return null;
+    try {
+      return new BigDecimal(line.get("outstandingQty").toString());
+    } catch (NumberFormatException e) {
+      return null;
+    }
   }
 
   /**
@@ -164,21 +211,26 @@ class OrderEventHandler {
    * (a till sale, a malformed confirmation) is not this handler's to keep.
    */
   private void awaitConfirmed(JsonObject obj, UUID tenantId, UUID orderId) {
+    UUID eventId;
+    UUID storeId;
+    String channel;
+    String fulfilment;
+    Instant confirmedAt;
+    java.util.Map<UUID, BigDecimal> wanted = new java.util.LinkedHashMap<>();
     try {
-      UUID eventId = Ids.parse(obj.getString("eventId"));
-      UUID storeId = Ids.parse(obj.getString("storeId"));
-      String channel = obj.getString("channel", "");
-      String fulfilment =
+      eventId = Ids.parse(obj.getString("eventId"));
+      storeId = Ids.parse(obj.getString("storeId"));
+      channel = obj.getString("channel", "");
+      fulfilment =
           obj.containsKey("fulfilmentType") && !obj.isNull("fulfilmentType")
               ? obj.getString("fulfilmentType")
               : null;
       JsonArray lines = obj.containsKey("lines") ? obj.getJsonArray("lines") : null;
       // When order-svc confirmed it; the order waits from then, not from when this arrived.
-      Instant confirmedAt =
+      confirmedAt =
           obj.containsKey("occurredAt") && !obj.isNull("occurredAt")
               ? Instant.parse(obj.getString("occurredAt"))
               : Instant.now();
-      java.util.Map<UUID, BigDecimal> wanted = new java.util.LinkedHashMap<>();
       if (lines != null) {
         for (int i = 0; i < lines.size(); i++) {
           JsonObject line = lines.getJsonObject(i);
@@ -188,12 +240,15 @@ class OrderEventHandler {
               BigDecimal::add);
         }
       }
-      if (waves.awaitConfirmedOnce(
-          eventId, tenantId, orderId, storeId, channel, fulfilment, confirmedAt, wanted)) {
-        LOG.log(Level.INFO, "OrderConfirmed {0}: waiting to be picked at {1}", orderId, storeId);
-      }
     } catch (RuntimeException e) {
-      LOG.log(Level.WARNING, "OrderConfirmed " + orderId + " not projected: " + e.getMessage());
+      LOG.log(Level.WARNING, "OrderConfirmed " + orderId + " malformed, not projected: " + e);
+      return;
+    }
+    // A failure to write is not swallowed here: it propagates, the loop redelivers, and the
+    // projection is idempotent on the event id.
+    if (waves.awaitConfirmedOnce(
+        eventId, tenantId, orderId, storeId, channel, fulfilment, confirmedAt, wanted)) {
+      LOG.log(Level.INFO, "OrderConfirmed {0}: waiting to be picked at {1}", orderId, storeId);
     }
   }
 

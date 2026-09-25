@@ -17,6 +17,8 @@ import com.storeql.service.OutboxRow;
 import com.storeql.web.ApiException;
 import jakarta.enterprise.context.ApplicationScoped;
 import jakarta.inject.Inject;
+import java.lang.System.Logger;
+import java.lang.System.Logger.Level;
 import java.math.BigDecimal;
 import java.sql.Connection;
 import java.sql.PreparedStatement;
@@ -42,6 +44,8 @@ import java.util.function.BiFunction;
 @ApplicationScoped
 public class WaveRepository extends BaseOutboxRepository {
 
+  private static final Logger LOG = System.getLogger(WaveRepository.class.getName());
+
   static final String AWAIT_CONSUMER = "inventory-svc/awaiting-orders";
 
   @Inject InventoryRepository inventory;
@@ -60,6 +64,8 @@ public class WaveRepository extends BaseOutboxRepository {
     return inTx(
         c -> {
           if (!markProcessedIfNewTx(c, eventId, AWAIT_CONSUMER)) return false;
+          // Cancelled or handed over in full before this confirmation arrived: done is done.
+          if (doneTx(c, tenantId, orderId)) return false;
           try (PreparedStatement ps =
               c.prepareStatement(
                   "INSERT INTO awaiting_orders (order_id, tenant_id, store_id, fulfilment_type,"
@@ -91,15 +97,79 @@ public class WaveRepository extends BaseOutboxRepository {
         "await confirmed order");
   }
 
-  /** The order is cancelled: it waits no more. */
-  public void forget(UUID tenantId, UUID orderId) {
-    exec(
-        "DELETE FROM awaiting_orders WHERE tenant_id = ? AND order_id = ?",
-        ps -> {
-          ps.setObject(1, tenantId);
-          ps.setObject(2, orderId);
+  /**
+   * The order is cancelled, or handed over in full: it waits no more, and a confirmation that
+   * arrives after this cannot make it wait again.
+   */
+  public void forget(UUID tenantId, UUID orderId, boolean couldHaveWaited) {
+    inTx(
+        c -> {
+          forgetTx(c, tenantId, orderId, couldHaveWaited);
+          return null;
         },
         "forget awaiting order");
+  }
+
+  /**
+   * Drops the order from the waiting list and, when it waited or {@code couldHaveWaited} (an online
+   * pickup or delivery order whose confirmation may still be on its way), leaves the tombstone; a
+   * till sale leaves nothing.
+   */
+  private static void forgetTx(Connection c, UUID tenantId, UUID orderId, boolean couldHaveWaited)
+      throws SQLException {
+    int waited;
+    try (PreparedStatement ps =
+        c.prepareStatement("DELETE FROM awaiting_orders WHERE tenant_id = ? AND order_id = ?")) {
+      ps.setObject(1, tenantId);
+      ps.setObject(2, orderId);
+      waited = ps.executeUpdate();
+    }
+    if (waited == 0 && !couldHaveWaited) return;
+    try (PreparedStatement ps =
+        c.prepareStatement(
+            "INSERT INTO awaiting_orders_done (order_id, tenant_id) VALUES (?,?) ON CONFLICT"
+                + " (order_id) DO NOTHING")) {
+      ps.setObject(1, orderId);
+      ps.setObject(2, tenantId);
+      ps.executeUpdate();
+    }
+  }
+
+  private static boolean doneTx(Connection c, UUID tenantId, UUID orderId) throws SQLException {
+    try (PreparedStatement ps =
+        c.prepareStatement(
+            "SELECT 1 FROM awaiting_orders_done WHERE tenant_id = ? AND order_id = ?")) {
+      ps.setObject(1, tenantId);
+      ps.setObject(2, orderId);
+      try (ResultSet rs = ps.executeQuery()) {
+        return rs.next();
+      }
+    }
+  }
+
+  /**
+   * What order-svc says is still outstanding on a line after a handover, whoever made it: the line
+   * never waits for more than that. Absolute, so a redelivered or reordered event states the same
+   * truth instead of subtracting twice.
+   */
+  public void outstandingKnown(
+      UUID tenantId, UUID orderId, UUID variantId, BigDecimal outstanding) {
+    inTx(
+        c -> {
+          try (PreparedStatement ps =
+              c.prepareStatement(
+                  "UPDATE awaiting_order_lines SET qty_outstanding = LEAST(qty_outstanding, ?)"
+                      + " WHERE tenant_id = ? AND order_id = ? AND variant_id = ?")) {
+            ps.setBigDecimal(1, outstanding);
+            ps.setObject(2, tenantId);
+            ps.setObject(3, orderId);
+            ps.setObject(4, variantId);
+            ps.executeUpdate();
+          }
+          pruneOrderTx(c, tenantId, orderId);
+          return null;
+        },
+        "awaiting line outstanding known");
   }
 
   /** A line fulfilled outside a wave (the Fulfil button): the order needs that much less. */
@@ -128,17 +198,19 @@ public class WaveRepository extends BaseOutboxRepository {
     }
   }
 
-  /** An order with nothing outstanding waits no more. */
+  /** An order with nothing outstanding waits no more, and is done. */
   private static void pruneOrderTx(Connection c, UUID tenantId, UUID orderId) throws SQLException {
     try (PreparedStatement ps =
         c.prepareStatement(
-            "DELETE FROM awaiting_orders o WHERE o.tenant_id = ? AND o.order_id = ? AND NOT EXISTS"
-                + " (SELECT 1 FROM awaiting_order_lines l WHERE l.tenant_id = o.tenant_id AND l.order_id"
-                + " = o.order_id AND l.qty_outstanding > 0)")) {
+            "SELECT 1 FROM awaiting_order_lines WHERE tenant_id = ? AND order_id = ? AND"
+                + " qty_outstanding > 0 LIMIT 1")) {
       ps.setObject(1, tenantId);
       ps.setObject(2, orderId);
-      ps.executeUpdate();
+      try (ResultSet rs = ps.executeQuery()) {
+        if (rs.next()) return; // something still waits
+      }
     }
+    forgetTx(c, tenantId, orderId, false);
   }
 
   /** The orders waiting at a store, earliest confirmed first, with what each still needs. */
@@ -148,7 +220,9 @@ public class WaveRepository extends BaseOutboxRepository {
             "SELECT order_id, tenant_id, store_id, fulfilment_type, confirmed_at, wave_id FROM"
                 + " awaiting_orders WHERE tenant_id = ?"
                 + (storeId == null ? "" : " AND store_id = ?")
-                + " ORDER BY confirmed_at, order_id",
+                // A wave takes the whole list, so it is not paged; the bound is a ceiling a store
+                // never reaches in a day, not a page.
+                + " ORDER BY confirmed_at, order_id LIMIT 500",
             ps -> {
               ps.setObject(1, tenantId);
               if (storeId != null) ps.setObject(2, storeId);
@@ -586,21 +660,45 @@ public class WaveRepository extends BaseOutboxRepository {
             List<Waves.Allocation> shares = Waves.share(allocations, picked);
             for (int i = 0; i < shares.size(); i++) {
               Waves.Allocation share = shares.get(i);
+              // An order that left the waiting list while the wave was open — cancelled, or handed
+              // over by hand — is not drawn: what was picked for it goes back on the shelf, and the
+              // share recorded against it is what actually left.
+              BigDecimal drawnBefore =
+                  perOrder
+                      .getOrDefault(share.orderId(), Map.of())
+                      .getOrDefault(line.variantId(), BigDecimal.ZERO);
+              BigDecimal draw =
+                  share
+                      .qty()
+                      .min(
+                          outstandingTx(c, tenantId, share.orderId(), line.variantId())
+                              .subtract(drawnBefore))
+                      .max(BigDecimal.ZERO);
+              if (draw.compareTo(share.qty()) < 0) {
+                LOG.log(
+                    Level.WARNING,
+                    "wave {0}: order {1} left while the wave was open; {2} of {3} picked for it"
+                        + " stays on the shelf",
+                    waveId,
+                    share.orderId(),
+                    share.qty().subtract(draw).toPlainString(),
+                    share.qty().toPlainString());
+              }
               try (PreparedStatement ps =
                   c.prepareStatement(
                       "UPDATE pick_wave_allocations SET picked_qty = ? WHERE tenant_id = ? AND line_id = ?"
                           + " AND seq = ?")) {
-                ps.setBigDecimal(1, share.qty());
+                ps.setBigDecimal(1, draw);
                 ps.setObject(2, tenantId);
                 ps.setObject(3, line.id());
                 ps.setInt(4, i);
                 ps.executeUpdate();
               }
-              if (share.qty().signum() <= 0) continue;
-              drawFromBatchTx(c, tenantId, wave.storeId(), line, share.orderId(), share.qty());
+              if (draw.signum() <= 0) continue;
+              drawFromBatchTx(c, tenantId, wave.storeId(), line, share.orderId(), draw);
               perOrder
                   .computeIfAbsent(share.orderId(), k -> new LinkedHashMap<>())
-                  .merge(line.variantId(), share.qty(), BigDecimal::add);
+                  .merge(line.variantId(), draw, BigDecimal::add);
             }
           }
           for (Map.Entry<UUID, Map<UUID, BigDecimal>> o : perOrder.entrySet()) {
@@ -646,10 +744,40 @@ public class WaveRepository extends BaseOutboxRepository {
         "complete pick wave");
   }
 
-  /** Takes {@code qty} from exactly this line's batch, as the sale the order is. */
-  private static void drawFromBatchTx(
+  /**
+   * Takes {@code qty} from exactly this line's batch, as the sale the order is. The batch must
+   * still be sellable here — at this store, available, duty paid — as it was when the wave directed
+   * to it; a batch quarantined or moved since is {@code INVENTORY_WAVE_STOCK_GONE}. A draw from a
+   * batch the supplier still owns announces {@code ConsignmentStockSold} on this transaction, as
+   * the ordinary sale deduction does: the supplier is owed the moment the stock leaves.
+   */
+  private void drawFromBatchTx(
       Connection c, UUID tenantId, UUID storeId, PickWaveLine line, UUID orderId, BigDecimal qty)
       throws SQLException {
+    String ownership;
+    UUID ownerSupplierId;
+    BigDecimal costPrice;
+    try (PreparedStatement ps =
+        c.prepareStatement(
+            "SELECT ownership, owner_supplier_id, cost_price FROM inventory_batches WHERE tenant_id"
+                + " = ? AND id = ? AND store_id = ? AND material_status = 'AVAILABLE' AND duty_status"
+                + " = 'DUTY_PAID' FOR UPDATE")) {
+      ps.setObject(1, tenantId);
+      ps.setObject(2, line.batchId());
+      ps.setObject(3, storeId);
+      try (ResultSet rs = ps.executeQuery()) {
+        if (!rs.next()) {
+          throw ApiException.unprocessable(
+              "INVENTORY_WAVE_STOCK_GONE",
+              "batch "
+                  + line.batchNo()
+                  + " is no longer available to sell at this store; count it and pick again");
+        }
+        ownership = rs.getString("ownership");
+        ownerSupplierId = rs.getObject("owner_supplier_id", UUID.class);
+        costPrice = rs.getBigDecimal("cost_price");
+      }
+    }
     try (PreparedStatement ps =
         c.prepareStatement(
             "UPDATE inventory_batches SET remaining_qty = remaining_qty - ? WHERE tenant_id = ? AND id"
@@ -679,6 +807,40 @@ public class WaveRepository extends BaseOutboxRepository {
         "ORDER",
         orderId,
         MovementAttribution.system());
+    if ("CONSIGNMENT".equals(ownership) && ownerSupplierId != null) {
+      insertOutbox(
+          c,
+          new OutboxRow(
+              "ConsignmentStockSold",
+              "storeql.inventory.consignment-stock-sold",
+              tenantId,
+              line.batchId(),
+              com.storeql.inventory.service.Events.consignmentStockSold(
+                  tenantId,
+                  storeId,
+                  line.variantId(),
+                  line.batchId(),
+                  ownerSupplierId,
+                  orderId,
+                  qty,
+                  costPrice)));
+    }
+  }
+
+  /** What an order still waits for on a product, locked for the wave that is about to draw it. */
+  private static BigDecimal outstandingTx(Connection c, UUID tenantId, UUID orderId, UUID variantId)
+      throws SQLException {
+    try (PreparedStatement ps =
+        c.prepareStatement(
+            "SELECT qty_outstanding FROM awaiting_order_lines WHERE tenant_id = ? AND order_id = ?"
+                + " AND variant_id = ? FOR UPDATE")) {
+      ps.setObject(1, tenantId);
+      ps.setObject(2, orderId);
+      ps.setObject(3, variantId);
+      try (ResultSet rs = ps.executeQuery()) {
+        return rs.next() ? rs.getBigDecimal("qty_outstanding") : BigDecimal.ZERO;
+      }
+    }
   }
 
   /** The order's holds on the product give up what the wave took; a hold emptied is consumed. */
@@ -761,11 +923,13 @@ public class WaveRepository extends BaseOutboxRepository {
   // ── The guard: a fulfilment of what a wave already picked ──────────────────
 
   /**
-   * When the order line being fulfilled is one a wave already deducted, records the line's revenue
-   * under the fulfilment's dedupe mark and acknowledges the pick, deducting nothing; false when no
-   * wave picked it, in which case nothing is written and the ordinary path runs.
+   * What a wave already drew for this order line, acknowledged on the fulfilment's own dedupe id:
+   * the fulfilment then deducts only what is left, and the line's revenue is recorded here for the
+   * whole, once. Zero when no wave picked the line — the ordinary path runs untouched. Redelivered,
+   * the same answer: the picks this dedupe id acknowledged count again, so the remainder the caller
+   * computes is the same remainder.
    */
-  public boolean revenueOnlyIfPickedByWave(
+  public BigDecimal pickedByWave(
       UUID dedupeId,
       String consumerName,
       UUID tenantId,
@@ -774,39 +938,76 @@ public class WaveRepository extends BaseOutboxRepository {
       BigDecimal qty,
       UUID orderId,
       BigDecimal netAmount) {
+    UUID ack = Ids.derived(dedupeId, "wave-pick");
     return inTx(
         c -> {
-          UUID pickId;
+          List<UUID> pickIds = new ArrayList<>();
+          UUID lastWave = null;
+          BigDecimal lastQty = BigDecimal.ZERO;
+          BigDecimal picked = BigDecimal.ZERO;
           try (PreparedStatement ps =
               c.prepareStatement(
-                  "SELECT id FROM wave_picked_lines WHERE tenant_id = ? AND order_id = ? AND variant_id"
-                      + " = ? AND qty = ? AND acknowledged_by IS NULL ORDER BY picked_at, id LIMIT 1 FOR"
-                      + " UPDATE")) {
+                  "SELECT id, wave_id, qty FROM wave_picked_lines WHERE tenant_id = ? AND order_id"
+                      + " = ? AND variant_id = ? AND (acknowledged_by IS NULL OR acknowledged_by = ?)"
+                      + " ORDER BY picked_at, id FOR UPDATE")) {
             ps.setObject(1, tenantId);
             ps.setObject(2, orderId);
             ps.setObject(3, variantId);
-            ps.setBigDecimal(4, qty);
+            ps.setObject(4, ack);
             try (ResultSet rs = ps.executeQuery()) {
-              if (!rs.next()) return false;
-              pickId = rs.getObject("id", UUID.class);
+              while (rs.next() && picked.compareTo(qty) < 0) {
+                pickIds.add(rs.getObject("id", UUID.class));
+                lastWave = rs.getObject("wave_id", UUID.class);
+                lastQty = rs.getBigDecimal("qty");
+                picked = picked.add(lastQty);
+              }
             }
           }
-          if (!markProcessedIfNewTx(c, dedupeId, consumerName)) return true;
+          if (pickIds.isEmpty()) return BigDecimal.ZERO;
+          BigDecimal covered = picked.min(qty);
+          if (!markProcessedIfNewTx(c, ack, consumerName)) return covered;
+          BigDecimal overhang = picked.subtract(qty);
+          if (overhang.signum() > 0) {
+            // The last pick covers more than this handover names: the part it does not is still a
+            // credit for the next one, so it is split off, unacknowledged, rather than lost.
+            UUID last = pickIds.get(pickIds.size() - 1);
+            try (PreparedStatement ps =
+                c.prepareStatement(
+                    "UPDATE wave_picked_lines SET qty = ? WHERE tenant_id = ? AND id = ?")) {
+              ps.setBigDecimal(1, lastQty.subtract(overhang));
+              ps.setObject(2, tenantId);
+              ps.setObject(3, last);
+              ps.executeUpdate();
+            }
+            try (PreparedStatement ps =
+                c.prepareStatement(
+                    "INSERT INTO wave_picked_lines (id, tenant_id, wave_id, order_id, variant_id,"
+                        + " qty) VALUES (?,?,?,?,?,?)")) {
+              ps.setObject(1, Ids.newId());
+              ps.setObject(2, tenantId);
+              ps.setObject(3, lastWave);
+              ps.setObject(4, orderId);
+              ps.setObject(5, variantId);
+              ps.setBigDecimal(6, overhang);
+              ps.executeUpdate();
+            }
+          }
           try (PreparedStatement ps =
               c.prepareStatement(
-                  "UPDATE wave_picked_lines SET acknowledged_by = ? WHERE tenant_id = ? AND id = ?")) {
-            ps.setObject(1, dedupeId);
+                  "UPDATE wave_picked_lines SET acknowledged_by = ? WHERE tenant_id = ? AND id ="
+                      + " ANY(?)")) {
+            ps.setObject(1, ack);
             ps.setObject(2, tenantId);
-            ps.setObject(3, pickId);
+            ps.setArray(3, c.createArrayOf("uuid", pickIds.toArray()));
             ps.executeUpdate();
           }
           if (netAmount != null) {
             InventoryRepository.insertSaleRevenueTx(
                 c, tenantId, storeId, variantId, orderId, qty, netAmount, null, "SALE");
           }
-          return true;
+          return covered;
         },
-        "acknowledge wave pick on fulfilment");
+        "acknowledge wave picks on fulfilment");
   }
 
   /** Now, for the wave's timestamps. */

@@ -75,6 +75,11 @@ class PutawayIT {
   }
 
   private Response call(String method, String path, String json, String tenant, String roles) {
+    return call(method, path, json, tenant, roles, null);
+  }
+
+  private Response call(
+      String method, String path, String json, String tenant, String roles, String storeIds) {
     var b =
         com.storeql.test.WebTargets.at(target, path)
             .request()
@@ -82,6 +87,7 @@ class PutawayIT {
             .header("X-User-Id", USER)
             .header("X-Roles", roles)
             .header("Idempotency-Key", Ids.newId().toString());
+    if (storeIds != null) b = b.header("X-Store-Ids", storeIds);
     return switch (method) {
       case "GET" -> b.get();
       case "PUT" -> b.put(Entity.entity(json, MediaType.APPLICATION_JSON));
@@ -197,6 +203,17 @@ class PutawayIT {
       if (!rules.getJsonObject(i).containsKey("variantId"))
         defaultId = rules.getJsonObject(i).getString("id");
     }
+    // A manager of another store removes no rule of this one: the rule's own store is checked.
+    assertThat(
+        call(
+                "DELETE",
+                "/admin/inventory/putaway/rules/" + defaultId,
+                null,
+                T,
+                "MANAGER",
+                Ids.newId().toString())
+            .getStatus(),
+        is(403));
     assertThat(
         call("DELETE", "/admin/inventory/putaway/rules/" + defaultId, null, T, "MANAGER")
             .getStatus(),

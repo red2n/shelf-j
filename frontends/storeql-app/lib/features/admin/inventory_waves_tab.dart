@@ -546,19 +546,25 @@ class _WaveDialogState extends ConsumerState<WaveDialog> {
   TextEditingController _ctrl(PickWaveLine l) =>
       _picked.putIfAbsent(l.id, () => TextEditingController(text: _q(l.pickedQty ?? l.directedQty)));
 
-  Future<void> _post(String path, Map<String, dynamic> body, String? done) async {
+  /// Posts to the wave and says whether it went through, so a step that depends on the one
+  /// before it (Complete after the picks) can stop when that one was refused.
+  Future<bool> _post(String path, Map<String, dynamic> body, String? done) async {
     setState(() => _busy = true);
     try {
       await ref.read(apiClientProvider).dio.post('$_inv/waves/${widget.id}$path', data: body);
       ref.invalidate(pickWaveProvider(widget.id));
       ref.invalidate(pickWavesProvider(widget.storeId));
       ref.invalidate(awaitingOrdersProvider(widget.storeId));
-      if (!mounted || done == null) return;
-      ScaffoldMessenger.of(context).showSnackBar(SnackBar(content: Text(done)));
+      if (mounted && done != null) {
+        ScaffoldMessenger.of(context).showSnackBar(SnackBar(content: Text(done)));
+      }
+      return true;
     } on DioException catch (e) {
-      if (!mounted) return;
-      ScaffoldMessenger.of(context)
-          .showSnackBar(SnackBar(content: Text(friendlyError(e, fallback: 'That did not go through.'))));
+      if (mounted) {
+        ScaffoldMessenger.of(context)
+            .showSnackBar(SnackBar(content: Text(friendlyError(e, fallback: 'That did not go through.'))));
+      }
+      return false;
     } finally {
       if (mounted) setState(() => _busy = false);
     }
@@ -642,7 +648,9 @@ class _WaveDialogState extends ConsumerState<WaveDialog> {
                     onPressed: _busy
                         ? null
                         : () async {
-                            await _post('/picks', _picksBody(w), null);
+                            // The picks first; a wave completed with picks the server refused
+                            // would deduct what was directed, not what was picked.
+                            if (!await _post('/picks', _picksBody(w), null)) return;
                             await _post('/complete', {}, 'Wave completed: the stock has left and the orders are being fulfilled.');
                           },
                     child: const Text('Complete'),

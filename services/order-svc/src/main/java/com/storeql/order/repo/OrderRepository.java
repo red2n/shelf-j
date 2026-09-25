@@ -913,7 +913,15 @@ public class OrderRepository extends BaseOutboxRepository {
   }
 
   /** One line's share of a fulfilment, for the event and the caller. */
-  public record FulfilledLine(UUID variantId, BigDecimal qty) {}
+  /** A line handed over now, and what the order still has outstanding on that variant after it. */
+  public record FulfilledLine(UUID variantId, BigDecimal qty, BigDecimal outstandingQty) {}
+
+  /** What a handover did: the lines, and whether the order is now handed over in full. */
+  public record Fulfilment(List<FulfilledLine> lines, boolean complete) {
+    public Fulfilment {
+      lines = List.copyOf(lines);
+    }
+  }
 
   /**
    * Hands over part or all of what is outstanding on an order (SJ-D35), in one transaction: the
@@ -938,9 +946,32 @@ public class OrderRepository extends BaseOutboxRepository {
       UUID orderId,
       Map<UUID, BigDecimal> wanted,
       UUID changedBy,
-      java.util.function.Function<List<FulfilledLine>, OutboxRow> eventFor) {
+      java.util.function.Function<Fulfilment, OutboxRow> eventFor) {
+    return fulfilLines(tenantId, orderId, wanted, changedBy, null, null, eventFor).orElseThrow();
+  }
+
+  /**
+   * {@link #fulfilLines} once per {@code dedupeId}: the {@code processed_events} mark is written on
+   * the handover's own transaction, so a consumer that redelivers the event neither hands over
+   * twice nor, having marked first, loses the handover to a failure after the mark.
+   *
+   * @param dedupeId the event-derived id to hand over once for, or null to dedupe nothing
+   * @param dedupeConsumer the consumer the mark belongs to
+   * @return the order after the handover, or empty when this dedupe id was already applied
+   */
+  public Optional<Order> fulfilLines(
+      UUID tenantId,
+      UUID orderId,
+      Map<UUID, BigDecimal> wanted,
+      UUID changedBy,
+      UUID dedupeId,
+      String dedupeConsumer,
+      java.util.function.Function<Fulfilment, OutboxRow> eventFor) {
     return inTx(
         c -> {
+          if (dedupeId != null && !markProcessedIfNewTx(c, dedupeId, dedupeConsumer)) {
+            return Optional.<Order>empty();
+          }
           String status;
           try (PreparedStatement ps =
               c.prepareStatement(
@@ -1041,7 +1072,7 @@ public class OrderRepository extends BaseOutboxRepository {
               }
               left = left.subtract(take);
             }
-            now.add(new FulfilledLine(variantId, e.getValue()));
+            now.add(new FulfilledLine(variantId, e.getValue(), outstanding.subtract(e.getValue())));
           }
           boolean complete = true;
           BigDecimal handed = BigDecimal.ZERO;
@@ -1084,8 +1115,8 @@ public class OrderRepository extends BaseOutboxRepository {
                       + ordered.stripTrailingZeros().toPlainString()
                       + " units handed over",
               changedBy);
-          insertOutbox(c, eventFor.apply(now));
-          return findOrderInTx(c, tenantId, orderId);
+          insertOutbox(c, eventFor.apply(new Fulfilment(now, complete)));
+          return Optional.of(findOrderInTx(c, tenantId, orderId));
         },
         "fulfil order " + orderId);
   }

@@ -67,15 +67,21 @@ public class WavePickedHandler {
         LOG.log(Level.WARNING, "WavePicked order skipped as malformed: " + e.getMessage());
         continue;
       }
-      // One mark per order on the event: a redelivery retries only the orders that never got
-      // marked, and an order marked is one that was fulfilled or refused for a reason.
-      if (!repo.markProcessedIfNew(Ids.derived(eventId, orderId.toString()), CONSUMER)) continue;
+      // One dedupe per order on the event, written on the handover's own transaction: a
+      // redelivery hands over only the orders this event never did, and a failure after the mark
+      // cannot lose a handover, because there is no mark without one.
+      UUID dedupe = Ids.derived(eventId, orderId.toString());
       try {
-        svc.fulfilOrder(tenantId, orderId, new FulfilRequest(lines), null, null);
+        if (!svc.fulfilOrderOnce(dedupe, CONSUMER, tenantId, orderId, new FulfilRequest(lines))) {
+          continue;
+        }
         LOG.log(
             Level.INFO, "WavePicked: order {0} fulfilled for {1} line(s)", orderId, lines.size());
       } catch (ApiException e) {
         if (e.status() >= 500) throw e;
+        // Refused for a reason that will not change (cancelled meanwhile, already handed over):
+        // remembered, so a redelivery is quiet about it.
+        repo.markProcessedIfNew(dedupe, CONSUMER);
         LOG.log(
             Level.WARNING,
             "WavePicked: order {0} not fulfilled ({1}): {2}",

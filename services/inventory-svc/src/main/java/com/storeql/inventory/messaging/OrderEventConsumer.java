@@ -41,15 +41,9 @@ class OrderEventConsumer extends BaseKafkaConsumer {
       defaultValue = "storeql.order.order-voided")
   String voidedTopic;
 
-  @Inject
-  @ConfigProperty(
-      name = "storeql.kafka.topics.order-confirmed",
-      defaultValue = "storeql.order.order-confirmed")
-  String confirmedTopic;
-
   @Override
   protected List<String> topics() {
-    return List.of(fulfilledTopic, returnedTopic, cancelledTopic, voidedTopic, confirmedTopic);
+    return List.of(fulfilledTopic, returnedTopic, cancelledTopic, voidedTopic);
   }
 
   @Override

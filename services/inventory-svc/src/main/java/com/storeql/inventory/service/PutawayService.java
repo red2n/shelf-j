@@ -56,14 +56,22 @@ public class PutawayService {
    */
   public void deleteRule(TenantContext ctx, UUID id) {
     ctx.requireAnyRole(MANAGEMENT);
-    if (!repo.deleteRule(ctx.requireTenantId(), id)) {
+    UUID tenantId = ctx.requireTenantId();
+    PutawayRule rule =
+        repo.findRule(tenantId, id)
+            .orElseThrow(
+                () ->
+                    ApiException.notFound(
+                        "INVENTORY_PUTAWAY_RULE_NOT_FOUND", "no putaway rule " + id));
+    // The rule's own store, not one the caller names: a manager of one store removes no other's.
+    ctx.requireStoreAccess(rule.storeId());
+    if (!repo.deleteRule(tenantId, id)) {
       throw ApiException.notFound("INVENTORY_PUTAWAY_RULE_NOT_FOUND", "no putaway rule " + id);
     }
   }
 
   public List<PutawayTask> openTasks(TenantContext ctx, UUID storeId) {
-    if (storeId != null) ctx.requireStoreAccess(storeId);
-    return repo.openTasks(ctx.requireTenantId(), storeId);
+    return repo.openTasks(ctx.requireTenantId(), ctx.scopeStore(storeId));
   }
 
   /**

@@ -10,6 +10,7 @@ import com.storeql.inventory.dto.WaveDtos.RecordPicksRequest;
 import com.storeql.inventory.repo.WaveRepository;
 import com.storeql.service.OutboxRow;
 import com.storeql.web.ApiException;
+import com.storeql.web.ErrorCodes;
 import com.storeql.web.Parsing;
 import com.storeql.web.Permissions;
 import com.storeql.web.TenantContext;
@@ -54,10 +55,7 @@ public class WaveService {
       String fulfilmentType,
       Instant confirmedAt,
       Map<UUID, BigDecimal> lines) {
-    if (!"ONLINE".equalsIgnoreCase(channel)
-        || fulfilmentType == null
-        || !WAVED_FULFILMENTS.contains(fulfilmentType.toUpperCase(Locale.ROOT))
-        || lines.isEmpty()) {
+    if (!waits(channel, fulfilmentType) || lines.isEmpty()) {
       return false;
     }
     return repo.awaitOnce(
@@ -70,15 +68,38 @@ public class WaveService {
         lines);
   }
 
-  public void forget(UUID tenantId, UUID orderId) {
-    repo.forget(tenantId, orderId);
+  /**
+   * The order is done (cancelled, or handed over in full): it waits no more. {@code
+   * couldHaveWaited} says whether it is the kind of order that waits at all — an online pickup or
+   * delivery — so a confirmation of it arriving late meets a tombstone; a till sale leaves none.
+   */
+  public void forget(UUID tenantId, UUID orderId, boolean couldHaveWaited) {
+    repo.forget(tenantId, orderId, couldHaveWaited);
+  }
+
+  /** Whether an order of this kind waits to be picked: online, for pickup or delivery. */
+  public static boolean waits(String channel, String fulfilmentType) {
+    return "ONLINE".equalsIgnoreCase(channel)
+        && fulfilmentType != null
+        && WAVED_FULFILMENTS.contains(fulfilmentType.toUpperCase(Locale.ROOT));
   }
 
   public void fulfilledByHand(UUID tenantId, UUID orderId, UUID variantId, BigDecimal qty) {
     repo.fulfilledByHand(tenantId, orderId, variantId, qty);
   }
 
-  public boolean revenueOnlyIfPickedByWave(
+  /** What order-svc says the line still has outstanding after a handover: it waits for no more. */
+  public void outstandingKnown(
+      UUID tenantId, UUID orderId, UUID variantId, BigDecimal outstanding) {
+    repo.outstandingKnown(tenantId, orderId, variantId, outstanding);
+  }
+
+  /**
+   * What a wave already drew for this order line (zero when none did), acknowledged on the
+   * fulfilment's dedupe id with the line's revenue recorded for the whole; the caller deducts only
+   * what is left.
+   */
+  public BigDecimal pickedByWave(
       UUID dedupeId,
       String consumerName,
       UUID tenantId,
@@ -87,15 +108,15 @@ public class WaveService {
       BigDecimal qty,
       UUID orderId,
       BigDecimal netAmount) {
-    return repo.revenueOnlyIfPickedByWave(
+    return repo.pickedByWave(
         dedupeId, consumerName, tenantId, storeId, variantId, qty, orderId, netAmount);
   }
 
   // ── Reads ──────────────────────────────────────────────────────────────────
 
   public List<AwaitingOrder> awaiting(TenantContext ctx, UUID storeId) {
-    if (storeId != null) ctx.requireStoreAccess(storeId);
-    return repo.awaiting(ctx.requireTenantId(), storeId);
+    // A keeper of one store reads that store when none is named; of several, must say which.
+    return repo.awaiting(ctx.requireTenantId(), ctx.scopeStore(storeId));
   }
 
   /**
@@ -110,7 +131,7 @@ public class WaveService {
   }
 
   public List<PickWave> list(TenantContext ctx, UUID storeId, String status) {
-    if (storeId != null) ctx.requireStoreAccess(storeId);
+    UUID store = ctx.scopeStore(storeId);
     String code = null;
     if (status != null && !status.isBlank()) {
       code = status.trim().toUpperCase(Locale.ROOT);
@@ -122,7 +143,7 @@ public class WaveService {
             "status must be OPEN, COMPLETED or CANCELLED; got " + status);
       }
     }
-    return repo.list(ctx.requireTenantId(), storeId, code);
+    return repo.list(ctx.requireTenantId(), store, code);
   }
 
   // ── Build, pick, complete, cancel ──────────────────────────────────────────
@@ -202,8 +223,13 @@ public class WaveService {
     ctx.requirePermission(Permissions.STOCK_TRANSFER);
     PickWave w = get(ctx, id);
     Map<UUID, BigDecimal> picks = new LinkedHashMap<>();
-    for (PickLineRequest l : req.lines())
+    for (PickLineRequest l : req.lines()) {
+      if (l == null) {
+        throw ApiException.badRequest(
+            ErrorCodes.VALIDATION_FAILED, "lines: a line must not be null");
+      }
       picks.put(Parsing.uuid(l.lineId(), "lines.lineId"), l.pickedQty());
+    }
     return repo.recordPicks(w.tenantId(), id, picks);
   }
 

@@ -50,6 +50,68 @@ class EventsTest {
   }
 
   @Test
+  void orderFulfilledSaysWhatIsStillOutstandingAndWhetherTheOrderIsDone() {
+    // inventory-svc's waiting list (wave picking) is set from these absolute figures, so a
+    // redelivered or reordered event states the same truth rather than subtracting twice.
+    var item =
+        new OrderItem(
+            Ids.newId(),
+            TENANT,
+            ORDER,
+            VARIANT,
+            new BigDecimal("2"),
+            BigDecimal.TEN,
+            BigDecimal.TEN,
+            null,
+            null);
+    var row =
+        Events.orderFulfilled(
+            TENANT,
+            ORDER,
+            STORE,
+            List.of(item),
+            java.util.Map.of(),
+            2,
+            java.util.Map.of(VARIANT, new BigDecimal("1")),
+            "PARTIALLY_FULFILLED",
+            "ONLINE",
+            "PICKUP");
+    JsonObject json = Json.createReader(new StringReader(row.payload())).readObject();
+    assertEquals("PARTIALLY_FULFILLED", json.getString("status"));
+    assertEquals("ONLINE", json.getString("channel"));
+    assertEquals("PICKUP", json.getString("fulfilmentType"));
+    JsonObject cancelled =
+        Json.createReader(
+                new StringReader(
+                    Events.orderCancelled(TENANT, ORDER, "changed mind", "ONLINE", "DELIVERY")
+                        .payload()))
+            .readObject();
+    assertEquals("DELIVERY", cancelled.getString("fulfilmentType"));
+    assertEquals(
+        false,
+        Json.createReader(
+                new StringReader(Events.orderCancelled(TENANT, ORDER, "expired").payload()))
+            .readObject()
+            .containsKey("channel"));
+    assertEquals(
+        0,
+        new BigDecimal("1")
+            .compareTo(
+                json.getJsonArray("items")
+                    .getJsonObject(0)
+                    .getJsonNumber("outstandingQty")
+                    .bigDecimalValue()));
+    // The plain shape says neither: a consumer reads them only when they are there.
+    JsonObject plain =
+        Json.createReader(
+                new StringReader(
+                    Events.orderFulfilled(TENANT, ORDER, STORE, List.of(item)).payload()))
+            .readObject();
+    assertEquals(false, plain.containsKey("status"));
+    assertEquals(false, plain.getJsonArray("items").getJsonObject(0).containsKey("outstandingQty"));
+  }
+
+  @Test
   void orderFulfilledGeneratesADistinctEventIdPerCall() {
     var item =
         new OrderItem(

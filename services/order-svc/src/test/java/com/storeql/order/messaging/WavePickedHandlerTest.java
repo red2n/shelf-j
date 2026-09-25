@@ -2,7 +2,6 @@ package com.storeql.order.messaging;
 
 import static org.mockito.ArgumentMatchers.any;
 import static org.mockito.ArgumentMatchers.eq;
-import static org.mockito.ArgumentMatchers.isNull;
 import static org.mockito.Mockito.never;
 import static org.mockito.Mockito.times;
 import static org.mockito.Mockito.verify;
@@ -75,34 +74,66 @@ class WavePickedHandlerTest {
 
   @Test
   void eachOrderNamedIsFulfilledForThePickedQuantitiesOnce() {
-    when(repo.markProcessedIfNew(any(), eq(WavePickedHandler.CONSUMER))).thenReturn(true);
+    when(svc.fulfilOrderOnce(any(), eq(WavePickedHandler.CONSUMER), eq(TENANT), any(), any()))
+        .thenReturn(true);
     handler.handle(payload());
     ArgumentCaptor<FulfilRequest> req = ArgumentCaptor.forClass(FulfilRequest.class);
-    verify(svc).fulfilOrder(eq(TENANT), eq(ORDER_1), req.capture(), isNull(), isNull());
-    verify(svc).fulfilOrder(eq(TENANT), eq(ORDER_2), any(), isNull(), isNull());
+    UUID dedupe1 = Ids.derived(EVENT, ORDER_1.toString());
+    verify(svc)
+        .fulfilOrderOnce(
+            eq(dedupe1), eq(WavePickedHandler.CONSUMER), eq(TENANT), eq(ORDER_1), req.capture());
+    verify(svc)
+        .fulfilOrderOnce(
+            eq(Ids.derived(EVENT, ORDER_2.toString())),
+            eq(WavePickedHandler.CONSUMER),
+            eq(TENANT),
+            eq(ORDER_2),
+            any());
     org.junit.jupiter.api.Assertions.assertEquals(2, req.getValue().lines().size());
     org.junit.jupiter.api.Assertions.assertEquals(
         APPLES.toString(), req.getValue().lines().get(0).variantId());
     org.junit.jupiter.api.Assertions.assertEquals(
         new BigDecimal("3"), req.getValue().lines().get(0).qty());
-    // Told again, nothing is fulfilled twice: each order is deduped on the event.
-    when(repo.markProcessedIfNew(any(), eq(WavePickedHandler.CONSUMER))).thenReturn(false);
+    // The dedupe is the service's, on the handover's own transaction — never a separate mark
+    // written before the handover, which a failure after it would turn into a lost order.
+    verify(repo, never()).markProcessedIfNew(any(), any());
+    // Told again, the service says it already did it, and nothing else happens.
+    when(svc.fulfilOrderOnce(any(), eq(WavePickedHandler.CONSUMER), eq(TENANT), any(), any()))
+        .thenReturn(false);
     handler.handle(payload());
-    verify(svc, times(1)).fulfilOrder(eq(TENANT), eq(ORDER_1), any(), isNull(), isNull());
+    verify(svc, times(2))
+        .fulfilOrderOnce(
+            eq(dedupe1), eq(WavePickedHandler.CONSUMER), eq(TENANT), eq(ORDER_1), any());
   }
 
   @Test
-  void anOrderThatCannotBeFulfilledIsSkippedAndTheRestStillAre() {
-    when(repo.markProcessedIfNew(any(), eq(WavePickedHandler.CONSUMER))).thenReturn(true);
-    when(svc.fulfilOrder(eq(TENANT), eq(ORDER_1), any(), isNull(), isNull()))
+  void anOrderThatCannotBeFulfilledIsSkippedRememberedAndTheRestStillAre() {
+    when(svc.fulfilOrderOnce(any(), eq(WavePickedHandler.CONSUMER), eq(TENANT), eq(ORDER_1), any()))
         .thenThrow(ApiException.conflict("ORDER_NOT_FULFILLABLE", "cancelled meanwhile"));
+    when(svc.fulfilOrderOnce(any(), eq(WavePickedHandler.CONSUMER), eq(TENANT), eq(ORDER_2), any()))
+        .thenReturn(true);
     handler.handle(payload());
-    verify(svc).fulfilOrder(eq(TENANT), eq(ORDER_2), any(), isNull(), isNull());
+    verify(svc)
+        .fulfilOrderOnce(any(), eq(WavePickedHandler.CONSUMER), eq(TENANT), eq(ORDER_2), any());
+    // A refusal that will not change is remembered, so a redelivery is quiet about it.
+    verify(repo)
+        .markProcessedIfNew(
+            eq(Ids.derived(EVENT, ORDER_1.toString())), eq(WavePickedHandler.CONSUMER));
+  }
+
+  @Test
+  void aTransientFailureIsRethrownSoTheEventIsRedelivered() {
+    when(svc.fulfilOrderOnce(any(), eq(WavePickedHandler.CONSUMER), eq(TENANT), eq(ORDER_1), any()))
+        .thenThrow(
+            new ApiException(503, "DB_UNAVAILABLE", "database unavailable", java.util.List.of()));
+    org.junit.jupiter.api.Assertions.assertThrows(
+        ApiException.class, () -> handler.handle(payload()));
+    verify(repo, never()).markProcessedIfNew(any(), any());
   }
 
   @Test
   void aMalformedEventIsSkippedWithoutTouchingAnOrder() {
     handler.handle("{\"eventType\":\"WavePicked\",\"tenantId\":\"not-an-id\"}");
-    verify(svc, never()).fulfilOrder(any(), any(), any(), any(), any());
+    verify(svc, never()).fulfilOrderOnce(any(), any(), any(), any(), any());
   }
 }

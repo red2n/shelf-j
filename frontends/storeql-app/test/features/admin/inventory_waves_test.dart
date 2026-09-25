@@ -29,6 +29,8 @@ const _order1 = '01a0b400-0000-7000-8000-0000000000o1';
 
 class _Server implements HttpClientAdapter {
   final List<RequestOptions> requests = [];
+  /// When set, saving the picks is refused, as the server does for more than was directed.
+  bool refusePicks = false;
 
   @override
   void close({bool force = false}) {}
@@ -48,6 +50,11 @@ class _Server implements HttpClientAdapter {
     if (path.endsWith('/waves/awaiting')) {
       return jsonResponse(
           '{"data":[{"orderId":"$_order1","storeId":"$_store","fulfilmentType":"DELIVERY","confirmedAt":"2026-09-25T08:00:00Z","lines":[{"variantId":"01a0b400-0000-7000-8000-0000000000v1","qtyOutstanding":3}]}]}');
+    }
+    if (path.endsWith('/waves/$_wave/picks') && refusePicks) {
+      return jsonResponse(
+          '{"code":"INVENTORY_WAVE_PICK_EXCEEDS_LINE","title":"Bad Request","status":400,"detail":"more than directed","error":{"code":"INVENTORY_WAVE_PICK_EXCEEDS_LINE","message":"more than directed"}}',
+          400);
     }
     if (path.endsWith('/waves/$_wave/picks') || path.endsWith('/waves/$_wave/complete')) {
       return jsonResponse('{"data":{"id":"$_wave","storeId":"$_store","status":"COMPLETED","createdAt":"2026-09-25T09:00:00Z","orderCount":1,"lines":[]}}');
@@ -137,6 +144,19 @@ void main() {
     // The completion request follows the saved picks, in that order.
     final order = server.requests.map((r) => r.path).where((p) => p.contains('/waves/$_wave/')).toList();
     expect(order.indexWhere((p) => p.endsWith('/picks')) < order.indexWhere((p) => p.endsWith('/complete')), isTrue);
+  });
+
+  testWidgets('Complete stops when the picks were refused: the wave is not completed', (tester) async {
+    final server = await _pump(tester);
+    server.refusePicks = true;
+    await tester.tap(find.byKey(const Key('wave-$_wave')));
+    await tester.pumpAndSettle();
+    await tester.enterText(find.byKey(const Key('wave-pick-$_line1')), '9');
+    await tester.tap(find.byKey(const Key('wave-complete')));
+    await tester.pumpAndSettle();
+    expect(server.requests.where((r) => r.path.endsWith('/waves/$_wave/picks')).length, 1);
+    expect(server.requests.where((r) => r.path.endsWith('/waves/$_wave/complete')), isEmpty);
+    expect(find.textContaining('more than directed'), findsOneWidget);
   });
 
   testWidgets('a batch on the putaway list is placed in a zone; a cashier only reads', (tester) async {

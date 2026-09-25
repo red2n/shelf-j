@@ -4,6 +4,7 @@ import static org.hamcrest.MatcherAssert.assertThat;
 import static org.hamcrest.Matchers.comparesEqualTo;
 import static org.hamcrest.Matchers.containsString;
 import static org.hamcrest.Matchers.is;
+import static org.hamcrest.Matchers.not;
 
 import com.storeql.ids.Ids;
 import com.storeql.test.Envelopes;
@@ -147,6 +148,12 @@ class WaveIT {
 
   /** Stock on the shelf, placed in a zone, with a lot and a date. */
   private JsonObject receive(String variant, int qty, String zone, String lot, String expiry) {
+    return receive(variant, qty, zone, lot, expiry, "");
+  }
+
+  /** As above, with more of the receipt's fields (a consignment's owner, say). */
+  private JsonObject receive(
+      String variant, int qty, String zone, String lot, String expiry, String extraJson) {
     return Envelopes.created(
         call(
             "POST",
@@ -162,6 +169,7 @@ class WaveIT {
                 + "\",\"costPrice\":1.00"
                 + (zone == null ? "" : ",\"zoneId\":\"" + zone + "\"")
                 + (expiry == null ? "" : ",\"expiryDate\":\"" + expiry + "\"")
+                + extraJson
                 + "}",
             T,
             "OWNER"));
@@ -227,6 +235,22 @@ class WaveIT {
   }
 
   private static String fulfilled(String eventId, String orderId, String items) {
+    return fulfilled(eventId, orderId, items, null);
+  }
+
+  /** As above, saying the order's status after the handover (FULFILLED ends its wait for good). */
+  private static String fulfilled(String eventId, String orderId, String items, String status) {
+    return fulfilled(eventId, orderId, items, status, "ONLINE", "DELIVERY");
+  }
+
+  /** As above, for an order of another kind (a till sale, say). */
+  private static String fulfilled(
+      String eventId,
+      String orderId,
+      String items,
+      String status,
+      String channel,
+      String fulfilment) {
     return "{\"eventId\":\""
         + eventId
         + "\",\"eventType\":\"OrderFulfilled\",\"tenantId\":\""
@@ -235,13 +259,40 @@ class WaveIT {
         + orderId
         + "\",\"storeId\":\""
         + STORE
+        + "\","
+        + (status == null ? "" : "\"status\":\"" + status + "\",")
+        + "\"channel\":\""
+        + channel
+        + "\",\"fulfilmentType\":\""
+        + fulfilment
         + "\",\"items\":["
         + items
         + "]}";
   }
 
+  private static String cancelled(String orderId) {
+    return "{\"eventType\":\"OrderCancelled\",\"tenantId\":\""
+        + T
+        + "\",\"orderId\":\""
+        + orderId
+        + "\",\"reason\":\"changed mind\",\"channel\":\"ONLINE\",\"fulfilmentType\":\"PICKUP\"}";
+  }
+
   private static String item(String variant, int qty, String net) {
     return "{\"variantId\":\"" + variant + "\",\"qty\":" + qty + ",\"netAmount\":" + net + "}";
+  }
+
+  /** As above, saying what the line still has outstanding after this handover. */
+  private static String item(String variant, int qty, String net, int outstanding) {
+    return "{\"variantId\":\""
+        + variant
+        + "\",\"qty\":"
+        + qty
+        + ",\"netAmount\":"
+        + net
+        + ",\"outstandingQty\":"
+        + outstanding
+        + "}";
   }
 
   private BigDecimal onHand(String variant) {
@@ -329,23 +380,64 @@ class WaveIT {
         comparesEqualTo(new BigDecimal("3")));
 
     // A cancelled order leaves the list; a fulfilled one too.
+    orders.handle(cancelled(ids[1]));
+    assertThat(
+        Envelopes.okArray(get("/admin/inventory/waves/awaiting?storeId=" + STORE)).size(), is(1));
+    // Its confirmation arriving after the cancellation (the topics land in either order) does not
+    // make it wait again: done is done.
     orders.handle(
-        "{\"eventType\":\"OrderCancelled\",\"tenantId\":\""
-            + T
-            + "\",\"orderId\":\""
-            + ids[1]
-            + "\",\"reason\":\"changed mind\"}");
+        confirmed(
+            Ids.newId().toString(), T, ids[1], STORE, "PICKUP", line(APPLES, 4), CONFIRMED_2));
     assertThat(
         Envelopes.okArray(get("/admin/inventory/waves/awaiting?storeId=" + STORE)).size(), is(1));
     orders.handle(
         fulfilled(
             Ids.newId().toString(),
             ids[0],
-            item(APPLES, 3, "7.50") + "," + item(PEARS, 2, "5.00")));
+            item(APPLES, 3, "7.50", 0) + "," + item(PEARS, 2, "5.00", 0),
+            "FULFILLED"));
     assertThat(
         Envelopes.okArray(get("/admin/inventory/waves/awaiting?storeId=" + STORE)).size(), is(0));
     // Fulfilled by hand, the stock left the ordinary way.
     assertThat(onHand(APPLES), comparesEqualTo(new BigDecimal("17")));
+    // And a late confirmation of the fulfilled order changes nothing either.
+    orders.handle(
+        confirmed(
+            Ids.newId().toString(),
+            T,
+            ids[0],
+            STORE,
+            "DELIVERY",
+            line(APPLES, 3) + "," + line(PEARS, 2),
+            CONFIRMED_1));
+    assertThat(
+        Envelopes.okArray(get("/admin/inventory/waves/awaiting?storeId=" + STORE)).size(), is(0));
+    // Two orders done, two tombstones; a till sale handed over leaves none — it never waits.
+    assertThat(
+        Envelopes.scalar(
+            PG,
+            "SELECT count(*) FROM inventory.awaiting_orders_done WHERE order_id IN ('"
+                + ids[0]
+                + "','"
+                + ids[1]
+                + "')"),
+        is("2"));
+    String tillSale = Ids.newId().toString();
+    orders.handle(
+        fulfilled(
+            Ids.newId().toString(),
+            tillSale,
+            item(APPLES, 1, "2.50", 0),
+            "FULFILLED",
+            "POS",
+            "INSTORE"));
+    assertThat(
+        Envelopes.scalar(
+            PG,
+            "SELECT count(*) FROM inventory.awaiting_orders_done WHERE order_id = '"
+                + tillSale
+                + "'"),
+        is("0"));
   }
 
   // ── a wave is one walk through the zones ───────────────────────────────────
@@ -456,6 +548,9 @@ class WaveIT {
                 "{\"lines\":[{\"lineId\":\"" + oldLine.getString("id") + "\",\"pickedQty\":9}]}"),
             400),
         is("INVENTORY_WAVE_PICK_EXCEEDS_LINE"));
+    assertThat(
+        code(post("/admin/inventory/waves/" + waveId + "/picks", "{\"lines\":[null]}"), 400),
+        is("VALIDATION_FAILED"));
     JsonObject picked =
         Envelopes.ok(
             post("/admin/inventory/waves/" + waveId + "/picks", "{\"lines\":[" + picks + "]}"));
@@ -525,17 +620,52 @@ class WaveIT {
             Ids.newId().toString(),
             ids[0],
             item(APPLES, 3, "7.50") + "," + item(PEARS, 2, "5.00")));
-    orders.handle(fulfilled(Ids.newId().toString(), ids[1], item(APPLES, 3, "7.50")));
+    // The wave's own fulfilment of order 2, in the older shape that states no outstanding figure:
+    // the waiting line is reduced only by what this fulfilment deducted — nothing — and a
+    // redelivery reduces it no further.
+    String wavesOwn = Ids.newId().toString();
+    orders.handle(fulfilled(wavesOwn, ids[1], item(APPLES, 3, "7.50")));
     assertThat(onHand(APPLES), comparesEqualTo(new BigDecimal("9")));
     assertThat(onHand(PEARS), comparesEqualTo(new BigDecimal("6")));
     assertThat(
         Envelopes.scalar(
             PG, "SELECT count(*) FROM inventory.sale_revenue WHERE order_id = '" + ids[0] + "'"),
         is("2"));
-    orders.handle(fulfilled(Ids.newId().toString(), ids[1], item(APPLES, 1, "2.50")));
+    // The hold on the apple still to come is not a leftover of that fulfilment: it stays HELD.
+    assertThat(
+        Envelopes.scalar(
+            PG,
+            "SELECT qty FROM inventory.reservations WHERE order_id = '"
+                + ids[1]
+                + "' AND status = 'HELD'"),
+        is("1.000"));
+    // The same fulfilment again changes nothing: not the shelf, not the waiting list.
+    orders.handle(fulfilled(wavesOwn, ids[1], item(APPLES, 3, "7.50")));
+    assertThat(onHand(APPLES), comparesEqualTo(new BigDecimal("9")));
+    assertThat(
+        num(
+            find(
+                find(
+                        Envelopes.okArray(get("/admin/inventory/waves/awaiting?storeId=" + STORE)),
+                        "orderId",
+                        ids[1])
+                    .getJsonArray("lines"),
+                "variantId",
+                APPLES),
+            "qtyOutstanding"),
+        comparesEqualTo(new BigDecimal("1")));
+    orders.handle(
+        fulfilled(Ids.newId().toString(), ids[1], item(APPLES, 1, "2.50", 0), "FULFILLED"));
     assertThat(onHand(APPLES), comparesEqualTo(new BigDecimal("8")));
     assertThat(
         Envelopes.okArray(get("/admin/inventory/waves/awaiting?storeId=" + STORE)).size(), is(0));
+    assertThat(
+        Envelopes.scalar(
+            PG,
+            "SELECT count(*) FROM inventory.reservations WHERE order_id = '"
+                + ids[1]
+                + "' AND status = 'HELD'"),
+        is("0"));
     // Completed once.
     assertThat(
         code(post("/admin/inventory/waves/" + waveId + "/complete", "{}"), 409),
@@ -559,6 +689,34 @@ class WaveIT {
                 call("GET", "/admin/inventory/waves/awaiting?storeId=" + STORE, null, T2, "OWNER"))
             .size(),
         is(0));
+    // Naming no store, a keeper of another store reads that store — not every store's list; a
+    // keeper of several must say which.
+    assertThat(
+        Envelopes.okArray(
+                call("GET", "/admin/inventory/waves/awaiting", null, T, "STOREKEEPER", OTHER_STORE))
+            .size(),
+        is(0));
+    assertThat(
+        Envelopes.okArray(
+                call("GET", "/admin/inventory/waves/awaiting", null, T, "STOREKEEPER", STORE))
+            .size(),
+        is(2));
+    assertThat(
+        code(
+            call(
+                "GET",
+                "/admin/inventory/waves/awaiting",
+                null,
+                T,
+                "STOREKEEPER",
+                STORE + "," + OTHER_STORE),
+            400),
+        is("STORE_REQUIRED"));
+    assertThat(
+        Envelopes.okArray(
+                call("GET", "/admin/inventory/waves", null, T, "STOREKEEPER", OTHER_STORE))
+            .size(),
+        is(0));
     assertThat(
         code(call("POST", "/admin/inventory/waves", body, T2, "OWNER"), 409),
         is("INVENTORY_WAVE_NOTHING_TO_PICK"));
@@ -577,5 +735,352 @@ class WaveIT {
                 "CASHIER")
             .getStatus(),
         is(403));
+  }
+
+  // ── a handover larger than the wave picked ─────────────────────────────────
+
+  @Test
+  void aHandoverLargerThanTheWavePickedDeductsOnlyTheRest() {
+    // Order 2 wants 4 apples; the wave picks it 3 (the old batch short by one). Then a person hands
+    // all 4 over at once, before order-svc has applied the wave — the fulfilment names 4, the wave
+    // drew 3: only the last apple leaves now, the revenue is recorded once for the line, and the
+    // hold on that apple is consumed, not released.
+    JsonObject oldApples = receive(APPLES, 5, ZONE_B, "A-OLD", "2026-10-01");
+    receive(APPLES, 10, ZONE_A, "A-NEW", "2026-11-01");
+    receive(PEARS, 8, ZONE_A, "P-1", null);
+    String[] ids = twoOrdersWaiting();
+    JsonObject wave =
+        Envelopes.created(post("/admin/inventory/waves", "{\"storeId\":\"" + STORE + "\"}"));
+    String waveId = wave.getString("id");
+    StringBuilder picks = new StringBuilder();
+    for (JsonValue v : wave.getJsonArray("lines")) {
+      JsonObject l = v.asJsonObject();
+      boolean shortLine = l.getString("batchId").equals(oldApples.getString("id"));
+      picks
+          .append(picks.length() == 0 ? "" : ",")
+          .append("{\"lineId\":\"")
+          .append(l.getString("id"))
+          .append("\",\"pickedQty\":")
+          .append(shortLine ? "4" : l.getJsonNumber("directedQty").toString())
+          .append("}");
+    }
+    Envelopes.ok(
+        post("/admin/inventory/waves/" + waveId + "/picks", "{\"lines\":[" + picks + "]}"));
+    Envelopes.ok(post("/admin/inventory/waves/" + waveId + "/complete", "{}"));
+    assertThat(onHand(APPLES), comparesEqualTo(new BigDecimal("9")));
+
+    String handover = Ids.newId().toString();
+    orders.handle(fulfilled(handover, ids[1], item(APPLES, 4, "10.00", 0), "FULFILLED"));
+    assertThat(onHand(APPLES), comparesEqualTo(new BigDecimal("8")));
+    assertThat(
+        Envelopes.scalar(
+            PG, "SELECT count(*) FROM inventory.sale_revenue WHERE order_id = '" + ids[1] + "'"),
+        is("1"));
+    assertThat(
+        Envelopes.scalar(
+            PG,
+            "SELECT count(*) FROM inventory.reservations WHERE order_id = '"
+                + ids[1]
+                + "' AND status <> 'CONSUMED'"),
+        is("0"));
+    assertThat(
+        Envelopes.okArray(get("/admin/inventory/waves/awaiting?storeId=" + STORE)).size(), is(0));
+    // Redelivered, the same handover deducts nothing more.
+    orders.handle(fulfilled(handover, ids[1], item(APPLES, 4, "10.00", 0), "FULFILLED"));
+    assertThat(onHand(APPLES), comparesEqualTo(new BigDecimal("8")));
+  }
+
+  // ── an order that left while the wave was open ─────────────────────────────
+
+  @Test
+  void anOrderThatLeftWhileTheWaveWasOpenIsNotDrawn() {
+    receive(APPLES, 20, ZONE_A, "A-1", null);
+    receive(PEARS, 8, ZONE_A, "P-1", null);
+    String[] ids = twoOrdersWaiting();
+    JsonObject wave =
+        Envelopes.created(post("/admin/inventory/waves", "{\"storeId\":\"" + STORE + "\"}"));
+    String waveId = wave.getString("id");
+    // Order 2 is cancelled while the picker is walking.
+    orders.handle(cancelled(ids[1]));
+    StringBuilder picks = new StringBuilder();
+    for (JsonValue v : wave.getJsonArray("lines")) {
+      JsonObject l = v.asJsonObject();
+      picks
+          .append(picks.length() == 0 ? "" : ",")
+          .append("{\"lineId\":\"")
+          .append(l.getString("id"))
+          .append("\",\"pickedQty\":")
+          .append(l.getJsonNumber("directedQty").toString())
+          .append("}");
+    }
+    Envelopes.ok(
+        post("/admin/inventory/waves/" + waveId + "/picks", "{\"lines\":[" + picks + "]}"));
+    JsonObject done = Envelopes.ok(post("/admin/inventory/waves/" + waveId + "/complete", "{}"));
+    assertThat(done.getString("status"), is("COMPLETED"));
+    // Order 1's 3 apples and 2 pears left; order 2's 4 apples did not, though they were picked.
+    assertThat(onHand(APPLES), comparesEqualTo(new BigDecimal("17")));
+    assertThat(onHand(PEARS), comparesEqualTo(new BigDecimal("6")));
+    assertThat(
+        Envelopes.scalar(
+            PG,
+            "SELECT count(*) FROM inventory.stock_movements WHERE ref_type = 'ORDER' AND ref_id = '"
+                + ids[1]
+                + "'"),
+        is("0"));
+    // The line says so: 7 picked, 3 of them for the order that is still here.
+    JsonObject appleLine = find(done.getJsonArray("lines"), "variantId", APPLES);
+    assertThat(num(appleLine, "pickedQty"), comparesEqualTo(new BigDecimal("7")));
+    assertThat(
+        num(find(appleLine.getJsonArray("orders"), "orderId", ids[1]), "pickedQty"),
+        comparesEqualTo(BigDecimal.ZERO));
+    String announced =
+        Envelopes.scalar(
+            PG,
+            "SELECT string_agg(payload, '|') FROM inventory.outbox WHERE event_type = 'WavePicked'");
+    assertThat(announced, containsString("\"orderId\":\"" + ids[0] + "\""));
+    assertThat(announced, not(containsString("\"orderId\":\"" + ids[1] + "\"")));
+  }
+
+  // ── consignment stock sold by a wave ───────────────────────────────────────
+
+  @Test
+  void aWaveSellingConsignmentStockTellsTheSupplierSide() {
+    String supplier = Ids.newId().toString();
+    receive(
+        APPLES,
+        5,
+        ZONE_A,
+        "C-1",
+        null,
+        ",\"ownership\":\"CONSIGNMENT\",\"supplierId\":\"" + supplier + "\"");
+    String order = Ids.newId().toString();
+    hold(order, APPLES, 4);
+    orders.handle(
+        confirmed(Ids.newId().toString(), T, order, STORE, "PICKUP", line(APPLES, 4), CONFIRMED_1));
+    JsonObject wave =
+        Envelopes.created(post("/admin/inventory/waves", "{\"storeId\":\"" + STORE + "\"}"));
+    String waveId = wave.getString("id");
+    JsonObject l = wave.getJsonArray("lines").getJsonObject(0);
+    Envelopes.ok(
+        post(
+            "/admin/inventory/waves/" + waveId + "/picks",
+            "{\"lines\":[{\"lineId\":\"" + l.getString("id") + "\",\"pickedQty\":4}]}"));
+    Envelopes.ok(post("/admin/inventory/waves/" + waveId + "/complete", "{}"));
+    assertThat(onHand(APPLES), comparesEqualTo(new BigDecimal("1")));
+    // The supplier is owed the moment the stock leaves, exactly as on an ordinary sale.
+    String sold =
+        Envelopes.scalar(
+            PG,
+            "SELECT string_agg(payload, '|') FROM inventory.outbox WHERE event_type ="
+                + " 'ConsignmentStockSold'");
+    assertThat(sold, containsString("\"supplierId\":\"" + supplier + "\""));
+    assertThat(sold, containsString("\"orderId\":\"" + order + "\""));
+    assertThat(sold, containsString("\"qty\":4"));
+  }
+
+  // ── an order handed over by hand while the wave was open ───────────────────
+
+  @Test
+  void anOrderHandedOverByHandMidWaveIsDrawnOnlyForWhatItStillWaits() {
+    // Order 2's four apples are split across two of the wave's lines (two from the old batch, two
+    // from the new). While the picker walks, three apples arrive with an even earlier date and a
+    // person hands three of order 2's apples over by hand — FEFO draws them from that batch, so
+    // the wave's own batches are untouched. Across both of its lines the wave then draws only the
+    // one apple order 2 still waits for: the clamp is per order and product, not per line.
+    receive(APPLES, 5, ZONE_B, "A-OLD", "2026-10-01");
+    receive(APPLES, 10, ZONE_A, "A-NEW", "2026-11-01");
+    receive(PEARS, 8, ZONE_A, "P-1", null);
+    String[] ids = twoOrdersWaiting();
+    JsonObject wave =
+        Envelopes.created(post("/admin/inventory/waves", "{\"storeId\":\"" + STORE + "\"}"));
+    String waveId = wave.getString("id");
+    receive(APPLES, 3, ZONE_A, "A-EARLY", "2026-09-30");
+    orders.handle(
+        fulfilled(
+            Ids.newId().toString(), ids[1], item(APPLES, 3, "7.50", 1), "PARTIALLY_FULFILLED"));
+    assertThat(onHand(APPLES), comparesEqualTo(new BigDecimal("15")));
+    StringBuilder picks = new StringBuilder();
+    for (JsonValue v : wave.getJsonArray("lines")) {
+      JsonObject l = v.asJsonObject();
+      picks
+          .append(picks.length() == 0 ? "" : ",")
+          .append("{\"lineId\":\"")
+          .append(l.getString("id"))
+          .append("\",\"pickedQty\":")
+          .append(l.getJsonNumber("directedQty").toString())
+          .append("}");
+    }
+    Envelopes.ok(
+        post("/admin/inventory/waves/" + waveId + "/picks", "{\"lines\":[" + picks + "]}"));
+    JsonObject done = Envelopes.ok(post("/admin/inventory/waves/" + waveId + "/complete", "{}"));
+    // Order 1: 3 apples and 2 pears; order 2: one apple only, across both apple lines: 15 - 4.
+    assertThat(onHand(APPLES), comparesEqualTo(new BigDecimal("11")));
+    BigDecimal drawnForOrder2 = BigDecimal.ZERO;
+    for (JsonValue v : done.getJsonArray("lines")) {
+      for (JsonValue o : v.asJsonObject().getJsonArray("orders")) {
+        if (ids[1].equals(o.asJsonObject().getString("orderId"))) {
+          drawnForOrder2 = drawnForOrder2.add(num(o.asJsonObject(), "pickedQty"));
+        }
+      }
+    }
+    assertThat(drawnForOrder2, comparesEqualTo(BigDecimal.ONE));
+    assertThat(
+        Envelopes.okArray(get("/admin/inventory/waves/awaiting?storeId=" + STORE)).size(), is(0));
+  }
+
+  // ── a handover smaller than the pick keeps the rest of the credit ──────────
+
+  @Test
+  void aHandoverSmallerThanThePickKeepsTheRestOfTheCredit() {
+    // The wave picked order 2's apples in full (4); a person hands 3 over before order-svc applies
+    // the wave. That fulfilment is covered by the pick and deducts nothing; the fourth apple's
+    // credit is kept, so when the last one is handed over it deducts nothing either.
+    receive(APPLES, 20, ZONE_A, "A-1", null);
+    receive(PEARS, 8, ZONE_A, "P-1", null);
+    String[] ids = twoOrdersWaiting();
+    JsonObject wave =
+        Envelopes.created(post("/admin/inventory/waves", "{\"storeId\":\"" + STORE + "\"}"));
+    String waveId = wave.getString("id");
+    StringBuilder picks = new StringBuilder();
+    for (JsonValue v : wave.getJsonArray("lines")) {
+      JsonObject l = v.asJsonObject();
+      picks
+          .append(picks.length() == 0 ? "" : ",")
+          .append("{\"lineId\":\"")
+          .append(l.getString("id"))
+          .append("\",\"pickedQty\":")
+          .append(l.getJsonNumber("directedQty").toString())
+          .append("}");
+    }
+    Envelopes.ok(
+        post("/admin/inventory/waves/" + waveId + "/picks", "{\"lines\":[" + picks + "]}"));
+    Envelopes.ok(post("/admin/inventory/waves/" + waveId + "/complete", "{}"));
+    assertThat(onHand(APPLES), comparesEqualTo(new BigDecimal("13")));
+    orders.handle(
+        fulfilled(
+            Ids.newId().toString(), ids[1], item(APPLES, 3, "7.50", 1), "PARTIALLY_FULFILLED"));
+    assertThat(onHand(APPLES), comparesEqualTo(new BigDecimal("13")));
+    assertThat(
+        Envelopes.scalar(
+            PG,
+            "SELECT sum(qty) FROM inventory.wave_picked_lines WHERE order_id = '"
+                + ids[1]
+                + "' AND acknowledged_by IS NULL"),
+        is("1.000"));
+    orders.handle(
+        fulfilled(Ids.newId().toString(), ids[1], item(APPLES, 1, "2.50", 0), "FULFILLED"));
+    assertThat(onHand(APPLES), comparesEqualTo(new BigDecimal("13")));
+    assertThat(
+        Envelopes.scalar(
+            PG, "SELECT count(*) FROM inventory.sale_revenue WHERE order_id = '" + ids[1] + "'"),
+        is("2"));
+  }
+
+  // ── a part handover keeps the holds of the lines still waiting ─────────────
+
+  @Test
+  void aPartHandoverKeepsTheHoldsOfLinesStillWaiting() {
+    // The picker finds the apples and none of the pears: the pears line is picked at nought.
+    // order-svc hands the apples over (PARTIALLY_FULFILLED); the pears' hold is not a leftover to
+    // release — the pears still wait, held, for the next wave.
+    receive(APPLES, 20, ZONE_A, "A-1", null);
+    receive(PEARS, 8, ZONE_A, "P-1", null);
+    String order1 = Ids.newId().toString();
+    hold(order1, APPLES, 3);
+    hold(order1, PEARS, 2);
+    orders.handle(
+        confirmed(
+            Ids.newId().toString(),
+            T,
+            order1,
+            STORE,
+            "DELIVERY",
+            line(APPLES, 3) + "," + line(PEARS, 2),
+            CONFIRMED_1));
+    JsonObject wave =
+        Envelopes.created(post("/admin/inventory/waves", "{\"storeId\":\"" + STORE + "\"}"));
+    String waveId = wave.getString("id");
+    JsonObject appleLine = find(wave.getJsonArray("lines"), "variantId", APPLES);
+    JsonObject pearLine = find(wave.getJsonArray("lines"), "variantId", PEARS);
+    Envelopes.ok(
+        post(
+            "/admin/inventory/waves/" + waveId + "/picks",
+            "{\"lines\":[{\"lineId\":\""
+                + appleLine.getString("id")
+                + "\",\"pickedQty\":3},{\"lineId\":\""
+                + pearLine.getString("id")
+                + "\",\"pickedQty\":0}]}"));
+    Envelopes.ok(post("/admin/inventory/waves/" + waveId + "/complete", "{}"));
+    orders.handle(
+        fulfilled(
+            Ids.newId().toString(), order1, item(APPLES, 3, "7.50", 0), "PARTIALLY_FULFILLED"));
+    assertThat(
+        Envelopes.scalar(
+            PG,
+            "SELECT qty FROM inventory.reservations WHERE order_id = '"
+                + order1
+                + "' AND variant_id = '"
+                + PEARS
+                + "' AND status = 'HELD'"),
+        is("2.000"));
+    JsonArray waiting = Envelopes.okArray(get("/admin/inventory/waves/awaiting?storeId=" + STORE));
+    assertThat(waiting.size(), is(1));
+    assertThat(
+        num(
+            find(waiting.getJsonObject(0).getJsonArray("lines"), "variantId", PEARS),
+            "qtyOutstanding"),
+        comparesEqualTo(new BigDecimal("2")));
+  }
+
+  // ── a batch no longer sellable stops the completion ────────────────────────
+
+  @Test
+  void aBatchNoLongerSellableStopsTheCompletion() {
+    JsonObject apples = receive(APPLES, 20, ZONE_A, "A-1", null);
+    receive(PEARS, 8, ZONE_A, "P-1", null);
+    twoOrdersWaiting();
+    JsonObject wave =
+        Envelopes.created(post("/admin/inventory/waves", "{\"storeId\":\"" + STORE + "\"}"));
+    String waveId = wave.getString("id");
+    StringBuilder picks = new StringBuilder();
+    for (JsonValue v : wave.getJsonArray("lines")) {
+      JsonObject l = v.asJsonObject();
+      picks
+          .append(picks.length() == 0 ? "" : ",")
+          .append("{\"lineId\":\"")
+          .append(l.getString("id"))
+          .append("\",\"pickedQty\":")
+          .append(l.getJsonNumber("directedQty").toString())
+          .append("}");
+    }
+    Envelopes.ok(
+        post("/admin/inventory/waves/" + waveId + "/picks", "{\"lines\":[" + picks + "]}"));
+    // The apples are quarantined between the walk and the completion.
+    Envelopes.scalar(
+        PG,
+        "UPDATE inventory.inventory_batches SET material_status = 'QUARANTINE' WHERE id = '"
+            + apples.getString("id")
+            + "' RETURNING id::text");
+    assertThat(
+        code(post("/admin/inventory/waves/" + waveId + "/complete", "{}"), 422),
+        is("INVENTORY_WAVE_STOCK_GONE"));
+    // Nothing moved: the wave is still open, the batch untouched (quarantined stock is not on
+    // hand, so the batch itself is read) and no sale was written.
+    assertThat(
+        Envelopes.scalar(
+            PG,
+            "SELECT remaining_qty FROM inventory.inventory_batches WHERE id = '"
+                + apples.getString("id")
+                + "'"),
+        is("20.000"));
+    assertThat(
+        Envelopes.scalar(
+            PG,
+            "SELECT count(*) FROM inventory.stock_movements WHERE type = 'SALE' AND batch_id = '"
+                + apples.getString("id")
+                + "'"),
+        is("0"));
+    assertThat(
+        Envelopes.ok(get("/admin/inventory/waves/" + waveId)).getString("status"), is("OPEN"));
   }
 }

@@ -112,24 +112,45 @@ public class PutawayRepository extends BaseJdbcRepository {
         "set putaway rule");
   }
 
+  private static final String RULE_COLUMNS =
+      "id, tenant_id, store_id, variant_id, zone_id, created_by, created_at";
+
   public List<PutawayRule> rules(UUID tenantId, UUID storeId) {
     return query(
-        "SELECT id, tenant_id, store_id, variant_id, zone_id, created_by, created_at FROM putaway_rules"
-            + " WHERE tenant_id = ? AND store_id = ? ORDER BY variant_id NULLS FIRST, created_at",
+        "SELECT "
+            + RULE_COLUMNS
+            + " FROM putaway_rules WHERE tenant_id = ? AND store_id = ? ORDER BY variant_id NULLS"
+            + " FIRST, created_at LIMIT 1000",
         ps -> {
           ps.setObject(1, tenantId);
           ps.setObject(2, storeId);
         },
-        rs ->
-            new PutawayRule(
-                rs.getObject("id", UUID.class),
-                rs.getObject("tenant_id", UUID.class),
-                rs.getObject("store_id", UUID.class),
-                rs.getObject("variant_id", UUID.class),
-                rs.getObject("zone_id", UUID.class),
-                rs.getObject("created_by", UUID.class),
-                rs.getObject("created_at", OffsetDateTime.class).toInstant()),
+        PutawayRepository::mapRule,
         "list putaway rules");
+  }
+
+  public Optional<PutawayRule> findRule(UUID tenantId, UUID id) {
+    return query(
+            "SELECT " + RULE_COLUMNS + " FROM putaway_rules WHERE tenant_id = ? AND id = ?",
+            ps -> {
+              ps.setObject(1, tenantId);
+              ps.setObject(2, id);
+            },
+            PutawayRepository::mapRule,
+            "find putaway rule")
+        .stream()
+        .findFirst();
+  }
+
+  private static PutawayRule mapRule(ResultSet rs) throws SQLException {
+    return new PutawayRule(
+        rs.getObject("id", UUID.class),
+        rs.getObject("tenant_id", UUID.class),
+        rs.getObject("store_id", UUID.class),
+        rs.getObject("variant_id", UUID.class),
+        rs.getObject("zone_id", UUID.class),
+        rs.getObject("created_by", UUID.class),
+        rs.getObject("created_at", OffsetDateTime.class).toInstant());
   }
 
   /** Removes a rule; false when the business has none by that id. */
@@ -161,7 +182,7 @@ public class PutawayRepository extends BaseJdbcRepository {
             + TASK_COLUMNS
             + " FROM putaway_tasks WHERE tenant_id = ? AND status = 'OPEN'"
             + (storeId == null ? "" : " AND store_id = ?")
-            + " ORDER BY created_at, id",
+            + " ORDER BY created_at, id LIMIT 500",
         ps -> {
           ps.setObject(1, tenantId);
           if (storeId != null) ps.setObject(2, storeId);

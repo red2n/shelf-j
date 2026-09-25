@@ -1237,7 +1237,7 @@ public class OrderService {
         Order.STATUS_CANCELLED,
         reason,
         userId,
-        Events.orderCancelled(tenantId, orderId, reason));
+        Events.orderCancelled(tenantId, orderId, reason, order.channel(), order.fulfilmentType()));
   }
 
   /**
@@ -1309,6 +1309,33 @@ public class OrderService {
       com.storeql.order.dto.Dtos.FulfilRequest req,
       UUID userId,
       TenantContext ctx) {
+    return fulfil(tenantId, orderId, req, userId, ctx, null, null).orElseThrow();
+  }
+
+  /**
+   * {@link #fulfilOrder} once per {@code dedupeId}, for an event that hands an order over (a wave
+   * picked at the store): the dedupe mark and the handover are one transaction, so a redelivered
+   * event hands over nothing twice and a failure after the mark loses nothing.
+   *
+   * @return true when this call handed the lines over; false when the dedupe id was already applied
+   */
+  public boolean fulfilOrderOnce(
+      UUID dedupeId,
+      String consumer,
+      UUID tenantId,
+      UUID orderId,
+      com.storeql.order.dto.Dtos.FulfilRequest req) {
+    return fulfil(tenantId, orderId, req, null, null, dedupeId, consumer).isPresent();
+  }
+
+  private java.util.Optional<Order> fulfil(
+      UUID tenantId,
+      UUID orderId,
+      com.storeql.order.dto.Dtos.FulfilRequest req,
+      UUID userId,
+      TenantContext ctx,
+      UUID dedupeId,
+      String dedupeConsumer) {
     Order order = getOrder(tenantId, orderId);
     if (ctx != null) {
       ctx.requireStoreAccess(order.storeId());
@@ -1333,27 +1360,36 @@ public class OrderService {
         orderId,
         wanted,
         userId,
-        now ->
-            Events.orderFulfilled(
-                tenantId,
-                orderId,
-                order.storeId(),
-                now.stream()
-                    .map(
-                        l ->
-                            new OrderItem(
-                                null,
-                                tenantId,
-                                orderId,
-                                l.variantId(),
-                                l.qty(),
-                                BigDecimal.ZERO,
-                                BigDecimal.ZERO,
-                                null,
-                                null))
-                    .toList(),
-                unitNet,
-                scale));
+        dedupeId,
+        dedupeConsumer,
+        f -> {
+          Map<UUID, BigDecimal> outstanding = new LinkedHashMap<>();
+          for (var l : f.lines()) outstanding.put(l.variantId(), l.outstandingQty());
+          return Events.orderFulfilled(
+              tenantId,
+              orderId,
+              order.storeId(),
+              f.lines().stream()
+                  .map(
+                      l ->
+                          new OrderItem(
+                              null,
+                              tenantId,
+                              orderId,
+                              l.variantId(),
+                              l.qty(),
+                              BigDecimal.ZERO,
+                              BigDecimal.ZERO,
+                              null,
+                              null))
+                  .toList(),
+              unitNet,
+              scale,
+              outstanding,
+              f.complete() ? Order.STATUS_FULFILLED : Order.STATUS_PARTIALLY_FULFILLED,
+              order.channel(),
+              order.fulfilmentType());
+        });
   }
 
   // ── Returns ───────────────────────────────────────────────────────────────

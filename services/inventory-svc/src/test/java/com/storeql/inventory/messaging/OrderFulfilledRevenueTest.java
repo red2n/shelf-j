@@ -61,7 +61,7 @@ class OrderFulfilledRevenueTest {
     handler.waves =
         new com.storeql.inventory.service.WaveService() {
           @Override
-          public boolean revenueOnlyIfPickedByWave(
+          public BigDecimal pickedByWave(
               UUID dedupeId,
               String consumerName,
               UUID tenantId,
@@ -70,7 +70,7 @@ class OrderFulfilledRevenueTest {
               BigDecimal qty,
               UUID orderId,
               BigDecimal netAmount) {
-            return false;
+            return BigDecimal.ZERO;
           }
 
           @Override
