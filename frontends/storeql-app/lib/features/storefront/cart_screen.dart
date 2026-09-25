@@ -179,6 +179,14 @@ class _StorefrontCartScreenState extends ConsumerState<StorefrontCartScreen> {
     final cs = Theme.of(context).colorScheme;
     final showPrices = ref.watch(storefrontShowPricesProvider);
     final configAsync = ref.watch(storefrontConfigProvider);
+    // A dark store sells delivery-only (ship-from-store and dark-store picking): no collection
+    // is offered there, so the choice is not shown and the checkout is a delivery.
+    final pickupOffered = configAsync.value?.pickupOffered ?? true;
+    if (!pickupOffered && _fulfilment != 'DELIVERY') {
+      WidgetsBinding.instance.addPostFrameCallback((_) {
+        if (mounted) setState(() => _fulfilment = 'DELIVERY');
+      });
+    }
     final storeName = configAsync.value?.storeName ?? '-';
     final scheme = configAsync.value?.depositScheme;
     final currency = cart.isNotEmpty ? cart.first.currency : '';
@@ -322,21 +330,34 @@ class _StorefrontCartScreenState extends ConsumerState<StorefrontCartScreen> {
                       ),
                     ],
                     if (showPrices) const SizedBox(height: 12),
-                    SegmentedButton<String>(
-                      segments: const [
-                        ButtonSegment(
-                            value: 'PICKUP',
-                            label: Text('Collect from store'),
-                            icon: Icon(Icons.storefront_outlined)),
-                        ButtonSegment(
-                            value: 'DELIVERY',
-                            label: Text('Deliver to home'),
-                            icon: Icon(Icons.local_shipping_outlined)),
-                      ],
-                      selected: {_fulfilment},
-                      onSelectionChanged: (s) =>
-                          setState(() => _fulfilment = s.first),
-                    ),
+                    if (pickupOffered)
+                      SegmentedButton<String>(
+                        segments: const [
+                          ButtonSegment(
+                              value: 'PICKUP',
+                              label: Text('Collect from store'),
+                              icon: Icon(Icons.storefront_outlined)),
+                          ButtonSegment(
+                              value: 'DELIVERY',
+                              label: Text('Deliver to home'),
+                              icon: Icon(Icons.local_shipping_outlined)),
+                        ],
+                        selected: {_fulfilment},
+                        onSelectionChanged: (s) =>
+                            setState(() => _fulfilment = s.first),
+                      )
+                    else
+                      Row(
+                        key: const Key('delivery-only'),
+                        children: [
+                          Icon(Icons.local_shipping_outlined,
+                              size: 18, color: Theme.of(context).colorScheme.onSurfaceVariant),
+                          const SizedBox(width: 8),
+                          Text('Delivery only from this shop',
+                              style: TextStyle(
+                                  color: Theme.of(context).colorScheme.onSurfaceVariant)),
+                        ],
+                      ),
                     if (_fulfilment == 'DELIVERY') ...[
                       const SizedBox(height: 12),
                       // The shopper's address book at this shop, when they keep one (12.10).
@@ -918,7 +939,10 @@ class _StorefrontCartScreenState extends ConsumerState<StorefrontCartScreen> {
       _recipientPhoneCtrl.clear();
       _contactPhoneCtrl.clear();
       setState(() {
-        _fulfilment = 'PICKUP';
+        _fulfilment =
+            (ref.read(storefrontConfigProvider).value?.pickupOffered ?? true)
+                ? 'PICKUP'
+                : 'DELIVERY';
         _payMethod = '';
       });
       // Refill the address form from the just-saved address so a follow-up

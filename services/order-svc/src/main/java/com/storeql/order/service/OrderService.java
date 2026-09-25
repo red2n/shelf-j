@@ -25,6 +25,7 @@ import com.storeql.order.domain.Domain.SalesByHourRow;
 import com.storeql.order.domain.Domain.SalesByStaffRow;
 import com.storeql.order.domain.Domain.SpecialOrder;
 import com.storeql.order.domain.Domain.SpecialOrderItem;
+import com.storeql.order.domain.Handover;
 import com.storeql.order.domain.OrderSplit;
 import com.storeql.order.domain.Routing;
 import com.storeql.order.dto.Dtos.AddDepositRequest;
@@ -319,6 +320,19 @@ public class OrderService {
       throw ApiException.conflict(
           "STORE_NOT_OPERATIONAL",
           "Store is closed or suspended — orders cannot be placed at this location");
+    // A dark store has no shop floor (ship-from-store and dark-store picking): it fills online
+    // orders for delivery, nobody is there to hand a collection over, and no till rings there.
+    if (isDarkStore(tenantId, storeId)) {
+      if ("POS".equalsIgnoreCase(req.channel())) {
+        throw ApiException.conflict(
+            "ORDER_NO_TILL_AT_DARK_STORE", "a dark store has no till; it fills online orders only");
+      }
+      if (!delivery) {
+        throw ApiException.conflict(
+            "ORDER_PICKUP_NOT_OFFERED",
+            "a dark store offers no collection; choose delivery, or a shop to collect from");
+      }
+    }
     String paymentMethod = null;
     if (req.paymentMethod() != null && !req.paymentMethod().isBlank()) {
       paymentMethod = req.paymentMethod().trim().toUpperCase(java.util.Locale.ROOT);
@@ -608,6 +622,166 @@ public class OrderService {
       inventory.releaseQuietly(tenantId, heldReservations);
       throw e;
     }
+  }
+
+  /**
+   * Whether the store is one of the tenant's dark stores. An unreadable answer is not a refusal:
+   * the store is taken for a shop and the order placed as it always was, as routing does when the
+   * stores cannot be read.
+   */
+  private boolean isDarkStore(UUID tenantId, UUID storeId) {
+    try {
+      var stores = profiles.stores(tenantId, storeId);
+      return stores != null && stores.isDark(storeId);
+    } catch (ApiException e) {
+      LOG.log(
+          System.Logger.Level.WARNING,
+          "store types unreadable ({0}); {1} taken for a shop",
+          e.code(),
+          storeId);
+      return false;
+    }
+  }
+
+  // ── Handover (ship-from-store and dark-store picking) ─────────────────────
+
+  /**
+   * Hands a picked delivery order to a carrier: recorded once, on the order's own store, by any
+   * member of staff assigned there; the shopper is told it is on its way through {@code
+   * OrderDispatched}.
+   *
+   * @throws ApiException 404 {@code ORDER_NOT_FOUND}; 403 {@code STORE_ACCESS_DENIED}; 409 {@code
+   *     ORDER_HANDOVER_KIND_MISMATCH} (not an online delivery), {@code ORDER_NOT_PICKED} (not yet
+   *     FULFILLED — still being picked, part-picked, or cancelled), {@code
+   *     ORDER_ALREADY_HANDED_OVER}
+   */
+  public Handover dispatch(
+      UUID tenantId,
+      UUID orderId,
+      com.storeql.order.dto.Dtos.DispatchRequest req,
+      TenantContext ctx) {
+    Order order = getOrder(tenantId, orderId);
+    String carrier = req.carrier().trim();
+    String reference = isBlank(req.reference()) ? null : req.reference().trim();
+    Handover h =
+        new Handover(
+            Ids.newId(),
+            tenantId,
+            orderId,
+            order.storeId(),
+            Handover.KIND_DISPATCHED,
+            carrier,
+            reference,
+            req.parcels(),
+            null,
+            ctx.userId(),
+            Instant.now());
+    return handOver(
+        order,
+        h,
+        Order.FULFILMENT_DELIVERY,
+        ctx,
+        "dispatched: " + carrier + (reference == null ? "" : ", ref " + reference),
+        Events.orderDispatched(
+            tenantId,
+            orderId,
+            order.storeId(),
+            order.customerId(),
+            order.loginId(),
+            carrier,
+            reference,
+            req.parcels()));
+  }
+
+  /**
+   * Hands a picked pickup order to its shopper at the counter: recorded once, by any member of
+   * staff at the store, naming who took it when staff noted it.
+   *
+   * @throws ApiException as {@link #dispatch}, with {@code ORDER_HANDOVER_KIND_MISMATCH} for
+   *     anything but an online pickup
+   */
+  public Handover collect(
+      UUID tenantId,
+      UUID orderId,
+      com.storeql.order.dto.Dtos.CollectRequest req,
+      TenantContext ctx) {
+    Order order = getOrder(tenantId, orderId);
+    String who = req == null || isBlank(req.collectedBy()) ? null : req.collectedBy().trim();
+    Handover h =
+        new Handover(
+            Ids.newId(),
+            tenantId,
+            orderId,
+            order.storeId(),
+            Handover.KIND_COLLECTED,
+            null,
+            null,
+            null,
+            who,
+            ctx.userId(),
+            Instant.now());
+    return handOver(
+        order,
+        h,
+        Order.FULFILMENT_PICKUP,
+        ctx,
+        who == null ? "collected" : "collected by " + who,
+        Events.orderCollected(
+            tenantId, orderId, order.storeId(), order.customerId(), order.loginId(), who));
+  }
+
+  private Handover handOver(
+      Order order,
+      Handover h,
+      String forFulfilment,
+      TenantContext ctx,
+      String reason,
+      com.storeql.service.OutboxRow event) {
+    ctx.requireStoreAccess(order.storeId());
+    // A till sale is handed over when it is paid; a pickup is collected and a delivery dispatched,
+    // never the other way about.
+    if (!Order.CHANNEL_ONLINE.equals(order.channel())
+        || !forFulfilment.equals(order.fulfilmentType())) {
+      throw ApiException.conflict(
+          "ORDER_HANDOVER_KIND_MISMATCH",
+          "order "
+              + order.id()
+              + " is a "
+              + order.channel()
+              + " "
+              + order.fulfilmentType()
+              + " order; "
+              + (Handover.KIND_DISPATCHED.equals(h.kind())
+                  ? "only an online delivery is dispatched"
+                  : "only an online pickup is collected"));
+    }
+    // Picked and packed in full: a part-picked order is dispatched when it is complete, and a
+    // cancelled one never.
+    if (!Order.STATUS_FULFILLED.equals(order.status())) {
+      throw ApiException.conflict(
+          "ORDER_NOT_PICKED",
+          "order "
+              + order.id()
+              + " is "
+              + order.status()
+              + "; only an order picked in full (FULFILLED) is handed over");
+    }
+    if (repo.findHandover(order.tenantId(), order.id()).isPresent()) {
+      throw ApiException.conflict(
+          "ORDER_ALREADY_HANDED_OVER", "order " + order.id() + " was handed over already");
+    }
+    return repo.recordHandover(h, reason, event);
+  }
+
+  /** The handover an order had, if any. */
+  public java.util.Optional<Handover> handoverOf(UUID tenantId, UUID orderId) {
+    return repo.findHandover(tenantId, orderId);
+  }
+
+  /** The handovers of these orders, by order; an order not yet handed over is not in the map. */
+  public Map<UUID, Handover> handoversOf(UUID tenantId, List<Order> orders) {
+    if (orders.isEmpty()) return Map.of();
+    return repo.findHandovers(tenantId, orders.stream().map(Order::id).toList());
   }
 
   /** A priced online delivery order about to be placed as a group (order orchestration). */
@@ -912,6 +1086,43 @@ public class OrderService {
       Instant to,
       String afterCursor,
       int limit) {
+    return listOrders(
+        tenantId,
+        storeId,
+        customerId,
+        loginId,
+        channel,
+        status,
+        null,
+        null,
+        from,
+        to,
+        afterCursor,
+        limit);
+  }
+
+  /**
+   * As above, also by how the order is fulfilled and whether it was handed over (ship-from-store
+   * and dark-store picking): a store's packed parcels awaiting the courier are {@code
+   * fulfilmentType=DELIVERY}, {@code status=FULFILLED}, {@code handedOver=false}.
+   *
+   * @param fulfilmentType restrict to PICKUP, DELIVERY or INSTORE, or {@code null}
+   * @param handedOver {@code false} for orders not yet handed over, {@code true} for those that
+   *     were, or {@code null} for either
+   */
+  public OrderPage listOrders(
+      UUID tenantId,
+      UUID storeId,
+      UUID customerId,
+      UUID loginId,
+      String channel,
+      String status,
+      String fulfilmentType,
+      Boolean handedOver,
+      Instant from,
+      Instant to,
+      String afterCursor,
+      int limit) {
     Instant afterCreatedAt = null;
     UUID afterId = null;
     String rawKey = com.storeql.web.Cursor.decode(afterCursor);
@@ -935,6 +1146,8 @@ public class OrderService {
             loginId,
             channel,
             status,
+            fulfilmentType,
+            handedOver,
             from,
             to,
             afterCreatedAt,
@@ -1688,7 +1901,9 @@ public class OrderService {
               outstanding,
               f.complete() ? Order.STATUS_FULFILLED : Order.STATUS_PARTIALLY_FULFILLED,
               order.channel(),
-              order.fulfilmentType());
+              order.fulfilmentType(),
+              order.customerId(),
+              order.loginId());
         });
   }
 

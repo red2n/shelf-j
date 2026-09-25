@@ -137,7 +137,7 @@ class _ServerOrderTile extends StatelessWidget {
                 style: TextStyle(color: cs.outline, fontSize: 12),
               ),
             const SizedBox(height: 2),
-            _StatusChip(status: order.status),
+            _StatusChip(status: order.status, label: order.stageLabel),
           ],
         ),
       ),
@@ -182,7 +182,11 @@ class _LocalOrderTile extends StatelessWidget {
 
 class _StatusChip extends StatelessWidget {
   final String status;
-  const _StatusChip({required this.status});
+
+  /// What the chip says, when not the status itself: where a picked order is
+  /// (ship-from-store) — *Ready to collect*, *Packed*, *On its way · DPD 1Z…*, *Collected*.
+  final String? label;
+  const _StatusChip({required this.status, this.label});
 
   @override
   Widget build(BuildContext context) {
@@ -196,7 +200,7 @@ class _StatusChip extends StatelessWidget {
     return Container(
       padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 2),
       decoration: BoxDecoration(color: bg, borderRadius: AppRadius.badge),
-      child: Text(status,
+      child: Text(label ?? status,
           style: TextStyle(color: fg, fontSize: 11, fontWeight: FontWeight.w600)),
     );
   }

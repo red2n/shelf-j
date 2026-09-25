@@ -201,6 +201,20 @@ public final class Mappers {
       List<OrderItem> items,
       List<com.storeql.order.domain.Domain.OrderDeposit> deposits,
       com.storeql.order.domain.OrderGroup group) {
+    return toDto(o, items, deposits, group, null);
+  }
+
+  /**
+   * Converts an order with its handover (ship-from-store and dark-store picking).
+   *
+   * @param handover how the picked order was handed over, or null until it is
+   */
+  public static OrderResponse toDto(
+      Order o,
+      List<OrderItem> items,
+      List<com.storeql.order.domain.Domain.OrderDeposit> deposits,
+      com.storeql.order.domain.OrderGroup group,
+      com.storeql.order.domain.Handover handover) {
     return new OrderResponse(
         str(o.id()),
         str(o.storeId()),
@@ -236,7 +250,21 @@ public final class Mappers {
                 .reduce(java.math.BigDecimal.ZERO, java.math.BigDecimal::add),
         deposits == null ? null : deposits.stream().map(Mappers::toDto).toList(),
         str(o.sellerUserId()),
-        group == null ? null : toDto(group));
+        group == null ? null : toDto(group),
+        handover == null ? null : toDto(handover));
+  }
+
+  /** Converts a handover (ship-from-store and dark-store picking). */
+  public static com.storeql.order.dto.Dtos.HandoverResponse toDto(
+      com.storeql.order.domain.Handover h) {
+    return new com.storeql.order.dto.Dtos.HandoverResponse(
+        h.kind(),
+        h.carrier(),
+        h.reference(),
+        h.parcels(),
+        h.collectedBy(),
+        ts(h.handedAt()),
+        str(h.handedBy()));
   }
 
   /** Converts a split checkout (order orchestration). */
@@ -310,6 +338,16 @@ public final class Mappers {
    * @param groupId the checkout, or null for an order never split
    */
   public static OrderSummaryResponse toSummary(Order o, java.util.UUID groupId) {
+    return toSummary(o, groupId, null);
+  }
+
+  /**
+   * Converts an order to its list form with its handover (ship-from-store).
+   *
+   * @param handover how the picked order was handed over, or null until it is
+   */
+  public static OrderSummaryResponse toSummary(
+      Order o, java.util.UUID groupId, com.storeql.order.domain.Handover handover) {
     return new OrderSummaryResponse(
         str(o.id()),
         str(o.storeId()),
@@ -325,7 +363,8 @@ public final class Mappers {
         ts(o.createdAt()),
         ts(o.updatedAt()),
         o.paymentMethod(),
-        str(groupId));
+        str(groupId),
+        handover == null ? null : toDto(handover));
   }
 
   /**

@@ -350,6 +350,8 @@ public class OrderRepository extends BaseOutboxRepository {
       UUID loginId,
       String channel,
       String status,
+      String fulfilmentType,
+      Boolean handedOver,
       Instant from,
       Instant to,
       Instant afterCreatedAt,
@@ -363,12 +365,20 @@ public class OrderRepository extends BaseOutboxRepository {
                 + " delivery_line1, delivery_line2, delivery_city, delivery_postal_code,"
                 + " delivery_recipient_name, delivery_recipient_phone, contact_phone, payment_method,"
                 + " seller_user_id"
-                + " FROM orders WHERE tenant_id=?");
+                + " FROM orders o WHERE tenant_id=?");
     if (storeId != null) sql.append(" AND store_id=?");
     if (customerId != null) sql.append(" AND customer_id=?");
     if (loginId != null) sql.append(" AND login_id=?");
     if (channel != null) sql.append(" AND channel=?");
     if (status != null) sql.append(" AND status=?");
+    if (fulfilmentType != null) sql.append(" AND fulfilment_type=?");
+    // Handed over or not (ship-from-store): whether the order has its one handover row.
+    if (handedOver != null) {
+      sql.append(handedOver ? " AND EXISTS" : " AND NOT EXISTS")
+          .append(
+              " (SELECT 1 FROM order_handovers h WHERE h.tenant_id = o.tenant_id"
+                  + " AND h.order_id = o.id)");
+    }
     if (from != null) sql.append(" AND created_at >= ?");
     if (to != null) sql.append(" AND created_at <= ?");
     // Keyset pagination: rows strictly after the cursor in (created_at DESC, id DESC) order.
@@ -384,6 +394,8 @@ public class OrderRepository extends BaseOutboxRepository {
           if (loginId != null) ps.setObject(i++, loginId);
           if (channel != null) ps.setString(i++, channel.toUpperCase(java.util.Locale.ROOT));
           if (status != null) ps.setString(i++, status.toUpperCase(java.util.Locale.ROOT));
+          if (fulfilmentType != null)
+            ps.setString(i++, fulfilmentType.toUpperCase(java.util.Locale.ROOT));
           if (from != null) ps.setObject(i++, from.atOffset(java.time.ZoneOffset.UTC));
           if (to != null) ps.setObject(i++, to.atOffset(java.time.ZoneOffset.UTC));
           if (afterCreatedAt != null && afterId != null) {
@@ -394,6 +406,118 @@ public class OrderRepository extends BaseOutboxRepository {
         },
         rs -> mapOrder(rs),
         "list orders");
+  }
+
+  // ── Handover (ship-from-store and dark-store picking) ─────────────────────
+
+  private static final String HANDOVER_COLUMNS =
+      "id, tenant_id, order_id, store_id, kind, carrier, reference, parcels, collected_by,"
+          + " handed_by, handed_at";
+
+  /**
+   * Records an order's one handover with its status-history line and its event on one transaction.
+   * The order's status is left as it is: FULFILLED stays the moment the goods left the shelf.
+   *
+   * @throws ApiException 409 {@code ORDER_ALREADY_HANDED_OVER} when the order has a handover
+   *     already — the unique row is the guard against two members of staff at once
+   */
+  public com.storeql.order.domain.Handover recordHandover(
+      com.storeql.order.domain.Handover h, String reason, OutboxRow event) {
+    return inTx(
+        c -> {
+          try (PreparedStatement ps =
+              c.prepareStatement(
+                  "INSERT INTO order_handovers ("
+                      + HANDOVER_COLUMNS
+                      + ") VALUES (?,?,?,?,?,?,?,?,?,?,?)")) {
+            ps.setObject(1, h.id());
+            ps.setObject(2, h.tenantId());
+            ps.setObject(3, h.orderId());
+            ps.setObject(4, h.storeId());
+            ps.setString(5, h.kind());
+            ps.setString(6, h.carrier());
+            ps.setString(7, h.reference());
+            if (h.parcels() == null) ps.setNull(8, java.sql.Types.INTEGER);
+            else ps.setInt(8, h.parcels());
+            ps.setString(9, h.collectedBy());
+            ps.setObject(10, h.handedBy());
+            ps.setObject(11, h.handedAt().atOffset(java.time.ZoneOffset.UTC));
+            ps.executeUpdate();
+          } catch (SQLException sqle) {
+            if (UNIQUE_VIOLATION.equals(sqle.getSQLState()))
+              throw new ApiException(
+                  409,
+                  "ORDER_ALREADY_HANDED_OVER",
+                  "order " + h.orderId() + " was handed over already",
+                  List.of(),
+                  sqle);
+            throw sqle;
+          }
+          appendStatusHistory(
+              c,
+              h.tenantId(),
+              h.orderId(),
+              Order.STATUS_FULFILLED,
+              Order.STATUS_FULFILLED,
+              reason,
+              h.handedBy());
+          insertOutbox(c, event);
+          return h;
+        },
+        "record handover");
+  }
+
+  /** An order's handover, if it had one. */
+  public Optional<com.storeql.order.domain.Handover> findHandover(UUID tenantId, UUID orderId) {
+    return query(
+            "SELECT "
+                + HANDOVER_COLUMNS
+                + " FROM order_handovers WHERE tenant_id = ? AND order_id = ?",
+            ps -> {
+              ps.setObject(1, tenantId);
+              ps.setObject(2, orderId);
+            },
+            OrderRepository::mapHandover,
+            "find handover")
+        .stream()
+        .findFirst();
+  }
+
+  /** The handovers of these orders, by order id. */
+  public java.util.Map<UUID, com.storeql.order.domain.Handover> findHandovers(
+      UUID tenantId, List<UUID> orderIds) {
+    java.util.Map<UUID, com.storeql.order.domain.Handover> out = new java.util.HashMap<>();
+    for (var h :
+        query(
+            "SELECT "
+                + HANDOVER_COLUMNS
+                + " FROM order_handovers WHERE tenant_id = ? AND order_id = ANY(?)",
+            ps -> {
+              ps.setObject(1, tenantId);
+              ps.setArray(2, ps.getConnection().createArrayOf("uuid", orderIds.toArray()));
+            },
+            OrderRepository::mapHandover,
+            "find handovers")) {
+      out.put(h.orderId(), h);
+    }
+    return out;
+  }
+
+  private static com.storeql.order.domain.Handover mapHandover(ResultSet rs) throws SQLException {
+    int parcels = rs.getInt("parcels");
+    boolean noParcels = rs.wasNull();
+    return new com.storeql.order.domain.Handover(
+        rs.getObject("id", UUID.class),
+        rs.getObject("tenant_id", UUID.class),
+        rs.getObject("order_id", UUID.class),
+        rs.getObject("store_id", UUID.class),
+        rs.getString("kind"),
+        rs.getString("carrier"),
+        rs.getString("reference"),
+        noParcels ? null : parcels,
+        rs.getString("collected_by"),
+        rs.getObject("handed_by", UUID.class),
+        rs.getTimestamp("handed_at").toInstant());
   }
 
   /**

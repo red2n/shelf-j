@@ -382,13 +382,15 @@ final posStoresProvider = FutureProvider.autoDispose<List<StoreInfo>>((
       .dio
       .get('/${ApiConstants.tenant}/storefront/stores');
   final data = (resp.data['data'] as List?) ?? [];
-  return data.map((e) {
+  // A dark store has no till (ship-from-store and dark-store picking): the server refuses a
+  // session there, so it is not offered.
+  return data.where((e) => (e as Map<String, dynamic>)['type'] != 'DARK_STORE').map((e) {
     final m = e as Map<String, dynamic>;
     return StoreInfo(
       id: m['storeId'] as String? ?? '',
       name: m['storeName'] as String? ?? '-',
       code: '',
-      type: 'STORE',
+      type: m['type'] as String? ?? 'STORE',
       status: m['status'] as String? ?? 'ACTIVE',
       showPrices: m['showPrices'] as bool? ?? true,
       enabledPaymentMethods:

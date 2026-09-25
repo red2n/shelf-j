@@ -311,6 +311,74 @@ public final class Events {
     return sb.append(']').toString();
   }
 
+  /**
+   * A picked delivery order handed to a carrier (ship-from-store): the shopper is told it is on its
+   * way with the carrier and reference; a business's webhooks hear it. The buyer's ids are JSON
+   * null for a guest checkout.
+   */
+  static OutboxRow orderDispatched(
+      UUID tenantId,
+      UUID orderId,
+      UUID storeId,
+      UUID customerId,
+      UUID loginId,
+      String carrier,
+      String reference,
+      Integer parcels) {
+    return new OutboxRow(
+        "OrderDispatched",
+        "storeql.order.order-dispatched",
+        tenantId,
+        orderId,
+        handoverPayload("OrderDispatched", tenantId, orderId, storeId, customerId, loginId)
+            + ",\"carrier\":"
+            + jsonText(carrier)
+            + ",\"reference\":"
+            + jsonText(reference)
+            + ",\"parcels\":"
+            + (parcels == null ? "null" : parcels.toString())
+            + "}");
+  }
+
+  /** A picked pickup order handed to its shopper at the counter (ship-from-store). */
+  static OutboxRow orderCollected(
+      UUID tenantId,
+      UUID orderId,
+      UUID storeId,
+      UUID customerId,
+      UUID loginId,
+      String collectedBy) {
+    return new OutboxRow(
+        "OrderCollected",
+        "storeql.order.order-collected",
+        tenantId,
+        orderId,
+        handoverPayload("OrderCollected", tenantId, orderId, storeId, customerId, loginId)
+            + ",\"collectedBy\":"
+            + jsonText(collectedBy)
+            + "}");
+  }
+
+  private static String handoverPayload(
+      String type, UUID tenantId, UUID orderId, UUID storeId, UUID customerId, UUID loginId) {
+    return "{\"eventId\":\""
+        + Ids.newId()
+        + "\",\"eventType\":\""
+        + type
+        + "\",\"occurredAt\":\""
+        + Instant.now()
+        + "\",\"tenantId\":\""
+        + tenantId
+        + "\",\"orderId\":\""
+        + orderId
+        + "\",\"storeId\":\""
+        + storeId
+        + "\",\"customerId\":"
+        + (customerId == null ? "null" : "\"" + customerId + "\"")
+        + ",\"loginId\":"
+        + (loginId == null ? "null" : "\"" + loginId + "\"");
+  }
+
   static OutboxRow orderCancelled(UUID tenantId, UUID orderId, String reason) {
     return orderCancelled(tenantId, orderId, reason, null, null);
   }
@@ -391,6 +459,40 @@ public final class Events {
       String status,
       String channel,
       String fulfilmentType) {
+    return orderFulfilled(
+        tenantId,
+        orderId,
+        storeId,
+        items,
+        unitNet,
+        scale,
+        outstanding,
+        status,
+        channel,
+        fulfilmentType,
+        null,
+        null);
+  }
+
+  /**
+   * As above, naming the buyer ({@code customerId}, the shop's record; {@code loginId}, the login
+   * that placed it), so notification-svc can tell a shopper their pickup is ready for collection
+   * (ship-from-store and dark-store picking) without a call back to order-svc. Both are JSON null
+   * for a guest checkout or a till sale.
+   */
+  static OutboxRow orderFulfilled(
+      UUID tenantId,
+      UUID orderId,
+      UUID storeId,
+      List<OrderItem> items,
+      java.util.Map<UUID, BigDecimal> unitNet,
+      int scale,
+      java.util.Map<UUID, BigDecimal> outstanding,
+      String status,
+      String channel,
+      String fulfilmentType,
+      UUID customerId,
+      UUID loginId) {
     // eventId is required by inventory-svc's OrderEventHandler for per-line dedupe — without it,
     // every OrderFulfilled is dropped as a malformed event and stock is never deducted.
     StringBuilder sb = new StringBuilder();
@@ -405,6 +507,10 @@ public final class Events {
         .append('"');
     if (status != null) sb.append(",\"status\":\"").append(esc(status)).append('"');
     sb.append(kind(channel, fulfilmentType));
+    sb.append(",\"customerId\":")
+        .append(customerId == null ? "null" : "\"" + customerId + "\"")
+        .append(",\"loginId\":")
+        .append(loginId == null ? "null" : "\"" + loginId + "\"");
     sb.append(",\"items\":[");
     for (int i = 0; i < items.size(); i++) {
       if (i > 0) sb.append(',');

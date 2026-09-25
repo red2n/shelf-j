@@ -200,11 +200,15 @@ final class Events {
         .formatted(Ids.newId(), tenantId, tenantId, Instant.now(), esc(status));
   }
 
-  static String storeStatusChanged(UUID tenantId, UUID storeId, String status) {
+  /**
+   * A store's status, and its type beside it (STORE, WAREHOUSE or DARK_STORE): iam-svc keeps the
+   * type so no till opens at a dark store (ship-from-store and dark-store picking).
+   */
+  static String storeStatusChanged(UUID tenantId, UUID storeId, String status, String type) {
     return """
                 {"eventId":"%s","eventType":"StoreStatusChanged","tenantId":"%s","aggregateId":"%s","occurredAt":"%s",\
-                "storeId":"%s","status":"%s"}"""
-        .formatted(Ids.newId(), tenantId, storeId, Instant.now(), storeId, esc(status));
+                "storeId":"%s","status":"%s","type":"%s"}"""
+        .formatted(Ids.newId(), tenantId, storeId, Instant.now(), storeId, esc(status), esc(type));
   }
 
   static String userRoleGranted(UUID tenantId, UUID userId, String role) {

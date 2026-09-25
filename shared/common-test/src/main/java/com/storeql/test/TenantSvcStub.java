@@ -509,6 +509,25 @@ public final class TenantSvcStub implements AutoCloseable {
     return this;
   }
 
+  /**
+   * Registers one of a tenant's dark stores (type DARK_STORE) with its coordinates, as tenant-svc's
+   * {@code GET /admin/stores} lists it: a shop with no shop floor that fills online orders for
+   * delivery only (ship-from-store and dark-store picking).
+   */
+  public TenantSvcStub withDarkStore(String tenantId, String storeId, double lat, double lng) {
+    stores
+        .computeIfAbsent(tenantId, t -> new java.util.concurrent.CopyOnWriteArrayList<>())
+        .add(
+            "{\"id\":\""
+                + storeId
+                + "\",\"country\":\"GB\",\"type\":\"DARK_STORE\",\"geoLat\":"
+                + lat
+                + ",\"geoLng\":"
+                + lng
+                + "}");
+    return this;
+  }
+
   /** How many profile reads have reached the stub, to show a cache holding. */
   public int requests() {
     return requests.get();

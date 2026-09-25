@@ -274,4 +274,81 @@ class EventsTest {
     JsonObject json = Json.createReader(new StringReader(row.payload())).readObject();
     assertEquals(0, json.getJsonArray("lines").size());
   }
+
+  // ── ship-from-store and dark-store picking ─────────────────────────────────
+
+  @Test
+  void orderFulfilledNamesTheBuyerSoAPickupCanBeToldItIsReady() {
+    UUID customer = Ids.newId();
+    UUID login = Ids.newId();
+    var item =
+        new OrderItem(
+            Ids.newId(),
+            TENANT,
+            ORDER,
+            VARIANT,
+            new BigDecimal("2"),
+            BigDecimal.TEN,
+            BigDecimal.TEN,
+            null,
+            null);
+    var row =
+        Events.orderFulfilled(
+            TENANT,
+            ORDER,
+            STORE,
+            List.of(item),
+            java.util.Map.of(),
+            2,
+            java.util.Map.of(VARIANT, BigDecimal.ZERO),
+            "FULFILLED",
+            "ONLINE",
+            "PICKUP",
+            customer,
+            login);
+    JsonObject json = Json.createReader(new StringReader(row.payload())).readObject();
+    assertEquals(customer.toString(), json.getString("customerId"));
+    assertEquals(login.toString(), json.getString("loginId"));
+    assertEquals("FULFILLED", json.getString("status"));
+    // A till sale or a guest checkout names nobody, and says so rather than leaving it out.
+    var guest = Events.orderFulfilled(TENANT, ORDER, STORE, List.of(item));
+    JsonObject g = Json.createReader(new StringReader(guest.payload())).readObject();
+    assertEquals(true, g.isNull("customerId"));
+    assertEquals(true, g.isNull("loginId"));
+  }
+
+  @Test
+  void aHandoverNamesTheOrderTheStoreTheBuyerAndHowItLeft() {
+    UUID customer = Ids.newId();
+    UUID login = Ids.newId();
+    var dispatched =
+        Events.orderDispatched(TENANT, ORDER, STORE, customer, login, "DPD", "1Z999", 2);
+    assertEquals("OrderDispatched", dispatched.eventType());
+    assertEquals("storeql.order.order-dispatched", dispatched.topic());
+    JsonObject d = Json.createReader(new StringReader(dispatched.payload())).readObject();
+    assertDoesNotThrow(() -> Ids.parse(d.getString("eventId")));
+    assertDoesNotThrow(() -> Instant.parse(d.getString("occurredAt")));
+    assertEquals(ORDER.toString(), d.getString("orderId"));
+    assertEquals(STORE.toString(), d.getString("storeId"));
+    assertEquals(customer.toString(), d.getString("customerId"));
+    assertEquals(login.toString(), d.getString("loginId"));
+    assertEquals("DPD", d.getString("carrier"));
+    assertEquals("1Z999", d.getString("reference"));
+    assertEquals(2, d.getInt("parcels"));
+
+    var collected = Events.orderCollected(TENANT, ORDER, STORE, null, login, "Sam Shopper");
+    assertEquals("OrderCollected", collected.eventType());
+    assertEquals("storeql.order.order-collected", collected.topic());
+    JsonObject c = Json.createReader(new StringReader(collected.payload())).readObject();
+    assertEquals(true, c.isNull("customerId"));
+    assertEquals("Sam Shopper", c.getString("collectedBy"));
+    // Nothing noted about who took it: said as null, not left out or blank.
+    JsonObject quiet =
+        Json.createReader(
+                new StringReader(
+                    Events.orderCollected(TENANT, ORDER, STORE, null, null, null).payload()))
+            .readObject();
+    assertEquals(true, quiet.isNull("collectedBy"));
+    assertEquals(true, quiet.isNull("loginId"));
+  }
 }

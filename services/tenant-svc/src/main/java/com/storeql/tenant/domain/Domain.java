@@ -76,6 +76,15 @@ public final class Domain {
       Instant updatedAt) {
     public static final String TYPE_STORE = "STORE";
     public static final String TYPE_WAREHOUSE = "WAREHOUSE";
+
+    /**
+     * A shop with no shop floor (ship-from-store and dark-store picking): it holds stock and fills
+     * online orders for delivery; no collection is offered there and no till opens.
+     */
+    public static final String TYPE_DARK_STORE = "DARK_STORE";
+
+    public static final java.util.List<String> TYPES =
+        java.util.List.of(TYPE_STORE, TYPE_WAREHOUSE, TYPE_DARK_STORE);
     public static final java.util.List<String> PAYMENT_METHODS =
         java.util.List.of("CASH", "CARD", "UPI", "WALLET");
     public static final String DEFAULT_PAYMENT_METHODS = "CASH,CARD";

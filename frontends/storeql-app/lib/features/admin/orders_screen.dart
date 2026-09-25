@@ -1255,7 +1255,7 @@ class _FulfilDialogState extends ConsumerState<FulfilDialog> {
       if (!mounted) return;
       Navigator.pop(context);
       ScaffoldMessenger.of(context).showSnackBar(SnackBar(
-          content: Text(everything ? 'Order fulfilled.' : 'Part of the order handed over.')));
+          content: Text(everything ? 'Order picked and packed.' : 'Part of the order picked.')));
     } catch (e) {
       setState(() {
         _saving = false;
@@ -1268,7 +1268,9 @@ class _FulfilDialogState extends ConsumerState<FulfilDialog> {
   Widget build(BuildContext context) {
     final detail = ref.watch(orderDetailProvider(widget.orderId));
     return AlertDialog(
-      title: const Text('Hand over'),
+      // Picked and packed, not handed over: the handover to the shopper or the carrier is its
+      // own step on the Fulfilment screen (ship-from-store and dark-store picking).
+      title: const Text('Picked & packed'),
       content: SizedBox(
         width: 460,
         child: detail.when(
@@ -1286,10 +1288,10 @@ class _FulfilDialogState extends ConsumerState<FulfilDialog> {
               mainAxisSize: MainAxisSize.min,
               crossAxisAlignment: CrossAxisAlignment.stretch,
               children: [
-                const Text('How much of each line goes to the customer now. '
-                    'Leave the outstanding quantities to hand over everything.'),
+                const Text('How much of each line is picked and packed now. '
+                    'Leave the outstanding quantities to pick everything.'),
                 const SizedBox(height: 12),
-                if (outstanding.isEmpty) const Text('Every line has been handed over.'),
+                if (outstanding.isEmpty) const Text('Every line is picked.'),
                 for (final l in outstanding)
                   Padding(
                     padding: const EdgeInsets.only(bottom: 8),
@@ -1323,7 +1325,7 @@ class _FulfilDialogState extends ConsumerState<FulfilDialog> {
         TextButton(onPressed: () => Navigator.pop(context), child: const Text('Cancel')),
         FilledButton(
           onPressed: _saving || !detail.hasValue ? null : () => _submit(detail.value!.items),
-          child: const Text('Hand over'),
+          child: const Text('Picked & packed'),
         ),
       ],
     );

@@ -213,6 +213,56 @@ class OnboardingIT {
     String body = depot.readEntity(String.class);
     assertThat(body, depot.getStatus(), is(201));
     assertThat(body, containsString("\"type\":\"WAREHOUSE\""));
+    // A dark store is a third kind (ship-from-store and dark-store picking): the storefront lists
+    // it
+    // with the shops, delivery-only — no collection is offered there; a shop offers collection.
+    Response dark =
+        post(
+            "/admin/stores",
+            "{\"name\":\"Online hub\",\"code\":\"DARK1\",\"type\":\"dark_store\","
+                + "\"timezone\":\"Europe/London\"}",
+            "X-Tenant-Id",
+            tenantId,
+            "X-Roles",
+            "OWNER");
+    String darkBody = dark.readEntity(String.class);
+    assertThat(darkBody, dark.getStatus(), is(201));
+    assertThat(darkBody, containsString("\"type\":\"DARK_STORE\""));
+    String darkId = field(darkBody, "id");
+    Response storefront =
+        target.path("/storefront/stores").request().header("X-Tenant-Id", tenantId).get();
+    String listed = storefront.readEntity(String.class);
+    assertThat(listed, storefront.getStatus(), is(200));
+    var stores = jakarta.json.Json.createReader(new java.io.StringReader(listed)).readObject();
+    java.util.Map<String, jakarta.json.JsonObject> byId = new java.util.HashMap<>();
+    for (var v : stores.getJsonArray("data"))
+      byId.put(v.asJsonObject().getString("storeId"), v.asJsonObject());
+    assertThat(listed, byId.get(darkId).getString("type"), is("DARK_STORE"));
+    assertThat(listed, byId.get(darkId).getBoolean("pickupOffered"), is(false));
+    var shop =
+        byId.values().stream()
+            .filter(o -> "STORE".equals(o.getString("type")))
+            .findFirst()
+            .orElseThrow();
+    assertThat(listed, shop.getBoolean("pickupOffered"), is(true));
+    // Another business's storefront lists none of these stores, dark or not.
+    String rival =
+        field(
+            post(
+                    "/onboarding/tenants",
+                    "{\"businessName\":\"Rival Ltd\",\"country\":\"gb\",\"currency\":\"gbp\"}",
+                    "X-User-Id",
+                    Ids.newId().toString())
+                .readEntity(String.class),
+            "id");
+    String rivalListed =
+        target
+            .path("/storefront/stores")
+            .request()
+            .header("X-Tenant-Id", rival)
+            .get()
+            .readEntity(String.class);
+    assertThat(rivalListed, not(containsString(darkId)));
     Response odd =
         post(
             "/admin/stores",

@@ -27,6 +27,7 @@ export 'security_notices_screen.dart';
 export 'audit_trail_screen.dart';
 export 'stores_screen.dart';
 export 'orders_screen.dart';
+export 'fulfilment_screen.dart';
 export 'procurement_screen.dart';
 export 'pricing_screen.dart';
 export 'reports_screen.dart';

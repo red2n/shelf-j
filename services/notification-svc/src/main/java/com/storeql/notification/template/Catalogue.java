@@ -151,6 +151,67 @@ public final class Catalogue {
                   .money("total", new BigDecimal("24.60"), "GBP")
                   .text("shop", "Hollins Grocers"));
 
+  /**
+   * Ship-from-store and dark-store picking: a pickup order picked and packed in full is ready for
+   * its shopper to collect.
+   */
+  static final MessageType ORDER_READY_FOR_COLLECTION =
+      new MessageType(
+          "ORDER_READY_FOR_COLLECTION",
+          "Order ready for collection",
+          Audience.CUSTOMER,
+          "Sent to a shopper with an account when their pickup order is picked, packed and"
+              + " waiting for them at the counter.",
+          List.of(v("order", "TEXT", "The order's reference"), SHOP),
+          List.of(
+              new FormSpec(
+                  Form.EMAIL,
+                  "Your order is ready to collect",
+                  "Your order {{order}} is ready to collect.\n\nBring this message or your order"
+                      + " number to the counter.\n\n— {{shop}}",
+                  List.of(Set.of("order"))),
+              new FormSpec(
+                  Form.PUSH,
+                  "Ready to collect",
+                  "Order {{order}} is ready to collect",
+                  List.of(Set.of("order")))),
+          () ->
+              Values.of()
+                  .text("order", "01a0c42a-11a0-76f6-a69f-c3297150342e")
+                  .text("shop", "Hollins Grocers"));
+
+  /** Ship-from-store: a picked delivery order left the store with a carrier. */
+  static final MessageType ORDER_DISPATCHED =
+      new MessageType(
+          "ORDER_DISPATCHED",
+          "Order on its way",
+          Audience.CUSTOMER,
+          "Sent to a shopper with an account when their delivery order leaves the store with a"
+              + " carrier, naming the carrier and its reference when the store noted one.",
+          List.of(
+              v("order", "TEXT", "The order's reference"),
+              v("carrier", "TEXT", "Who is carrying it"),
+              v("reference", "TEXT", "The carrier's reference or tracking number, when known"),
+              SHOP),
+          List.of(
+              new FormSpec(
+                  Form.EMAIL,
+                  "Your order is on its way",
+                  "Your order {{order}} left with {{carrier}}.{{#reference}}\nReference:"
+                      + " {{reference}}{{/reference}}\n\n— {{shop}}",
+                  List.of(Set.of("order"), Set.of("carrier"))),
+              new FormSpec(
+                  Form.PUSH,
+                  "On its way",
+                  "Order {{order}} left with {{carrier}}{{#reference}} — {{reference}}{{/reference}}",
+                  List.of(Set.of("order")))),
+          () ->
+              Values.of()
+                  .text("order", "01a0c42a-11a0-76f6-a69f-c3297150342e")
+                  .text("carrier", "DPD")
+                  .text("reference", "15501234567890")
+                  .text("shop", "Hollins Grocers"));
+
   /** GPSR (EU) 2023/988 art.36(2): the parts a recall notice to a buyer must have. */
   private static final Set<String> RECALL_REMEDY =
       Set.of("remedies", "remedy_refund", "remedy_replacement", "remedy_repair");
@@ -673,6 +734,8 @@ public final class Catalogue {
     for (MessageType t :
         List.of(
             ORDER_CONFIRMED,
+            ORDER_READY_FOR_COLLECTION,
+            ORDER_DISPATCHED,
             RECALL_NOTICE,
             SUPPLIER_REMITTANCE,
             STOCK_BELOW_THRESHOLD,

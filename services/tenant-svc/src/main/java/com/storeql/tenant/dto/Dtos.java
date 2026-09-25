@@ -199,7 +199,7 @@ public final class Dtos {
       String id,
       String name,
       String code,
-      @Schema(description = "STORE or WAREHOUSE.") String type,
+      @Schema(description = "STORE, WAREHOUSE or DARK_STORE.") String type,
       @Schema(description = "ACTIVE or INACTIVE.") String status,
       @Schema(description = "True if this is the tenant's default store.") boolean isDefault,
       String line1,
@@ -235,7 +235,13 @@ public final class Dtos {
       @Schema(
               description =
                   "The deposit return scheme in force where this store trades, or null (09.16).")
-          DepositSchemeResponse depositScheme) {}
+          DepositSchemeResponse depositScheme,
+      @Schema(description = "STORE, WAREHOUSE or DARK_STORE.") String type,
+      @Schema(
+              description =
+                  "Whether a shopper may collect an order here. False at a dark store, which fills"
+                      + " online orders for delivery only (ship-from-store and dark-store picking).")
+          boolean pickupOffered) {}
 
   @Schema(name = "ZoneResponse")
   public record ZoneResponse(

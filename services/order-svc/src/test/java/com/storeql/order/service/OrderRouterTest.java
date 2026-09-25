@@ -169,4 +169,23 @@ class OrderRouterTest {
     stock(Map.of(), Set.of(CRATES));
     assertThat(router.route(ctx, T, LEEDS, List.of(line(CRATES, "4"))).isEmpty(), is(true));
   }
+
+  @Test
+  void aDarkStoreIsAShopToRoutingAndAWarehouseIsNot() {
+    // A dark store fills online orders for delivery: exactly what routing is looking for.
+    when(profiles.stores(T, LEEDS))
+        .thenReturn(
+            new TenantProfiles.Stores(
+                Set.of(LEEDS, YORK, DC),
+                Map.of(),
+                Set.of(DC),
+                Map.of(
+                    LEEDS, new TenantProfiles.Point(53.8008, -1.5491),
+                    YORK, new TenantProfiles.Point(53.9600, -1.0873),
+                    DC, new TenantProfiles.Point(53.8000, -1.5400)),
+                Set.of(YORK)));
+    stock(Map.of(YORK, has(PEARS, "5"), DC, has(PEARS, "50")), Set.of());
+    var plan = router.route(ctx, T, LEEDS, List.of(line(PEARS, "3"))).get();
+    assertThat(plan.stores(), contains(YORK));
+  }
 }

@@ -252,14 +252,16 @@ public class TenantService {
   /**
    * The store's type, upper-cased: STORE when none is given.
    *
-   * @throws ApiException 400 {@code TENANT_STORE_TYPE_INVALID} for anything but STORE or WAREHOUSE
+   * @throws ApiException 400 {@code TENANT_STORE_TYPE_INVALID} for anything but STORE, WAREHOUSE or
+   *     DARK_STORE
    */
   static String storeType(String requested) {
     if (requested == null || requested.isBlank()) return Store.TYPE_STORE;
     String type = requested.trim().toUpperCase(java.util.Locale.ROOT);
-    if (!Store.TYPE_STORE.equals(type) && !Store.TYPE_WAREHOUSE.equals(type)) {
+    if (!Store.TYPES.contains(type)) {
       throw ApiException.badRequest(
-          "TENANT_STORE_TYPE_INVALID", "a store is a STORE or a WAREHOUSE; got " + requested);
+          "TENANT_STORE_TYPE_INVALID",
+          "a store is a STORE, a WAREHOUSE or a DARK_STORE; got " + requested);
     }
     return type;
   }
@@ -335,7 +337,7 @@ public class TenantService {
             "storeql.tenant.store-status-changed",
             tenantId,
             storeId,
-            Events.storeStatusChanged(tenantId, storeId, store.status()));
+            Events.storeStatusChanged(tenantId, storeId, store.status(), store.type()));
 
     return repo.createStoreWithDefaultZone(
         store, defaultZone, List.of(storeEvent, zoneEvent, statusEvent));
@@ -959,7 +961,7 @@ public class TenantService {
    *     {@code INVALID_STATUS} (400) when the status is not a known one
    */
   public Store patchStoreStatus(UUID tenantId, UUID storeId, PatchStatusRequest req) {
-    getStore(tenantId, storeId);
+    Store existing = getStore(tenantId, storeId);
     String status = req.status().toUpperCase(Locale.ROOT);
     if (!Store.STATUSES.contains(status)) {
       throw ApiException.badRequest("INVALID_STATUS", "status must be one of " + Store.STATUSES);
@@ -971,7 +973,7 @@ public class TenantService {
             "storeql.tenant.store-status-changed",
             tenantId,
             storeId,
-            Events.storeStatusChanged(tenantId, storeId, status));
+            Events.storeStatusChanged(tenantId, storeId, status, existing.type()));
     return repo.updateStoreStatusWithOutbox(tenantId, storeId, status, event);
   }
 

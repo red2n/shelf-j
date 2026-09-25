@@ -12,19 +12,18 @@ import jakarta.json.JsonObject;
 import java.io.StringReader;
 import java.lang.System.Logger;
 import java.lang.System.Logger.Level;
-import java.math.BigDecimal;
 import java.util.UUID;
 
 /**
- * Emails the buyer an order confirmation when an order is confirmed. Guest orders (no customerId)
- * are skipped; for a real customer the email is resolved from customer-svc (best-effort — a missing
- * email just skips the send). Malformed payloads are skipped; a delivery failure propagates so the
- * consumer loop retries (idempotent per event in {@link Notifier}).
+ * Tells a shopper their delivery order is on its way (ship-from-store): on {@code OrderDispatched},
+ * naming the carrier and its reference when the store noted one. Once per event, on the buyer the
+ * event names; a guest checkout sends nothing; a delivery failure propagates so the loop retries.
  */
 @ApplicationScoped
-class OrderConfirmedHandler {
+class OrderDispatchedHandler {
 
-  private static final Logger LOG = System.getLogger(OrderConfirmedHandler.class.getName());
+  private static final Logger LOG = System.getLogger(OrderDispatchedHandler.class.getName());
+  private static final String TYPE = "ORDER_DISPATCHED";
 
   @Inject Notifier notifier;
   @Inject CustomerClient customers;
@@ -34,40 +33,42 @@ class OrderConfirmedHandler {
     UUID tenantId;
     UUID orderId;
     UUID customerId;
-    BigDecimal total;
-    String currency;
+    String carrier;
+    String reference;
     try (var reader = Json.createReader(new StringReader(json))) {
       JsonObject obj = reader.readObject();
       if (!obj.containsKey("customerId") || obj.isNull("customerId")) {
-        return; // guest checkout — no account to email
+        return; // guest checkout — no account to write to
       }
       eventId = Ids.parse(obj.getString("eventId"));
       tenantId = Ids.parse(obj.getString("tenantId"));
       orderId = Ids.parse(obj.getString("orderId"));
       customerId = Ids.parse(obj.getString("customerId"));
-      total = obj.getJsonNumber("total").bigDecimalValue();
-      // order-svc always sends the order's currency; one without is malformed, not pounds (SJ-D53).
-      currency = obj.getString("currency");
+      carrier = obj.getString("carrier");
+      reference =
+          obj.containsKey("reference") && !obj.isNull("reference")
+              ? obj.getString("reference")
+              : null;
     } catch (RuntimeException e) {
-      LOG.log(Level.WARNING, "Malformed OrderConfirmed payload skipped: " + e.getMessage());
+      LOG.log(Level.WARNING, "Malformed OrderDispatched payload skipped: " + e.getMessage());
       return;
     }
-
-    // How it reaches them — email, the shopper's own language, a push to a registered phone, each
-    // once — is the way every order message does (ship-from-store added two more).
     OrderMessages.tell(
         notifier,
         customers,
         eventId,
-        "ORDER_CONFIRMATION",
+        TYPE,
         tenantId,
         customerId,
         orderId,
         form ->
             new Messages.Message(
-                "ORDER_CONFIRMED",
+                TYPE,
                 form,
                 null,
-                Values.of().text("order", orderId.toString()).money("total", total, currency)));
+                Values.of()
+                    .text("order", orderId.toString())
+                    .text("carrier", carrier)
+                    .text("reference", reference)));
   }
 }

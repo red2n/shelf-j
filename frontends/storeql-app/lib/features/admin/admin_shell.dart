@@ -218,6 +218,15 @@ const _navItems = [
   ),
   _AdminNavItem(
     destination: AdaptiveNavDestination(
+      label: 'Fulfilment',
+      icon: Icons.outbox_outlined,
+      selectedIcon: Icons.outbox,
+    ),
+    route: '/admin/fulfilment',
+    storekeeperVisible: true,
+  ),
+  _AdminNavItem(
+    destination: AdaptiveNavDestination(
       label: 'Procurement',
       icon: Icons.local_shipping_outlined,
       selectedIcon: Icons.local_shipping,

@@ -367,6 +367,26 @@ class TenantProfilesTest {
   }
 
   @Test
+  @DisplayName("A dark store is known as one; a shop and a warehouse are not")
+  void storesKnowWhichAreDark() {
+    var profiles =
+        TenantProfiles.forTest(
+            id -> Optional.empty(),
+            (tenant, after) ->
+                Optional.of(
+                    storesPage(
+                        null,
+                        "{\"id\":\"" + STORE_DE + "\",\"type\":\"DARK_STORE\"}",
+                        "{\"id\":\"" + STORE_NONE + "\",\"type\":\"STORE\"}")),
+            new Moving());
+    var stores = profiles.stores(TENANT, null);
+    assertTrue(stores.isDark(STORE_DE));
+    assertFalse(stores.isDark(STORE_NONE));
+    assertFalse(stores.isWarehouse(STORE_DE));
+    assertFalse(stores.isDark(null));
+  }
+
+  @Test
   @DisplayName("Stores that cannot be read are refused, never taken to be none, and not cached")
   void unreadableStoresAreRefused() {
     AtomicInteger reads = new AtomicInteger();

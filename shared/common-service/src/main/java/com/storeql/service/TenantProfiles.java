@@ -83,25 +83,47 @@ public class TenantProfiles {
    * @param countries the upper-cased country of each store that records one
    * @param warehouses the stores of type WAREHOUSE: stock-only sites that serve shops (depot / DC
    *     replenishment); every other store is a shop
+   * @param dark the stores of type DARK_STORE: shops with no shop floor, which fill online orders
+   *     for delivery only — no collection is offered there and no till opens (ship-from-store and
+   *     dark-store picking)
    */
   public record Stores(
-      Set<UUID> ids, Map<UUID, String> countries, Set<UUID> warehouses, Map<UUID, Point> points) {
+      Set<UUID> ids,
+      Map<UUID, String> countries,
+      Set<UUID> warehouses,
+      Map<UUID, Point> points,
+      Set<UUID> dark) {
 
     public Stores {
       ids = Set.copyOf(ids);
       countries = Map.copyOf(countries);
       warehouses = Set.copyOf(warehouses);
       points = Map.copyOf(points);
+      dark = Set.copyOf(dark);
+    }
+
+    /** As before dark stores were read: no store is one. */
+    public Stores(
+        Set<UUID> ids, Map<UUID, String> countries, Set<UUID> warehouses, Map<UUID, Point> points) {
+      this(ids, countries, warehouses, points, Set.of());
     }
 
     /** As before warehouses were read: no store is one. */
     public Stores(Set<UUID> ids, Map<UUID, String> countries) {
-      this(ids, countries, Set.of(), Map.of());
+      this(ids, countries, Set.of(), Map.of(), Set.of());
     }
 
     /** As before coordinates were read. */
     public Stores(Set<UUID> ids, Map<UUID, String> countries, Set<UUID> warehouses) {
-      this(ids, countries, warehouses, Map.of());
+      this(ids, countries, warehouses, Map.of(), Set.of());
+    }
+
+    /**
+     * Whether the store is one of the tenant's dark stores: it fills online orders for delivery and
+     * offers no collection and no till.
+     */
+    public boolean isDark(UUID storeId) {
+      return storeId != null && dark.contains(storeId);
     }
 
     /** Where the store is, or null when it records no coordinates. */
@@ -129,6 +151,7 @@ public class TenantProfiles {
       Map<UUID, String> countries,
       Set<UUID> warehouses,
       Map<UUID, Point> points,
+      Set<UUID> dark,
       String nextCursor) {}
 
   private record CachedStores(Stores stores, Instant readAt) {}
@@ -223,6 +246,7 @@ public class TenantProfiles {
     Map<UUID, String> countries = new HashMap<>();
     Set<UUID> warehouses = new HashSet<>();
     Map<UUID, Point> points = new HashMap<>();
+    Set<UUID> dark = new HashSet<>();
     String after = null;
     for (int page = 0; page < MAX_STORE_PAGES; page++) {
       Optional<StorePage> read =
@@ -232,8 +256,9 @@ public class TenantProfiles {
       countries.putAll(read.get().countries());
       warehouses.addAll(read.get().warehouses());
       points.putAll(read.get().points());
+      dark.addAll(read.get().dark());
       if (read.get().nextCursor() == null) {
-        return Optional.of(new Stores(ids, countries, warehouses, points));
+        return Optional.of(new Stores(ids, countries, warehouses, points, dark));
       }
       after = read.get().nextCursor();
     }
@@ -254,15 +279,17 @@ public class TenantProfiles {
       Map<UUID, String> countries = new HashMap<>();
       Set<UUID> warehouses = new HashSet<>();
       Map<UUID, Point> points = new HashMap<>();
+      Set<UUID> dark = new HashSet<>();
       for (JsonValue value : root.getJsonArray("data")) {
         JsonObject store = value.asJsonObject();
         UUID id = Ids.parse(store.getString("id"));
         ids.add(id);
-        if (store.containsKey("type")
-            && !store.isNull("type")
-            && "WAREHOUSE".equals(upper(store.getString("type")))) {
-          warehouses.add(id);
-        }
+        String type =
+            store.containsKey("type") && !store.isNull("type")
+                ? upper(store.getString("type"))
+                : null;
+        if ("WAREHOUSE".equals(type)) warehouses.add(id);
+        if ("DARK_STORE".equals(type)) dark.add(id);
         if (store.containsKey("geoLat")
             && !store.isNull("geoLat")
             && store.containsKey("geoLng")
@@ -291,6 +318,7 @@ public class TenantProfiles {
               Map.copyOf(countries),
               Set.copyOf(warehouses),
               Map.copyOf(points),
+              Set.copyOf(dark),
               next == null || next.isBlank() ? null : next));
     } catch (RuntimeException e) {
       LOG.log(Level.WARNING, "unreadable page of stores: {0}", e.getMessage());

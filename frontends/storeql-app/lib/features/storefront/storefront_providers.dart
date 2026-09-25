@@ -357,11 +357,16 @@ class StorefrontConfig {
   /// null. The deposit is put on the order by the server as its own line.
   final DepositScheme? depositScheme;
 
+  /// Whether a shopper may collect an order here; false at a dark store, which
+  /// fills online orders for delivery only.
+  final bool pickupOffered;
+
   const StorefrontConfig({
     required this.showPrices,
     this.storeName = '-',
     this.enabledPaymentMethods = const ['CASH', 'CARD'],
     this.depositScheme,
+    this.pickupOffered = true,
   });
 }
 
@@ -436,13 +441,26 @@ class StoreSummary {
   final String id;
   final String name;
   final bool showPrices;
+
+  /// STORE, WAREHOUSE or DARK_STORE.
+  final String type;
+
+  /// Whether a shopper may collect here. A dark store — a shop with no shop
+  /// floor — sells delivery-only (ship-from-store and dark-store picking).
+  final bool pickupOffered;
   const StoreSummary(
-      {required this.id, required this.name, required this.showPrices});
+      {required this.id,
+      required this.name,
+      required this.showPrices,
+      this.type = 'STORE',
+      this.pickupOffered = true});
 
   factory StoreSummary.fromJson(Map<String, dynamic> j) => StoreSummary(
         id: j['storeId'] as String? ?? '',
         name: j['storeName'] as String? ?? '-',
         showPrices: j['showPrices'] as bool? ?? true,
+        type: j['type'] as String? ?? 'STORE',
+        pickupOffered: j['pickupOffered'] as bool? ?? true,
       );
 }
 
@@ -497,6 +515,7 @@ final storefrontConfigProvider =
               ?.map((e) => e.toString().toUpperCase())
               .toList() ??
           const ['CASH', 'CARD'],
+      pickupOffered: d['pickupOffered'] as bool? ?? true,
     );
   } catch (_) {
     return const StorefrontConfig(showPrices: true);
@@ -931,6 +950,12 @@ class ServerOrderSummary {
   /// orchestration); null for an order never split.
   final String? groupId;
 
+  /// How a picked order was handed over (ship-from-store): DISPATCHED to a carrier, or
+  /// COLLECTED at the counter; null until it is.
+  final String? handoverKind;
+  final String? handoverCarrier;
+  final String? handoverReference;
+
   const ServerOrderSummary({
     required this.id,
     required this.storeId,
@@ -940,7 +965,27 @@ class ServerOrderSummary {
     required this.currency,
     required this.placedAt,
     this.groupId,
+    this.handoverKind,
+    this.handoverCarrier,
+    this.handoverReference,
   });
+
+  /// Where the order is, in the shopper's words: a picked pickup is *Ready to collect*, a picked
+  /// delivery *Packed* until it is *On its way · DPD 1Z…*, a collected one *Collected*; anything
+  /// else reads as its status.
+  String get stageLabel {
+    if (handoverKind == 'COLLECTED') return 'Collected';
+    if (handoverKind == 'DISPATCHED') {
+      final ref = [handoverCarrier, handoverReference]
+          .where((e) => e != null && e.isNotEmpty)
+          .join(' ');
+      return ref.isEmpty ? 'On its way' : 'On its way · $ref';
+    }
+    if (status.toUpperCase() == 'FULFILLED') {
+      return fulfilmentType.toUpperCase() == 'PICKUP' ? 'Ready to collect' : 'Packed';
+    }
+    return status;
+  }
 
   factory ServerOrderSummary.fromJson(Map<String, dynamic> j) =>
       ServerOrderSummary(
@@ -953,6 +998,9 @@ class ServerOrderSummary {
         placedAt: DateTime.tryParse(j['createdAt'] as String? ?? '')?.toLocal() ??
             DateTime.now(),
         groupId: j['groupId'] as String?,
+        handoverKind: (j['handover'] as Map<String, dynamic>?)?['kind'] as String?,
+        handoverCarrier: (j['handover'] as Map<String, dynamic>?)?['carrier'] as String?,
+        handoverReference: (j['handover'] as Map<String, dynamic>?)?['reference'] as String?,
       );
 }
 

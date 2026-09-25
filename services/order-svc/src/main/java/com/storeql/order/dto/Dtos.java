@@ -1,6 +1,8 @@
 package com.storeql.order.dto;
 
 import jakarta.validation.Valid;
+import jakarta.validation.constraints.Max;
+import jakarta.validation.constraints.Min;
 import jakarta.validation.constraints.NotBlank;
 import jakarta.validation.constraints.NotNull;
 import jakarta.validation.constraints.Positive;
@@ -218,7 +220,45 @@ public final class Dtos {
               description =
                   "The checkout this order is a part of, when a delivery was split across shops"
                       + " (order orchestration). Absent for an order never split, and on lists.")
-          OrderGroupResponse group) {}
+          OrderGroupResponse group,
+      @Schema(
+              description =
+                  "How a picked online order was handed over (ship-from-store): dispatched to a"
+                      + " carrier, or collected by its shopper. Absent until it is.")
+          HandoverResponse handover) {}
+
+  @Schema(
+      name = "DispatchRequest",
+      description = "Hand a picked (FULFILLED) delivery order to a carrier (ship-from-store).")
+  public record DispatchRequest(
+      @Schema(description = "The carrier's name as the store knows it.") @NotBlank @Size(max = 80)
+          String carrier,
+      @Schema(description = "The carrier's reference or tracking number, when it gave one.")
+          @Size(max = 80)
+          String reference,
+      @Schema(description = "How many parcels left, when counted.") @Min(1) @Max(999)
+          Integer parcels) {}
+
+  @Schema(
+      name = "CollectRequest",
+      description = "Hand a picked (FULFILLED) pickup order to its shopper at the counter.")
+  public record CollectRequest(
+      @Schema(description = "Who took it, when staff noted it.") @Size(max = 120)
+          String collectedBy) {}
+
+  @Schema(
+      name = "HandoverResponse",
+      description =
+          "The one handover of a picked online order: DISPATCHED to a carrier, or COLLECTED by"
+              + " the shopper.")
+  public record HandoverResponse(
+      String kind,
+      String carrier,
+      String reference,
+      Integer parcels,
+      String collectedBy,
+      String at,
+      @Schema(description = "The member of staff who recorded it.") String by) {}
 
   @Schema(
       name = "OrderGroupResponse",
@@ -322,7 +362,12 @@ public final class Dtos {
               description =
                   "The split checkout this order is a part of (order orchestration); absent for an"
                       + " order never split.")
-          String groupId) {}
+          String groupId,
+      @Schema(
+              description =
+                  "How a picked online order was handed over (ship-from-store); absent until it"
+                      + " is.")
+          HandoverResponse handover) {}
 
   @Schema(name = "VoidRequest")
   public record VoidRequest(

@@ -236,7 +236,8 @@ class _StoreSwitcher extends ConsumerWidget {
                       DropdownMenuItem(
                         value: s.id,
                         child: Text(
-                          s.name,
+                          // A dark store sells delivery-only: said where the shopper chooses.
+                          s.pickupOffered ? s.name : '${s.name} · delivery only',
                           overflow: TextOverflow.ellipsis,
                           style: const TextStyle(fontWeight: FontWeight.w600),
                         ),

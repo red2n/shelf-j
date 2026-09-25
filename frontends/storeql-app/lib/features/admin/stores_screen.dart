@@ -87,6 +87,7 @@ class StoresScreen extends ConsumerWidget {
                 itemBuilder: (context, i) {
                   final s = stores[i];
                   final isWarehouse = s.type.toUpperCase() == 'WAREHOUSE';
+                  final isDark = s.type.toUpperCase() == 'DARK_STORE';
                   final active = s.status.toUpperCase() == 'ACTIVE';
                   final location = [s.city, s.country]
                       .where((e) => e != null && e.isNotEmpty)
@@ -97,7 +98,11 @@ class StoresScreen extends ConsumerWidget {
                       leading: CircleAvatar(
                         backgroundColor: cs.primaryContainer,
                         child: Icon(
-                          isWarehouse ? Icons.warehouse_outlined : Icons.store_outlined,
+                          isWarehouse
+                              ? Icons.warehouse_outlined
+                              : isDark
+                                  ? Icons.nightlight_outlined
+                                  : Icons.store_outlined,
                           color: cs.onPrimaryContainer,
                         ),
                       ),
@@ -106,6 +111,7 @@ class StoresScreen extends ConsumerWidget {
                       subtitle: Text([
                         s.code,
                         if (location.isNotEmpty) location,
+                        if (isDark) 'Dark store · delivery only, no till',
                         s.showPrices ? 'Prices shown' : 'Catalog mode',
                       ].join(' · ')),
                       trailing: Row(
@@ -1211,6 +1217,9 @@ class _AddStoreDialogState extends ConsumerState<_AddStoreDialog> {
                           DropdownMenuItem(value: 'STORE', child: Text('Retail Store')),
                           DropdownMenuItem(
                               value: 'WAREHOUSE', child: Text('Warehouse')),
+                          DropdownMenuItem(
+                              value: 'DARK_STORE',
+                              child: Text('Dark store (online only)')),
                         ],
                         onChanged: (v) => setState(() => _type = v!),
                       ),

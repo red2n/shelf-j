@@ -327,6 +327,13 @@ final routerProvider = Provider<GoRouter>((ref) {
             ),
           ),
           GoRoute(
+            path: '/admin/fulfilment',
+            builder: (_, _) => DeferredWidget(
+              libraryLoader: admin_lib.loadLibrary,
+              builder: (_) => admin_lib.FulfilmentScreen(),
+            ),
+          ),
+          GoRoute(
             path: '/admin/procurement',
             builder: (_, _) => DeferredWidget(
               libraryLoader: admin_lib.loadLibrary,
@@ -489,6 +496,7 @@ final routerProvider = Provider<GoRouter>((ref) {
 /// Paths a storekeeper-only user may open inside the admin shell.
 bool _storekeeperAdminAllowed(String loc) {
   return loc.startsWith('/admin/inventory') ||
+      loc.startsWith('/admin/fulfilment') ||
       loc.startsWith('/admin/food-safety') ||
       loc.startsWith('/admin/recalls') ||
       loc.startsWith('/admin/stores');

@@ -155,6 +155,8 @@ public class StorefrontResource {
         s.country(),
         s.pincode(),
         null,
-        scheme.map(d -> com.storeql.tenant.mapper.Mappers.toDepositScheme(d, today)).orElse(null));
+        scheme.map(d -> com.storeql.tenant.mapper.Mappers.toDepositScheme(d, today)).orElse(null),
+        s.type(),
+        !Store.TYPE_DARK_STORE.equals(s.type()));
   }
 }

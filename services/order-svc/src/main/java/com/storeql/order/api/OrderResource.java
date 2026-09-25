@@ -45,8 +45,12 @@ public class OrderResource {
 
   /** A page of orders in list form, each naming the split checkout it is a part of. */
   private List<OrderSummaryResponse> summaries(List<com.storeql.order.domain.Domain.Order> orders) {
-    var groups = svc.groupIdsOf(ctx.requireTenantId(), orders);
-    return orders.stream().map(o -> Mappers.toSummary(o, groups.get(o.id()))).toList();
+    UUID tenantId = ctx.requireTenantId();
+    var groups = svc.groupIdsOf(tenantId, orders);
+    var handovers = svc.handoversOf(tenantId, orders);
+    return orders.stream()
+        .map(o -> Mappers.toSummary(o, groups.get(o.id()), handovers.get(o.id())))
+        .toList();
   }
 
   /**
@@ -69,14 +73,19 @@ public class OrderResource {
   @Operation(
       summary = "List orders",
       description =
-          "List orders for the caller's tenant, optionally filtered by store, channel, status, and"
+          "List orders for the caller's tenant, optionally filtered by store, channel, status,"
+              + " fulfilment type, whether handed over (ship-from-store: handover=PENDING is the"
+              + " picked orders awaiting the courier or the shopper, DONE those handed over), and"
               + " creation-date range. Cursor-paginated.")
   @APIResponse(responseCode = "200", description = "Page of order summaries")
+  @APIResponse(responseCode = "400", description = "ORDER_HANDOVER_FILTER_INVALID")
   @GET
   public ApiResponse<List<OrderSummaryResponse>> list(
       @QueryParam("store") String store,
       @QueryParam("channel") String channel,
       @QueryParam("status") String status,
+      @QueryParam("fulfilmentType") String fulfilmentType,
+      @QueryParam("handover") String handover,
       @QueryParam("from") String from,
       @QueryParam("to") String to,
       @QueryParam("after") String after,
@@ -86,9 +95,30 @@ public class OrderResource {
     Instant fromInst = parseInstant(from, "from");
     Instant toInst = parseInstant(to, "to");
     int clamped = Cursor.clampLimit(limit);
+    Boolean handedOver = null;
+    if (handover != null && !handover.isBlank()) {
+      switch (handover.toUpperCase(java.util.Locale.ROOT)) {
+        case "PENDING" -> handedOver = false;
+        case "DONE" -> handedOver = true;
+        default ->
+            throw ApiException.badRequest(
+                "ORDER_HANDOVER_FILTER_INVALID", "handover must be PENDING or DONE");
+      }
+    }
     var page =
         svc.listOrders(
-            tenantId, storeId, null, null, channel, status, fromInst, toInst, after, clamped);
+            tenantId,
+            storeId,
+            null,
+            null,
+            channel,
+            status,
+            fulfilmentType == null || fulfilmentType.isBlank() ? null : fulfilmentType,
+            handedOver,
+            fromInst,
+            toInst,
+            after,
+            clamped);
     return ApiResponse.ok(
         summaries(page.orders()), new ApiResponse.Meta(ctx.requestId(), page.nextCursor()));
   }
@@ -263,7 +293,8 @@ public class OrderResource {
                     order,
                     items,
                     svc.depositsOf(order.tenantId(), order.id()),
-                    svc.groupOf(order.tenantId(), order.id()).orElse(null))))
+                    svc.groupOf(order.tenantId(), order.id()).orElse(null),
+                    svc.handoverOf(order.tenantId(), order.id()).orElse(null))))
         .build();
   }
 
@@ -411,6 +442,82 @@ public class OrderResource {
     return Response.ok(
             ApiResponse.ok(
                 Mappers.toDto(order, items, svc.depositsOf(order.tenantId(), order.id()))))
+        .build();
+  }
+
+  /**
+   * Hands a picked delivery order to a carrier (ship-from-store and dark-store picking).
+   *
+   * @param id the FULFILLED delivery order
+   * @param req the carrier, and its reference and the parcel count when known
+   * @return the order with its handover
+   */
+  @Operation(
+      summary = "Dispatch a picked delivery order",
+      description =
+          "Records that a FULFILLED (picked and packed) online delivery order left with a carrier,"
+              + " once; the shopper is told it is on its way. Any member of staff assigned to the"
+              + " order's store.")
+  @APIResponse(responseCode = "200", description = "Dispatched; the order with its handover")
+  @APIResponse(responseCode = "400", description = "No carrier, or a field too long")
+  @APIResponse(responseCode = "403", description = "Not assigned to the order's store")
+  @APIResponse(responseCode = "404", description = "Order not found")
+  @APIResponse(
+      responseCode = "409",
+      description =
+          "ORDER_NOT_PICKED (not yet FULFILLED), ORDER_HANDOVER_KIND_MISMATCH (not an online"
+              + " delivery), ORDER_ALREADY_HANDED_OVER")
+  @POST
+  @Path("/{id}/dispatch")
+  public Response dispatch(
+      @PathParam("id") String id, com.storeql.order.dto.Dtos.DispatchRequest req) {
+    ctx.requireAnyRole("CASHIER", "STOREKEEPER", "MANAGER", "OWNER");
+    Validations.validate(req);
+    var handover = svc.dispatch(ctx.requireTenantId(), Parsing.uuid(id, "id"), req, ctx);
+    return handedOver(handover);
+  }
+
+  /**
+   * Hands a picked pickup order to its shopper at the counter.
+   *
+   * @param id the FULFILLED pickup order
+   * @param req who took it, when noted; the body may be empty
+   * @return the order with its handover
+   */
+  @Operation(
+      summary = "Record a picked pickup order collected",
+      description =
+          "Records that a FULFILLED (picked and packed) online pickup order was collected by its"
+              + " shopper, once. Any member of staff assigned to the order's store.")
+  @APIResponse(responseCode = "200", description = "Collected; the order with its handover")
+  @APIResponse(responseCode = "403", description = "Not assigned to the order's store")
+  @APIResponse(responseCode = "404", description = "Order not found")
+  @APIResponse(
+      responseCode = "409",
+      description =
+          "ORDER_NOT_PICKED, ORDER_HANDOVER_KIND_MISMATCH (not an online pickup),"
+              + " ORDER_ALREADY_HANDED_OVER")
+  @POST
+  @Path("/{id}/collect")
+  public Response collect(
+      @PathParam("id") String id, com.storeql.order.dto.Dtos.CollectRequest req) {
+    ctx.requireAnyRole("CASHIER", "STOREKEEPER", "MANAGER", "OWNER");
+    if (req != null) Validations.validate(req);
+    var handover = svc.collect(ctx.requireTenantId(), Parsing.uuid(id, "id"), req, ctx);
+    return handedOver(handover);
+  }
+
+  private Response handedOver(com.storeql.order.domain.Handover h) {
+    var order = svc.getOrder(h.tenantId(), h.orderId());
+    var items = svc.getOrderItems(h.tenantId(), h.orderId());
+    return Response.ok(
+            ApiResponse.ok(
+                Mappers.toDto(
+                    order,
+                    items,
+                    svc.depositsOf(h.tenantId(), h.orderId()),
+                    svc.groupOf(h.tenantId(), h.orderId()).orElse(null),
+                    h)))
         .build();
   }
 

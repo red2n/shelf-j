@@ -41,7 +41,15 @@ public final class Webhooks {
           new EventType(
               "OrderFulfilled",
               "storeql.order.order-fulfilled",
-              "An order was handed over or delivered"),
+              "An order was picked and packed (a till sale: handed over)"),
+          new EventType(
+              "OrderDispatched",
+              "storeql.order.order-dispatched",
+              "A picked delivery order left the store with a carrier"),
+          new EventType(
+              "OrderCollected",
+              "storeql.order.order-collected",
+              "A picked pickup order was collected by its shopper"),
           new EventType(
               "OrderCancelled", "storeql.order.order-cancelled", "An order was cancelled"),
           new EventType(
