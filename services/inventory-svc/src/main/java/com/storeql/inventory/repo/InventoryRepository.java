@@ -2371,26 +2371,42 @@ public class InventoryRepository extends BaseOutboxRepository {
   public TransferOrder createTransferOrder(TransferOrder order, List<TransferOrderLine> lines) {
     return inTx(
         c -> {
-          try (PreparedStatement ps =
-              c.prepareStatement(
-                  "INSERT INTO transfer_orders"
-                      + " (id, tenant_id, from_store_id, to_store_id, transfer_type,"
-                      + "  status, notes, created_at)"
-                      + " VALUES (?,?,?,?,?,?,?,?)")) {
-            ps.setObject(1, order.id());
-            ps.setObject(2, order.tenantId());
-            ps.setObject(3, order.fromStoreId());
-            ps.setObject(4, order.toStoreId());
-            ps.setString(5, order.transferType());
-            ps.setString(6, order.status());
-            ps.setString(7, order.notes());
-            ps.setObject(8, order.createdAt().atOffset(ZoneOffset.UTC));
-            ps.executeUpdate();
-          }
-          insertTransferLines(c, lines);
+          createTransferOrderTx(c, order, lines);
           return order;
         },
         "create transfer order");
+  }
+
+  /** The columns every read of a transfer order takes, in {@link #mapTransferOrder}'s order. */
+  static final String TRANSFER_COLUMNS =
+      "id, tenant_id, from_store_id, to_store_id, transfer_type, status, notes, created_at,"
+          + " shipped_at, received_at, source, proposal_run_id";
+
+  /**
+   * Writes a transfer order and its lines on the caller's transaction: a manual one, or a DRAFT a
+   * depot replenishment run proposes with the run's id and a reason on each line.
+   */
+  static void createTransferOrderTx(
+      Connection c, TransferOrder order, List<TransferOrderLine> lines) throws SQLException {
+    try (PreparedStatement ps =
+        c.prepareStatement(
+            "INSERT INTO transfer_orders"
+                + " (id, tenant_id, from_store_id, to_store_id, transfer_type,"
+                + "  status, notes, created_at, source, proposal_run_id)"
+                + " VALUES (?,?,?,?,?,?,?,?,?,?)")) {
+      ps.setObject(1, order.id());
+      ps.setObject(2, order.tenantId());
+      ps.setObject(3, order.fromStoreId());
+      ps.setObject(4, order.toStoreId());
+      ps.setString(5, order.transferType());
+      ps.setString(6, order.status());
+      ps.setString(7, order.notes());
+      ps.setObject(8, order.createdAt().atOffset(ZoneOffset.UTC));
+      ps.setString(9, order.source() == null ? TransferOrder.SOURCE_MANUAL : order.source());
+      ps.setObject(10, order.proposalRunId());
+      ps.executeUpdate();
+    }
+    insertTransferLines(c, lines);
   }
 
   /**
@@ -2406,9 +2422,7 @@ public class InventoryRepository extends BaseOutboxRepository {
       UUID tenantId, UUID storeId, String status, int limit) {
     StringBuilder sb =
         new StringBuilder(
-            "SELECT id, tenant_id, from_store_id, to_store_id, transfer_type,"
-                + " status, notes, created_at, shipped_at, received_at"
-                + " FROM transfer_orders WHERE tenant_id = ?");
+            "SELECT " + TRANSFER_COLUMNS + " FROM transfer_orders WHERE tenant_id = ?");
     if (storeId != null) sb.append(" AND (from_store_id = ? OR to_store_id = ?)");
     if (status != null) sb.append(" AND status = ?");
     sb.append(" ORDER BY created_at DESC LIMIT ?");
@@ -2438,9 +2452,7 @@ public class InventoryRepository extends BaseOutboxRepository {
   public Optional<TransferOrder> findTransferOrder(UUID tenantId, UUID id) {
     List<TransferOrder> rows =
         query(
-            "SELECT id, tenant_id, from_store_id, to_store_id, transfer_type,"
-                + " status, notes, created_at, shipped_at, received_at"
-                + " FROM transfer_orders WHERE tenant_id = ? AND id = ?",
+            "SELECT " + TRANSFER_COLUMNS + " FROM transfer_orders WHERE tenant_id = ? AND id = ?",
             ps -> {
               ps.setObject(1, tenantId);
               ps.setObject(2, id);
@@ -2456,12 +2468,15 @@ public class InventoryRepository extends BaseOutboxRepository {
    * @param transferOrderId the transfer order id
    * @return the matching rows
    */
-  public List<TransferOrderLine> listTransferOrderLines(UUID transferOrderId) {
+  public List<TransferOrderLine> listTransferOrderLines(UUID tenantId, UUID transferOrderId) {
     return query(
         "SELECT id, tenant_id, transfer_order_id, variant_id,"
-            + " requested_qty, shipped_qty, received_qty"
-            + " FROM transfer_order_lines WHERE transfer_order_id = ? ORDER BY id",
-        ps -> ps.setObject(1, transferOrderId),
+            + " requested_qty, shipped_qty, received_qty, reason"
+            + " FROM transfer_order_lines WHERE tenant_id = ? AND transfer_order_id = ? ORDER BY id",
+        ps -> {
+          ps.setObject(1, tenantId);
+          ps.setObject(2, transferOrderId);
+        },
         InventoryRepository::mapTransferOrderLine,
         "list transfer order lines");
   }
@@ -2479,7 +2494,7 @@ public class InventoryRepository extends BaseOutboxRepository {
             throw ApiException.unprocessable(
                 "TRANSFER_ORDER_NOT_SHIPPABLE", "Transfer order is " + order.status());
           }
-          List<TransferOrderLine> lines = listTransferOrderLines(orderId);
+          List<TransferOrderLine> lines = listTransferOrderLines(tenantId, orderId);
           boolean isDirect = TransferOrder.TYPE_DIRECT.equals(order.transferType());
 
           for (TransferOrderLine line : lines) {
@@ -2529,12 +2544,12 @@ public class InventoryRepository extends BaseOutboxRepository {
                   ? "UPDATE transfer_orders SET status = 'RECEIVED',"
                       + " shipped_at = now(), received_at = now()"
                       + " WHERE tenant_id = ? AND id = ?"
-                      + " RETURNING id, tenant_id, from_store_id, to_store_id, transfer_type,"
-                      + " status, notes, created_at, shipped_at, received_at"
+                      + " RETURNING "
+                      + TRANSFER_COLUMNS
                   : "UPDATE transfer_orders SET status = 'SHIPPED', shipped_at = now()"
                       + " WHERE tenant_id = ? AND id = ?"
-                      + " RETURNING id, tenant_id, from_store_id, to_store_id, transfer_type,"
-                      + " status, notes, created_at, shipped_at, received_at";
+                      + " RETURNING "
+                      + TRANSFER_COLUMNS;
           try (PreparedStatement ps = c.prepareStatement(sql)) {
             ps.setObject(1, tenantId);
             ps.setObject(2, orderId);
@@ -2566,7 +2581,7 @@ public class InventoryRepository extends BaseOutboxRepository {
                 "TRANSFER_ORDER_DIRECT_AUTO_RECEIVED",
                 "DIRECT transfers are auto-received on ship");
           }
-          List<TransferOrderLine> lines = listTransferOrderLines(orderId);
+          List<TransferOrderLine> lines = listTransferOrderLines(tenantId, orderId);
           for (TransferOrderLine line : lines) {
             BigDecimal qty = line.shippedQty() == null ? line.requestedQty() : line.shippedQty();
             // What arrives is what left the sending store, read back from the ledger the shipment
@@ -2620,8 +2635,8 @@ public class InventoryRepository extends BaseOutboxRepository {
               c.prepareStatement(
                   "UPDATE transfer_orders SET status = 'RECEIVED', received_at = now()"
                       + " WHERE tenant_id = ? AND id = ?"
-                      + " RETURNING id, tenant_id, from_store_id, to_store_id, transfer_type,"
-                      + " status, notes, created_at, shipped_at, received_at")) {
+                      + " RETURNING "
+                      + TRANSFER_COLUMNS)) {
             ps.setObject(1, tenantId);
             ps.setObject(2, orderId);
             try (ResultSet rs = ps.executeQuery()) {
@@ -2647,7 +2662,9 @@ public class InventoryRepository extends BaseOutboxRepository {
     return inTx(
         c -> {
           TransferOrder order = loadTransferOrderForUpdate(c, tenantId, orderId);
-          if (!TransferOrder.PENDING.equals(order.status())) {
+          // A proposed DRAFT may be discarded as a released PENDING one may be cancelled.
+          if (!TransferOrder.PENDING.equals(order.status())
+              && !TransferOrder.DRAFT.equals(order.status())) {
             return Optional.<TransferOrder>empty();
           }
           TransferOrder cancelled;
@@ -2655,8 +2672,8 @@ public class InventoryRepository extends BaseOutboxRepository {
               c.prepareStatement(
                   "UPDATE transfer_orders SET status = 'CANCELLED'"
                       + " WHERE tenant_id = ? AND id = ?"
-                      + " RETURNING id, tenant_id, from_store_id, to_store_id, transfer_type,"
-                      + " status, notes, created_at, shipped_at, received_at")) {
+                      + " RETURNING "
+                      + TRANSFER_COLUMNS)) {
             ps.setObject(1, tenantId);
             ps.setObject(2, orderId);
             try (ResultSet rs = ps.executeQuery()) {
@@ -2674,8 +2691,8 @@ public class InventoryRepository extends BaseOutboxRepository {
       throws SQLException {
     try (PreparedStatement ps =
         c.prepareStatement(
-            "SELECT id, tenant_id, from_store_id, to_store_id, transfer_type,"
-                + " status, notes, created_at, shipped_at, received_at"
+            "SELECT "
+                + TRANSFER_COLUMNS
                 + " FROM transfer_orders WHERE tenant_id = ? AND id = ? FOR UPDATE")) {
       ps.setObject(1, tenantId);
       ps.setObject(2, id);
@@ -2687,19 +2704,20 @@ public class InventoryRepository extends BaseOutboxRepository {
     }
   }
 
-  private void insertTransferLines(Connection c, List<TransferOrderLine> lines)
+  private static void insertTransferLines(Connection c, List<TransferOrderLine> lines)
       throws SQLException {
     try (PreparedStatement ps =
         c.prepareStatement(
             "INSERT INTO transfer_order_lines"
-                + " (id, tenant_id, transfer_order_id, variant_id, requested_qty)"
-                + " VALUES (?,?,?,?,?)")) {
+                + " (id, tenant_id, transfer_order_id, variant_id, requested_qty, reason)"
+                + " VALUES (?,?,?,?,?,?)")) {
       for (TransferOrderLine l : lines) {
         ps.setObject(1, l.id());
         ps.setObject(2, l.tenantId());
         ps.setObject(3, l.transferOrderId());
         ps.setObject(4, l.variantId());
         ps.setBigDecimal(5, l.requestedQty());
+        ps.setString(6, l.reason());
         ps.addBatch();
       }
       ps.executeBatch();
@@ -2719,7 +2737,9 @@ public class InventoryRepository extends BaseOutboxRepository {
         rs.getString("notes"),
         rs.getObject("created_at", OffsetDateTime.class).toInstant(),
         shippedOdt == null ? null : shippedOdt.toInstant(),
-        receivedOdt == null ? null : receivedOdt.toInstant());
+        receivedOdt == null ? null : receivedOdt.toInstant(),
+        rs.getString("source"),
+        rs.getObject("proposal_run_id", UUID.class));
   }
 
   private static TransferOrderLine mapTransferOrderLine(ResultSet rs) throws SQLException {
@@ -2730,7 +2750,8 @@ public class InventoryRepository extends BaseOutboxRepository {
         rs.getObject("variant_id", UUID.class),
         rs.getBigDecimal("requested_qty"),
         rs.getBigDecimal("shipped_qty"),
-        rs.getBigDecimal("received_qty"));
+        rs.getBigDecimal("received_qty"),
+        rs.getString("reason"));
   }
 
   // ── Tier-1 Gap #24: Expiry alert query ────────────────────────────────────

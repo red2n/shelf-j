@@ -270,21 +270,61 @@ public final class Events {
         + "}";
   }
 
+  /**
+   * A transfer left its store: what went, line by line, so a consumer can hold it as stock in
+   * transit (depot / DC replenishment). A transfer ships all it asked for, so the line's quantity
+   * is the requested one.
+   */
   static String transferOrderShipped(
-      UUID tenantId, UUID orderId, UUID fromStoreId, UUID toStoreId) {
+      UUID tenantId,
+      UUID orderId,
+      UUID fromStoreId,
+      UUID toStoreId,
+      java.util.List<com.storeql.inventory.domain.Domain.TransferOrderLine> lines) {
     return EventPayload.base("TransferOrderShipped", tenantId, orderId)
         + ",\"fromStoreId\":\""
         + fromStoreId
         + "\",\"toStoreId\":\""
         + toStoreId
-        + "\"}";
+        + "\","
+        + transferLines(lines, true)
+        + "}";
   }
 
-  static String transferOrderReceived(UUID tenantId, UUID orderId, UUID toStoreId) {
+  /** A transfer arrived: what arrived, line by line, closing what was in transit. */
+  static String transferOrderReceived(
+      UUID tenantId,
+      UUID orderId,
+      UUID fromStoreId,
+      UUID toStoreId,
+      java.util.List<com.storeql.inventory.domain.Domain.TransferOrderLine> lines) {
     return EventPayload.base("TransferOrderReceived", tenantId, orderId)
-        + ",\"toStoreId\":\""
+        + ",\"fromStoreId\":\""
+        + fromStoreId
+        + "\",\"toStoreId\":\""
         + toStoreId
-        + "\"}";
+        + "\","
+        + transferLines(lines, false)
+        + "}";
+  }
+
+  /** The {@code lines} member: each line's variant and quantity (shipped, or else requested). */
+  private static String transferLines(
+      java.util.List<com.storeql.inventory.domain.Domain.TransferOrderLine> lines,
+      boolean requested) {
+    StringBuilder sb = new StringBuilder("\"lines\":[");
+    for (int i = 0; i < lines.size(); i++) {
+      var l = lines.get(i);
+      java.math.BigDecimal qty =
+          requested || l.shippedQty() == null ? l.requestedQty() : l.shippedQty();
+      if (i > 0) sb.append(',');
+      sb.append("{\"variantId\":\"")
+          .append(l.variantId())
+          .append("\",\"qty\":")
+          .append(qty.stripTrailingZeros().toPlainString())
+          .append('}');
+    }
+    return sb.append(']').toString();
   }
 
   static String transferOrderCancelled(UUID tenantId, UUID orderId) {

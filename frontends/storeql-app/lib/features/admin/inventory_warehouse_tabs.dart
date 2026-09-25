@@ -127,6 +127,7 @@ class _InventoryTransfersTabState extends ConsumerState<InventoryTransfersTab> {
   }
 
   IconData _statusIcon(String status) => switch (status) {
+        'DRAFT' => Icons.edit_note_outlined,
         'PENDING' => Icons.hourglass_empty,
         'SHIPPED' => Icons.local_shipping_outlined,
         'RECEIVED' => Icons.check_circle_outline,
@@ -157,6 +158,10 @@ class _TransferActions extends ConsumerWidget {
     return PopupMenuButton<String>(
       onSelected: (a) => _act(context, ref, a),
       itemBuilder: (_) => [
+        if (status == 'DRAFT') ...[
+          const PopupMenuItem(value: 'release', child: Text('Release')),
+          const PopupMenuItem(value: 'cancel', child: Text('Discard')),
+        ],
         if (status == 'PENDING') ...[
           const PopupMenuItem(value: 'ship', child: Text('Ship')),
           const PopupMenuItem(value: 'cancel', child: Text('Cancel')),
@@ -172,6 +177,7 @@ class _TransferActions extends ConsumerWidget {
       'ship' => 'ship',
       'receive' => 'receive',
       'cancel' => 'cancel',
+      'release' => 'release',
       _ => null,
     };
     if (path == null) return;
@@ -182,7 +188,14 @@ class _TransferActions extends ConsumerWidget {
       onChanged();
       if (context.mounted) {
         ScaffoldMessenger.of(context).showSnackBar(
-          SnackBar(content: Text('Transfer ${action}ed.')),
+          SnackBar(
+            content: Text(switch (action) {
+              'ship' => 'Transfer shipped.',
+              'receive' => 'Transfer received.',
+              'release' => 'Released: the warehouse can ship it.',
+              _ => 'Transfer cancelled.',
+            }),
+          ),
         );
       }
     } catch (e) {

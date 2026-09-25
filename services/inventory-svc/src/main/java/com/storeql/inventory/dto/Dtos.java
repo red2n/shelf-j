@@ -615,7 +615,11 @@ public final class Dtos {
       BigDecimal requestedQty,
       @Schema(description = "Quantity actually shipped.") BigDecimal shippedQty,
       @Schema(description = "Quantity actually received at the destination store.")
-          BigDecimal receivedQty) {}
+          BigDecimal receivedQty,
+      @Schema(
+              description =
+                  "Why a replenishment proposal asked for this quantity; null when a person did.")
+          String reason) {}
 
   @Schema(
       name = "TransferOrderResponse",
@@ -625,11 +629,18 @@ public final class Dtos {
       @Schema(description = "UUID of the sending store.") String fromStoreId,
       @Schema(description = "UUID of the receiving store.") String toStoreId,
       String transferType,
-      @Schema(description = "PENDING, SHIPPED, RECEIVED, or CANCELLED.") String status,
+      @Schema(
+              description =
+                  "DRAFT (proposed, to be released), PENDING, SHIPPED, RECEIVED, or CANCELLED.")
+          String status,
       String notes,
       String createdAt,
       String shippedAt,
       String receivedAt,
+      @Schema(description = "MANUAL, or PROPOSAL when a warehouse's replenishment run raised it.")
+          String source,
+      @Schema(description = "The replenishment run that proposed it, or null.")
+          String proposalRunId,
       List<TransferOrderLineResponse> lines) {}
 
   // ── Lot Genealogy (Gap #11) ──────────────────────────────────────────────

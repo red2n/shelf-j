@@ -36,6 +36,7 @@ public class TransferOrderResource {
 
   @Inject InventoryService service;
   @Inject TenantContext ctx;
+  @Inject com.storeql.inventory.service.NetworkService network;
 
   /**
    * Creates a transfer order.
@@ -174,15 +175,17 @@ public class TransferOrderResource {
   /**
    * Cancels a transfer order.
    *
-   * <p>Only PENDING transfer orders can be cancelled.
+   * <p>Only DRAFT or PENDING transfer orders can be cancelled.
    *
    * @param id the id (path parameter)
    * @throws com.storeql.web.ApiException {@code 422} only PENDING transfer orders can be cancelled
    */
   @Operation(
       summary = "Cancel a transfer order",
-      description = "Only PENDING transfer orders can be cancelled.")
-  @APIResponse(responseCode = "422", description = "Only PENDING transfer orders can be cancelled")
+      description = "Only DRAFT or PENDING transfer orders can be cancelled.")
+  @APIResponse(
+      responseCode = "422",
+      description = "Only DRAFT or PENDING transfer orders can be cancelled")
   @POST
   @Path("/transfers/{id}/cancel")
   public ApiResponse<TransferOrderResponse> cancelTransfer(@PathParam("id") UUID id) {
@@ -191,6 +194,24 @@ public class TransferOrderResource {
     ctx.requireAnyStoreAccess(open.fromStoreId(), open.toStoreId());
     var cancelled = service.cancelTransferOrder(ctx.requireTenantId(), id);
     var wl = service.getTransferOrder(ctx.requireTenantId(), cancelled.id());
+    return ApiResponse.ok(Mappers.toTransferOrder(wl.order(), wl.lines()));
+  }
+
+  /**
+   * Releases a transfer a replenishment run proposed: DRAFT becomes PENDING, for the warehouse to
+   * ship.
+   *
+   * @param id the id (path parameter)
+   */
+  @Operation(
+      summary = "Release a proposed transfer",
+      description = "A DRAFT raised by a warehouse's replenishment run becomes PENDING.")
+  @APIResponse(responseCode = "404", description = "TRANSFER_ORDER_NOT_FOUND")
+  @APIResponse(responseCode = "409", description = "INVENTORY_TRANSFER_NOT_DRAFT")
+  @POST
+  @Path("/transfers/{id}/release")
+  public ApiResponse<TransferOrderResponse> releaseTransfer(@PathParam("id") UUID id) {
+    var wl = network.release(ctx, id);
     return ApiResponse.ok(Mappers.toTransferOrder(wl.order(), wl.lines()));
   }
 

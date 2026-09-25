@@ -1682,6 +1682,8 @@ public class InventoryService {
             notes,
             now,
             null,
+            null,
+            TransferOrder.SOURCE_MANUAL,
             null);
     List<TransferOrderLine> withIds =
         lines.stream()
@@ -1697,7 +1699,7 @@ public class InventoryService {
                         null))
             .toList();
     repo.createTransferOrder(order, withIds);
-    return new TransferOrderWithLines(order, repo.listTransferOrderLines(orderId));
+    return new TransferOrderWithLines(order, repo.listTransferOrderLines(tenantId, orderId));
   }
 
   /**
@@ -1727,7 +1729,7 @@ public class InventoryService {
         repo.findTransferOrder(tenantId, id)
             .orElseThrow(
                 () -> ApiException.notFound("TRANSFER_ORDER_NOT_FOUND", "No such transfer order"));
-    return new TransferOrderWithLines(order, repo.listTransferOrderLines(id));
+    return new TransferOrderWithLines(order, repo.listTransferOrderLines(tenantId, id));
   }
 
   /**
@@ -1757,8 +1759,12 @@ public class InventoryService {
                 tenantId,
                 id,
                 Events.transferOrderShipped(
-                    tenantId, id, existing.fromStoreId(), existing.toStoreId())));
-    return new TransferOrderWithLines(shipped, repo.listTransferOrderLines(id));
+                    tenantId,
+                    id,
+                    existing.fromStoreId(),
+                    existing.toStoreId(),
+                    repo.listTransferOrderLines(tenantId, id))));
+    return new TransferOrderWithLines(shipped, repo.listTransferOrderLines(tenantId, id));
   }
 
   /**
@@ -1786,8 +1792,13 @@ public class InventoryService {
                 "storeql.inventory.transfer-order-received",
                 tenantId,
                 id,
-                Events.transferOrderReceived(tenantId, id, existing.toStoreId())));
-    return new TransferOrderWithLines(received, repo.listTransferOrderLines(id));
+                Events.transferOrderReceived(
+                    tenantId,
+                    id,
+                    existing.fromStoreId(),
+                    existing.toStoreId(),
+                    repo.listTransferOrderLines(tenantId, id))));
+    return new TransferOrderWithLines(received, repo.listTransferOrderLines(tenantId, id));
   }
 
   /**
@@ -1813,7 +1824,7 @@ public class InventoryService {
             () ->
                 ApiException.unprocessable(
                     "TRANSFER_ORDER_NOT_CANCELLABLE",
-                    "Only PENDING transfer orders can be cancelled"));
+                    "Only DRAFT or PENDING transfer orders can be cancelled"));
   }
 
   // ---- cycle counting (Gap #10) ----

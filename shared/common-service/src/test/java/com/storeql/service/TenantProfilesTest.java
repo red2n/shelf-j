@@ -1,6 +1,7 @@
 package com.storeql.service;
 
 import static org.junit.jupiter.api.Assertions.assertEquals;
+import static org.junit.jupiter.api.Assertions.assertFalse;
 import static org.junit.jupiter.api.Assertions.assertThrows;
 import static org.junit.jupiter.api.Assertions.assertTrue;
 
@@ -323,6 +324,27 @@ class TenantProfilesTest {
     clock.now = clock.now.plus(TenantProfiles.TTL);
     profiles.stores(TENANT, null);
     assertEquals(6, reads.get(), "the cache ages out");
+  }
+
+  @Test
+  @DisplayName("Each store's type is kept, upper-cased; one recorded as neither is a store")
+  void storesKnowWhetherTheyAreWarehouses() {
+    var profiles =
+        TenantProfiles.forTest(
+            id -> Optional.empty(),
+            (tenant, after) ->
+                Optional.of(
+                    storesPage(
+                        null,
+                        "{\"id\":\"" + STORE_DE + "\",\"type\":\"warehouse\"}",
+                        "{\"id\":\"" + STORE_NONE + "\",\"type\":\"STORE\"}",
+                        "{\"id\":\"" + STORE_NEW + "\"}")),
+            new Moving());
+    var stores = profiles.stores(TENANT, null);
+    assertTrue(stores.isWarehouse(STORE_DE));
+    assertFalse(stores.isWarehouse(STORE_NONE));
+    assertFalse(stores.isWarehouse(STORE_NEW), "no type recorded is a store, as tenant-svc says");
+    assertFalse(stores.isWarehouse(null));
   }
 
   @Test

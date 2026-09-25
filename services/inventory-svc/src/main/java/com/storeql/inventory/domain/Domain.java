@@ -786,13 +786,23 @@ public final class Domain {
       String notes,
       Instant createdAt,
       Instant shippedAt,
-      Instant receivedAt) {
+      Instant receivedAt,
+      /** MANUAL (raised by a person) or PROPOSAL (raised by a depot replenishment run). */
+      String source,
+      /** The run that proposed it, or null for a manual transfer. */
+      UUID proposalRunId) {
     public static final String TYPE_DIRECT = "DIRECT";
     public static final String TYPE_INTRANSIT = "INTRANSIT";
+
+    /** Proposed by a run, waiting for a person to release it. */
+    public static final String DRAFT = "DRAFT";
+
     public static final String PENDING = "PENDING";
     public static final String SHIPPED = "SHIPPED";
     public static final String RECEIVED = "RECEIVED";
     public static final String CANCELLED = "CANCELLED";
+    public static final String SOURCE_MANUAL = "MANUAL";
+    public static final String SOURCE_PROPOSAL = "PROPOSAL";
   }
 
   /** One SKU line on a transfer order. */
@@ -803,7 +813,64 @@ public final class Domain {
       UUID variantId,
       BigDecimal requestedQty,
       BigDecimal shippedQty,
-      BigDecimal receivedQty) {}
+      BigDecimal receivedQty,
+      /** Why a proposal asked for this quantity; null on a manual line. */
+      String reason) {
+
+    /** A line as a person asks for it: no reason. */
+    public TransferOrderLine(
+        UUID id,
+        UUID tenantId,
+        UUID transferOrderId,
+        UUID variantId,
+        BigDecimal requestedQty,
+        BigDecimal shippedQty,
+        BigDecimal receivedQty) {
+      this(id, tenantId, transferOrderId, variantId, requestedQty, shippedQty, receivedQty, null);
+    }
+  }
+
+  // ── Depot / DC replenishment (intent/depot-dc-replenishment.md) ─────────────
+
+  /**
+   * A shop served by a warehouse of the same business.
+   *
+   * @param leadTimeDays days from the warehouse to the shop
+   */
+  public record Serving(
+      UUID id,
+      UUID tenantId,
+      UUID storeId,
+      UUID warehouseId,
+      int leadTimeDays,
+      UUID createdBy,
+      Instant createdAt,
+      Instant updatedAt) {}
+
+  /**
+   * A product a served shop buys direct from its supplier, not from its warehouse: an exception to
+   * its serving.
+   */
+  public record DirectPurchase(
+      UUID id, UUID tenantId, UUID storeId, UUID variantId, UUID createdBy, Instant createdAt) {}
+
+  /** One run of a warehouse's transfer proposal, with what it raised. */
+  public record TransferProposalRun(
+      UUID id,
+      UUID tenantId,
+      UUID warehouseId,
+      UUID runBy,
+      Instant runAt,
+      int coverDays,
+      int shops,
+      int transfers,
+      int lines,
+      int shortLines,
+      List<UUID> transferIds) {
+    public TransferProposalRun {
+      transferIds = List.copyOf(transferIds);
+    }
+  }
 
   /**
    * Safety stock parameters + last computed result for a (store, variant) pair (Gap #8). method MAD

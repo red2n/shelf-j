@@ -81,17 +81,36 @@ public class TenantProfiles {
    *
    * @param ids every store of the tenant
    * @param countries the upper-cased country of each store that records one
+   * @param warehouses the stores of type WAREHOUSE: stock-only sites that serve shops (depot / DC
+   *     replenishment); every other store is a shop
    */
-  public record Stores(Set<UUID> ids, Map<UUID, String> countries) {
+  public record Stores(Set<UUID> ids, Map<UUID, String> countries, Set<UUID> warehouses) {
+
+    public Stores {
+      ids = Set.copyOf(ids);
+      countries = Map.copyOf(countries);
+      warehouses = Set.copyOf(warehouses);
+    }
+
+    /** As before warehouses were read: no store is one. */
+    public Stores(Set<UUID> ids, Map<UUID, String> countries) {
+      this(ids, countries, Set.of());
+    }
 
     /** Whether the store is one of the tenant's. */
     public boolean has(UUID storeId) {
       return storeId != null && ids.contains(storeId);
     }
+
+    /** Whether the store is one of the tenant's warehouses. */
+    public boolean isWarehouse(UUID storeId) {
+      return storeId != null && warehouses.contains(storeId);
+    }
   }
 
   /** One page of {@code GET /admin/stores}. */
-  record StorePage(List<UUID> ids, Map<UUID, String> countries, String nextCursor) {}
+  record StorePage(
+      List<UUID> ids, Map<UUID, String> countries, Set<UUID> warehouses, String nextCursor) {}
 
   private record CachedStores(Stores stores, Instant readAt) {}
 
@@ -183,6 +202,7 @@ public class TenantProfiles {
   private Optional<Stores> readStores(UUID tenantId) {
     Set<UUID> ids = new HashSet<>();
     Map<UUID, String> countries = new HashMap<>();
+    Set<UUID> warehouses = new HashSet<>();
     String after = null;
     for (int page = 0; page < MAX_STORE_PAGES; page++) {
       Optional<StorePage> read =
@@ -190,8 +210,9 @@ public class TenantProfiles {
       if (read.isEmpty()) return Optional.empty();
       ids.addAll(read.get().ids());
       countries.putAll(read.get().countries());
+      warehouses.addAll(read.get().warehouses());
       if (read.get().nextCursor() == null) {
-        return Optional.of(new Stores(Set.copyOf(ids), Map.copyOf(countries)));
+        return Optional.of(new Stores(ids, countries, warehouses));
       }
       after = read.get().nextCursor();
     }
@@ -210,10 +231,16 @@ public class TenantProfiles {
       if (!root.containsKey("data") || root.isNull("data")) return Optional.empty();
       List<UUID> ids = new ArrayList<>();
       Map<UUID, String> countries = new HashMap<>();
+      Set<UUID> warehouses = new HashSet<>();
       for (JsonValue value : root.getJsonArray("data")) {
         JsonObject store = value.asJsonObject();
         UUID id = Ids.parse(store.getString("id"));
         ids.add(id);
+        if (store.containsKey("type")
+            && !store.isNull("type")
+            && "WAREHOUSE".equals(upper(store.getString("type")))) {
+          warehouses.add(id);
+        }
         String country =
             store.containsKey("country") && !store.isNull("country")
                 ? upper(store.getString("country"))
@@ -230,6 +257,7 @@ public class TenantProfiles {
           new StorePage(
               List.copyOf(ids),
               Map.copyOf(countries),
+              Set.copyOf(warehouses),
               next == null || next.isBlank() ? null : next));
     } catch (RuntimeException e) {
       LOG.log(Level.WARNING, "unreadable page of stores: {0}", e.getMessage());

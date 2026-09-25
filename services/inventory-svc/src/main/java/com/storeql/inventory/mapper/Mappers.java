@@ -481,7 +481,8 @@ public final class Mappers {
         l.variantId().toString(),
         l.requestedQty(),
         l.shippedQty(),
-        l.receivedQty());
+        l.receivedQty(),
+        l.reason());
   }
 
   /**
@@ -503,6 +504,8 @@ public final class Mappers {
         ts(o.createdAt()),
         ts(o.shippedAt()),
         ts(o.receivedAt()),
+        o.source(),
+        o.proposalRunId() == null ? null : o.proposalRunId().toString(),
         lines.stream().map(Mappers::toTransferOrderLine).toList());
   }
 

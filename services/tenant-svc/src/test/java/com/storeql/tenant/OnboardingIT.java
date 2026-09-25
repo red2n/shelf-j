@@ -178,6 +178,55 @@ class OnboardingIT {
     }
   }
 
+  @Test
+  void aStoreIsAShopOrAWarehouseAndNothingElse() {
+    // Depot / DC replenishment reads the type to know which stores may serve shops: a type it
+    // cannot read would be a warehouse nobody could use, or a shop that quietly serves others.
+    Response t =
+        post(
+            "/onboarding/tenants",
+            "{\"businessName\":\"Depot Ltd\",\"country\":\"gb\",\"currency\":\"gbp\"}",
+            "X-User-Id",
+            owner);
+    String tenantId = field(t.readEntity(String.class), "id");
+    assertThat(
+        post(
+                "/onboarding/stores",
+                "{\"name\":\"First\",\"code\":\"FIRST\",\"timezone\":\"Europe/London\"}",
+                "X-Tenant-Id",
+                tenantId,
+                "X-User-Id",
+                owner,
+                "X-Roles",
+                "OWNER")
+            .getStatus(),
+        is(201));
+    Response depot =
+        post(
+            "/admin/stores",
+            "{\"name\":\"Depot\",\"code\":\"DC1\",\"type\":\"warehouse\","
+                + "\"timezone\":\"Europe/London\"}",
+            "X-Tenant-Id",
+            tenantId,
+            "X-Roles",
+            "OWNER");
+    String body = depot.readEntity(String.class);
+    assertThat(body, depot.getStatus(), is(201));
+    assertThat(body, containsString("\"type\":\"WAREHOUSE\""));
+    Response odd =
+        post(
+            "/admin/stores",
+            "{\"name\":\"Odd\",\"code\":\"ODD\",\"type\":\"SHED\","
+                + "\"timezone\":\"Europe/London\"}",
+            "X-Tenant-Id",
+            tenantId,
+            "X-Roles",
+            "OWNER");
+    String oddBody = odd.readEntity(String.class);
+    assertThat(oddBody, odd.getStatus(), is(400));
+    assertThat(oddBody, containsString("TENANT_STORE_TYPE_INVALID"));
+  }
+
   /**
    * Regression test for the tenant-ownership check in TenantService#createDefaultStore /
    * #onboardingStatus: the gateway's onboarding carve-out (JwtAuthFilter#isOnboarding) forwards a

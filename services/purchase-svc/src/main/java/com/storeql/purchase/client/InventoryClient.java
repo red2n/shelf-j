@@ -19,6 +19,7 @@ import jakarta.json.Json;
 import jakarta.json.JsonArray;
 import jakarta.json.JsonObject;
 import jakarta.json.JsonReader;
+import jakarta.json.JsonValue;
 import java.io.StringReader;
 import java.lang.System.Logger;
 import java.lang.System.Logger.Level;
@@ -30,6 +31,7 @@ import java.util.HashMap;
 import java.util.List;
 import java.util.Map;
 import java.util.Optional;
+import java.util.Set;
 import java.util.UUID;
 import org.eclipse.microprofile.faulttolerance.CircuitBreaker;
 import org.eclipse.microprofile.faulttolerance.Retry;
@@ -168,6 +170,86 @@ public class InventoryClient {
    * an order.
    */
   public record ForecastGlance(BigDecimal next28, Integer maxCoverDays) {}
+
+  /**
+   * What a warehouse's shops are expected to need of one product (depot / DC replenishment).
+   *
+   * @param next28 their forecast over 28 days, summed
+   * @param avgDailyDemand their average daily demand, summed
+   * @param committed already promised to them in transfers not yet shipped
+   * @param shops how many of its shops stock it from the warehouse
+   */
+  public record ServedDemand(
+      BigDecimal next28, BigDecimal avgDailyDemand, BigDecimal committed, int shops) {}
+
+  /**
+   * How a store is supplied, as inventory-svc's network says.
+   *
+   * @param servedBy the shop's warehouse, or null when it buys everything direct
+   * @param direct what a served shop buys direct
+   * @param warehouse whether the store is a warehouse serving shops
+   * @param demand a warehouse's shops' needs per product
+   */
+  public record Sourcing(
+      UUID servedBy, Set<UUID> direct, boolean warehouse, Map<UUID, ServedDemand> demand) {
+    public static final Sourcing ALONE = new Sourcing(null, Set.of(), false, Map.of());
+
+    public Sourcing {
+      direct = Set.copyOf(direct);
+      demand = Map.copyOf(demand);
+    }
+
+    /** Whether a served shop buys this product from its warehouse, not from a supplier. */
+    public boolean fromWarehouse(UUID variantId) {
+      return servedBy != null && !direct.contains(variantId);
+    }
+  }
+
+  /**
+   * How the store is supplied.
+   *
+   * @return the sourcing; {@link Sourcing#ALONE} when inventory-svc knows no network for it; empty
+   *     when inventory-svc could not be read, so the caller can refuse rather than buy for a shop
+   *     its warehouse already serves
+   */
+  public Optional<Sourcing> sourcing(UUID tenantId, UUID storeId) {
+    ServiceReader.Reply reply =
+        planning.get(
+            tenantId, "/admin/inventory/network/sourcing", Map.of("storeId", storeId.toString()));
+    if (reply.status() == 404) {
+      return Optional.of(Sourcing.ALONE);
+    }
+    if (!reply.ok()) {
+      return Optional.empty();
+    }
+    try (JsonReader reader = Json.createReader(new StringReader(reply.body()))) {
+      JsonObject d = reader.readObject().getJsonObject("data");
+      if (d == null) return Optional.of(Sourcing.ALONE);
+      UUID servedBy =
+          d.containsKey("servedBy") && !d.isNull("servedBy")
+              ? Ids.parse(d.getString("servedBy"))
+              : null;
+      Set<UUID> direct = new java.util.HashSet<>();
+      if (d.containsKey("direct") && !d.isNull("direct")) {
+        for (JsonValue v : d.getJsonArray("direct")) {
+          direct.add(Ids.parse(((jakarta.json.JsonString) v).getString()));
+        }
+      }
+      Map<UUID, ServedDemand> demand = new HashMap<>();
+      if (d.containsKey("demand") && !d.isNull("demand")) {
+        for (JsonObject x : d.getJsonArray("demand").getValuesAs(JsonObject.class)) {
+          demand.put(
+              Ids.parse(x.getString("variantId")),
+              new ServedDemand(
+                  number(x, "next28"),
+                  number(x, "avgDailyDemand"),
+                  number(x, "committed"),
+                  x.getInt("shops", 0)));
+        }
+      }
+      return Optional.of(new Sourcing(servedBy, direct, d.getBoolean("warehouse", false), demand));
+    }
+  }
 
   /**
    * A glance at each forecast variant at the store.

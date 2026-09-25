@@ -480,6 +480,17 @@ public final class TenantSvcStub implements AutoCloseable {
     return this;
   }
 
+  /**
+   * Registers one of a tenant's warehouses (type WAREHOUSE), as tenant-svc's {@code GET
+   * /admin/stores} lists it: a stock-only site that serves shops (depot / DC replenishment).
+   */
+  public TenantSvcStub withWarehouse(String tenantId, String storeId) {
+    stores
+        .computeIfAbsent(tenantId, t -> new java.util.concurrent.CopyOnWriteArrayList<>())
+        .add("{\"id\":\"" + storeId + "\",\"country\":null,\"type\":\"WAREHOUSE\"}");
+    return this;
+  }
+
   /** How many profile reads have reached the stub, to show a cache holding. */
   public int requests() {
     return requests.get();

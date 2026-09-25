@@ -76,6 +76,18 @@ public class ProposalService {
     }
   }
 
+  /**
+   * One item the run judges: its plan and position, and what the reason starts with. A warehouse's
+   * item stands for the shops it serves (depot / DC replenishment), so its reason says so.
+   */
+  private record Item(
+      Plan plan,
+      BigDecimal available,
+      BigDecimal onOrder,
+      BigDecimal next28,
+      Integer shelfLife,
+      String prefix) {}
+
   private record ProposedLine(
       UUID variantId,
       BigDecimal qty,
@@ -83,6 +95,57 @@ public class ProposalService {
       String vatCode,
       String reason,
       int leadTimeDays) {}
+
+  /**
+   * A warehouse's item, standing for the shops it serves: the reorder point is their daily demand
+   * over the warehouse's lead time, the forecast is theirs, and what is already promised to them is
+   * taken off what the warehouse holds. The warehouse's own plan, when it has one, still gives the
+   * lead time and the supplier's order modifiers; its own demand history does not count — a
+   * warehouse sells nothing itself.
+   */
+  private static Item servedItem(
+      UUID v,
+      InventoryClient.ServedDemand d,
+      Plan own,
+      int lead,
+      Map<UUID, BigDecimal> available,
+      Map<UUID, BigDecimal> onOrder) {
+    BigDecimal daily = d.avgDailyDemand() == null ? BigDecimal.ZERO : d.avgDailyDemand();
+    BigDecimal committed = d.committed() == null ? BigDecimal.ZERO : d.committed();
+    Plan plan =
+        new Plan(
+            v,
+            daily.multiply(BigDecimal.valueOf(lead)).setScale(3, RoundingMode.HALF_UP),
+            own == null ? null : own.eoq(),
+            own == null ? null : own.minOrderQty(),
+            own == null ? null : own.maxOrderQty(),
+            own == null ? null : own.lotMultiplier(),
+            daily,
+            lead);
+    String prefix =
+        "for the "
+            + d.shops()
+            + (d.shops() == 1 ? " shop" : " shops")
+            + " it serves ("
+            + OrderProposal.plain(daily)
+            + "/day; "
+            + OrderProposal.plain(committed)
+            + " committed to them): ";
+    return new Item(
+        plan,
+        available.getOrDefault(v, BigDecimal.ZERO).subtract(committed),
+        onOrder.getOrDefault(v, BigDecimal.ZERO),
+        d.next28(),
+        null,
+        prefix);
+  }
+
+  /** The supplier's quoted lead time, for the supplier the business would buy the item from. */
+  private Integer supplierQuote(UUID tenantId, SupplierChoice lastBought, UUID coded) {
+    UUID supplierId = lastBought != null ? lastBought.supplierId() : coded;
+    if (supplierId == null) return null;
+    return purchases.findSupplier(tenantId, supplierId).map(Supplier::leadTimeDays).orElse(null);
+  }
 
   /**
    * Proposes orders for a store.
@@ -109,6 +172,10 @@ public class ProposalService {
     }
     List<Plan> plans =
         inventory.reorderPlans(tenantId, storeId).orElseThrow(ProposalService::stockUnavailable);
+    // Depot / DC replenishment: a shop a warehouse serves buys only what it buys direct; a
+    // warehouse buys for the shops it serves.
+    InventoryClient.Sourcing sourcing =
+        inventory.sourcing(tenantId, storeId).orElseThrow(ProposalService::stockUnavailable);
     Map<UUID, BigDecimal> available =
         inventory
             .availableByVariant(tenantId, storeId)
@@ -116,19 +183,56 @@ public class ProposalService {
     Map<UUID, ForecastGlance> forecast =
         inventory.forecastGlances(tenantId, storeId).orElse(Map.of());
     Map<UUID, BigDecimal> onOrder = repo.onOrderByVariant(tenantId, storeId);
-    List<UUID> variants = plans.stream().map(Plan::variantId).toList();
+    List<UUID> variants = new ArrayList<>(plans.stream().map(Plan::variantId).toList());
+    for (UUID v : sourcing.demand().keySet()) if (!variants.contains(v)) variants.add(v);
     Map<UUID, SupplierChoice> lastBought = repo.lastSupplierByVariant(tenantId, variants);
     Map<UUID, UUID> coded = repo.itemCodeSupplierByVariant(tenantId, variants);
 
-    Map<UUID, List<ProposedLine>> bySupplier = new LinkedHashMap<>();
     List<SkippedItem> skipped = new ArrayList<>();
+    List<Item> items = new ArrayList<>();
+    int unleaded = 0;
+    Map<UUID, Plan> planByVariant = new LinkedHashMap<>();
     for (Plan plan : plans) {
+      if (sourcing.fromWarehouse(plan.variantId())) continue;
+      planByVariant.put(plan.variantId(), plan);
+    }
+    for (Map.Entry<UUID, InventoryClient.ServedDemand> e : sourcing.demand().entrySet()) {
+      UUID v = e.getKey();
+      Plan own = planByVariant.remove(v);
+      Integer quote = supplierQuote(tenantId, lastBought.get(v), coded.get(v));
+      Integer lead = own != null ? Integer.valueOf(own.leadTimeDays()) : quote;
+      if (lead == null) {
+        unleaded++;
+        skipped.add(
+            new SkippedItem(
+                v,
+                "no lead time for the warehouse: set a reorder plan at the warehouse or the"
+                    + " supplier's quoted lead time"));
+        continue;
+      }
+      items.add(servedItem(v, e.getValue(), own, lead, available, onOrder));
+    }
+    for (Plan plan : planByVariant.values()) {
       UUID v = plan.variantId();
       ForecastGlance glance = forecast.get(v);
-      Integer shelfLife = glance == null ? null : glance.maxCoverDays();
+      items.add(
+          new Item(
+              plan,
+              available.getOrDefault(v, BigDecimal.ZERO),
+              onOrder.getOrDefault(v, BigDecimal.ZERO),
+              glance == null ? null : glance.next28(),
+              glance == null ? null : glance.maxCoverDays(),
+              ""));
+    }
+
+    Map<UUID, List<ProposedLine>> bySupplier = new LinkedHashMap<>();
+    for (Item item : items) {
+      Plan plan = item.plan();
+      UUID v = plan.variantId();
+      Integer shelfLife = item.shelfLife();
       // The cover this line will get: what was asked for, or the shelf life when that is shorter.
       int lineCover = shelfLife != null && shelfLife < cover ? shelfLife : cover;
-      BigDecimal expected = glance == null ? null : glance.next28();
+      BigDecimal expected = item.next28();
       if (expected != null && lineCover != FORECAST_DAYS.intValue()) {
         expected =
             expected
@@ -137,15 +241,9 @@ public class ProposalService {
       }
       OrderProposal.Result result =
           OrderProposal.propose(
-              plan,
-              new Position(
-                  available.getOrDefault(v, BigDecimal.ZERO),
-                  onOrder.getOrDefault(v, BigDecimal.ZERO),
-                  expected,
-                  shelfLife),
-              cover);
+              plan, new Position(item.available(), item.onOrder(), expected, shelfLife), cover);
       if (result instanceof Skipped s) {
-        skipped.add(new SkippedItem(v, s.reason()));
+        skipped.add(new SkippedItem(v, item.prefix() + s.reason()));
         continue;
       }
       if (!(result instanceof Order order)) {
@@ -170,7 +268,7 @@ public class ProposalService {
                   order.qty(),
                   choice.unitPrice() == null ? BigDecimal.ZERO : choice.unitPrice(),
                   choice.vatCode() == null ? "T1" : choice.vatCode(),
-                  order.reason(),
+                  item.prefix() + order.reason(),
                   plan.leadTimeDays()));
     }
 
@@ -248,7 +346,7 @@ public class ProposalService {
             ctx.userId(),
             now,
             cover,
-            plans.size(),
+            items.size() + unleaded,
             orderIds.size(),
             lines,
             orderIds,

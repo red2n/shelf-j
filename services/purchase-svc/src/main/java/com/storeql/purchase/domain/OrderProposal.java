@@ -184,7 +184,7 @@ public final class OrderProposal {
   }
 
   /** A number as a buyer would write it: no trailing zeros, never exponent form. */
-  static String plain(BigDecimal v) {
+  public static String plain(BigDecimal v) {
     BigDecimal stripped = v.stripTrailingZeros();
     return stripped.scale() < 0 ? stripped.setScale(0).toPlainString() : stripped.toPlainString();
   }

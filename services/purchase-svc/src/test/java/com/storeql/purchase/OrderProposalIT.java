@@ -70,6 +70,8 @@ class OrderProposalIT {
   void fresh() throws SQLException {
     PurchaseFixtures.truncateAll(PG);
     INVENTORY.reset();
+    // Routes outlive a test; each starts with no network, as a business without a warehouse has.
+    INVENTORY.on("GET", "/admin/inventory/network/sourcing", 404, "{}");
     store = Ids.newId();
     otherStore = Ids.newId();
   }
@@ -374,5 +376,95 @@ class OrderProposalIT {
     // (5), not 28 days
     assertThat(line.getJsonNumber("qty").bigDecimalValue(), is(new BigDecimal("9.000")));
     assertThat(line.getString("proposalReason"), containsString("capped to the 5-day shelf life"));
+  }
+
+  // ── depot / DC replenishment ────────────────────────────────────────────────
+
+  private void sourcing(String json) {
+    INVENTORY.on("GET", "/admin/inventory/network/sourcing", 200, "{\"data\":" + json + "}");
+  }
+
+  @Test
+  @DisplayName(
+      "A shop a warehouse serves buys only what it buys direct; the rest is the warehouse's to send")
+  void aServedShopBuysOnlyWhatItBuysDirect() {
+    String acme = supplier("Acme Wholesale");
+    orderFrom(acme, v1, "1", "2.00");
+    orderFrom(acme, v2, "1", "3.00");
+    UUID warehouse = Ids.newId();
+    // Both below their reorder points; v2 is bought direct, v1 comes from the warehouse.
+    stockPosition(
+        plan(v1, "10", "20", "1", 7) + "," + plan(v2, "10", "30", "1", 7),
+        level(v1, "0") + "," + level(v2, "0"),
+        "");
+    sourcing(
+        "{\"storeId\":\""
+            + store
+            + "\",\"warehouse\":false,\"servedBy\":\""
+            + warehouse
+            + "\",\"leadTimeDays\":2,\"direct\":[\""
+            + v2
+            + "\"],\"shops\":[],\"demand\":[]}");
+    JsonObject run =
+        data(post("/purchase-orders/proposals/run", "{\"storeId\":\"" + store + "\"}"), 200);
+    assertThat(run.getInt("considered"), is(1));
+    JsonArray orders = run.getJsonArray("orders");
+    assertThat(orders.size(), is(1));
+    String poId = orders.getJsonObject(0).getString("poId");
+    JsonArray lines =
+        body(as("/purchase-orders/" + poId + "/lines", "OWNER", null).get(), 200)
+            .getJsonArray("data");
+    assertThat(lines.size(), is(1));
+    assertThat(lines.getJsonObject(0).getString("variantId"), is(v2.toString()));
+  }
+
+  @Test
+  @DisplayName(
+      "A warehouse buys for the shops it serves: their demand over its lead time, less what it has promised them")
+  void aWarehouseBuysForTheShopsItServes() {
+    String acme =
+        data(
+                post(
+                    "/suppliers",
+                    "{\"name\":\"Acme Wholesale\",\"vatRegistered\":false,\"currency\":\"GBP\","
+                        + "\"leadTimeDays\":3}"),
+                201)
+            .getString("id");
+    orderFrom(acme, v1, "1", "2.00"); // one on order, and Acme is where we buy v1
+    // The warehouse has no plan of its own (it sells nothing); 10 on hand, 5 promised to shops.
+    stockPosition("", level(v1, "10") + "," + level(v4, "0"), "");
+    sourcing(
+        "{\"storeId\":\""
+            + store
+            + "\",\"warehouse\":true,\"servedBy\":null,\"direct\":[],\"shops\":[\""
+            + Ids.newId()
+            + "\",\""
+            + Ids.newId()
+            + "\"],\"demand\":[{\"variantId\":\""
+            + v1
+            + "\",\"next28\":56,\"avgDailyDemand\":2,\"committed\":5,\"shops\":2},"
+            + "{\"variantId\":\""
+            + v4
+            + "\",\"next28\":28,\"avgDailyDemand\":1,\"committed\":0,\"shops\":1}]}");
+    JsonObject run =
+        data(post("/purchase-orders/proposals/run", "{\"storeId\":\"" + store + "\"}"), 200);
+    assertThat(run.getInt("considered"), is(2));
+    // v4: nobody sells it to us and no plan says how long it takes.
+    assertThat(
+        first(run.getJsonArray("skipped"), "variantId", v4.toString()).getString("reason"),
+        containsString("no lead time for the warehouse"));
+    JsonArray orders = run.getJsonArray("orders");
+    assertThat(orders.size(), is(1));
+    String poId = orders.getJsonObject(0).getString("poId");
+    JsonObject line =
+        body(as("/purchase-orders/" + poId + "/lines", "OWNER", null).get(), 200)
+            .getJsonArray("data")
+            .getJsonObject(0);
+    // Reorder point: 2 a day over Acme's 3 days = 6; position: 10 on hand less 5 promised, plus 1
+    // on order = 6 ≤ 6; order back to it plus the shops' 56 over 28 days.
+    assertThat(line.getJsonNumber("qty").bigDecimalValue(), is(new BigDecimal("56.000")));
+    String reason = line.getString("proposalReason");
+    assertThat(reason, containsString("for the 2 shops it serves (2/day; 5 committed to them)"));
+    assertThat(reason, containsString("on hand 5 + on order 1 = 6 ≤ reorder point 6"));
   }
 }

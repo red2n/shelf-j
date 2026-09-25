@@ -15,6 +15,7 @@ import 'providers/inventory_levels_pagination.dart';
 import 'inventory_forecast_tab.dart';
 import 'inventory_bond_tab.dart';
 import 'inventory_markdown_tab.dart';
+import 'inventory_network_tab.dart';
 import 'inventory_waves_tab.dart';
 import 'inventory_yield_tab.dart';
 import 'inventory_warehouse_tabs.dart';
@@ -33,7 +34,7 @@ class _InventoryScreenState extends ConsumerState<InventoryScreen> {
   @override
   Widget build(BuildContext context) {
     return DefaultTabController(
-      length: 10,
+      length: 11,
       child: Column(
         crossAxisAlignment: CrossAxisAlignment.start,
         children: [
@@ -72,6 +73,7 @@ class _InventoryScreenState extends ConsumerState<InventoryScreen> {
               Tab(text: 'Bond & duty'),
               Tab(text: 'Yield & prep'),
               Tab(text: 'Picking & putaway'),
+              Tab(text: 'Depot & shops'),
             ],
           ),
           const Expanded(
@@ -90,6 +92,7 @@ class _InventoryScreenState extends ConsumerState<InventoryScreen> {
                 InventoryYieldTab(),
                 // Wave picking of the orders waiting at the store, and directed putaway.
                 InventoryWavesTab(),
+                InventoryNetworkTab(),
               ],
             ),
           ),

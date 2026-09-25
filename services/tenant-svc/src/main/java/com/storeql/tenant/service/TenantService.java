@@ -249,12 +249,29 @@ public class TenantService {
     return trimmed;
   }
 
+  /**
+   * The store's type, upper-cased: STORE when none is given.
+   *
+   * @throws ApiException 400 {@code TENANT_STORE_TYPE_INVALID} for anything but STORE or WAREHOUSE
+   */
+  static String storeType(String requested) {
+    if (requested == null || requested.isBlank()) return Store.TYPE_STORE;
+    String type = requested.trim().toUpperCase(java.util.Locale.ROOT);
+    if (!Store.TYPE_STORE.equals(type) && !Store.TYPE_WAREHOUSE.equals(type)) {
+      throw ApiException.badRequest(
+          "TENANT_STORE_TYPE_INVALID", "a store is a STORE or a WAREHOUSE; got " + requested);
+    }
+    return type;
+  }
+
   private StoreWithZone createStoreInternal(
       UUID tenantId, CreateStoreRequest req, boolean isDefault) {
+    // A shop or a warehouse, nothing else: depot / DC replenishment reads the type to know which
+    // stores may serve shops.
+    String type = storeType(req.type());
     // What the business is sold decides how many stores it may open (21.8).
     plans.requireRoomForAnotherStore(tenantId);
     UUID storeId = Ids.newId();
-    String type = req.type() == null || req.type().isBlank() ? Store.TYPE_STORE : req.type();
     Instant nowStore = Instant.now();
     var store =
         new Store(

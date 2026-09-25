@@ -478,6 +478,8 @@ class TransferOrderLine {
   final double requestedQty;
   final double? shippedQty;
   final double? receivedQty;
+  /// Why a warehouse's replenishment proposal asked for this quantity; null when a person did.
+  final String? reason;
 
   const TransferOrderLine({
     this.id,
@@ -485,6 +487,7 @@ class TransferOrderLine {
     required this.requestedQty,
     this.shippedQty,
     this.receivedQty,
+    this.reason,
   });
 
   factory TransferOrderLine.fromJson(Map<String, dynamic> j) => TransferOrderLine(
@@ -493,6 +496,7 @@ class TransferOrderLine {
         requestedQty: (j['requestedQty'] as num?)?.toDouble() ?? 0,
         shippedQty: (j['shippedQty'] as num?)?.toDouble(),
         receivedQty: (j['receivedQty'] as num?)?.toDouble(),
+        reason: j['reason'] as String?,
       );
 }
 
@@ -506,6 +510,8 @@ class TransferOrder {
   final String? createdAt;
   final String? shippedAt;
   final String? receivedAt;
+  /// MANUAL, or PROPOSAL when a warehouse's replenishment run raised it.
+  final String? source;
   final List<TransferOrderLine> lines;
 
   const TransferOrder({
@@ -518,6 +524,7 @@ class TransferOrder {
     this.createdAt,
     this.shippedAt,
     this.receivedAt,
+    this.source,
     required this.lines,
   });
 
@@ -531,6 +538,7 @@ class TransferOrder {
         createdAt: j['createdAt'] as String?,
         shippedAt: j['shippedAt'] as String?,
         receivedAt: j['receivedAt'] as String?,
+        source: j['source'] as String?,
         lines: ((j['lines'] as List?) ?? [])
             .map((e) => TransferOrderLine.fromJson(e as Map<String, dynamic>))
             .toList(),
