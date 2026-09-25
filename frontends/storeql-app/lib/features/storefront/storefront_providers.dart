@@ -927,6 +927,10 @@ class ServerOrderSummary {
   final String currency;
   final DateTime placedAt;
 
+  /// The checkout this order is a part of, when a delivery came from several shops (order
+  /// orchestration); null for an order never split.
+  final String? groupId;
+
   const ServerOrderSummary({
     required this.id,
     required this.storeId,
@@ -935,6 +939,7 @@ class ServerOrderSummary {
     required this.total,
     required this.currency,
     required this.placedAt,
+    this.groupId,
   });
 
   factory ServerOrderSummary.fromJson(Map<String, dynamic> j) =>
@@ -947,7 +952,45 @@ class ServerOrderSummary {
         currency: j['currency'] as String? ?? '',
         placedAt: DateTime.tryParse(j['createdAt'] as String? ?? '')?.toLocal() ??
             DateTime.now(),
+        groupId: j['groupId'] as String?,
       );
+}
+
+/// One part of a delivery split across shops (order orchestration), as the answer to placing it
+/// names it: its own order at its own shop, with its total and how many items it carries.
+class CheckoutPart {
+  final String orderId;
+  final String storeId;
+  final double total;
+  final int units;
+
+  const CheckoutPart({
+    required this.orderId,
+    required this.storeId,
+    required this.total,
+    required this.units,
+  });
+
+  factory CheckoutPart.fromJson(Map<String, dynamic> j) => CheckoutPart(
+        orderId: j['orderId'] as String? ?? '',
+        storeId: j['storeId'] as String? ?? '',
+        total: (j['total'] as num?)?.toDouble() ?? 0,
+        units: (j['units'] as num?)?.toInt() ?? 0,
+      );
+}
+
+/// "Arrives in 2 parts: 3 items from Leeds, 1 from York" — a split delivery in the shopper's
+/// words; a shop the list does not name is called by the end of its id.
+String splitSummary(List<CheckoutPart> parts, Map<String, String> storeNames) {
+  final bits = <String>[];
+  for (var i = 0; i < parts.length; i++) {
+    final p = parts[i];
+    final name = storeNames[p.storeId] ?? 'shop ${p.storeId.length > 4 ? p.storeId.substring(p.storeId.length - 4) : p.storeId}';
+    bits.add(i == 0
+        ? '${p.units} item${p.units == 1 ? '' : 's'} from $name'
+        : '${p.units} from $name');
+  }
+  return 'Arrives in ${parts.length} parts: ${bits.join(', ')}';
 }
 
 /// The signed-in customer's real order history. Returns null when not signed in

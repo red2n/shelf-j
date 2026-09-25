@@ -749,6 +749,34 @@ class _StorefrontCartScreenState extends ConsumerState<StorefrontCartScreen> {
       // 09.16: the server put the return-scheme deposit on the order as its own
       // line; the shopper sees it and pays the total that carries it.
       final depositAmount = (data['depositAmount'] as num?)?.toDouble() ?? 0;
+      // Order orchestration: a delivery the shop serving the postcode cannot fill alone comes in
+      // parts from several shops — one checkout, paid once for all of them.
+      final group = data['group'] as Map<String, dynamic>?;
+      final parts = [
+        for (final p in (group?['parts'] as List?) ?? const [])
+          CheckoutPart.fromJson(p as Map<String, dynamic>),
+      ];
+      final split = parts.length > 1;
+      final payTotal =
+          split ? (group!['total'] as num?)?.toDouble() ?? total : total;
+      final storeNames =
+          split ? await _storeNames() : const <String, String>{};
+      if (split && payNow) {
+        if (!mounted) return;
+        // No spinner behind the sheet: the shopper is deciding, nothing is in flight.
+        setState(() => _placing = false);
+        final go = await _confirmSplitSheet(parts, storeNames,
+            group!['currency'] as String? ?? currency, payTotal);
+        if (!mounted) return;
+        if (!go) {
+          ScaffoldMessenger.of(context).showSnackBar(const SnackBar(
+            content: Text('Nothing was charged. Your order is held for a '
+                'short while and released if it is not paid.'),
+          ));
+          return;
+        }
+        setState(() => _placing = true);
+      }
 
       // 2. "Pay now" captures payment online immediately (capture → PaymentCaptured → order
       // confirms). "Pay later" — catalog mode, or a priced shop's customer choosing to defer —
@@ -756,12 +784,15 @@ class _StorefrontCartScreenState extends ConsumerState<StorefrontCartScreen> {
       if (payNow) {
         await dio.post(
           '/${ApiConstants.payment}/payments/online',
-          data: {
-            'orderId': orderId,
-            'amount': total,
-            'method': pay.method,
-            'storeId': storeId,
-          },
+          // A split checkout is paid once, for all its parts.
+          data: split
+              ? {'groupId': group!['id'], 'amount': payTotal, 'method': pay.method}
+              : {
+                  'orderId': orderId,
+                  'amount': total,
+                  'method': pay.method,
+                  'storeId': storeId,
+                },
           options: Options(headers: {'Idempotency-Key': derivedId(idemBase, 'pay')}),
         );
       }
@@ -770,17 +801,33 @@ class _StorefrontCartScreenState extends ConsumerState<StorefrontCartScreen> {
       if (delivery) await _saveAddress();
 
       // Remember this order on-device so it shows in "My orders" (guest fallback).
-      await ref.read(storefrontOrdersProvider.notifier).add(
-            StorefrontOrderRecord(
-              orderId: orderId,
-              total: showPrices ? total : 0,
-              currency: showPrices ? currency : '',
-              itemCount: cart.fold<int>(0, (s, l) => s + l.qty),
-              placedAt: DateTime.now(),
-              storeName: storeName,
-              fulfilmentType: _fulfilment,
-            ),
-          );
+      if (split) {
+        for (final p in parts) {
+          await ref.read(storefrontOrdersProvider.notifier).add(
+                StorefrontOrderRecord(
+                  orderId: p.orderId,
+                  total: showPrices ? p.total : 0,
+                  currency: showPrices ? currency : '',
+                  itemCount: p.units,
+                  placedAt: DateTime.now(),
+                  storeName: storeNames[p.storeId] ?? storeName,
+                  fulfilmentType: _fulfilment,
+                ),
+              );
+        }
+      } else {
+        await ref.read(storefrontOrdersProvider.notifier).add(
+              StorefrontOrderRecord(
+                orderId: orderId,
+                total: showPrices ? total : 0,
+                currency: showPrices ? currency : '',
+                itemCount: cart.fold<int>(0, (s, l) => s + l.qty),
+                placedAt: DateTime.now(),
+                storeName: storeName,
+                fulfilmentType: _fulfilment,
+              ),
+            );
+      }
       // Signed-in customers get a server-backed list — refresh it so the new
       // order shows on the next visit to "My orders".
       ref.invalidate(serverOrdersProvider);
@@ -798,9 +845,14 @@ class _StorefrontCartScreenState extends ConsumerState<StorefrontCartScreen> {
             mainAxisSize: MainAxisSize.min,
             children: [
               Text('Order #${shortRef(orderId)}'),
+              if (split) ...[
+                const SizedBox(height: 6),
+                Text(splitSummary(parts, storeNames),
+                    key: const Key('split-parts'), textAlign: TextAlign.center),
+              ],
               if (payNow) ...[
                 const SizedBox(height: 6),
-                Text('$currency ${total.toStringAsFixed(2)} paid',
+                Text('$currency ${payTotal.toStringAsFixed(2)} paid',
                     style: const TextStyle(fontWeight: FontWeight.bold)),
               ],
               if (depositAmount > 0) ...[
@@ -827,11 +879,11 @@ class _StorefrontCartScreenState extends ConsumerState<StorefrontCartScreen> {
                     showPrices
                         ? (pay.method == 'CASH'
                             ? (delivery
-                                ? 'Pay $currency ${total.toStringAsFixed(2)} in cash on delivery.'
-                                : 'Pay $currency ${total.toStringAsFixed(2)} in cash at pickup.')
+                                ? 'Pay $currency ${payTotal.toStringAsFixed(2)} in cash on delivery.'
+                                : 'Pay $currency ${payTotal.toStringAsFixed(2)} in cash at pickup.')
                             : (delivery
-                                ? 'Pay $currency ${total.toStringAsFixed(2)} on delivery.'
-                                : 'Pay $currency ${total.toStringAsFixed(2)} at pickup.'))
+                                ? 'Pay $currency ${payTotal.toStringAsFixed(2)} on delivery.'
+                                : 'Pay $currency ${payTotal.toStringAsFixed(2)} at pickup.'))
                         : (delivery
                             ? 'Price & payment will be confirmed on delivery.'
                             : 'Price & payment will be confirmed in store.'),
@@ -891,6 +943,9 @@ class _StorefrontCartScreenState extends ConsumerState<StorefrontCartScreen> {
       case 'ORDER_INSUFFICIENT_STOCK':
         return 'Sorry — some items in your cart just sold out. '
             'Please adjust the quantities and try again.';
+      case 'ORDER_UNFULFILLABLE':
+        return 'Sorry — our shops can\'t gather everything in your cart right now. '
+            'Please adjust the quantities and try again.';
       case 'ORDER_INVENTORY_UNAVAILABLE':
         return 'We couldn\'t confirm stock right now. Please try again in a moment.';
       case 'PAYMENT_METHOD_DISABLED':
@@ -899,6 +954,74 @@ class _StorefrontCartScreenState extends ConsumerState<StorefrontCartScreen> {
       default:
         return friendlyError(e, fallback: 'Checkout failed.');
     }
+  }
+
+  // ── Split delivery (order orchestration) ─────────────────────────────────
+
+  /// The shops' names, for saying where each part comes from; none when they cannot be read.
+  Future<Map<String, String>> _storeNames() async {
+    try {
+      final stores = await ref.read(storefrontStoresProvider.future);
+      return {for (final s in stores) s.id: s.name};
+    } catch (_) {
+      return const {};
+    }
+  }
+
+  /// Before any money moves: the order comes in parts, from which shops, for how much each, and
+  /// one payment for all of it. Returns true when the shopper pays.
+  Future<bool> _confirmSplitSheet(List<CheckoutPart> parts,
+      Map<String, String> storeNames, String currency, double payTotal) async {
+    final paid = await showModalBottomSheet<bool>(
+      context: context,
+      showDragHandle: true,
+      builder: (ctx) {
+        final cs = Theme.of(ctx).colorScheme;
+        return SafeArea(
+          child: Padding(
+            padding: const EdgeInsets.fromLTRB(20, 4, 20, 16),
+            child: Column(
+              mainAxisSize: MainAxisSize.min,
+              crossAxisAlignment: CrossAxisAlignment.stretch,
+              children: [
+                Text('Your order comes in ${parts.length} parts',
+                    style: Theme.of(ctx).textTheme.titleLarge),
+                const SizedBox(height: 8),
+                Text(
+                    'Not everything is at one shop, so ${parts.length} of our shops '
+                    'will each send part of it. You pay once.',
+                    style: TextStyle(color: cs.onSurfaceVariant)),
+                const SizedBox(height: 8),
+                for (final p in parts)
+                  ListTile(
+                    key: Key('split-part-${p.orderId}'),
+                    contentPadding: EdgeInsets.zero,
+                    leading: Icon(Icons.local_shipping_outlined,
+                        color: cs.onSurfaceVariant),
+                    title: Text(storeNames[p.storeId] ?? 'Another shop'),
+                    subtitle:
+                        Text('${p.units} item${p.units == 1 ? '' : 's'}'),
+                    trailing: Text('$currency ${p.total.toStringAsFixed(2)}',
+                        style: const TextStyle(fontWeight: FontWeight.w600)),
+                  ),
+                const SizedBox(height: 12),
+                FilledButton.icon(
+                  key: const Key('split-pay'),
+                  onPressed: () => Navigator.pop(ctx, true),
+                  icon: const Icon(Icons.lock_outline),
+                  label: Text('Pay $currency ${payTotal.toStringAsFixed(2)}'),
+                ),
+                TextButton(
+                  onPressed: () => Navigator.pop(ctx, false),
+                  child: const Text('Not now'),
+                ),
+              ],
+            ),
+          ),
+        );
+      },
+    );
+    return paid == true;
   }
 
   // ── Pending-order guard ──────────────────────────────────────────────────

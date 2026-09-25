@@ -188,6 +188,19 @@ public final class Mappers {
    */
   public static OrderResponse toDto(
       Order o, List<OrderItem> items, List<com.storeql.order.domain.Domain.OrderDeposit> deposits) {
+    return toDto(o, items, deposits, null);
+  }
+
+  /**
+   * Converts an order with the checkout it is a part of (order orchestration).
+   *
+   * @param group the split checkout, or null for an order never split
+   */
+  public static OrderResponse toDto(
+      Order o,
+      List<OrderItem> items,
+      List<com.storeql.order.domain.Domain.OrderDeposit> deposits,
+      com.storeql.order.domain.OrderGroup group) {
     return new OrderResponse(
         str(o.id()),
         str(o.storeId()),
@@ -222,7 +235,25 @@ public final class Mappers {
                 .map(com.storeql.order.domain.Domain.OrderDeposit::amount)
                 .reduce(java.math.BigDecimal.ZERO, java.math.BigDecimal::add),
         deposits == null ? null : deposits.stream().map(Mappers::toDto).toList(),
-        str(o.sellerUserId()));
+        str(o.sellerUserId()),
+        group == null ? null : toDto(group));
+  }
+
+  /** Converts a split checkout (order orchestration). */
+  public static com.storeql.order.dto.Dtos.OrderGroupResponse toDto(
+      com.storeql.order.domain.OrderGroup g) {
+    return new com.storeql.order.dto.Dtos.OrderGroupResponse(
+        str(g.id()),
+        str(g.loginId()),
+        g.total(),
+        g.currency(),
+        ts(g.createdAt()),
+        g.parts().stream()
+            .map(
+                p ->
+                    new com.storeql.order.dto.Dtos.OrderPartResponse(
+                        str(p.orderId()), str(p.storeId()), p.status(), p.total(), p.units()))
+            .toList());
   }
 
   /** Converts one deposit line (09.16). */
@@ -270,6 +301,15 @@ public final class Mappers {
    * @return its API representation
    */
   public static OrderSummaryResponse toSummary(Order o) {
+    return toSummary(o, null);
+  }
+
+  /**
+   * Converts an order to its list form, naming the split checkout it is a part of.
+   *
+   * @param groupId the checkout, or null for an order never split
+   */
+  public static OrderSummaryResponse toSummary(Order o, java.util.UUID groupId) {
     return new OrderSummaryResponse(
         str(o.id()),
         str(o.storeId()),
@@ -284,7 +324,8 @@ public final class Mappers {
         o.currency(),
         ts(o.createdAt()),
         ts(o.updatedAt()),
-        o.paymentMethod());
+        o.paymentMethod(),
+        str(groupId));
   }
 
   /**

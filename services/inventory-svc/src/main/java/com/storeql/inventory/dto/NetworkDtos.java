@@ -83,4 +83,12 @@ public final class NetworkDtos {
       name = "OwedResponse",
       description = "What a purchase order still owes a shop of a product, to cross the dock.")
   public record OwedResponse(UUID warehouseId, UUID storeId, UUID variantId, BigDecimal qty) {}
+
+  @Schema(name = "StoreStockResponse")
+  public record StoreStockResponse(UUID storeId, UUID variantId, BigDecimal available) {}
+
+  @Schema(
+      name = "StockByStoreResponse",
+      description = "What each store can give of the products asked, and which are dropship.")
+  public record StockByStoreResponse(List<StoreStockResponse> levels, List<UUID> dropship) {}
 }

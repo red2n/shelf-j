@@ -196,6 +196,8 @@ class AdminAuthorizationFilterTest {
           "/orders/01a09509-72ec-72e9-9f08-94a93df26a36/history",
           "/orders/01a09509-72ec-72e9-9f08-94a93df26a36/returns",
           "/orders/01a09509-72ec-72e9-9f08-94a93df26a36/fiscal-receipt",
+          // A split checkout (order orchestration), with the order's own object-level check.
+          "/order-groups/01a09509-72ec-72e9-9f08-94a93df26a36",
           "/promotions",
           "/auth/me",
           "/cart",
@@ -219,6 +221,10 @@ class AdminAuthorizationFilterTest {
     // stays denied, so a future sub-resource cannot inherit the exemption by accident.
     assertAborted(invoke("GET", "/orders/abc/audit-trail"), 403);
     assertAborted(invoke("GET", "/orders/abc/history/all"), 403);
+    // Only the id-shaped split checkout; its list and anything under one stay staff work.
+    assertAborted(invoke("GET", "/order-groups"), 403);
+    assertAborted(invoke("GET", "/order-groups/export"), 403);
+    assertAborted(invoke("GET", "/order-groups/01a09509-72ec-72e9-9f08-94a93df26a36/parts"), 403);
   }
 
   /**

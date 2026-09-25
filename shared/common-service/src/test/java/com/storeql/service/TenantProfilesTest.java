@@ -348,6 +348,25 @@ class TenantProfilesTest {
   }
 
   @Test
+  @DisplayName("Each store's coordinates are kept where it records them; none is none")
+  void storesKnowWhereTheyAre() {
+    var profiles =
+        TenantProfiles.forTest(
+            id -> Optional.empty(),
+            (tenant, after) ->
+                Optional.of(
+                    storesPage(
+                        null,
+                        "{\"id\":\"" + STORE_DE + "\",\"geoLat\":53.8,\"geoLng\":-1.55}",
+                        "{\"id\":\"" + STORE_NONE + "\",\"geoLat\":null}")),
+            new Moving());
+    var stores = profiles.stores(TENANT, null);
+    assertEquals(53.8, stores.where(STORE_DE).lat(), 1e-9);
+    assertEquals(-1.55, stores.where(STORE_DE).lng(), 1e-9);
+    assertEquals(null, stores.where(STORE_NONE));
+  }
+
+  @Test
   @DisplayName("Stores that cannot be read are refused, never taken to be none, and not cached")
   void unreadableStoresAreRefused() {
     AtomicInteger reads = new AtomicInteger();

@@ -141,6 +141,21 @@ public final class Events {
 
   static OutboxRow orderPlaced(
       UUID tenantId, UUID orderId, String channel, UUID customerId, UUID loginId, UUID storeId) {
+    return orderPlaced(tenantId, orderId, channel, customerId, loginId, storeId, null);
+  }
+
+  /**
+   * As above, naming the checkout the order is a part of when a delivery was split across stores
+   * (order orchestration); an order never split carries no {@code groupId}.
+   */
+  static OutboxRow orderPlaced(
+      UUID tenantId,
+      UUID orderId,
+      String channel,
+      UUID customerId,
+      UUID loginId,
+      UUID storeId,
+      UUID groupId) {
     String customerPart =
         customerId != null ? ",\"customerId\":\"" + customerId + "\"" : ",\"customerId\":null";
     // Both ids, because consumers key on different ones: loyalty wants the shop's customer record,
@@ -163,6 +178,7 @@ public final class Events {
             + "\""
             + customerPart
             + loginPart
+            + (groupId != null ? ",\"groupId\":\"" + groupId + "\"" : "")
             + "}");
   }
 

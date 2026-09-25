@@ -109,6 +109,62 @@ public class PaymentService {
     return capture(req, tenantId, orderId, storeId, idempotencyKey);
   }
 
+  /** One payment for a split checkout: the tender captured for each part. */
+  public record GroupPayment(UUID groupId, BigDecimal total, List<PaymentTender> tenders) {
+    public GroupPayment {
+      tenders = List.copyOf(tenders);
+    }
+  }
+
+  /**
+   * One online payment for a delivery checkout split across shops (order orchestration). The claim
+   * is verified against order-svc as a single order's is, made of the whole checkout; then one
+   * tender is captured per part — its total, its store — on one transaction, each announcing its
+   * PaymentCaptured so order-svc confirms that part. A refund stays per part: each tender is its
+   * order's. A retry with the same key replays the tenders taken.
+   *
+   * @throws ApiException 400 {@code PAYMENT_INVALID_METHOD} for a method other than CARD, UPI or
+   *     WALLET; the guard's refusals; 422 when a part's store has the method switched off
+   */
+  public GroupPayment recordOnlineGroupPayment(
+      RecordTenderRequest req, TenantContext ctx, String idempotencyKey) {
+    UUID tenantId = ctx.requireTenantId();
+    UUID groupId = Ids.parse(req.groupId());
+    String method = req.method().toUpperCase(Locale.ROOT);
+    if (!STORE_TOGGLEABLE_METHODS.contains(method) || PaymentTender.METHOD_CASH.equals(method)) {
+      throw ApiException.badRequest(
+          "PAYMENT_INVALID_METHOD", "a checkout is paid by CARD, UPI or WALLET — got: " + method);
+    }
+    OrderClient.GroupInfo group = guard.verifyGroupClaim(tenantId, groupId, req.amount(), ctx);
+    for (OrderClient.GroupPart part : group.parts()) {
+      requireMethodEnabledForStore(tenantId, part.storeId(), method);
+    }
+    UUID keyBase = idempotencyKey == null ? null : Ids.parse(idempotencyKey);
+    Instant now = Instant.now();
+    List<PaymentTender> tenders = new java.util.ArrayList<>();
+    List<com.storeql.service.OutboxRow> events = new java.util.ArrayList<>();
+    for (OrderClient.GroupPart part : group.parts()) {
+      UUID tenderId = Ids.newId();
+      tenders.add(
+          new PaymentTender(
+              tenderId,
+              tenantId,
+              part.orderId(),
+              part.total(),
+              method,
+              req.reference(),
+              keyBase == null ? null : Ids.derived(keyBase, "part:" + part.orderId()).toString(),
+              PaymentTender.STATUS_CAPTURED,
+              req.notes(),
+              now,
+              part.storeId()));
+      events.add(
+          Events.paymentCaptured(
+              tenantId, tenderId, part.orderId(), part.total(), method, part.storeId()));
+    }
+    return new GroupPayment(groupId, group.total(), repo.createTenders(tenders, events));
+  }
+
   private PaymentTender capture(
       RecordTenderRequest req, UUID tenantId, UUID orderId, UUID storeId, String idempotencyKey) {
     String method = req.method().toUpperCase(Locale.ROOT);

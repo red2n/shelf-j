@@ -43,6 +43,12 @@ public class OrderResource {
   @Inject OrderService svc;
   @Inject TenantContext ctx;
 
+  /** A page of orders in list form, each naming the split checkout it is a part of. */
+  private List<OrderSummaryResponse> summaries(List<com.storeql.order.domain.Domain.Order> orders) {
+    var groups = svc.groupIdsOf(ctx.requireTenantId(), orders);
+    return orders.stream().map(o -> Mappers.toSummary(o, groups.get(o.id()))).toList();
+  }
+
   /**
    * List orders for this tenant. All filters are optional.
    *
@@ -84,8 +90,7 @@ public class OrderResource {
         svc.listOrders(
             tenantId, storeId, null, null, channel, status, fromInst, toInst, after, clamped);
     return ApiResponse.ok(
-        page.orders().stream().map(Mappers::toSummary).toList(),
-        new ApiResponse.Meta(ctx.requestId(), page.nextCursor()));
+        summaries(page.orders()), new ApiResponse.Meta(ctx.requestId(), page.nextCursor()));
   }
 
   /**
@@ -165,8 +170,7 @@ public class OrderResource {
     var page =
         svc.listOrders(tenantId, null, null, loginId, null, null, null, null, after, clamped);
     return ApiResponse.ok(
-        page.orders().stream().map(Mappers::toSummary).toList(),
-        new ApiResponse.Meta(ctx.requestId(), page.nextCursor()));
+        summaries(page.orders()), new ApiResponse.Meta(ctx.requestId(), page.nextCursor()));
   }
 
   /**
@@ -200,7 +204,10 @@ public class OrderResource {
   @APIResponse(responseCode = "403", description = "Non-staff caller attempted to apply a discount")
   @APIResponse(
       responseCode = "409",
-      description = "Tenant or store is suspended/closed, or insufficient stock to reserve")
+      description =
+          "Tenant or store is suspended/closed, insufficient stock to reserve, or"
+              + " ORDER_UNFULFILLABLE: no combination of the business's shops holds a delivery"
+              + " order")
   @POST
   public Response place(
       @jakarta.ws.rs.HeaderParam(com.storeql.web.HttpHeaders.IDEMPOTENCY_KEY) String idempotencyKey,
@@ -220,7 +227,11 @@ public class OrderResource {
     return Response.status(201)
         .entity(
             ApiResponse.ok(
-                Mappers.toDto(order, items, svc.depositsOf(order.tenantId(), order.id()))))
+                Mappers.toDto(
+                    order,
+                    items,
+                    svc.depositsOf(order.tenantId(), order.id()),
+                    svc.groupOf(order.tenantId(), order.id()).orElse(null))))
         .build();
   }
 
@@ -248,7 +259,11 @@ public class OrderResource {
     var items = svc.getOrderItems(ctx.tenantId(), order.id());
     return Response.ok(
             ApiResponse.ok(
-                Mappers.toDto(order, items, svc.depositsOf(order.tenantId(), order.id()))))
+                Mappers.toDto(
+                    order,
+                    items,
+                    svc.depositsOf(order.tenantId(), order.id()),
+                    svc.groupOf(order.tenantId(), order.id()).orElse(null))))
         .build();
   }
 

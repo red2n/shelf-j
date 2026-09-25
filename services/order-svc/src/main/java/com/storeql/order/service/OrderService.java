@@ -25,6 +25,8 @@ import com.storeql.order.domain.Domain.SalesByHourRow;
 import com.storeql.order.domain.Domain.SalesByStaffRow;
 import com.storeql.order.domain.Domain.SpecialOrder;
 import com.storeql.order.domain.Domain.SpecialOrderItem;
+import com.storeql.order.domain.OrderSplit;
+import com.storeql.order.domain.Routing;
 import com.storeql.order.dto.Dtos.AddDepositRequest;
 import com.storeql.order.dto.Dtos.CreateLayawayRequest;
 import com.storeql.order.dto.Dtos.CreateReturnRequest;
@@ -82,6 +84,7 @@ public class OrderService {
   @Inject com.storeql.service.Jurisdictions jurisdictions;
   @Inject com.storeql.order.client.ProductClient products;
   @Inject com.storeql.order.repo.DepositRepository depositRepo;
+  @Inject OrderRouter router;
 
   // ── Orders ────────────────────────────────────────────────────────────────
 
@@ -426,6 +429,41 @@ public class OrderService {
               quotedVatRate));
     }
 
+    // Order orchestration (intent/order-orchestration-and-split-fulfilment.md): an online delivery
+    // order the delivery-area store cannot fill alone goes to the shops that can — one other shop
+    // as an ordinary order there, several as a group of orders. Not for a basket with a staff
+    // discount or a whole-basket offer, whose money is not shared across parts here; those are
+    // placed at the area store as they always were.
+    if (Order.CHANNEL_ONLINE.equals(req.channel())
+        && delivery
+        && config.reserveEnforce()
+        && (req.discountAmount() == null || req.discountAmount().signum() == 0)
+        && (quoted == null || quoted.basketDiscount().signum() == 0)) {
+      var routed = router.route(ctx, tenantId, storeId, items).orElse(null);
+      if (routed != null && routed.legs().size() == 1) {
+        storeId = routed.legs().get(0).storeId();
+      } else if (routed != null) {
+        BigDecimal splitTax =
+            enforcePricing
+                ? serverTax.setScale(2, java.math.RoundingMode.HALF_UP)
+                : req.taxAmount() != null ? req.taxAmount() : BigDecimal.ZERO;
+        return placeSplit(
+            new SplitCheckout(
+                req,
+                tenantId,
+                customerId,
+                loginId,
+                currency,
+                fulfilment,
+                paymentMethod,
+                items,
+                splitTax,
+                quoted == null ? List.of() : quoted.applied()),
+            routed,
+            idempotencyKey);
+      }
+    }
+
     // Hold stock for ONLINE orders before persisting, so a short line rejects the checkout with
     // 409 instead of accepting an order the store can't fulfil (industry-standard reserve →
     // consume-at-fulfilment → release-on-cancel). POS is exempt: it places and fulfils within
@@ -570,6 +608,268 @@ public class OrderService {
       inventory.releaseQuietly(tenantId, heldReservations);
       throw e;
     }
+  }
+
+  /** A priced online delivery order about to be placed as a group (order orchestration). */
+  private record SplitCheckout(
+      PlaceOrderRequest req,
+      UUID tenantId,
+      UUID customerId,
+      UUID loginId,
+      String currency,
+      String fulfilment,
+      String paymentMethod,
+      List<OrderItem> items,
+      BigDecimal tax,
+      List<com.storeql.order.client.PricingClient.AppliedPromotion> applied) {
+    SplitCheckout {
+      items = List.copyOf(items);
+      applied = List.copyOf(applied);
+    }
+  }
+
+  /**
+   * Places a delivery order as a group of orders, one per shop (order orchestration): each part its
+   * lines, its share of the tax, its own holds at its own store and its own OrderPlaced naming the
+   * group; the group and every part on one transaction. The holds are all or nothing: one shop
+   * short releases what the others held. The checkout's key places the group once and a retry gets
+   * the first part back, as a retried single order gets its order.
+   *
+   * @return the first part, the delivery-area store's when it takes part
+   */
+  private Order placeSplit(SplitCheckout co, Routing.Plan plan, String idempotencyKey) {
+    UUID tenantId = co.tenantId();
+    if (idempotencyKey != null) {
+      var earlier = repo.findOrderByIdempotencyKey(tenantId, idempotencyKey);
+      if (earlier.isPresent()) return earlier.get();
+    }
+    List<OrderItem> items = co.items();
+    List<OrderSplit.Part> parts =
+        OrderSplit.split(
+            items.stream()
+                .map(i -> new OrderSplit.Line(i.variantId(), i.qty(), i.lineTotal(), i.vatAmount()))
+                .toList(),
+            plan.byStore(),
+            co.tax(),
+            BigDecimal.ZERO,
+            BigDecimal.ZERO);
+    List<List<com.storeql.order.client.PricingClient.AppliedPromotion>> promotions =
+        promotionsByPart(co.applied(), parts);
+    UUID groupId = Ids.newId();
+    UUID idemBase = idempotencyKey != null ? Ids.parse(idempotencyKey) : groupId;
+    PlaceOrderRequest req = co.req();
+    Instant now = Instant.now();
+    List<OrderRepository.NewOrder> placed = new ArrayList<>();
+    List<UUID> held = new ArrayList<>();
+    BigDecimal groupTotal = BigDecimal.ZERO;
+    try {
+      for (int k = 0; k < parts.size(); k++) {
+        OrderSplit.Part part = parts.get(k);
+        UUID childId = Ids.newId();
+        List<OrderItem> childItems = new ArrayList<>();
+        for (OrderSplit.LinePart lp : part.lines()) {
+          OrderItem it = items.get(lp.lineIndex());
+          childItems.add(
+              new OrderItem(
+                  Ids.newId(),
+                  tenantId,
+                  childId,
+                  it.variantId(),
+                  lp.qty(),
+                  it.unitPrice(),
+                  lp.lineTotal(),
+                  it.notes(),
+                  it.weighingInstrumentId(),
+                  BigDecimal.ZERO,
+                  lp.vat(),
+                  it.markdownId(),
+                  it.vatCode(),
+                  it.vatRate()));
+        }
+        held.addAll(
+            inventory.reserveForOrder(
+                tenantId,
+                childId,
+                part.storeId(),
+                childItems.stream()
+                    .map(
+                        i ->
+                            new com.storeql.order.client.InventoryClient.ReserveLine(
+                                i.variantId(), i.qty()))
+                    .toList(),
+                config.reservationTtlSeconds(),
+                Ids.derived(idemBase, "store:" + part.storeId())));
+        List<OrderDeposit> deposits =
+            containerDeposits(tenantId, part.storeId(), co.currency(), childId, childItems);
+        BigDecimal total =
+            part.subtotal()
+                .add(part.tax())
+                .add(
+                    deposits.stream()
+                        .map(OrderDeposit::amount)
+                        .reduce(BigDecimal.ZERO, BigDecimal::add));
+        groupTotal = groupTotal.add(total);
+        Order child =
+            new Order(
+                childId,
+                tenantId,
+                part.storeId(),
+                co.customerId(),
+                co.loginId(),
+                req.channel(),
+                co.fulfilment(),
+                Order.STATUS_PENDING,
+                part.subtotal(),
+                part.tax(),
+                BigDecimal.ZERO,
+                total,
+                co.currency(),
+                req.notes(),
+                // The first part carries the checkout's key, so a retry finds it as a retried
+                // single order finds its order.
+                k == 0 ? idempotencyKey : null,
+                now,
+                now,
+                req.taxExempt() != null && req.taxExempt(),
+                req.exemptReason(),
+                req.deliveryLine1(),
+                req.deliveryLine2(),
+                req.deliveryCity(),
+                req.deliveryPostalCode(),
+                req.deliveryRecipientName(),
+                req.deliveryRecipientPhone(),
+                req.contactPhone(),
+                co.paymentMethod(),
+                BigDecimal.ZERO,
+                null);
+        placed.add(
+            new OrderRepository.NewOrder(
+                child,
+                childItems,
+                Events.orderPlaced(
+                    tenantId,
+                    childId,
+                    req.channel(),
+                    co.customerId(),
+                    co.loginId(),
+                    part.storeId(),
+                    groupId),
+                null,
+                promotions.get(k),
+                deposits));
+      }
+      repo.createOrderGroup(
+          new com.storeql.order.domain.OrderGroup(
+              groupId,
+              tenantId,
+              co.customerId(),
+              co.loginId(),
+              groupTotal,
+              co.currency(),
+              now,
+              List.of()),
+          idempotencyKey,
+          placed);
+    } catch (ApiException e) {
+      // A retry that raced the first placement: its holds replayed the first's, so none is freed.
+      if ("ORDER_DUPLICATE_KEY".equals(e.code()) && idempotencyKey != null) {
+        return repo.findOrderByIdempotencyKey(tenantId, idempotencyKey).orElseThrow(() -> e);
+      }
+      inventory.releaseQuietly(tenantId, held);
+      throw e;
+    } catch (RuntimeException e) {
+      inventory.releaseQuietly(tenantId, held);
+      throw e;
+    }
+    Order first = placed.get(0).order();
+    // A coupon is spent once for the checkout, against its first part; each part counts down its
+    // own reduced-price stickers.
+    if (!co.applied().isEmpty()) {
+      pricing.recordRedemptionsQuietly(
+          tenantId, first.id(), co.customerId(), co.applied(), co.currency());
+    }
+    for (OrderRepository.NewOrder n : placed) {
+      if (n.items().stream().anyMatch(i -> i.markdownId() != null)) {
+        pricing.recordMarkdownRedemptionsQuietly(tenantId, n.order().id(), n.items());
+      }
+    }
+    return first;
+  }
+
+  /**
+   * Each part's share of the line promotions: a promotion on a product goes with the parts that
+   * hold it, shared by their quantities when the line was split; one on no product goes with the
+   * first part.
+   */
+  private static List<List<com.storeql.order.client.PricingClient.AppliedPromotion>>
+      promotionsByPart(
+          List<com.storeql.order.client.PricingClient.AppliedPromotion> applied,
+          List<OrderSplit.Part> parts) {
+    List<List<com.storeql.order.client.PricingClient.AppliedPromotion>> out = new ArrayList<>();
+    parts.forEach(p -> out.add(new ArrayList<>()));
+    for (var a : applied) {
+      List<BigDecimal> qtys =
+          parts.stream()
+              .map(
+                  p ->
+                      p.lines().stream()
+                          .filter(l -> l.variantId().equals(a.variantId()))
+                          .map(OrderSplit.LinePart::qty)
+                          .reduce(BigDecimal.ZERO, BigDecimal::add))
+              .toList();
+      if (a.variantId() == null || qtys.stream().allMatch(q -> q.signum() == 0)) {
+        out.get(0).add(a);
+        continue;
+      }
+      List<BigDecimal> shares = OrderSplit.share(a.amount(), qtys);
+      for (int k = 0; k < parts.size(); k++) {
+        if (qtys.get(k).signum() > 0) {
+          out.get(k)
+              .add(
+                  new com.storeql.order.client.PricingClient.AppliedPromotion(
+                      a.promotionId(), a.name(), a.variantId(), shares.get(k)));
+        }
+      }
+    }
+    return out;
+  }
+
+  /**
+   * The checkout an order is a part of, when a delivery was split across shops.
+   *
+   * @return the group, its parts in the order the shopper reads them; empty for an order never
+   *     split
+   */
+  public java.util.Optional<com.storeql.order.domain.OrderGroup> groupOf(
+      UUID tenantId, UUID orderId) {
+    return repo.groupIdOf(tenantId, orderId).flatMap(g -> repo.findGroup(tenantId, g));
+  }
+
+  /** The checkout each of these orders is a part of, for those that were split. */
+  public Map<UUID, UUID> groupIdsOf(UUID tenantId, List<Order> orders) {
+    if (orders.isEmpty()) return Map.of();
+    return repo.groupIdsOf(tenantId, orders.stream().map(Order::id).toList());
+  }
+
+  /**
+   * A split checkout, for its shopper or the business's staff.
+   *
+   * @throws ApiException 404 {@code ORDER_GROUP_NOT_FOUND} when there is none in the tenant, or the
+   *     caller may not read it — a denial is a 404 so ids cannot be probed
+   */
+  public com.storeql.order.domain.OrderGroup getGroup(UUID groupId, TenantContext ctx) {
+    UUID tenantId = ctx.requireTenantId();
+    var group =
+        repo.findGroup(tenantId, groupId)
+            .orElseThrow(
+                () -> ApiException.notFound("ORDER_GROUP_NOT_FOUND", "order group not found"));
+    boolean mine = group.loginId() != null && group.loginId().equals(ctx.userId());
+    boolean staff =
+        isStaff(ctx) && group.parts().stream().anyMatch(p -> ctx.hasStoreAccess(p.storeId()));
+    if (!mine && !staff) {
+      throw ApiException.notFound("ORDER_GROUP_NOT_FOUND", "order group not found");
+    }
+    return group;
   }
 
   /**

@@ -416,6 +416,11 @@ public class JwtAuthFilter implements ContainerRequestFilter {
     if ("GET".equals(method) && isOrderSelfRead(path)) {
       return true;
     }
+    // A split checkout (order orchestration): the shopper reading the parts of the delivery they
+    // placed, with order-svc's object-level check behind it like an order read by id.
+    if ("GET".equals(method) && isOrderGroupSelfRead(path)) {
+      return true;
+    }
     // The shopper's recall notices and their choice of remedy (05.10): keyed on the login in
     // order-svc like /orders/mine, with the storefront header naming the shop. Two shapes and no
     // more — the recall's list and its settlement are staff work through the normal door.
@@ -619,6 +624,11 @@ public class JwtAuthFilter implements ContainerRequestFilter {
         && slash > 0
         && looksLikeUuid(rest.substring(0, slash))
         && "remedy".equals(rest.substring(slash + 1));
+  }
+
+  private static boolean isOrderGroupSelfRead(String path) {
+    String prefix = "api/order-svc/order-groups/";
+    return path.startsWith(prefix) && looksLikeUuid(path.substring(prefix.length()));
   }
 
   private static boolean isOrderSelfRead(String path) {

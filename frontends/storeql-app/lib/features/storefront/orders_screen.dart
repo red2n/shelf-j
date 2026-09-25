@@ -57,7 +57,10 @@ class StorefrontOrdersScreen extends ConsumerWidget {
                     child: _ServerOrderTile(
                         order: order,
                         storeName: storeNames[order.storeId] ?? order.storeId,
-                        showPrices: showPrices),
+                        showPrices: showPrices,
+                        parts: order.groupId == null
+                            ? 1
+                            : list.where((o) => o.groupId == order.groupId).length),
                   );
                 },
               ),
@@ -94,8 +97,14 @@ class _ServerOrderTile extends StatelessWidget {
   final ServerOrderSummary order;
   final String storeName;
   final bool showPrices;
+
+  /// How many parts the checkout came in (order orchestration); 1 for an order never split.
+  final int parts;
   const _ServerOrderTile(
-      {required this.order, required this.storeName, required this.showPrices});
+      {required this.order,
+      required this.storeName,
+      required this.showPrices,
+      this.parts = 1});
 
   @override
   Widget build(BuildContext context) {
@@ -110,7 +119,8 @@ class _ServerOrderTile extends StatelessWidget {
         title: Text('Order #$shortId',
             style: const TextStyle(fontWeight: FontWeight.bold)),
         subtitle: Text(
-            '${order.fulfilmentType == 'DELIVERY' ? 'Deliver to home' : 'Collect from $storeName'}\n${_fmtDate(order.placedAt)}'),
+            key: Key('order-subtitle-${order.id}'),
+            '${order.fulfilmentType == 'DELIVERY' ? (parts > 1 ? 'Part of a delivery in $parts parts · from $storeName' : 'Deliver to home') : 'Collect from $storeName'}\n${_fmtDate(order.placedAt)}'),
         isThreeLine: true,
         trailing: Column(
           mainAxisAlignment: MainAxisAlignment.center,

@@ -424,6 +424,10 @@ class JwtAuthFilterTest {
       {"PUT", "api/customer-svc/customers/01a09509-72ec-72e9-9f08-94a93df26a36/addresses"},
       {"PUT", "api/notification-svc/notifications/devices/01a09509-72ec-72e9-9f08-94a93df26a36"},
       {"POST", "api/notification-svc/notifications/send"},
+      // A split checkout is read by id only: not its list, not anything under it, not a write.
+      {"GET", "api/order-svc/order-groups"},
+      {"GET", "api/order-svc/order-groups/01a09509-72ec-72e9-9f08-94a93df26a36/parts"},
+      {"POST", "api/order-svc/order-groups/01a09509-72ec-72e9-9f08-94a93df26a36"},
     };
     for (String[] c : cases) {
       headers.clear();
@@ -449,7 +453,9 @@ class JwtAuthFilterTest {
         new String[] {
           "api/order-svc/orders/01a09509-72ec-72e9-9f08-94a93df26a36",
           "api/order-svc/orders/01a09509-72ec-72e9-9f08-94a93df26a36/history",
-          "api/order-svc/orders/01a09509-72ec-72e9-9f08-94a93df26a36/fiscal-receipt"
+          "api/order-svc/orders/01a09509-72ec-72e9-9f08-94a93df26a36/fiscal-receipt",
+          // A split checkout's parts (order orchestration), checked in order-svc like an order.
+          "api/order-svc/order-groups/01a09509-72ec-72e9-9f08-94a93df26a36"
         }) {
       org.junit.jupiter.api.Assertions.assertEquals(
           "tenant-abc", tenantDerivedFor("GET", path, true), path);

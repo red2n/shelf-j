@@ -222,6 +222,17 @@ public class AdminAuthorizationFilter implements ContainerRequestFilter {
   }
 
   /**
+   * {@code GET /order-groups/{id}} with an id-shaped segment and nothing under it.
+   *
+   * @param path the service-local request path
+   * @return {@code true} for exactly that shape
+   */
+  private static boolean isOrderGroupSelfRead(String path) {
+    if (!path.startsWith("/order-groups/")) return false;
+    return looksLikeUuid(path.substring("/order-groups/".length()));
+  }
+
+  /**
    * {@code GET /payments/intents/{id}} and nothing else under it.
    *
    * @param path the service-local request path
@@ -315,6 +326,10 @@ public class AdminAuthorizationFilter implements ContainerRequestFilter {
         // would apply, and a blanket staff requirement here would stop a shopper reading their own
         // order. GET /orders, the tenant-wide list, has no such check and is deliberately excluded.
         || isOrderSelfRead(path)
+        // A split checkout (order orchestration), /order-groups/{id} and nothing under it: the same
+        // object-level check as an order — the shopper who placed it or the business's staff, and
+        // a 404 for anyone else.
+        || isOrderGroupSelfRead(path)
         // A shopper polling their own payment intent after being sent away for SCA — without this
         // they cannot learn whether the payment they just completed succeeded. Not unguarded:
         // PaymentIntentService applies the same object-level check as the tender reads, resolving

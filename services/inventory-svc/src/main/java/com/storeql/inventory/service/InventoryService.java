@@ -972,6 +972,16 @@ public class InventoryService {
     return repo.levels(tenantId, storeId);
   }
 
+  /** What every store holds of the products named (order orchestration's read). */
+  public List<Level> levelsForVariants(UUID tenantId, List<UUID> variantIds) {
+    return repo.levelsForVariants(tenantId, variantIds);
+  }
+
+  /** The products the supplier fulfils per order (dropship). */
+  public List<UUID> dropshipVariants(UUID tenantId) {
+    return repo.dropshipVariants(tenantId);
+  }
+
   /**
    * What a shopper can buy at a store: each variant with stock available on the shelf, and each
    * variant the supplier fulfils per order (dropship) — available with none on the shelf.

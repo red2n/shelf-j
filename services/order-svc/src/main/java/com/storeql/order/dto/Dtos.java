@@ -213,7 +213,38 @@ public final class Dtos {
               description =
                   "Who is credited with the sale, which is not who rang it up. Absent for a sale"
                       + " credited to nobody, which is the ordinary case online.")
-          String sellerUserId) {}
+          String sellerUserId,
+      @Schema(
+              description =
+                  "The checkout this order is a part of, when a delivery was split across shops"
+                      + " (order orchestration). Absent for an order never split, and on lists.")
+          OrderGroupResponse group) {}
+
+  @Schema(
+      name = "OrderGroupResponse",
+      description =
+          "One checkout placed as several orders, one per shop, paid once: its total is the"
+              + " parts' totals added up.")
+  public record OrderGroupResponse(
+      String id,
+      @Schema(
+              description =
+                  "The login that placed the checkout; payment-svc checks a shopper pays only"
+                      + " their own.")
+          String loginId,
+      BigDecimal total,
+      String currency,
+      String createdAt,
+      @Schema(description = "The parts, the delivery-area store's first.")
+          List<OrderPartResponse> parts) {}
+
+  @Schema(name = "OrderPartResponse", description = "One order of a split checkout.")
+  public record OrderPartResponse(
+      String orderId,
+      String storeId,
+      String status,
+      BigDecimal total,
+      @Schema(description = "How many items the part carries.") BigDecimal units) {}
 
   @Schema(name = "OrderStatusHistoryResponse", description = "Append-only order status transition.")
   public record OrderStatusHistoryResponse(
@@ -286,7 +317,12 @@ public final class Dtos {
       String currency,
       String createdAt,
       String updatedAt,
-      String paymentMethod) {}
+      String paymentMethod,
+      @Schema(
+              description =
+                  "The split checkout this order is a part of (order orchestration); absent for an"
+                      + " order never split.")
+          String groupId) {}
 
   @Schema(name = "VoidRequest")
   public record VoidRequest(

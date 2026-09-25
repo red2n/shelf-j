@@ -912,6 +912,25 @@ public class InventoryRepository extends BaseOutboxRepository {
   }
 
   /**
+   * What every store holds of the products named: on hand, reserved and available per store, for
+   * routing an online order (order orchestration). Bounded as {@link #levels} is.
+   */
+  public List<Level> levelsForVariants(UUID tenantId, List<UUID> variantIds) {
+    return query(
+        LEVELS_CORE
+            + " AND b.variant_id = ANY(?) GROUP BY b.store_id, b.variant_id ORDER BY b.store_id,"
+            + " b.variant_id LIMIT ?",
+        ps -> {
+          ps.setObject(1, tenantId);
+          ps.setObject(2, tenantId);
+          ps.setArray(3, ps.getConnection().createArrayOf("uuid", variantIds.toArray()));
+          ps.setInt(4, LEVELS_SAFETY_CAP);
+        },
+        InventoryRepository::mapLevel,
+        "load levels for variants");
+  }
+
+  /**
    * One keyset page of levels, ordered by {@code (store_id, variant_id)} and starting strictly
    * after the {@code (afterStoreId, afterVariantId)} cursor when both are supplied. {@code limit}
    * caps the returned rows so the caller can request {@code limit + 1} to detect a further page.

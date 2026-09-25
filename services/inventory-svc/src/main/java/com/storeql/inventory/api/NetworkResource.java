@@ -157,6 +157,40 @@ public class NetworkResource {
   }
 
   @Operation(
+      summary = "What each store holds of some products",
+      description =
+          "Per store, what is available of each product named, and which the supplier fulfils per"
+              + " order — order-svc's read when it routes an online order. Staff only.")
+  @APIResponse(responseCode = "200", description = "The stock by store")
+  @GET
+  @Path("/stock")
+  public Response stock(@QueryParam("variants") String variants) {
+    java.util.List<java.util.UUID> ids =
+        variants == null || variants.isBlank()
+            ? java.util.List.of()
+            : java.util.Arrays.stream(variants.split(","))
+                .map(String::trim)
+                .filter(v -> !v.isEmpty())
+                .map(Ids::parse)
+                .toList();
+    if (ids.size() > 200) {
+      throw ApiException.badRequest("VALIDATION_FAILED", "variants: at most 200");
+    }
+    var stock = svc.stockByStore(ctx, ids);
+    return Response.ok(
+            ApiResponse.ok(
+                new NetworkDtos.StockByStoreResponse(
+                    stock.levels().stream()
+                        .map(
+                            l ->
+                                new NetworkDtos.StoreStockResponse(
+                                    l.storeId(), l.variantId(), l.available()))
+                        .toList(),
+                    java.util.List.copyOf(stock.dropship()))))
+        .build();
+  }
+
+  @Operation(
       summary = "What a purchase order still owes the shops across the dock",
       description =
           "Per shop and product, as purchase-svc last announced it, less what deliveries already"

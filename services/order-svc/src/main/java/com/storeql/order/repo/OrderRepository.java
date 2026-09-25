@@ -82,69 +82,204 @@ public class OrderRepository extends BaseOutboxRepository {
       List<com.storeql.order.client.PricingClient.AppliedPromotion> appliedPromotions,
       List<com.storeql.order.domain.Domain.OrderDeposit> deposits) {
     return inTx(
+        c ->
+            createOrderTx(
+                c,
+                new NewOrder(order, items, event, discount, appliedPromotions, deposits),
+                null,
+                null),
+        "create order");
+  }
+
+  /**
+   * One order as a checkout writes it: the order, its lines, the discount audit, the promotions and
+   * deposits it carries, and its OrderPlaced.
+   */
+  public record NewOrder(
+      Order order,
+      List<OrderItem> items,
+      OutboxRow event,
+      OrderDiscount discount,
+      List<com.storeql.order.client.PricingClient.AppliedPromotion> appliedPromotions,
+      List<com.storeql.order.domain.Domain.OrderDeposit> deposits) {
+    public NewOrder {
+      items = List.copyOf(items);
+      appliedPromotions = List.copyOf(appliedPromotions);
+      deposits = List.copyOf(deposits);
+    }
+  }
+
+  /**
+   * Places a split checkout (order orchestration): the group and each of its orders on one
+   * transaction, so a shopper never holds half a checkout. The group's key is the checkout's; a
+   * second placement with it is {@code 409 ORDER_DUPLICATE_KEY}, which the caller replays.
+   *
+   * @param parts the orders, the delivery-area store's first
+   */
+  public void createOrderGroup(
+      com.storeql.order.domain.OrderGroup group, String idempotencyKey, List<NewOrder> parts) {
+    inTx(
         c -> {
           try (PreparedStatement ps =
               c.prepareStatement(
-                  "INSERT INTO orders"
-                      + " (id,tenant_id,store_id,customer_id,login_id,channel,fulfilment_type,"
-                      + "  status,"
-                      + "  subtotal,tax_amount,discount_amount,total,currency,notes,idempotency_key,"
-                      + "  tax_exempt,exempt_reason,delivery_line1,delivery_line2,delivery_city,"
-                      + "  delivery_postal_code,delivery_recipient_name,delivery_recipient_phone,contact_phone,"
-                      + "  payment_method,promotion_discount,seller_user_id)"
-                      + " VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)")) {
-            ps.setObject(1, order.id());
-            ps.setObject(2, order.tenantId());
-            ps.setObject(3, order.storeId());
-            ps.setObject(4, order.customerId());
-            ps.setObject(5, order.loginId());
-            ps.setString(6, order.channel());
-            ps.setString(7, order.fulfilmentType());
-            ps.setString(8, order.status());
-            ps.setBigDecimal(9, order.subtotal());
-            ps.setBigDecimal(10, order.taxAmount());
-            ps.setBigDecimal(11, order.discountAmount());
-            ps.setBigDecimal(12, order.total());
-            ps.setString(13, order.currency());
-            ps.setString(14, order.notes());
-            ps.setString(15, order.idempotencyKey());
-            ps.setBoolean(16, order.taxExempt());
-            ps.setString(17, order.exemptReason());
-            ps.setString(18, order.deliveryLine1());
-            ps.setString(19, order.deliveryLine2());
-            ps.setString(20, order.deliveryCity());
-            ps.setString(21, order.deliveryPostalCode());
-            ps.setString(22, order.deliveryRecipientName());
-            ps.setString(23, order.deliveryRecipientPhone());
-            ps.setString(24, order.contactPhone());
-            ps.setString(25, order.paymentMethod());
-            ps.setBigDecimal(
-                26,
-                order.promotionDiscount() == null
-                    ? java.math.BigDecimal.ZERO
-                    : order.promotionDiscount());
-            ps.setObject(27, order.sellerUserId());
+                  "INSERT INTO order_groups"
+                      + " (id,tenant_id,customer_id,login_id,total,currency,idempotency_key)"
+                      + " VALUES (?,?,?,?,?,?,?)")) {
+            ps.setObject(1, group.id());
+            ps.setObject(2, group.tenantId());
+            ps.setObject(3, group.customerId());
+            ps.setObject(4, group.loginId());
+            ps.setBigDecimal(5, group.total());
+            ps.setString(6, group.currency());
+            ps.setString(7, idempotencyKey);
             ps.executeUpdate();
           } catch (java.sql.SQLException sqle) {
             if (UNIQUE_VIOLATION.equals(sqle.getSQLState()))
               throw new ApiException(
-                  409,
-                  "ORDER_DUPLICATE_KEY",
-                  "duplicate idempotency key",
-                  java.util.List.of(),
-                  sqle);
+                  409, "ORDER_DUPLICATE_KEY", "duplicate idempotency key", List.of(), sqle);
             throw sqle;
           }
-          for (OrderItem item : items) insertOrderItem(c, item);
-          for (var deposit : deposits) DepositRepository.insertDeposit(c, deposit);
-          appendStatusHistory(
-              c, order.tenantId(), order.id(), null, order.status(), "created", null);
-          if (discount != null) insertOrderDiscount(c, discount);
-          insertOrderPromotionsTx(c, order.tenantId(), order.id(), appliedPromotions);
-          insertOutbox(c, event);
-          return order;
+          for (int i = 0; i < parts.size(); i++) createOrderTx(c, parts.get(i), group.id(), i);
+          return null;
         },
-        "create order");
+        "create order group");
+  }
+
+  /** A split checkout, its parts in the order the shopper reads them. */
+  public Optional<com.storeql.order.domain.OrderGroup> findGroup(UUID tenantId, UUID groupId) {
+    List<com.storeql.order.domain.OrderGroup.Part> parts =
+        query(
+            "SELECT o.id, o.store_id, o.status, o.total,"
+                + " (SELECT COALESCE(SUM(i.qty), 0) FROM order_items i"
+                + "   WHERE i.tenant_id = o.tenant_id AND i.order_id = o.id) AS units"
+                + " FROM orders o WHERE o.tenant_id = ? AND o.group_id = ? ORDER BY o.group_part",
+            ps -> {
+              ps.setObject(1, tenantId);
+              ps.setObject(2, groupId);
+            },
+            rs ->
+                new com.storeql.order.domain.OrderGroup.Part(
+                    rs.getObject("id", UUID.class),
+                    rs.getObject("store_id", UUID.class),
+                    rs.getString("status"),
+                    rs.getBigDecimal("total"),
+                    rs.getBigDecimal("units")),
+            "load order group parts");
+    return query(
+            "SELECT id, tenant_id, customer_id, login_id, total, currency, created_at"
+                + " FROM order_groups WHERE tenant_id = ? AND id = ?",
+            ps -> {
+              ps.setObject(1, tenantId);
+              ps.setObject(2, groupId);
+            },
+            rs ->
+                new com.storeql.order.domain.OrderGroup(
+                    rs.getObject("id", UUID.class),
+                    rs.getObject("tenant_id", UUID.class),
+                    rs.getObject("customer_id", UUID.class),
+                    rs.getObject("login_id", UUID.class),
+                    rs.getBigDecimal("total"),
+                    rs.getString("currency"),
+                    rs.getTimestamp("created_at").toInstant(),
+                    parts),
+            "load order group")
+        .stream()
+        .findFirst();
+  }
+
+  /** The checkout each of these orders is a part of; an order never split is not in the map. */
+  public java.util.Map<UUID, UUID> groupIdsOf(UUID tenantId, List<UUID> orderIds) {
+    java.util.Map<UUID, UUID> out = new java.util.HashMap<>();
+    for (UUID[] pair :
+        query(
+            "SELECT id, group_id FROM orders"
+                + " WHERE tenant_id = ? AND id = ANY(?) AND group_id IS NOT NULL",
+            ps -> {
+              ps.setObject(1, tenantId);
+              ps.setArray(2, ps.getConnection().createArrayOf("uuid", orderIds.toArray()));
+            },
+            rs -> new UUID[] {rs.getObject("id", UUID.class), rs.getObject("group_id", UUID.class)},
+            "find orders' groups")) {
+      out.put(pair[0], pair[1]);
+    }
+    return out;
+  }
+
+  /** The group an order is a part of, if it was placed as one. */
+  public Optional<UUID> groupIdOf(UUID tenantId, UUID orderId) {
+    return query(
+            "SELECT group_id FROM orders WHERE tenant_id = ? AND id = ? AND group_id IS NOT NULL",
+            ps -> {
+              ps.setObject(1, tenantId);
+              ps.setObject(2, orderId);
+            },
+            rs -> rs.getObject("group_id", UUID.class),
+            "find an order's group")
+        .stream()
+        .findFirst();
+  }
+
+  private Order createOrderTx(Connection c, NewOrder n, UUID groupId, Integer groupPart)
+      throws java.sql.SQLException {
+    Order order = n.order();
+    try (PreparedStatement ps =
+        c.prepareStatement(
+            "INSERT INTO orders"
+                + " (id,tenant_id,store_id,customer_id,login_id,channel,fulfilment_type,"
+                + "  status,"
+                + "  subtotal,tax_amount,discount_amount,total,currency,notes,idempotency_key,"
+                + "  tax_exempt,exempt_reason,delivery_line1,delivery_line2,delivery_city,"
+                + "  delivery_postal_code,delivery_recipient_name,delivery_recipient_phone,contact_phone,"
+                + "  payment_method,promotion_discount,seller_user_id,group_id,group_part)"
+                + " VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)")) {
+      ps.setObject(1, order.id());
+      ps.setObject(2, order.tenantId());
+      ps.setObject(3, order.storeId());
+      ps.setObject(4, order.customerId());
+      ps.setObject(5, order.loginId());
+      ps.setString(6, order.channel());
+      ps.setString(7, order.fulfilmentType());
+      ps.setString(8, order.status());
+      ps.setBigDecimal(9, order.subtotal());
+      ps.setBigDecimal(10, order.taxAmount());
+      ps.setBigDecimal(11, order.discountAmount());
+      ps.setBigDecimal(12, order.total());
+      ps.setString(13, order.currency());
+      ps.setString(14, order.notes());
+      ps.setString(15, order.idempotencyKey());
+      ps.setBoolean(16, order.taxExempt());
+      ps.setString(17, order.exemptReason());
+      ps.setString(18, order.deliveryLine1());
+      ps.setString(19, order.deliveryLine2());
+      ps.setString(20, order.deliveryCity());
+      ps.setString(21, order.deliveryPostalCode());
+      ps.setString(22, order.deliveryRecipientName());
+      ps.setString(23, order.deliveryRecipientPhone());
+      ps.setString(24, order.contactPhone());
+      ps.setString(25, order.paymentMethod());
+      ps.setBigDecimal(
+          26,
+          order.promotionDiscount() == null
+              ? java.math.BigDecimal.ZERO
+              : order.promotionDiscount());
+      ps.setObject(27, order.sellerUserId());
+      ps.setObject(28, groupId);
+      if (groupPart == null) ps.setNull(29, java.sql.Types.SMALLINT);
+      else ps.setInt(29, groupPart);
+      ps.executeUpdate();
+    } catch (java.sql.SQLException sqle) {
+      if (UNIQUE_VIOLATION.equals(sqle.getSQLState()))
+        throw new ApiException(
+            409, "ORDER_DUPLICATE_KEY", "duplicate idempotency key", java.util.List.of(), sqle);
+      throw sqle;
+    }
+    for (OrderItem item : n.items()) insertOrderItem(c, item);
+    for (var deposit : n.deposits()) DepositRepository.insertDeposit(c, deposit);
+    appendStatusHistory(c, order.tenantId(), order.id(), null, order.status(), "created", null);
+    if (n.discount() != null) insertOrderDiscount(c, n.discount());
+    insertOrderPromotionsTx(c, order.tenantId(), order.id(), n.appliedPromotions());
+    insertOutbox(c, n.event());
+    return order;
   }
 
   /** Append-only (golden rule #8): inserted with the order, never updated or deleted. */

@@ -491,6 +491,24 @@ public final class TenantSvcStub implements AutoCloseable {
     return this;
   }
 
+  /**
+   * Registers one of a tenant's shops (type STORE) with its coordinates, as tenant-svc's {@code GET
+   * /admin/stores} lists it: where an online order is routed from (order orchestration).
+   */
+  public TenantSvcStub withStoreAt(String tenantId, String storeId, double lat, double lng) {
+    stores
+        .computeIfAbsent(tenantId, t -> new java.util.concurrent.CopyOnWriteArrayList<>())
+        .add(
+            "{\"id\":\""
+                + storeId
+                + "\",\"country\":\"GB\",\"type\":\"STORE\",\"geoLat\":"
+                + lat
+                + ",\"geoLng\":"
+                + lng
+                + "}");
+    return this;
+  }
+
   /** How many profile reads have reached the stub, to show a cache holding. */
   public int requests() {
     return requests.get();

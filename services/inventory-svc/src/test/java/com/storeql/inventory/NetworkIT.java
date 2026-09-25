@@ -518,4 +518,45 @@ class NetworkIT {
             .size(),
         is(1));
   }
+
+  // ── stock by store, for routing an online order ────────────────────────────
+
+  @Test
+  void theStockOfEveryStoreIsReadForTheProductsNamedByStaffOnly() {
+    receive(LEEDS, APPLES, 4);
+    receive(YORK, APPLES, 9);
+    receive(YORK, PEARS, 2);
+    JsonObject stock =
+        Envelopes.ok(
+            call(
+                "GET",
+                "/admin/inventory/network/stock?variants=" + APPLES,
+                null,
+                T,
+                "STOREKEEPER",
+                null));
+    JsonArray levels = stock.getJsonArray("levels");
+    assertThat(levels, hasSize(2));
+    for (JsonValue v : levels) {
+      JsonObject l = v.asJsonObject();
+      String want = LEEDS.equals(l.getString("storeId")) ? "4" : "9";
+      assertThat(
+          l.getJsonNumber("available").bigDecimalValue(), comparesEqualTo(new BigDecimal(want)));
+    }
+    assertThat(
+        call("GET", "/admin/inventory/network/stock?variants=" + APPLES, null, T, "CUSTOMER", null)
+            .getStatus(),
+        is(403));
+    assertThat(
+        Envelopes.ok(
+                call(
+                    "GET",
+                    "/admin/inventory/network/stock?variants=" + APPLES,
+                    null,
+                    T2,
+                    "OWNER",
+                    null))
+            .getJsonArray("levels"),
+        hasSize(0));
+  }
 }

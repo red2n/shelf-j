@@ -84,17 +84,29 @@ public class TenantProfiles {
    * @param warehouses the stores of type WAREHOUSE: stock-only sites that serve shops (depot / DC
    *     replenishment); every other store is a shop
    */
-  public record Stores(Set<UUID> ids, Map<UUID, String> countries, Set<UUID> warehouses) {
+  public record Stores(
+      Set<UUID> ids, Map<UUID, String> countries, Set<UUID> warehouses, Map<UUID, Point> points) {
 
     public Stores {
       ids = Set.copyOf(ids);
       countries = Map.copyOf(countries);
       warehouses = Set.copyOf(warehouses);
+      points = Map.copyOf(points);
     }
 
     /** As before warehouses were read: no store is one. */
     public Stores(Set<UUID> ids, Map<UUID, String> countries) {
-      this(ids, countries, Set.of());
+      this(ids, countries, Set.of(), Map.of());
+    }
+
+    /** As before coordinates were read. */
+    public Stores(Set<UUID> ids, Map<UUID, String> countries, Set<UUID> warehouses) {
+      this(ids, countries, warehouses, Map.of());
+    }
+
+    /** Where the store is, or null when it records no coordinates. */
+    public Point where(UUID storeId) {
+      return storeId == null ? null : points.get(storeId);
     }
 
     /** Whether the store is one of the tenant's. */
@@ -108,9 +120,16 @@ public class TenantProfiles {
     }
   }
 
+  /** A store's latitude and longitude, in degrees. */
+  public record Point(double lat, double lng) {}
+
   /** One page of {@code GET /admin/stores}. */
   record StorePage(
-      List<UUID> ids, Map<UUID, String> countries, Set<UUID> warehouses, String nextCursor) {}
+      List<UUID> ids,
+      Map<UUID, String> countries,
+      Set<UUID> warehouses,
+      Map<UUID, Point> points,
+      String nextCursor) {}
 
   private record CachedStores(Stores stores, Instant readAt) {}
 
@@ -203,6 +222,7 @@ public class TenantProfiles {
     Set<UUID> ids = new HashSet<>();
     Map<UUID, String> countries = new HashMap<>();
     Set<UUID> warehouses = new HashSet<>();
+    Map<UUID, Point> points = new HashMap<>();
     String after = null;
     for (int page = 0; page < MAX_STORE_PAGES; page++) {
       Optional<StorePage> read =
@@ -211,8 +231,9 @@ public class TenantProfiles {
       ids.addAll(read.get().ids());
       countries.putAll(read.get().countries());
       warehouses.addAll(read.get().warehouses());
+      points.putAll(read.get().points());
       if (read.get().nextCursor() == null) {
-        return Optional.of(new Stores(ids, countries, warehouses));
+        return Optional.of(new Stores(ids, countries, warehouses, points));
       }
       after = read.get().nextCursor();
     }
@@ -232,6 +253,7 @@ public class TenantProfiles {
       List<UUID> ids = new ArrayList<>();
       Map<UUID, String> countries = new HashMap<>();
       Set<UUID> warehouses = new HashSet<>();
+      Map<UUID, Point> points = new HashMap<>();
       for (JsonValue value : root.getJsonArray("data")) {
         JsonObject store = value.asJsonObject();
         UUID id = Ids.parse(store.getString("id"));
@@ -240,6 +262,16 @@ public class TenantProfiles {
             && !store.isNull("type")
             && "WAREHOUSE".equals(upper(store.getString("type")))) {
           warehouses.add(id);
+        }
+        if (store.containsKey("geoLat")
+            && !store.isNull("geoLat")
+            && store.containsKey("geoLng")
+            && !store.isNull("geoLng")) {
+          points.put(
+              id,
+              new Point(
+                  store.getJsonNumber("geoLat").doubleValue(),
+                  store.getJsonNumber("geoLng").doubleValue()));
         }
         String country =
             store.containsKey("country") && !store.isNull("country")
@@ -258,6 +290,7 @@ public class TenantProfiles {
               List.copyOf(ids),
               Map.copyOf(countries),
               Set.copyOf(warehouses),
+              Map.copyOf(points),
               next == null || next.isBlank() ? null : next));
     } catch (RuntimeException e) {
       LOG.log(Level.WARNING, "unreadable page of stores: {0}", e.getMessage());

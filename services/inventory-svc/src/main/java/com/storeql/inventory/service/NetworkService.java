@@ -463,6 +463,28 @@ public class NetworkService {
     return r instanceof DcReplenishment.Need n ? Optional.of(n) : Optional.empty();
   }
 
+  /** What each store holds of some products, and which of them the supplier fulfils per order. */
+  public record StockByStore(List<Level> levels, Set<UUID> dropship) {
+    public StockByStore {
+      levels = List.copyOf(levels);
+      dropship = Set.copyOf(dropship);
+    }
+  }
+
+  /**
+   * What each store of the business can give of the products named — the order router's read (order
+   * orchestration). Quantities are the business's own; a shopper never sees them.
+   */
+  public StockByStore stockByStore(TenantContext ctx, List<UUID> variantIds) {
+    ctx.requireAnyRole("PLATFORM_ADMIN", "OWNER", "MANAGER", "STOREKEEPER");
+    UUID tenantId = ctx.requireTenantId();
+    if (variantIds.isEmpty()) return new StockByStore(List.of(), Set.of());
+    Set<UUID> named = Set.copyOf(variantIds);
+    Set<UUID> dropship = new java.util.HashSet<>();
+    for (UUID v : inventory.dropshipVariants(tenantId)) if (named.contains(v)) dropship.add(v);
+    return new StockByStore(inventory.levelsForVariants(tenantId, variantIds), dropship);
+  }
+
   /** The warehouse's runs, newest first. */
   public List<TransferProposalRun> runs(TenantContext ctx, UUID warehouseId) {
     ctx.requireStoreAccess(warehouseId);
