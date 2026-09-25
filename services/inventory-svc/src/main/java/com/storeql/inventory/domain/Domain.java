@@ -328,6 +328,83 @@ public final class Domain {
       UUID releasedBy,
       Instant releasedAt) {}
 
+  // ── Wave picking and directed putaway ──────────────────────────────────────
+
+  /** A confirmed online order waiting to be picked at its store, and what it still needs. */
+  public record AwaitingOrder(
+      UUID orderId,
+      UUID tenantId,
+      UUID storeId,
+      String fulfilmentType,
+      Instant confirmedAt,
+      UUID waveId,
+      List<AwaitingLine> lines) {}
+
+  public record AwaitingLine(UUID variantId, BigDecimal qtyOutstanding) {}
+
+  /** One walk through the zones for the orders it gathered. */
+  public record PickWave(
+      UUID id,
+      UUID tenantId,
+      UUID storeId,
+      String status,
+      UUID createdBy,
+      Instant createdAt,
+      UUID completedBy,
+      Instant completedAt,
+      Instant cancelledAt,
+      int orderCount,
+      List<PickWaveLine> lines) {
+    public static final String OPEN = "OPEN";
+    public static final String COMPLETED = "COMPLETED";
+    public static final String CANCELLED = "CANCELLED";
+  }
+
+  /** One pick line: one batch, what to take from it, what was taken, whom it serves. */
+  public record PickWaveLine(
+      UUID id,
+      UUID waveId,
+      int walkOrder,
+      UUID zoneId,
+      UUID batchId,
+      String batchNo,
+      UUID variantId,
+      BigDecimal directedQty,
+      BigDecimal pickedQty,
+      List<PickWaveAllocation> orders) {}
+
+  public record PickWaveAllocation(UUID orderId, BigDecimal qty, BigDecimal pickedQty) {}
+
+  /**
+   * Where a product goes when it arrives with no zone; a rule with no variant is the store default.
+   */
+  public record PutawayRule(
+      UUID id,
+      UUID tenantId,
+      UUID storeId,
+      UUID variantId,
+      UUID zoneId,
+      UUID createdBy,
+      Instant createdAt) {}
+
+  /** A batch that arrived with no zone and no rule to place it. */
+  public record PutawayTask(
+      UUID id,
+      UUID tenantId,
+      UUID storeId,
+      UUID batchId,
+      UUID variantId,
+      BigDecimal qty,
+      UUID suggestedZoneId,
+      String status,
+      UUID placedZoneId,
+      UUID placedBy,
+      Instant placedAt,
+      Instant createdAt) {
+    public static final String OPEN = "OPEN";
+    public static final String PLACED = "PLACED";
+  }
+
   // ── Fresh yield, preparation and butchery loss ─────────────────────────────
 
   /** One cut a template expects: its share of the input, of the cost, and its own shelf life. */

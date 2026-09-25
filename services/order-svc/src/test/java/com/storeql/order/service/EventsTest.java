@@ -2,6 +2,7 @@ package com.storeql.order.service;
 
 import static org.junit.jupiter.api.Assertions.assertDoesNotThrow;
 import static org.junit.jupiter.api.Assertions.assertEquals;
+import static org.junit.jupiter.api.Assertions.assertFalse;
 import static org.junit.jupiter.api.Assertions.assertNotEquals;
 
 import com.storeql.ids.Ids;
@@ -11,6 +12,7 @@ import jakarta.json.Json;
 import jakarta.json.JsonObject;
 import java.io.StringReader;
 import java.math.BigDecimal;
+import java.time.Instant;
 import java.util.List;
 import java.util.UUID;
 import org.junit.jupiter.api.Test;
@@ -129,6 +131,11 @@ class EventsTest {
 
     JsonObject json = Json.createReader(new StringReader(row.payload())).readObject();
     assertEquals("OrderConfirmed", json.getString("eventType"));
+    // When it was confirmed: inventory-svc lists the orders waiting to be picked by this, not by
+    // when the event happened to arrive.
+    Instant occurredAt = Instant.parse(json.getString("occurredAt"));
+    assertFalse(occurredAt.isAfter(Instant.now()));
+    assertFalse(occurredAt.isBefore(Instant.now().minusSeconds(60)));
     assertEquals(
         0, new BigDecimal("5.50").compareTo(json.getJsonNumber("total").bigDecimalValue()));
     var lines = json.getJsonArray("lines");

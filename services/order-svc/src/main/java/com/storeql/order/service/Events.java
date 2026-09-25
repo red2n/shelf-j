@@ -233,7 +233,12 @@ public final class Events {
         orderId,
         "{\"eventId\":\""
             + Ids.newId()
-            + "\",\"eventType\":\"OrderConfirmed\",\"tenantId\":\""
+            + "\",\"eventType\":\"OrderConfirmed\",\"occurredAt\":\""
+            // When the order was confirmed, on the confirmation's own transaction: inventory-svc
+            // lists the orders waiting to be picked by it, so two confirmations that ride different
+            // partitions and arrive in either order still wait in the order they happened.
+            + Instant.now()
+            + "\",\"tenantId\":\""
             + tenantId
             + "\",\"orderId\":\""
             + orderId

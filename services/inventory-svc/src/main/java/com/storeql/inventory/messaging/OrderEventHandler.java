@@ -3,6 +3,7 @@ package com.storeql.inventory.messaging;
 import com.storeql.ids.Ids;
 import com.storeql.inventory.domain.Domain.Reservation;
 import com.storeql.inventory.service.InventoryService;
+import com.storeql.inventory.service.WaveService;
 import com.storeql.web.ApiException;
 import jakarta.enterprise.context.ApplicationScoped;
 import jakarta.inject.Inject;
@@ -13,6 +14,7 @@ import java.io.StringReader;
 import java.lang.System.Logger;
 import java.lang.System.Logger.Level;
 import java.math.BigDecimal;
+import java.time.Instant;
 import java.util.ArrayList;
 import java.util.List;
 import java.util.UUID;
@@ -49,6 +51,7 @@ class OrderEventHandler {
   static final String CONSUMER_NAME = "inventory-svc/order-sync";
 
   @Inject InventoryService service;
+  @Inject WaveService waves;
 
   void handle(String json) {
     JsonObject obj;
@@ -65,8 +68,13 @@ class OrderEventHandler {
       return;
     }
 
+    if ("OrderConfirmed".equals(eventType)) {
+      awaitConfirmed(obj, tenantId, orderId);
+      return;
+    }
     if ("OrderCancelled".equals(eventType)) {
       releaseHolds(tenantId, orderId);
+      waves.forget(tenantId, orderId);
       return;
     }
 
@@ -109,6 +117,12 @@ class OrderEventHandler {
       UUID dedupeId = lineDedupeId(eventId, i);
       try {
         if (fulfil) {
+          // A line a wave already picked left the shelf when the wave completed: keep the
+          // revenue, deduct nothing twice.
+          if (waves.revenueOnlyIfPickedByWave(
+              dedupeId, CONSUMER_NAME, tenantId, storeId, variantId, qty, orderId, netAmount)) {
+            continue;
+          }
           Reservation hold = takeMatchingHold(holds, variantId, qty);
           if (hold != null) {
             service.consumeOnce(dedupeId, CONSUMER_NAME, tenantId, hold.id(), netAmount);
@@ -116,6 +130,7 @@ class OrderEventHandler {
             service.deductSaleFromOrderOnce(
                 dedupeId, CONSUMER_NAME, tenantId, storeId, variantId, qty, orderId, netAmount);
           }
+          waves.fulfilledByHand(tenantId, orderId, variantId, qty);
         } else if (voided) {
           service.receiveVoidFromOrderOnce(
               dedupeId, CONSUMER_NAME, tenantId, storeId, variantId, qty, orderId);
@@ -142,6 +157,44 @@ class OrderEventHandler {
       releaseQuietly(tenantId, leftover.id());
     }
     LOG.log(Level.INFO, "{0} {1}: processed {2} line(s)", eventType, orderId, items.size());
+  }
+
+  /**
+   * A confirmed online order for pickup or delivery waits at its store to be picked; anything else
+   * (a till sale, a malformed confirmation) is not this handler's to keep.
+   */
+  private void awaitConfirmed(JsonObject obj, UUID tenantId, UUID orderId) {
+    try {
+      UUID eventId = Ids.parse(obj.getString("eventId"));
+      UUID storeId = Ids.parse(obj.getString("storeId"));
+      String channel = obj.getString("channel", "");
+      String fulfilment =
+          obj.containsKey("fulfilmentType") && !obj.isNull("fulfilmentType")
+              ? obj.getString("fulfilmentType")
+              : null;
+      JsonArray lines = obj.containsKey("lines") ? obj.getJsonArray("lines") : null;
+      // When order-svc confirmed it; the order waits from then, not from when this arrived.
+      Instant confirmedAt =
+          obj.containsKey("occurredAt") && !obj.isNull("occurredAt")
+              ? Instant.parse(obj.getString("occurredAt"))
+              : Instant.now();
+      java.util.Map<UUID, BigDecimal> wanted = new java.util.LinkedHashMap<>();
+      if (lines != null) {
+        for (int i = 0; i < lines.size(); i++) {
+          JsonObject line = lines.getJsonObject(i);
+          wanted.merge(
+              Ids.parse(line.getString("variantId")),
+              new BigDecimal(line.get("qty").toString()),
+              BigDecimal::add);
+        }
+      }
+      if (waves.awaitConfirmedOnce(
+          eventId, tenantId, orderId, storeId, channel, fulfilment, confirmedAt, wanted)) {
+        LOG.log(Level.INFO, "OrderConfirmed {0}: waiting to be picked at {1}", orderId, storeId);
+      }
+    } catch (RuntimeException e) {
+      LOG.log(Level.WARNING, "OrderConfirmed " + orderId + " not projected: " + e.getMessage());
+    }
   }
 
   /** Removes and returns the first HELD reservation matching this line, or null if none. */

@@ -3,6 +3,7 @@ package com.storeql.inventory.service;
 import com.storeql.events.EventPayload;
 import com.storeql.ids.Ids;
 import com.storeql.inventory.domain.Domain.BondRelease;
+import com.storeql.inventory.domain.Domain.PickWave;
 import com.storeql.inventory.domain.Domain.YieldRun;
 import com.storeql.inventory.domain.Domain.YieldRunOutput;
 import com.storeql.inventory.domain.FoodSafety.CheckRecord;
@@ -15,6 +16,7 @@ import jakarta.json.JsonArrayBuilder;
 import jakarta.json.JsonObjectBuilder;
 import java.math.BigDecimal;
 import java.time.Instant;
+import java.util.Map;
 import java.util.Set;
 import java.util.UUID;
 import java.util.stream.Collectors;
@@ -163,6 +165,39 @@ public final class Events {
           .append(",\"batchId\":")
           .append(o.batchId() == null ? "null" : "\"" + o.batchId() + "\"")
           .append('}');
+    }
+    sb.append("]}");
+    return sb.toString();
+  }
+
+  /**
+   * A wave picked at a store: which orders to fulfil for what, as picked. order-svc fulfils each
+   * order it names for exactly these quantities, once per event.
+   */
+  public static String wavePicked(PickWave wave, Map<UUID, Map<UUID, BigDecimal>> picked) {
+    StringBuilder sb =
+        new StringBuilder(EventPayload.base("WavePicked", wave.tenantId(), wave.id()));
+    sb.append(",\"waveId\":\"")
+        .append(wave.id())
+        .append("\",\"storeId\":\"")
+        .append(wave.storeId())
+        .append("\",\"orders\":[");
+    boolean firstOrder = true;
+    for (Map.Entry<UUID, Map<UUID, BigDecimal>> o : picked.entrySet()) {
+      if (!firstOrder) sb.append(',');
+      firstOrder = false;
+      sb.append("{\"orderId\":\"").append(o.getKey()).append("\",\"lines\":[");
+      boolean firstLine = true;
+      for (Map.Entry<UUID, BigDecimal> l : o.getValue().entrySet()) {
+        if (!firstLine) sb.append(',');
+        firstLine = false;
+        sb.append("{\"variantId\":\"")
+            .append(l.getKey())
+            .append("\",\"qty\":")
+            .append(l.getValue().stripTrailingZeros().toPlainString())
+            .append('}');
+      }
+      sb.append("]}");
     }
     sb.append("]}");
     return sb.toString();

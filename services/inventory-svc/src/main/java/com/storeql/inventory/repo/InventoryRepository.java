@@ -1819,6 +1819,11 @@ public class InventoryRepository extends BaseOutboxRepository {
       ps.setString(18, b.dutyStatus() == null ? Batch.DUTY_PAID : b.dutyStatus());
       ps.executeUpdate();
     }
+    // Directed putaway: a batch that arrives with no zone is placed by the store's rule, or waits
+    // on the putaway list for a person to place.
+    if (b.zoneId() == null && b.remainingQty() != null && b.remainingQty().signum() > 0) {
+      PutawayRepository.directTx(c, b);
+    }
     return RecallRepository.holdOnArrival(c, b);
   }
 
@@ -2825,7 +2830,7 @@ public class InventoryRepository extends BaseOutboxRepository {
   }
 
   /** Returns the ORDER BY clause for the given picking strategy. */
-  private static String pickOrderClause(
+  static String pickOrderClause(
       String strategy, String gradePreference, List<UUID> zonePriorityOrder) {
     String effectiveStrategy = strategy == null ? PickingRule.FEFO : strategy;
     return switch (effectiveStrategy) {
@@ -2863,7 +2868,7 @@ public class InventoryRepository extends BaseOutboxRepository {
    * repo. Matches the original (pre-extraction) behavior exactly: {@code query()} acquires its own
    * connection, so this was never part of {@code consumeTx}'s transaction even before the split.
    */
-  private Optional<PickingRule> resolvePickingRule(UUID tenantId, UUID storeId, UUID variantId) {
+  Optional<PickingRule> resolvePickingRule(UUID tenantId, UUID storeId, UUID variantId) {
     return query(
             "SELECT pr.id,pr.tenant_id,pr.name,pr.strategy,pr.grade_preference,pr.status,"
                 + "pr.created_at,pr.updated_at"
@@ -2886,7 +2891,7 @@ public class InventoryRepository extends BaseOutboxRepository {
         .findFirst();
   }
 
-  private List<PickingRuleZonePriority> listZonePriorities(UUID tenantId, UUID ruleId) {
+  List<PickingRuleZonePriority> listZonePriorities(UUID tenantId, UUID ruleId) {
     return query(
         "SELECT id,tenant_id,rule_id,zone_id,priority FROM picking_rule_zone_priorities"
             + " WHERE tenant_id=? AND rule_id=? ORDER BY priority ASC",
@@ -2924,7 +2929,7 @@ public class InventoryRepository extends BaseOutboxRepository {
    * current available qty is below it, inserts a StockBelowThreshold outbox event. Called after any
    * stock-reducing operation so the alert and the deduction are atomic (golden rule #6).
    */
-  private void checkThresholdTx(Connection c, UUID tenantId, UUID storeId, UUID variantId)
+  void checkThresholdTx(Connection c, UUID tenantId, UUID storeId, UUID variantId)
       throws SQLException {
     BigDecimal threshold = null;
     try (PreparedStatement ps =
@@ -2981,7 +2986,7 @@ public class InventoryRepository extends BaseOutboxRepository {
 
   // ---------------------------------------------------------------- sale revenue (19.7)
 
-  private static void insertSaleRevenueTx(
+  static void insertSaleRevenueTx(
       Connection c,
       UUID tenantId,
       UUID storeId,
