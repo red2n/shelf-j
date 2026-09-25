@@ -58,6 +58,9 @@ public class NetworkService {
     }
   }
 
+  /** A shop's need for a product now, and its share of a quantity the warehouse would send. */
+  public record NeedShare(UUID storeId, BigDecimal need, BigDecimal qty) {}
+
   /** A run and the DRAFT transfers it raised. */
   public record RunResult(TransferProposalRun run, List<TransferOrderWithLines> transfers) {
     public RunResult {
@@ -393,6 +396,71 @@ public class NetworkService {
             shortLines,
             transfers.keySet().stream().map(TransferOrder::id).toList());
     return result(tenantId, repo.saveRun(run, idempotencyKey, transfers));
+  }
+
+  /**
+   * How a quantity of a product arriving at the warehouse would be shared among its shops by what
+   * they need now — the replenishment rule and its fair share — for cross-docking's fill helper.
+   */
+  public List<NeedShare> needShares(
+      TenantContext ctx, UUID warehouseId, UUID variantId, BigDecimal qty) {
+    ctx.requireStoreAccess(warehouseId);
+    UUID tenantId = ctx.requireTenantId();
+    Map<UUID, Set<UUID>> direct = repo.directByShop(tenantId);
+    List<DcReplenishment.Need> needs = new ArrayList<>();
+    for (Serving shop : repo.shopsOf(tenantId, warehouseId)) {
+      if (direct.getOrDefault(shop.storeId(), Set.of()).contains(variantId)) continue;
+      needOf(tenantId, shop, variantId, DEFAULT_COVER_DAYS).ifPresent(needs::add);
+    }
+    List<NeedShare> out = new ArrayList<>();
+    for (DcReplenishment.Allocation a :
+        DcReplenishment.share(qty == null ? BigDecimal.ZERO : qty, needs)) {
+      out.add(new NeedShare(a.storeId(), a.need(), a.qty()));
+    }
+    return out;
+  }
+
+  /**
+   * A shop's claim on a delivery, as the fair share weighs it: what it is owed, its position now
+   * and how fast it sells — so that a short delivery's remainder goes to the least cover.
+   */
+  public DcReplenishment.Need claim(
+      UUID tenantId, UUID storeId, UUID variantId, BigDecimal owed, String reason) {
+    BigDecimal position =
+        available(tenantId, storeId)
+            .getOrDefault(variantId, BigDecimal.ZERO)
+            .add(repo.inboundByVariant(tenantId, storeId).getOrDefault(variantId, BigDecimal.ZERO));
+    BigDecimal daily =
+        inventory.listRopPlans(tenantId, storeId).stream()
+            .filter(p -> p.variantId().equals(variantId))
+            .map(ReorderPointPlan::avgDailyDemand)
+            .findFirst()
+            .orElse(null);
+    return new DcReplenishment.Need(storeId, owed, position, daily, reason);
+  }
+
+  private Optional<DcReplenishment.Need> needOf(
+      UUID tenantId, Serving shop, UUID variantId, int cover) {
+    Optional<ReorderPointPlan> plan =
+        inventory.listRopPlans(tenantId, shop.storeId()).stream()
+            .filter(p -> p.variantId().equals(variantId))
+            .findFirst();
+    if (plan.isEmpty()) return Optional.empty();
+    DemandForecast f = latestForecasts(tenantId, shop.storeId()).get(variantId);
+    int days = shop.leadTimeDays() + cover;
+    DcReplenishment.Result r =
+        DcReplenishment.need(
+            new DcReplenishment.Shop(
+                shop.storeId(),
+                plan.get().rop(),
+                available(tenantId, shop.storeId()).getOrDefault(variantId, BigDecimal.ZERO),
+                repo.inboundByVariant(tenantId, shop.storeId())
+                    .getOrDefault(variantId, BigDecimal.ZERO),
+                f != null && f.forecast() != null ? f.forecast().expectedOver(days) : null,
+                plan.get().avgDailyDemand(),
+                shop.leadTimeDays(),
+                cover));
+    return r instanceof DcReplenishment.Need n ? Optional.of(n) : Optional.empty();
   }
 
   /** The warehouse's runs, newest first. */

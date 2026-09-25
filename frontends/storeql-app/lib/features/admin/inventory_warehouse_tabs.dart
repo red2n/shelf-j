@@ -109,7 +109,8 @@ class _InventoryTransfersTabState extends ConsumerState<InventoryTransfersTab> {
                     title: Text('$from → $to'),
                     subtitle: Text(
                       '${o.status} · ${o.lines.length} line(s)'
-                      '${o.notes != null && o.notes!.isNotEmpty ? ' · ${o.notes}' : ''}',
+                      '${o.source == 'CROSSDOCK' ? ' · cross-docked from order ${shortRef(o.purchaseOrderId ?? '')}' : o.source == 'PROPOSAL' ? ' · proposed by the warehouse' : ''}'
+                      '${o.notes != null && o.notes!.isNotEmpty && o.source != 'CROSSDOCK' ? ' · ${o.notes}' : ''}',
                     ),
                     trailing: _TransferActions(
                       order: o,

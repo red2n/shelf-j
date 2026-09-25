@@ -1372,6 +1372,13 @@ class _PoDetailDialogState extends ConsumerState<_PoDetailDialog> {
         ? const AsyncValue<List<PurchaseOrderLineProgress>>.data([])
         : ref.watch(purchaseOrderProgressProvider(poId));
     final progress = progressAsync.asData?.value ?? const [];
+    // Cross-docking: an order delivered to a warehouse can send its lines straight on to the shops.
+    final stores = ref.watch(storesProvider).value ?? const <StoreInfo>[];
+    final names = {for (final s in stores) s.id: s.name};
+    final atWarehouse = po != null && stores.any((s) => s.id == po.storeId && s.type == 'WAREHOUSE');
+    final allocations = atWarehouse
+        ? ref.watch(purchaseOrderAllocationsProvider(poId)).value ?? const <LineAllocation>[]
+        : const <LineAllocation>[];
 
     return AlertDialog(
       title: Column(
@@ -1439,8 +1446,26 @@ class _PoDetailDialogState extends ConsumerState<_PoDetailDialog> {
                                 .firstOrNull;
                             final owed = p?.qtyOutstanding ?? 0;
                             return ListTile(
+                              key: Key('po-line-${l.id}'),
                               dense: true,
                               contentPadding: EdgeInsets.zero,
+                              leading: atWarehouse && isDraft
+                                  ? IconButton(
+                                      key: Key('po-line-allocate-${l.id}'),
+                                      tooltip: 'Allocate to shops',
+                                      icon: const Icon(Icons.call_split),
+                                      onPressed: () => showDialog<void>(
+                                        context: context,
+                                        builder: (_) => _AllocateLineDialog(
+                                          poId: poId,
+                                          lineId: l.id,
+                                          warehouseId: po.storeId,
+                                          lineQty: l.qty,
+                                          current: allocations.where((a) => a.poLineId == l.id).toList(),
+                                        ),
+                                      ),
+                                    )
+                                  : null,
                               title: Text(
                                 _short(l.variantId, 14),
                                 style: const TextStyle(
@@ -1464,7 +1489,11 @@ class _PoDetailDialogState extends ConsumerState<_PoDetailDialog> {
                                     '${p.qtyReturned.toStringAsFixed(0)} returned',
                                 ].join(' · ') +
                                     // The proposal's arithmetic, so the buyer can check the line.
-                                    (l.proposalReason == null ? '' : '\n${l.proposalReason}'),
+                                    (l.proposalReason == null ? '' : '\n${l.proposalReason}') +
+                                    // Where it goes on arrival, when it crosses the dock.
+                                    (allocations.any((a) => a.poLineId == l.id)
+                                        ? '\ncross-docked to ${allocations.where((a) => a.poLineId == l.id).map((a) => '${names[a.storeId] ?? _short(a.storeId)} ${a.qty.toStringAsFixed(0)}').join(', ')}'
+                                        : ''),
                                 style: TextStyle(
                                   color: owed > 0
                                       ? context.status.warning
@@ -3000,3 +3029,139 @@ class _ProposeOrdersDialogState extends ConsumerState<_ProposeOrdersDialog> {
     );
   }
 }
+
+/// Cross-docking: a warehouse draft's line allocated to the shops the warehouse serves — typed, or
+/// filled from what they need now — so the delivery goes straight across the dock to them.
+class _AllocateLineDialog extends ConsumerStatefulWidget {
+  final String poId;
+  final String lineId;
+  final String warehouseId;
+  final double lineQty;
+  final List<LineAllocation> current;
+  const _AllocateLineDialog({
+    required this.poId,
+    required this.lineId,
+    required this.warehouseId,
+    required this.lineQty,
+    required this.current,
+  });
+
+  @override
+  ConsumerState<_AllocateLineDialog> createState() => _AllocateLineDialogState();
+}
+
+class _AllocateLineDialogState extends ConsumerState<_AllocateLineDialog> {
+  final Map<String, TextEditingController> _qty = {};
+  bool _busy = false;
+
+  TextEditingController _ctrl(String storeId) => _qty.putIfAbsent(storeId, () {
+        final had = widget.current.where((a) => a.storeId == storeId).firstOrNull;
+        return TextEditingController(text: had == null ? '' : had.qty.toStringAsFixed(0));
+      });
+
+  @override
+  void dispose() {
+    for (final c in _qty.values) {
+      c.dispose();
+    }
+    super.dispose();
+  }
+
+  String get _path => '/${ApiConstants.purchase}/purchase-orders/${widget.poId}/lines/${widget.lineId}/allocations';
+
+  Future<void> _done(String message) async {
+    ref.invalidate(purchaseOrderAllocationsProvider(widget.poId));
+    if (!mounted) return;
+    Navigator.of(context).pop();
+    ScaffoldMessenger.of(context).showSnackBar(SnackBar(content: Text(message)));
+  }
+
+  Future<void> _send(Future<void> Function() call, String done, String fallback) async {
+    setState(() => _busy = true);
+    try {
+      await call();
+      await _done(done);
+    } catch (e) {
+      if (mounted) {
+        ScaffoldMessenger.of(context).showSnackBar(SnackBar(content: Text(friendlyError(e, fallback: fallback))));
+      }
+    } finally {
+      if (mounted) setState(() => _busy = false);
+    }
+  }
+
+  @override
+  Widget build(BuildContext context) {
+    final stores = ref.watch(storesProvider).value ?? const <StoreInfo>[];
+    final names = {for (final s in stores) s.id: s.name};
+    final network = ref.watch(servedShopsProvider(widget.warehouseId));
+    return AlertDialog(
+      title: const Text('Allocate to shops'),
+      content: SizedBox(
+        width: 420,
+        child: network.when(
+          loading: () => const SizedBox(height: 120, child: LoadingView(label: 'Loading the shops…')),
+          error: (e, _) => ErrorView(message: friendlyError(e, fallback: 'Could not load the shops.')),
+          data: (shops) => shops.isEmpty
+              ? const Text('This warehouse serves no shop yet: set that on the Inventory screen, Depot & shops.')
+              : Column(
+                  mainAxisSize: MainAxisSize.min,
+                  crossAxisAlignment: CrossAxisAlignment.stretch,
+                  children: [
+                    Text('Of ${widget.lineQty.toStringAsFixed(0)} on the line. What is allocated crosses the dock on arrival; the rest is put away.'),
+                    for (final shop in shops)
+                      TextField(
+                        key: Key('allocate-$shop'),
+                        controller: _ctrl(shop),
+                        keyboardType: const TextInputType.numberWithOptions(decimal: true),
+                        decoration: InputDecoration(labelText: names[shop] ?? _short(shop)),
+                      ),
+                  ],
+                ),
+        ),
+      ),
+      actions: [
+        TextButton(onPressed: () => Navigator.of(context).pop(), child: const Text('Cancel')),
+        TextButton(
+          key: const Key('allocate-fill'),
+          onPressed: _busy
+              ? null
+              : () => _send(
+                    () => ref.read(apiClientProvider).dio.post('$_path/fill'),
+                    'Allocated by what the shops need now.',
+                    'Could not fill from the shops\' needs.',
+                  ),
+          child: const Text('Fill from the shops\' needs'),
+        ),
+        FilledButton(
+          key: const Key('allocate-save'),
+          onPressed: _busy
+              ? null
+              : () {
+                  final rows = [
+                    for (final e in _qty.entries)
+                      if ((double.tryParse(e.value.text.trim()) ?? 0) > 0)
+                        {'storeId': e.key, 'qty': double.parse(e.value.text.trim())},
+                  ];
+                  _send(
+                    () => ref.read(apiClientProvider).dio.put(_path, data: {'allocations': rows}),
+                    rows.isEmpty ? 'Allocations cleared.' : 'Allocated.',
+                    'Could not allocate the line.',
+                  );
+                },
+          child: const Text('Save'),
+        ),
+      ],
+    );
+  }
+}
+
+/// The shops a warehouse serves, from inventory's network.
+final servedShopsProvider = FutureProvider.autoDispose.family<List<String>, String>((ref, warehouseId) async {
+  final resp = await ref.read(apiClientProvider).dio.get('/${ApiConstants.inventory}/admin/inventory/network/serving');
+  return ((resp.data['data'] as List?) ?? const [])
+      .map((e) => e as Map<String, dynamic>)
+      .where((e) => e['warehouseId'] == warehouseId)
+      .map((e) => e['storeId'] as String)
+      .toList();
+});

@@ -765,6 +765,18 @@ public final class Domain {
     }
   }
 
+  /** Part of a warehouse order's line allocated to a shop the warehouse serves (cross-docking). */
+  public record LineAllocation(
+      UUID id,
+      UUID tenantId,
+      UUID poId,
+      UUID poLineId,
+      UUID variantId,
+      UUID storeId,
+      BigDecimal qty,
+      UUID createdBy,
+      Instant createdAt) {}
+
   public record PurchaseOrderLine(
       UUID id,
       UUID tenantId,

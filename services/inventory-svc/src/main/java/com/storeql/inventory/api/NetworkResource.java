@@ -1,10 +1,12 @@
 package com.storeql.inventory.api;
 
 import com.storeql.ids.Ids;
+import com.storeql.inventory.dto.NetworkDtos;
 import com.storeql.inventory.dto.NetworkDtos.ServingRequest;
 import com.storeql.inventory.dto.NetworkDtos.TransferProposalRequest;
 import com.storeql.inventory.mapper.NetworkMappers;
 import com.storeql.inventory.service.NetworkService;
+import com.storeql.web.ApiException;
 import com.storeql.web.ApiResponse;
 import com.storeql.web.TenantContext;
 import com.storeql.web.Validations;
@@ -22,6 +24,7 @@ import jakarta.ws.rs.Produces;
 import jakarta.ws.rs.QueryParam;
 import jakarta.ws.rs.core.MediaType;
 import jakarta.ws.rs.core.Response;
+import java.math.BigDecimal;
 import java.util.Locale;
 import org.eclipse.microprofile.openapi.annotations.Operation;
 import org.eclipse.microprofile.openapi.annotations.responses.APIResponse;
@@ -39,6 +42,7 @@ import org.eclipse.microprofile.openapi.annotations.tags.Tag;
 public class NetworkResource {
 
   @Inject NetworkService svc;
+  @Inject com.storeql.inventory.service.CrossDockService crossDock;
   @Inject TenantContext ctx;
 
   @Operation(
@@ -149,6 +153,52 @@ public class NetworkResource {
                 : idempotencyKey.toLowerCase(Locale.ROOT));
     return Response.status(Response.Status.CREATED)
         .entity(ApiResponse.ok(NetworkMappers.toDto(r.run(), r.transfers())))
+        .build();
+  }
+
+  @Operation(
+      summary = "What a purchase order still owes the shops across the dock",
+      description =
+          "Per shop and product, as purchase-svc last announced it, less what deliveries already"
+              + " sent across.")
+  @APIResponse(responseCode = "200", description = "What is owed")
+  @GET
+  @Path("/crossdock")
+  public Response owed(@QueryParam("purchaseOrderId") String purchaseOrderId) {
+    return Response.ok(
+            ApiResponse.ok(
+                crossDock.owed(ctx, Ids.parse(purchaseOrderId)).stream()
+                    .map(
+                        o ->
+                            new NetworkDtos.OwedResponse(
+                                o.warehouseId(), o.storeId(), o.variantId(), o.qty()))
+                    .toList()))
+        .build();
+  }
+
+  @Operation(
+      summary = "The shops' needs for a product, and their shares of a quantity",
+      description =
+          "What each shop the warehouse serves needs of the product now, and how the quantity"
+              + " would be shared among them fairly. Read by purchase-svc's cross-dock fill.")
+  @APIResponse(responseCode = "200", description = "The shares")
+  @GET
+  @Path("/needs")
+  public Response needs(
+      @QueryParam("warehouseId") String warehouseId,
+      @QueryParam("variantId") String variantId,
+      @QueryParam("qty") String qty) {
+    BigDecimal amount;
+    try {
+      amount = qty == null || qty.isBlank() ? BigDecimal.ZERO : new BigDecimal(qty);
+    } catch (NumberFormatException e) {
+      throw new ApiException(400, "VALIDATION_FAILED", "qty: not a number", java.util.List.of(), e);
+    }
+    return Response.ok(
+            ApiResponse.ok(
+                svc.needShares(ctx, Ids.parse(warehouseId), Ids.parse(variantId), amount).stream()
+                    .map(NetworkMappers::toDto)
+                    .toList()))
         .build();
   }
 

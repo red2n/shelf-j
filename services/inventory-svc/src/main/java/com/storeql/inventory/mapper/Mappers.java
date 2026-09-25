@@ -506,6 +506,8 @@ public final class Mappers {
         ts(o.receivedAt()),
         o.source(),
         o.proposalRunId() == null ? null : o.proposalRunId().toString(),
+        o.purchaseOrderId() == null ? null : o.purchaseOrderId().toString(),
+        o.goodsReceiptId() == null ? null : o.goodsReceiptId().toString(),
         lines.stream().map(Mappers::toTransferOrderLine).toList());
   }
 

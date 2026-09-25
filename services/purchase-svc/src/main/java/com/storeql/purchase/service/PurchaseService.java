@@ -32,6 +32,7 @@ import com.storeql.purchase.dto.Dtos.RecordCreditNoteRequest;
 import com.storeql.purchase.dto.Dtos.ResolveSupplierInvoiceRequest;
 import com.storeql.purchase.dto.Dtos.UpdateSupplierRequest;
 import com.storeql.purchase.repo.PurchaseRepository;
+import com.storeql.service.OutboxRow;
 import com.storeql.web.ApiException;
 import com.storeql.web.Parsing;
 import com.storeql.web.Permissions;
@@ -472,6 +473,27 @@ public class PurchaseService {
    * @throws ApiException 400 {@code PURCHASE_PO_NOT_DRAFT} if the order is not DRAFT; 409 if it
    *     stopped being DRAFT between the read and the write
    */
+  /**
+   * Cross-docking: an order on its way announces its allocations to inventory-svc as they stand, so
+   * the shops count them on their way and the delivery goes straight across the dock.
+   */
+  private static java.util.function.Function<
+          List<Domain.LineAllocation>, java.util.Optional<OutboxRow>>
+      allocationsStand(PurchaseOrder po) {
+    return a ->
+        java.util.Optional.of(
+            Events.crossDockAllocationsSet(po.tenantId(), po.id(), po.storeId(), a));
+  }
+
+  /** An order that stops being on its way announces that nothing is owed to the shops any more. */
+  private static java.util.function.Function<
+          List<Domain.LineAllocation>, java.util.Optional<OutboxRow>>
+      allocationsLapse(PurchaseOrder po) {
+    return a ->
+        java.util.Optional.of(
+            Events.crossDockAllocationsSet(po.tenantId(), po.id(), po.storeId(), List.of()));
+  }
+
   public PurchaseOrder submitPurchaseOrder(TenantContext ctx, UUID poId) {
     UUID tenantId = ctx.requireTenantId();
     PurchaseOrder po = getPurchaseOrder(ctx, poId);
@@ -488,7 +510,8 @@ public class PurchaseService {
             tenantId,
             poId,
             landing,
-            trailRow(ctx, po, Domain.APPROVAL_REQUESTED, authority, authority.reason()));
+            trailRow(ctx, po, Domain.APPROVAL_REQUESTED, authority, authority.reason()),
+            allocationsStand(po));
     if (!submitted)
       throw ApiException.conflict(
           "PURCHASE_PO_NOT_DRAFT", "The order stopped being DRAFT before it could be submitted");
@@ -550,7 +573,8 @@ public class PurchaseService {
                 po,
                 Domain.APPROVAL_APPROVED,
                 authority,
-                req == null ? null : trimmed(req.reason())));
+                req == null ? null : trimmed(req.reason())),
+            allocationsStand(po));
     if (!decided)
       throw ApiException.conflict(
           "PURCHASE_PO_NOT_PENDING_APPROVAL",
@@ -587,7 +611,11 @@ public class PurchaseService {
             po.totalNet(), po.currency(), ctx.roles(), config.approvalLimits(), translation(po));
     boolean decided =
         repo.decidePurchaseOrder(
-            tenantId, poId, false, trailRow(ctx, po, Domain.APPROVAL_REJECTED, authority, reason));
+            tenantId,
+            poId,
+            false,
+            trailRow(ctx, po, Domain.APPROVAL_REJECTED, authority, reason),
+            allocationsLapse(po));
     if (!decided)
       throw ApiException.conflict(
           "PURCHASE_PO_NOT_PENDING_APPROVAL",
@@ -704,7 +732,11 @@ public class PurchaseService {
 
     boolean cancelled =
         repo.cancelPurchaseOrder(
-            tenantId, poId, reason, Events.purchaseOrderCancelled(tenantId, poId, reason));
+            tenantId,
+            poId,
+            reason,
+            Events.purchaseOrderCancelled(tenantId, poId, reason),
+            allocationsLapse(po));
     if (!cancelled)
       throw ApiException.conflict(
           "PURCHASE_PO_NOT_CANCELLABLE",
@@ -742,7 +774,8 @@ public class PurchaseService {
       TenantContext ctx, UUID poId, CancelPurchaseOrderRequest req) {
     UUID tenantId = ctx.requireTenantId();
     PurchaseOrder po = getPurchaseOrder(ctx, poId);
-    boolean closed = repo.closePurchaseOrderShort(tenantId, poId, req.reason().trim());
+    boolean closed =
+        repo.closePurchaseOrderShort(tenantId, poId, req.reason().trim(), allocationsLapse(po));
     if (!closed)
       throw ApiException.conflict(
           "PURCHASE_PO_NOT_CLOSEABLE",

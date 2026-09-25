@@ -58,6 +58,7 @@ public class ProposalService {
   @Inject ProposalRepository repo;
   @Inject PurchaseRepository purchases;
   @Inject InventoryClient inventory;
+  @Inject com.storeql.purchase.repo.CrossDockRepository crossDock;
   @Inject PricingClient pricing;
 
   /** One draft order a run raised, described for the reply. */
@@ -182,7 +183,15 @@ public class ProposalService {
             .orElseThrow(ProposalService::stockUnavailable);
     Map<UUID, ForecastGlance> forecast =
         inventory.forecastGlances(tenantId, storeId).orElse(Map.of());
-    Map<UUID, BigDecimal> onOrder = repo.onOrderByVariant(tenantId, storeId);
+    Map<UUID, BigDecimal> onOrder = new LinkedHashMap<>(repo.onOrderByVariant(tenantId, storeId));
+    if (sourcing.warehouse()) {
+      // Cross-docking: what is allocated to shops on the warehouse's open orders is theirs, on
+      // its way to them — not the warehouse's to count against its own reorder point.
+      crossDock
+          .allocatedOnOrder(tenantId, storeId)
+          .forEach(
+              (v, q) -> onOrder.computeIfPresent(v, (k, o) -> o.subtract(q).max(BigDecimal.ZERO)));
+    }
     List<UUID> variants = new ArrayList<>(plans.stream().map(Plan::variantId).toList());
     for (UUID v : sourcing.demand().keySet()) if (!variants.contains(v)) variants.add(v);
     Map<UUID, SupplierChoice> lastBought = repo.lastSupplierByVariant(tenantId, variants);

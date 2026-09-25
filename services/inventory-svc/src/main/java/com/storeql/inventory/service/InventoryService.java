@@ -651,7 +651,7 @@ public class InventoryService {
         sourceId);
   }
 
-  private static OutboxRow stockReceivedEvent(Batch batch) {
+  static OutboxRow stockReceivedEvent(Batch batch) {
     return new OutboxRow(
         "StockReceived",
         "storeql.inventory.stock-received",

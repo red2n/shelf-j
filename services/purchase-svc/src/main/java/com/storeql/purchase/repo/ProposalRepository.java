@@ -29,7 +29,7 @@ import java.util.UUID;
 public class ProposalRepository extends BaseJdbcRepository {
 
   /** Orders committed to a supplier and not yet fully received: what is on order. */
-  private static final String OPEN_STATUSES =
+  static final String OPEN_STATUSES =
       "('"
           + Domain.PO_SUBMITTED
           + "','"

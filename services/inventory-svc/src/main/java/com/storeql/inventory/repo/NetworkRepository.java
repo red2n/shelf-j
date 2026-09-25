@@ -183,17 +183,26 @@ public class NetworkRepository extends BaseOutboxRepository {
 
   /**
    * What is on its way to a store from its warehouse: proposed, released and shipped transfers not
-   * yet received, per product.
+   * yet received, and what a warehouse's purchase orders still owe it to cross-dock, per product.
    */
   public Map<UUID, BigDecimal> inboundByVariant(UUID tenantId, UUID storeId) {
-    return sumByVariant(
-        "SELECT l.variant_id, SUM(l.requested_qty) AS qty FROM transfer_order_lines l JOIN"
-            + " transfer_orders o ON o.tenant_id = l.tenant_id AND o.id = l.transfer_order_id"
-            + " WHERE o.tenant_id = ? AND o.to_store_id = ? AND o.status IN"
-            + " ('DRAFT','PENDING','SHIPPED') GROUP BY l.variant_id",
-        tenantId,
-        storeId,
-        "inbound transfers");
+    Map<UUID, BigDecimal> out =
+        sumByVariant(
+            "SELECT l.variant_id, SUM(l.requested_qty) AS qty FROM transfer_order_lines l JOIN"
+                + " transfer_orders o ON o.tenant_id = l.tenant_id AND o.id = l.transfer_order_id"
+                + " WHERE o.tenant_id = ? AND o.to_store_id = ? AND o.status IN"
+                + " ('DRAFT','PENDING','SHIPPED') GROUP BY l.variant_id",
+            tenantId,
+            storeId,
+            "inbound transfers");
+    sumByVariant(
+            "SELECT variant_id, SUM(qty) AS qty FROM crossdock_expected WHERE tenant_id = ? AND"
+                + " store_id = ? GROUP BY variant_id",
+            tenantId,
+            storeId,
+            "owed across the dock")
+        .forEach((v, q) -> out.merge(v, q, BigDecimal::add));
+    return out;
   }
 
   /**

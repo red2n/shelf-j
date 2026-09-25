@@ -50,6 +50,41 @@ final class Events {
             + "}");
   }
 
+  /**
+   * The whole of a warehouse order's cross-dock allocations, as they now stand (cross-docking): a
+   * snapshot inventory-svc replaces its record with — what each shop is owed of each product when
+   * the delivery arrives. Empty when the order is rejected, cancelled or closed short. Keyed by the
+   * order, so the snapshots of one order arrive in the order they were made.
+   */
+  public static OutboxRow crossDockAllocationsSet(
+      UUID tenantId, UUID poId, UUID warehouseId, List<Domain.LineAllocation> allocations) {
+    StringBuilder sb =
+        new StringBuilder(EventPayload.base("CrossDockAllocationsSet", tenantId, poId))
+            .append(",\"poId\":\"")
+            .append(poId)
+            .append("\",\"warehouseId\":\"")
+            .append(warehouseId)
+            .append("\",\"allocations\":[");
+    for (int i = 0; i < allocations.size(); i++) {
+      Domain.LineAllocation a = allocations.get(i);
+      if (i > 0) sb.append(',');
+      sb.append("{\"variantId\":\"")
+          .append(a.variantId())
+          .append("\",\"storeId\":\"")
+          .append(a.storeId())
+          .append("\",\"qty\":")
+          .append(a.qty().stripTrailingZeros().toPlainString())
+          .append('}');
+    }
+    sb.append("]}");
+    return new OutboxRow(
+        "CrossDockAllocationsSet",
+        "storeql.purchase.crossdock-allocations-set",
+        tenantId,
+        poId,
+        sb.toString());
+  }
+
   static OutboxRow purchaseOrderCancelled(UUID tenantId, UUID poId, String reason) {
     return new OutboxRow(
         "PurchaseOrderCancelled",

@@ -790,7 +790,43 @@ public final class Domain {
       /** MANUAL (raised by a person) or PROPOSAL (raised by a depot replenishment run). */
       String source,
       /** The run that proposed it, or null for a manual transfer. */
-      UUID proposalRunId) {
+      UUID proposalRunId,
+      /** A cross-dock transfer's purchase order (purchase-svc's, referenced), else null. */
+      UUID purchaseOrderId,
+      /** A cross-dock transfer's goods receipt (purchase-svc's, referenced), else null. */
+      UUID goodsReceiptId) {
+
+    /** A transfer that did not come across a dock. */
+    public TransferOrder(
+        UUID id,
+        UUID tenantId,
+        UUID fromStoreId,
+        UUID toStoreId,
+        String transferType,
+        String status,
+        String notes,
+        Instant createdAt,
+        Instant shippedAt,
+        Instant receivedAt,
+        String source,
+        UUID proposalRunId) {
+      this(
+          id,
+          tenantId,
+          fromStoreId,
+          toStoreId,
+          transferType,
+          status,
+          notes,
+          createdAt,
+          shippedAt,
+          receivedAt,
+          source,
+          proposalRunId,
+          null,
+          null);
+    }
+
     public static final String TYPE_DIRECT = "DIRECT";
     public static final String TYPE_INTRANSIT = "INTRANSIT";
 
@@ -803,6 +839,9 @@ public final class Domain {
     public static final String CANCELLED = "CANCELLED";
     public static final String SOURCE_MANUAL = "MANUAL";
     public static final String SOURCE_PROPOSAL = "PROPOSAL";
+
+    /** Raised at a warehouse's receipt for the shops a purchase order was allocated to. */
+    public static final String SOURCE_CROSSDOCK = "CROSSDOCK";
   }
 
   /** One SKU line on a transfer order. */
@@ -815,7 +854,31 @@ public final class Domain {
       BigDecimal shippedQty,
       BigDecimal receivedQty,
       /** Why a proposal asked for this quantity; null on a manual line. */
-      String reason) {
+      String reason,
+      /** The batch a cross-dock line ships from, drawn first; null otherwise. */
+      UUID sourceBatchId) {
+
+    /** A line with a reason and no batch of its own. */
+    public TransferOrderLine(
+        UUID id,
+        UUID tenantId,
+        UUID transferOrderId,
+        UUID variantId,
+        BigDecimal requestedQty,
+        BigDecimal shippedQty,
+        BigDecimal receivedQty,
+        String reason) {
+      this(
+          id,
+          tenantId,
+          transferOrderId,
+          variantId,
+          requestedQty,
+          shippedQty,
+          receivedQty,
+          reason,
+          null);
+    }
 
     /** A line as a person asks for it: no reason. */
     public TransferOrderLine(
@@ -826,7 +889,16 @@ public final class Domain {
         BigDecimal requestedQty,
         BigDecimal shippedQty,
         BigDecimal receivedQty) {
-      this(id, tenantId, transferOrderId, variantId, requestedQty, shippedQty, receivedQty, null);
+      this(
+          id,
+          tenantId,
+          transferOrderId,
+          variantId,
+          requestedQty,
+          shippedQty,
+          receivedQty,
+          null,
+          null);
     }
   }
 

@@ -33,12 +33,14 @@ class GoodsReceivedHandler {
   static final String CONSUMER_NAME = "inventory-svc/goods-received";
 
   @Inject InventoryService service;
+  @Inject com.storeql.inventory.service.CrossDockService crossDock;
 
   void handle(String json) {
     UUID eventId;
     UUID tenantId;
     UUID storeId;
     UUID refId;
+    UUID poId;
     JsonArray lines;
     String ownership;
     UUID supplierId;
@@ -53,6 +55,8 @@ class GoodsReceivedHandler {
               ? Ids.parse(obj.getString("refId"))
               : null;
       lines = obj.getJsonArray("lines");
+      poId =
+          obj.containsKey("poId") && !obj.isNull("poId") ? Ids.parse(obj.getString("poId")) : null;
       // Consignment stock ownership: a delivery on consignment stays the supplier's.
       ownership = nullableString(obj, "ownership");
       // Bonded stock: a delivery under bond arrives with its duty suspended.
@@ -69,10 +73,36 @@ class GoodsReceivedHandler {
       return;
     }
 
+    // Cross-docking: the lines a warehouse's order still owes its shops go straight across the
+    // dock on one transaction; the rest are received as always. The business's own duty-paid
+    // stock only — purchase-svc refuses to allocate anything else.
+    boolean ownStock =
+        (ownership == null || "OWNED".equalsIgnoreCase(ownership))
+            && (dutyStatus == null || "DUTY_PAID".equalsIgnoreCase(dutyStatus));
+    java.util.Set<UUID> crossing =
+        poId != null && ownStock
+            ? crossDock.crossingVariants(tenantId, poId, storeId)
+            : java.util.Set.of();
+    java.util.List<com.storeql.inventory.service.CrossDockService.Delivered> dock =
+        new java.util.ArrayList<>();
     int created = 0;
     for (int i = 0; i < lines.size(); i++) {
       JsonObject line = lines.getJsonObject(i);
       UUID variantId = Ids.parse(line.getString("variantId"));
+      if (crossing.contains(variantId)) {
+        dock.add(
+            new com.storeql.inventory.service.CrossDockService.Delivered(
+                variantId,
+                new BigDecimal(line.get("qty").toString()),
+                nullableString(line, "batchNo"),
+                line.containsKey("costPrice") && !line.isNull("costPrice")
+                    ? new BigDecimal(line.get("costPrice").toString())
+                    : null,
+                line.containsKey("expiryDate") && !line.isNull("expiryDate")
+                    ? LocalDate.parse(line.getString("expiryDate"))
+                    : null));
+        continue;
+      }
       BigDecimal qty = new BigDecimal(line.get("qty").toString());
       String batchNo = nullableString(line, "batchNo");
       BigDecimal cost =
@@ -100,6 +130,23 @@ class GoodsReceivedHandler {
           dutyStatus)) {
         created++;
       }
+    }
+    if (!dock.isEmpty()) {
+      java.util.List<UUID> transfers =
+          crossDock.receive(
+              Ids.derived(eventId, CONSUMER_NAME + ":crossdock"),
+              CONSUMER_NAME,
+              tenantId,
+              storeId,
+              poId,
+              refId,
+              dock);
+      LOG.log(
+          Level.INFO,
+          "GoodsReceived {0}: {1} line(s) cross-docked in {2} transfer(s)",
+          eventId,
+          dock.size(),
+          transfers.size());
     }
     if (created > 0) {
       LOG.log(Level.INFO, "GoodsReceived {0}: created {1} batch(es)", eventId, created);

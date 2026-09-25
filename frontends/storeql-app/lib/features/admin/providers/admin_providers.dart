@@ -510,8 +510,10 @@ class TransferOrder {
   final String? createdAt;
   final String? shippedAt;
   final String? receivedAt;
-  /// MANUAL, or PROPOSAL when a warehouse's replenishment run raised it.
+  /// MANUAL, PROPOSAL (a warehouse's replenishment run) or CROSSDOCK (a delivery's allocation).
   final String? source;
+  /// A cross-dock transfer's purchase order.
+  final String? purchaseOrderId;
   final List<TransferOrderLine> lines;
 
   const TransferOrder({
@@ -525,6 +527,7 @@ class TransferOrder {
     this.shippedAt,
     this.receivedAt,
     this.source,
+    this.purchaseOrderId,
     required this.lines,
   });
 
@@ -539,6 +542,7 @@ class TransferOrder {
         shippedAt: j['shippedAt'] as String?,
         receivedAt: j['receivedAt'] as String?,
         source: j['source'] as String?,
+        purchaseOrderId: j['purchaseOrderId'] as String?,
         lines: ((j['lines'] as List?) ?? [])
             .map((e) => TransferOrderLine.fromJson(e as Map<String, dynamic>))
             .toList(),

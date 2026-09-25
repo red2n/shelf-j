@@ -191,12 +191,17 @@ public class InventoryClient {
    * @param demand a warehouse's shops' needs per product
    */
   public record Sourcing(
-      UUID servedBy, Set<UUID> direct, boolean warehouse, Map<UUID, ServedDemand> demand) {
-    public static final Sourcing ALONE = new Sourcing(null, Set.of(), false, Map.of());
+      UUID servedBy,
+      Set<UUID> direct,
+      boolean warehouse,
+      Map<UUID, ServedDemand> demand,
+      Set<UUID> shops) {
+    public static final Sourcing ALONE = new Sourcing(null, Set.of(), false, Map.of(), Set.of());
 
     public Sourcing {
       direct = Set.copyOf(direct);
       demand = Map.copyOf(demand);
+      shops = Set.copyOf(shops);
     }
 
     /** Whether a served shop buys this product from its warehouse, not from a supplier. */
@@ -247,8 +252,46 @@ public class InventoryClient {
                   x.getInt("shops", 0)));
         }
       }
-      return Optional.of(new Sourcing(servedBy, direct, d.getBoolean("warehouse", false), demand));
+      Set<UUID> shops = new java.util.HashSet<>();
+      if (d.containsKey("shops") && !d.isNull("shops")) {
+        for (JsonValue v : d.getJsonArray("shops")) {
+          shops.add(Ids.parse(((jakarta.json.JsonString) v).getString()));
+        }
+      }
+      return Optional.of(
+          new Sourcing(servedBy, direct, d.getBoolean("warehouse", false), demand, shops));
     }
+  }
+
+  /** One shop's share of a quantity the warehouse would send, by the shops' current needs. */
+  public record NeedShare(UUID storeId, BigDecimal need, BigDecimal qty) {}
+
+  /**
+   * How a quantity of a product arriving at a warehouse would be shared among the shops it serves
+   * by what they need now (cross-docking's fill-from-needs).
+   *
+   * @return the shares; empty when inventory-svc could not be read
+   */
+  public Optional<List<NeedShare>> needShares(
+      UUID tenantId, UUID warehouseId, UUID variantId, BigDecimal qty) {
+    ServiceReader.Reply reply =
+        planning.get(
+            tenantId,
+            "/admin/inventory/network/needs",
+            Map.of(
+                "warehouseId",
+                warehouseId.toString(),
+                "variantId",
+                variantId.toString(),
+                "qty",
+                qty.toPlainString()));
+    if (!reply.ok()) return Optional.empty();
+    List<NeedShare> out = new ArrayList<>();
+    for (JsonObject o : dataArray(reply.body())) {
+      out.add(
+          new NeedShare(Ids.parse(o.getString("storeId")), number(o, "need"), number(o, "qty")));
+    }
+    return Optional.of(out);
   }
 
   /**

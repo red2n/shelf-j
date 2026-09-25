@@ -37,6 +37,10 @@ public final class NetworkMappers {
             .toList());
   }
 
+  public static NetworkDtos.NeedShareResponse toDto(NetworkService.NeedShare n) {
+    return new NetworkDtos.NeedShareResponse(n.storeId(), n.need(), n.qty());
+  }
+
   public static NetworkDtos.TransferProposalRunResponse toDto(
       TransferProposalRun r, List<TransferOrderWithLines> transfers) {
     return new NetworkDtos.TransferProposalRunResponse(

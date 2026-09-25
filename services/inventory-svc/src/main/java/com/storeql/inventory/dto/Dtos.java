@@ -641,6 +641,10 @@ public final class Dtos {
           String source,
       @Schema(description = "The replenishment run that proposed it, or null.")
           String proposalRunId,
+      @Schema(description = "A cross-dock transfer's purchase order, or null.")
+          String purchaseOrderId,
+      @Schema(description = "A cross-dock transfer's goods receipt, or null.")
+          String goodsReceiptId,
       List<TransferOrderLineResponse> lines) {}
 
   // ── Lot Genealogy (Gap #11) ──────────────────────────────────────────────

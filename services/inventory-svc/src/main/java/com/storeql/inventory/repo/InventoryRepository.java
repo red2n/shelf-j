@@ -1396,6 +1396,38 @@ public class InventoryRepository extends BaseOutboxRepository {
       List<UUID> zonePriorityOrder,
       MovementAttribution attribution)
       throws SQLException {
+    return deductBatches(
+        c,
+        tenantId,
+        storeId,
+        variantId,
+        qty,
+        moveType,
+        refType,
+        refId,
+        strategy,
+        gradePreference,
+        zonePriorityOrder,
+        null,
+        attribution);
+  }
+
+  /** As above, drawing {@code firstBatch} before any other when it is given. */
+  List<Drawn> deductBatches(
+      Connection c,
+      UUID tenantId,
+      UUID storeId,
+      UUID variantId,
+      BigDecimal qty,
+      String moveType,
+      String refType,
+      UUID refId,
+      String strategy,
+      String gradePreference,
+      List<UUID> zonePriorityOrder,
+      UUID firstBatch,
+      MovementAttribution attribution)
+      throws SQLException {
     String orderBy = pickOrderClause(strategy, gradePreference, zonePriorityOrder);
     BigDecimal toDeduct = qty;
     List<Drawn> batches = new ArrayList<>();
@@ -1408,12 +1440,15 @@ public class InventoryRepository extends BaseOutboxRepository {
                 + " WHERE tenant_id=? AND store_id=? AND variant_id=? AND remaining_qty > 0"
                 + " AND material_status='AVAILABLE'"
                 + dutyFilter(moveType)
-                + " ORDER BY "
+                // The named batch first (a cross-dock line's own); with none named every row
+                // compares to null alike and the order is the rule's.
+                + " ORDER BY (id = CAST(? AS uuid)) DESC NULLS LAST, "
                 + orderBy
                 + " FOR UPDATE")) {
       ps.setObject(1, tenantId);
       ps.setObject(2, storeId);
       ps.setObject(3, variantId);
+      ps.setObject(4, firstBatch);
       try (ResultSet rs = ps.executeQuery()) {
         while (rs.next()) {
           batches.add(
@@ -1792,6 +1827,20 @@ public class InventoryRepository extends BaseOutboxRepository {
    * @return why a recall now holds the batch, or null when none does
    */
   private String insertBatch(Connection c, Batch b, String idempotencyKey) throws SQLException {
+    return insertBatch(c, b, idempotencyKey, true);
+  }
+
+  /**
+   * A batch that crosses the dock: inserted with no putaway — it leaves on a transfer, it is not
+   * shelved — and held like any other if a recall covers it.
+   */
+  static String insertCrossDockBatchTx(InventoryRepository repo, Connection c, Batch b)
+      throws SQLException {
+    return repo.insertBatch(c, b, null, false);
+  }
+
+  private String insertBatch(Connection c, Batch b, String idempotencyKey, boolean putaway)
+      throws SQLException {
     try (PreparedStatement ps =
         c.prepareStatement(
             "INSERT INTO inventory_batches"
@@ -1821,7 +1870,10 @@ public class InventoryRepository extends BaseOutboxRepository {
     }
     // Directed putaway: a batch that arrives with no zone is placed by the store's rule, or waits
     // on the putaway list for a person to place.
-    if (b.zoneId() == null && b.remainingQty() != null && b.remainingQty().signum() > 0) {
+    if (putaway
+        && b.zoneId() == null
+        && b.remainingQty() != null
+        && b.remainingQty().signum() > 0) {
       PutawayRepository.directTx(c, b);
     }
     return RecallRepository.holdOnArrival(c, b);
@@ -2380,7 +2432,7 @@ public class InventoryRepository extends BaseOutboxRepository {
   /** The columns every read of a transfer order takes, in {@link #mapTransferOrder}'s order. */
   static final String TRANSFER_COLUMNS =
       "id, tenant_id, from_store_id, to_store_id, transfer_type, status, notes, created_at,"
-          + " shipped_at, received_at, source, proposal_run_id";
+          + " shipped_at, received_at, source, proposal_run_id, purchase_order_id, goods_receipt_id";
 
   /**
    * Writes a transfer order and its lines on the caller's transaction: a manual one, or a DRAFT a
@@ -2392,8 +2444,9 @@ public class InventoryRepository extends BaseOutboxRepository {
         c.prepareStatement(
             "INSERT INTO transfer_orders"
                 + " (id, tenant_id, from_store_id, to_store_id, transfer_type,"
-                + "  status, notes, created_at, source, proposal_run_id)"
-                + " VALUES (?,?,?,?,?,?,?,?,?,?)")) {
+                + "  status, notes, created_at, source, proposal_run_id, purchase_order_id,"
+                + "  goods_receipt_id)"
+                + " VALUES (?,?,?,?,?,?,?,?,?,?,?,?)")) {
       ps.setObject(1, order.id());
       ps.setObject(2, order.tenantId());
       ps.setObject(3, order.fromStoreId());
@@ -2404,6 +2457,8 @@ public class InventoryRepository extends BaseOutboxRepository {
       ps.setObject(8, order.createdAt().atOffset(ZoneOffset.UTC));
       ps.setString(9, order.source() == null ? TransferOrder.SOURCE_MANUAL : order.source());
       ps.setObject(10, order.proposalRunId());
+      ps.setObject(11, order.purchaseOrderId());
+      ps.setObject(12, order.goodsReceiptId());
       ps.executeUpdate();
     }
     insertTransferLines(c, lines);
@@ -2471,7 +2526,7 @@ public class InventoryRepository extends BaseOutboxRepository {
   public List<TransferOrderLine> listTransferOrderLines(UUID tenantId, UUID transferOrderId) {
     return query(
         "SELECT id, tenant_id, transfer_order_id, variant_id,"
-            + " requested_qty, shipped_qty, received_qty, reason"
+            + " requested_qty, shipped_qty, received_qty, reason, source_batch_id"
             + " FROM transfer_order_lines WHERE tenant_id = ? AND transfer_order_id = ? ORDER BY id",
         ps -> {
           ps.setObject(1, tenantId);
@@ -2498,8 +2553,10 @@ public class InventoryRepository extends BaseOutboxRepository {
           boolean isDirect = TransferOrder.TYPE_DIRECT.equals(order.transferType());
 
           for (TransferOrderLine line : lines) {
+            // A cross-dock line ships the batch the delivery made first: what crosses the dock is
+            // what arrived, with its lot, date and cost.
             List<Drawn> drawn =
-                deductFifo(
+                deductBatches(
                     c,
                     tenantId,
                     order.fromStoreId(),
@@ -2508,6 +2565,10 @@ public class InventoryRepository extends BaseOutboxRepository {
                     MoveType.TRANSFER,
                     "TRANSFER_ORDER",
                     orderId,
+                    null,
+                    null,
+                    null,
+                    line.sourceBatchId(),
                     MovementAttribution.system());
             if (isDirect) {
               // What arrives is what left: each source batch's lot, date and cost (SJ-D71).
@@ -2709,8 +2770,8 @@ public class InventoryRepository extends BaseOutboxRepository {
     try (PreparedStatement ps =
         c.prepareStatement(
             "INSERT INTO transfer_order_lines"
-                + " (id, tenant_id, transfer_order_id, variant_id, requested_qty, reason)"
-                + " VALUES (?,?,?,?,?,?)")) {
+                + " (id, tenant_id, transfer_order_id, variant_id, requested_qty, reason,"
+                + " source_batch_id) VALUES (?,?,?,?,?,?,?)")) {
       for (TransferOrderLine l : lines) {
         ps.setObject(1, l.id());
         ps.setObject(2, l.tenantId());
@@ -2718,6 +2779,7 @@ public class InventoryRepository extends BaseOutboxRepository {
         ps.setObject(4, l.variantId());
         ps.setBigDecimal(5, l.requestedQty());
         ps.setString(6, l.reason());
+        ps.setObject(7, l.sourceBatchId());
         ps.addBatch();
       }
       ps.executeBatch();
@@ -2739,7 +2801,9 @@ public class InventoryRepository extends BaseOutboxRepository {
         shippedOdt == null ? null : shippedOdt.toInstant(),
         receivedOdt == null ? null : receivedOdt.toInstant(),
         rs.getString("source"),
-        rs.getObject("proposal_run_id", UUID.class));
+        rs.getObject("proposal_run_id", UUID.class),
+        rs.getObject("purchase_order_id", UUID.class),
+        rs.getObject("goods_receipt_id", UUID.class));
   }
 
   private static TransferOrderLine mapTransferOrderLine(ResultSet rs) throws SQLException {
@@ -2751,7 +2815,8 @@ public class InventoryRepository extends BaseOutboxRepository {
         rs.getBigDecimal("requested_qty"),
         rs.getBigDecimal("shipped_qty"),
         rs.getBigDecimal("received_qty"),
-        rs.getString("reason"));
+        rs.getString("reason"),
+        rs.getObject("source_batch_id", UUID.class));
   }
 
   // ── Tier-1 Gap #24: Expiry alert query ────────────────────────────────────

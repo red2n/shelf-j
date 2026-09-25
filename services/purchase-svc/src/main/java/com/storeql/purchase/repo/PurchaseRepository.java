@@ -354,6 +354,37 @@ public class PurchaseRepository extends BaseOutboxRepository {
    */
   public boolean submitPurchaseOrder(
       UUID tenantId, UUID id, String status, Domain.PurchaseOrderApproval trail) {
+    return submitPurchaseOrder(tenantId, id, status, trail, NO_ANNOUNCEMENT);
+  }
+
+  /** What a status change says about the order's cross-dock allocations, given them. */
+  public static final java.util.function.Function<List<Domain.LineAllocation>, Optional<OutboxRow>>
+      NO_ANNOUNCEMENT = a -> Optional.empty();
+
+  /**
+   * Writes what the announcement makes of the order's cross-dock allocations, on the caller's
+   * transaction: a submitted order's snapshot, or an empty one when the order stops being on its
+   * way. Nothing when the order has no allocations.
+   */
+  private void announceAllocationsTx(
+      Connection c,
+      UUID tenantId,
+      UUID poId,
+      java.util.function.Function<List<Domain.LineAllocation>, Optional<OutboxRow>> announce)
+      throws SQLException {
+    List<Domain.LineAllocation> allocations = CrossDockRepository.allocationsTx(c, tenantId, poId);
+    if (allocations.isEmpty()) return;
+    Optional<OutboxRow> row = announce.apply(allocations);
+    if (row.isPresent()) insertOutbox(c, row.get());
+  }
+
+  /** As above, announcing the order's cross-dock allocations on the same transaction. */
+  public boolean submitPurchaseOrder(
+      UUID tenantId,
+      UUID id,
+      String status,
+      Domain.PurchaseOrderApproval trail,
+      java.util.function.Function<List<Domain.LineAllocation>, Optional<OutboxRow>> announce) {
     return inTx(
         c -> {
           int rows;
@@ -372,6 +403,7 @@ public class PurchaseRepository extends BaseOutboxRepository {
           }
           if (rows == 0) return false;
           insertApproval(c, trail);
+          announceAllocationsTx(c, tenantId, id, announce);
           return true;
         },
         "submit purchase order");
@@ -392,6 +424,16 @@ public class PurchaseRepository extends BaseOutboxRepository {
    */
   public boolean decidePurchaseOrder(
       UUID tenantId, UUID id, boolean approve, Domain.PurchaseOrderApproval decision) {
+    return decidePurchaseOrder(tenantId, id, approve, decision, NO_ANNOUNCEMENT);
+  }
+
+  /** As above, announcing the order's cross-dock allocations on the same transaction. */
+  public boolean decidePurchaseOrder(
+      UUID tenantId,
+      UUID id,
+      boolean approve,
+      Domain.PurchaseOrderApproval decision,
+      java.util.function.Function<List<Domain.LineAllocation>, Optional<OutboxRow>> announce) {
     return inTx(
         c -> {
           int rows;
@@ -411,6 +453,7 @@ public class PurchaseRepository extends BaseOutboxRepository {
           }
           if (rows == 0) return false;
           insertApproval(c, decision);
+          announceAllocationsTx(c, tenantId, id, announce);
           return true;
         },
         approve ? "approve purchase order" : "reject purchase order");
@@ -508,6 +551,16 @@ public class PurchaseRepository extends BaseOutboxRepository {
    *     or CANCELLED and therefore not cancellable
    */
   public boolean cancelPurchaseOrder(UUID tenantId, UUID id, String reason, OutboxRow event) {
+    return cancelPurchaseOrder(tenantId, id, reason, event, NO_ANNOUNCEMENT);
+  }
+
+  /** As above, announcing the order's cross-dock allocations on the same transaction. */
+  public boolean cancelPurchaseOrder(
+      UUID tenantId,
+      UUID id,
+      String reason,
+      OutboxRow event,
+      java.util.function.Function<List<Domain.LineAllocation>, Optional<OutboxRow>> announce) {
     return inTx(
         c -> {
           int rows;
@@ -523,6 +576,7 @@ public class PurchaseRepository extends BaseOutboxRepository {
           }
           if (rows == 0) return false;
           insertOutbox(c, event);
+          announceAllocationsTx(c, tenantId, id, announce);
           return true;
         },
         "cancel purchase order");
@@ -931,6 +985,15 @@ public class PurchaseRepository extends BaseOutboxRepository {
    * close racing a final delivery cannot both win — whichever commits second finds no row.
    */
   public boolean closePurchaseOrderShort(UUID tenantId, UUID poId, String reason) {
+    return closePurchaseOrderShort(tenantId, poId, reason, NO_ANNOUNCEMENT);
+  }
+
+  /** As above, announcing the order's cross-dock allocations on the same transaction. */
+  public boolean closePurchaseOrderShort(
+      UUID tenantId,
+      UUID poId,
+      String reason,
+      java.util.function.Function<List<Domain.LineAllocation>, Optional<OutboxRow>> announce) {
     return inTx(
         c -> {
           try (var ps =
@@ -941,8 +1004,10 @@ public class PurchaseRepository extends BaseOutboxRepository {
             ps.setString(1, reason);
             ps.setObject(2, tenantId);
             ps.setObject(3, poId);
-            return ps.executeUpdate() > 0;
+            if (ps.executeUpdate() == 0) return false;
           }
+          announceAllocationsTx(c, tenantId, poId, announce);
+          return true;
         },
         "close purchase order short");
   }

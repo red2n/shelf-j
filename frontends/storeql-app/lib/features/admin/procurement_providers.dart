@@ -803,3 +803,27 @@ final payingAccountsProvider = FutureProvider.autoDispose<List<PayingAccount>>((
       .map((e) => PayingAccount.fromJson(e as Map<String, dynamic>))
       .toList();
 });
+
+/// Part of a warehouse order's line allocated to a shop it serves (cross-docking).
+class LineAllocation {
+  final String poLineId;
+  final String storeId;
+  final double qty;
+  const LineAllocation({required this.poLineId, required this.storeId, required this.qty});
+  factory LineAllocation.fromJson(Map<String, dynamic> j) => LineAllocation(
+        poLineId: j['poLineId'] as String? ?? '',
+        storeId: j['storeId'] as String? ?? '',
+        qty: (j['qty'] as num?)?.toDouble() ?? 0,
+      );
+}
+
+/// A warehouse order's cross-dock allocations, every line.
+final purchaseOrderAllocationsProvider =
+    FutureProvider.autoDispose.family<List<LineAllocation>, String>((ref, poId) async {
+  final resp = await ref.read(apiClientProvider).dio.get(
+        '/${ApiConstants.purchase}/purchase-orders/$poId/allocations',
+      );
+  return ((resp.data['data'] as List?) ?? const [])
+      .map((e) => LineAllocation.fromJson(e as Map<String, dynamic>))
+      .toList();
+});

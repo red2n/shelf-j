@@ -73,4 +73,14 @@ public final class NetworkDtos {
       List<UUID> transferIds,
       @Schema(description = "The DRAFT transfers raised, with a reason on every line.")
           List<TransferOrderResponse> transferOrders) {}
+
+  @Schema(
+      name = "NeedShareResponse",
+      description = "A shop's need for a product now, and its fair share of the quantity asked.")
+  public record NeedShareResponse(UUID storeId, BigDecimal need, BigDecimal qty) {}
+
+  @Schema(
+      name = "OwedResponse",
+      description = "What a purchase order still owes a shop of a product, to cross the dock.")
+  public record OwedResponse(UUID warehouseId, UUID storeId, UUID variantId, BigDecimal qty) {}
 }
