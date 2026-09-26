@@ -7,7 +7,7 @@
 | **Roadmap** | new: the user — "either the cashier can enter or ignore based on the customer feedback" |
 | **Services** | tenant-svc owns the store's choice · order-svc enforces it and keeps the number · notification-svc texts it on a recall · the app asks for it |
 | **Builds on** | `stores` (beside `enabled_payment_methods`), `orders.contact_phone`, the till's customer bar and Tender screen, `RecallSaleAffectedHandler` → `RecallNoticeIssued`, customer-svc `PhoneNumbers` |
-| **Built in** | — |
+| **Built in** | 355e6012 on `test/k6-gross-margin` |
 
 ## Problem
 
