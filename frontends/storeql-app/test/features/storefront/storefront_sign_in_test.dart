@@ -2,6 +2,8 @@ import 'package:flutter/material.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:flutter_secure_storage/flutter_secure_storage.dart';
 import 'package:flutter_test/flutter_test.dart';
+import 'package:go_router/go_router.dart';
+import 'package:storeql_app/core/auth/password_policy.dart';
 import 'package:storeql_app/features/storefront/storefront_providers.dart';
 import 'package:storeql_app/features/storefront/storefront_shell.dart';
 
@@ -23,10 +25,16 @@ class _Recording extends StorefrontAuthNotifier {
       calls.add('register $email $password');
 }
 
-Future<_Recording> _open(WidgetTester tester) async {
+Future<_Recording> _open(WidgetTester tester, {PasswordPolicy policy = PasswordPolicy.fallback}) async {
   final auth = _Recording();
   await tester.pumpWidget(ProviderScope(
-    overrides: [storefrontAuthProvider.overrideWith((ref) => auth)],
+    overrides: [
+      storefrontAuthProvider.overrideWith((ref) => auth),
+      // Never a real network call in a widget test — it would leave a
+      // pending Dio timer behind. Every screen this file pumps reads the
+      // same fallback the app itself would, unless a test names another.
+      passwordPolicyProvider.overrideWith((ref) async => policy),
+    ],
     child: MaterialApp(
       home: Scaffold(
         body: Builder(
@@ -76,5 +84,61 @@ void main() {
     await tester.pumpAndSettle();
     expect(auth.calls, isEmpty);
     expect(find.textContaining('At least 15 characters'), findsOneWidget);
+  });
+
+  testWidgets('offers a way back for a forgotten password, in sign-in mode only', (tester) async {
+    await _open(tester);
+    expect(find.byKey(const Key('forgot-password')), findsOneWidget);
+
+    await tester.tap(find.textContaining('Create an account'));
+    await tester.pumpAndSettle();
+    expect(find.byKey(const Key('forgot-password')), findsNothing);
+  });
+
+  testWidgets(
+      "the forgotten-password link names where it came from, so the page can "
+      'lead back to the shop rather than to staff sign-in',
+      (tester) async {
+    String? capturedFrom;
+    final router = GoRouter(
+      initialLocation: '/store/products',
+      routes: [
+        GoRoute(
+          path: '/store/products',
+          builder: (_, _) => Scaffold(
+            body: Builder(
+              builder: (context) => TextButton(
+                onPressed: () => showDialog(
+                    context: context, builder: (_) => const StorefrontAuthDialog()),
+                child: const Text('open'),
+              ),
+            ),
+          ),
+        ),
+        GoRoute(
+          path: '/forgot-password',
+          builder: (_, state) {
+            capturedFrom = state.uri.queryParameters['from'];
+            return const Text('FORGOT PASSWORD PAGE');
+          },
+        ),
+      ],
+    );
+    addTearDown(router.dispose);
+    await tester.pumpWidget(ProviderScope(
+      overrides: [
+        storefrontAuthProvider.overrideWith((ref) => _Recording()),
+        passwordPolicyProvider.overrideWith((ref) async => PasswordPolicy.fallback),
+      ],
+      child: MaterialApp.router(routerConfig: router),
+    ));
+    await tester.tap(find.text('open'));
+    await tester.pumpAndSettle();
+
+    await tester.tap(find.byKey(const Key('forgot-password')));
+    await tester.pumpAndSettle();
+
+    expect(capturedFrom, 'storefront');
+    expect(find.text('FORGOT PASSWORD PAGE'), findsOneWidget);
   });
 }

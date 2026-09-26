@@ -156,7 +156,7 @@ void main() {
         overrides: [
           _catalogConfig(),
           storefrontAvailabilityProvider.overrideWith(
-              (ref) async => {'v1': true}),
+              (ref) async => {'v1': const StockInfo(inStock: true)}),
           productFirstVariantProvider('p1').overrideWith(
               (ref) async => const StoreVariant(id: 'v1', sku: 'SKU-001')),
         ],
@@ -176,7 +176,7 @@ void main() {
         overrides: [
           _catalogConfig(),
           storefrontAvailabilityProvider.overrideWith(
-              (ref) async => {'v1': false}),
+              (ref) async => {'v1': const StockInfo(inStock: false)}),
           productFirstVariantProvider('p1').overrideWith(
               (ref) async => const StoreVariant(id: 'v1', sku: 'SKU-001')),
         ],
@@ -196,7 +196,7 @@ void main() {
         overrides: [
           _catalogConfig(),
           storefrontAvailabilityProvider.overrideWith(
-              (ref) async => {'v1': true}),
+              (ref) async => {'v1': const StockInfo(inStock: true)}),
           productFirstVariantProvider('p1').overrideWith(
               (ref) async => const StoreVariant(id: 'v1', sku: 'SKU-001')),
         ],
@@ -234,7 +234,7 @@ void main() {
           storefrontVariantsProvider(pid).overrideWith(
               (ref) async => [const StoreVariant(id: 'v1', sku: 'SKU-001')]),
           storefrontAvailabilityProvider.overrideWith(
-              (ref) async => {'v1': true}),
+              (ref) async => {'v1': const StockInfo(inStock: true)}),
         ],
       ));
       await tester.pumpAndSettle();

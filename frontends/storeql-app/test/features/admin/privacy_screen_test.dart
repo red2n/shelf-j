@@ -8,6 +8,7 @@ import 'package:storeql_app/core/network/api_client.dart';
 import 'package:storeql_app/core/spacing.dart';
 import 'package:storeql_app/features/admin/privacy_screen.dart';
 
+import 'package:intl/intl.dart';
 // ---------------------------------------------------------------------------
 // The business's side of its customers' privacy (13.12): the grievance contact
 // and period, the notice per language, the queue of requests, and a breach told
@@ -70,6 +71,12 @@ String _request(String id, {String status = 'OPEN', bool overdue = false, String
     '{"id":"$id","customerId":"$customerId","kind":"GRIEVANCE","detail":"You kept emailing.","openedAt":"2026-09-10T10:00:00Z","dueOn":"2026-09-25","status":"$status","overdue":$overdue,"resolution":${status == 'OPEN' ? 'null' : '"Stopped."'}}';
 
 void main() {
+  // This file's UI dates (e.g. day-before-month, "Sept") are about
+  // AppFormat writing en_GB correctly, not about which locale the app
+  // defaults to (core/l10n/app_locales_test.dart owns that) — pinned
+  // explicitly so it stays true whatever the app's own fallback is.
+  setUp(() => Intl.defaultLocale = 'en_GB');
+  tearDown(() => Intl.defaultLocale = null);
   setUpAll(initializeDateFormatting);
 
   testWidgets('the settings load into the form and save as one PUT', (tester) async {

@@ -159,4 +159,51 @@ class AppLocalizationsPl extends AppLocalizations {
   @override
   String get ssoErrGeneric =>
       'Strona logowania Twojej firmy nie mogła Cię zalogować. Poproś jej właściciela o sprawdzenie ustawień.';
+
+  @override
+  String get forgotPassword => 'Nie pamiętasz hasła?';
+
+  @override
+  String get forgotPasswordTitle => 'Nie pamiętasz hasła?';
+
+  @override
+  String get forgotPasswordIntro =>
+      'Wpisz swój adres e-mail. Jeśli jest powiązany z kontem, wyślemy link do zresetowania hasła.';
+
+  @override
+  String get forgotPasswordSubmit => 'Wyślij link';
+
+  @override
+  String get forgotPasswordSent =>
+      'Jeśli jakieś konto używa tego adresu, wysłaliśmy na niego link. Działa trzydzieści minut i tylko raz.';
+
+  @override
+  String get resetPasswordTitle => 'Ustaw nowe hasło';
+
+  @override
+  String get resetPasswordNewLabel => 'Nowe hasło';
+
+  @override
+  String get resetPasswordConfirmLabel => 'Potwierdź nowe hasło';
+
+  @override
+  String get resetPasswordMismatch =>
+      'To nie zgadza się z nowym hasłem podanym powyżej.';
+
+  @override
+  String get resetPasswordSubmit => 'Zmień hasło';
+
+  @override
+  String get resetPasswordDone => 'Hasło zmienione — zaloguj się nim.';
+
+  @override
+  String get resetPasswordDoneStorefront =>
+      'Robisz zakupy w sklepie internetowym? Możesz zalogować się w sklepie.';
+
+  @override
+  String get resetPasswordTokenInvalid =>
+      'Ten link wygasł albo został już użyty — poproś o nowy.';
+
+  @override
+  String get resetPasswordRequestNew => 'Poproś o nowy link';
 }

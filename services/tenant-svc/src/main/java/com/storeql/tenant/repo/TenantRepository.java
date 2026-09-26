@@ -23,6 +23,7 @@ import java.time.OffsetDateTime;
 import java.time.ZoneOffset;
 import java.util.List;
 import java.util.Optional;
+import java.util.Set;
 import java.util.UUID;
 
 /**
@@ -672,17 +673,22 @@ public class TenantRepository extends BaseOutboxRepository {
    * Keyset page of staff assignments: rows strictly after the cursor in (created_at, id) order.
    *
    * @param tenantId owning tenant; the first condition of the query
+   * @param storeIds the caller's stores; empty means unrestricted (an owner, a business-wide
+   *     manager, the platform admin) and every assignment is a candidate. Non-empty restricts to
+   *     assignments at one of those stores or a business-wide one ({@code store_id IS NULL}) — the
+   *     same rule iam-svc applies to {@code GET /auth/admin/staff-users}.
    * @param afterCreatedAt cursor timestamp, or {@code null} for the first page
    * @param afterId cursor id, breaking ties on identical timestamps
    * @param limit maximum rows; callers pass one more than the page size to detect a next page
    * @return the page of assignments
    */
   public List<StaffAssignment> listStaff(
-      UUID tenantId, Instant afterCreatedAt, UUID afterId, int limit) {
+      UUID tenantId, Set<UUID> storeIds, Instant afterCreatedAt, UUID afterId, int limit) {
     StringBuilder sql =
         new StringBuilder(
             "SELECT id, tenant_id, user_id, store_id, role, base_tier, created_at"
                 + " FROM staff_assignments WHERE tenant_id = ?");
+    if (!storeIds.isEmpty()) sql.append(" AND (store_id = ANY(?) OR store_id IS NULL)");
     if (afterCreatedAt != null && afterId != null) sql.append(" AND (created_at, id) > (?, ?)");
     sql.append(" ORDER BY created_at, id LIMIT ?");
     return query(
@@ -690,6 +696,9 @@ public class TenantRepository extends BaseOutboxRepository {
         ps -> {
           int i = 1;
           ps.setObject(i++, tenantId);
+          if (!storeIds.isEmpty()) {
+            ps.setArray(i++, ps.getConnection().createArrayOf("uuid", storeIds.toArray()));
+          }
           if (afterCreatedAt != null && afterId != null) {
             ps.setObject(i++, afterCreatedAt.atOffset(ZoneOffset.UTC));
             ps.setObject(i++, afterId);

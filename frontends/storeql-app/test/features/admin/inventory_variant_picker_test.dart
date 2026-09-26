@@ -12,6 +12,7 @@ import 'package:storeql_app/shared/widgets/empty_state.dart';
 
 import '../../support/fake_api.dart';
 
+import 'package:intl/intl.dart';
 // ---------------------------------------------------------------------------
 // Receive Stock and Set reorder level name the product, not its id:
 //   * with nothing to scan, the person finds the product by its name or its
@@ -199,6 +200,12 @@ void _expectNoIds() {
 }
 
 void main() {
+  // This file's UI dates (e.g. day-before-month, "Sept") are about
+  // AppFormat writing en_GB correctly, not about which locale the app
+  // defaults to (core/l10n/app_locales_test.dart owns that) — pinned
+  // explicitly so it stays true whatever the app's own fallback is.
+  setUp(() => Intl.defaultLocale = 'en_GB');
+  tearDown(() => Intl.defaultLocale = null);
   setUpAll(initializeDateFormatting);
 
   group('Receive Stock', () {

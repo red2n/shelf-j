@@ -17,4 +17,13 @@ public interface Businesses {
    * real person. False when unknown — an outage never silences a live business.
    */
   boolean sandbox(UUID tenantId);
+
+  /**
+   * Its home trading currency, ISO 4217: what a Catalogue sample or preview shows an amount in,
+   * never a hard-coded GBP. Default empty so a test double written before this existed still
+   * compiles; {@link TenantBusinesses} reads the real one from {@code TenantProfiles}.
+   */
+  default Optional<String> currency(UUID tenantId) {
+    return Optional.empty();
+  }
 }

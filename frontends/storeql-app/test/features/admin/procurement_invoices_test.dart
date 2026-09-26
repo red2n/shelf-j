@@ -9,6 +9,7 @@ import 'package:storeql_app/core/network/api_client.dart';
 import 'package:storeql_app/features/admin/procurement_screen.dart';
 import 'package:storeql_app/shared/widgets/status_badge.dart';
 
+import 'package:intl/intl.dart';
 // ---------------------------------------------------------------------------
 // The three-way match on screen: ordered against received against invoiced.
 //
@@ -77,6 +78,12 @@ Future<void> _pump(WidgetTester tester, String body) async {
 }
 
 void main() {
+  // This file's UI dates (e.g. day-before-month, "Sept") are about
+  // AppFormat writing en_GB correctly, not about which locale the app
+  // defaults to (core/l10n/app_locales_test.dart owns that) — pinned
+  // explicitly so it stays true whatever the app's own fallback is.
+  setUp(() => Intl.defaultLocale = 'en_GB');
+  tearDown(() => Intl.defaultLocale = null);
   // An invoice's dates are shown as dates, which needs the locale's date data.
   setUpAll(initializeDateFormatting);
 

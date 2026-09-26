@@ -260,7 +260,7 @@ void main() {
         overrides: [
           _configOverride(showPrices: false),
           storefrontAvailabilityProvider
-              .overrideWith((ref) async => {'v1': true}),
+              .overrideWith((ref) async => {'v1': const StockInfo(inStock: true)}),
           productFirstVariantProvider('p1').overrideWith(
             (ref) async => const StoreVariant(id: 'v1', sku: 'SKU-001'),
           ),

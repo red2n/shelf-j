@@ -1,36 +1,13 @@
 import 'package:flutter/material.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
+import 'package:go_router/go_router.dart';
 import '../../core/auth/auth_notifier.dart';
+import '../../core/auth/password_policy.dart';
 import '../../core/auth/sso.dart';
 import '../../core/network/api_error.dart';
 import '../../core/spacing.dart';
 import '../../core/theme.dart';
 import '../../l10n/gen/app_localizations.dart';
-
-/// iam-svc's `PasswordPolicy` (NIST SP 800-63B-4): a new password is fifteen
-/// to a hundred and twenty-eight characters, counted as a person sees them.
-/// Only a new password is held to it — signing in asks for the password the
-/// login already has, whatever its length.
-const passwordMinLength = 15;
-const passwordMaxLength = 128;
-
-/// Why [password] would not do as a new password, in the policy's words, or
-/// null when its length is within the policy. Identity and breach checks stay
-/// with the server, which says so by code.
-///
-/// [min] and [max] are the policy's bounds: the ones this app mirrors, until
-/// the server names its own in a refusal.
-String? newPasswordProblem(
-  AppLocalizations l,
-  String? password, {
-  int min = passwordMinLength,
-  int max = passwordMaxLength,
-}) {
-  final length = (password ?? '').runes.length;
-  if (length < min) return l.fieldPasswordTooShort(min);
-  if (length > max) return l.fieldPasswordTooLong(max);
-  return null;
-}
 
 class LoginScreen extends ConsumerStatefulWidget {
   const LoginScreen({super.key});
@@ -46,12 +23,6 @@ class _LoginScreenState extends ConsumerState<LoginScreen> {
   final _phoneCtrl = TextEditingController();
   bool _obscure = true;
   bool _isRegister = false;
-
-  /// The password policy's bounds: the ones this app mirrors, until iam-svc
-  /// names its own in a refusal (its minimum is configured). Then the helper,
-  /// the check before sending and the refusal all say the server's number.
-  int _minLength = passwordMinLength;
-  int _maxLength = passwordMaxLength;
 
   @override
   void dispose() {
@@ -90,8 +61,11 @@ class _LoginScreenState extends ConsumerState<LoginScreen> {
     final l = AppLocalizations.of(context);
     final authAsync = ref.watch(authNotifierProvider);
     final isLoading = authAsync.isLoading;
-    if (authAsync.hasError) _learnPolicy(authAsync.error!);
-    final error = authAsync.hasError ? _friendlyError(context, authAsync.error!) : null;
+    // Only in sign-up mode: a plain sign-in never touches the policy
+    // endpoint, so a test (or a person) that never opens sign-up never makes
+    // that network call at all.
+    final policy = _isRegister ? watchPasswordPolicy(ref) : PasswordPolicy.fallback;
+    final error = authAsync.hasError ? _friendlyError(context, authAsync.error!, policy) : null;
     // A password refused because the business signs its staff in through its
     // provider: the server names the business, so one press continues there.
     final requiredSlug = authAsync.hasError && apiErrorCode(authAsync.error!) == 'SSO_REQUIRED'
@@ -189,8 +163,9 @@ class _LoginScreenState extends ConsumerState<LoginScreen> {
                         decoration: InputDecoration(
                           labelText: l.fieldPassword,
                           prefixIcon: const Icon(Icons.lock_outline),
-                          // A new password is told the rule before it is refused by it.
-                          helperText: _isRegister ? l.fieldPasswordTooShort(_minLength) : null,
+                          // The published policy's rule, before it is typed —
+                          // never learned only from a refusal.
+                          helperText: _isRegister ? l.fieldPasswordTooShort(policy.minLength) : null,
                           helperMaxLines: 3,
                           errorMaxLines: 3,
                           suffixIcon: IconButton(
@@ -201,9 +176,19 @@ class _LoginScreenState extends ConsumerState<LoginScreen> {
                         ),
                         // Signing in asks only for a password: the policy is for new ones.
                         validator: (v) => _isRegister
-                            ? newPasswordProblem(l, v, min: _minLength, max: _maxLength)
+                            ? passwordLengthProblem(l, v, policy)
                             : (v == null || v.isEmpty ? l.fieldPasswordRequired : null),
                       ),
+                      if (!_isRegister) ...[
+                        Align(
+                          alignment: AlignmentDirectional.centerEnd,
+                          child: TextButton(
+                            key: const Key('forgot-password'),
+                            onPressed: isLoading ? null : () => context.go('/forgot-password'),
+                            child: Text(l.forgotPassword),
+                          ),
+                        ),
+                      ],
                       const SizedBox(height: AppSpacing.xl),
                       FilledButton(
                         onPressed: isLoading ? null : _submit,
@@ -243,21 +228,21 @@ class _LoginScreenState extends ConsumerState<LoginScreen> {
     );
   }
 
-  String _friendlyError(BuildContext context, Object e) {
+  String _friendlyError(BuildContext context, Object e, PasswordPolicy policy) {
     final l = AppLocalizations.of(context);
     if (e is SsoError) return ssoMessage(e.code, l);
     final code = apiErrorCode(e);
     if (code != null && (code.startsWith('SSO_') || code == 'TENANT_INACTIVE')) {
       return ssoMessage(code, l);
     }
-    // iam-svc's PasswordPolicy refusals, each in its own words. A length is the
-    // server's own when its message names one (its configured rule), else the
-    // one this app mirrors.
+    // iam-svc's PasswordPolicy refusals, each in its own words. The length is
+    // the published policy's own — fetched before the form was ever
+    // submitted, never guessed from this one refusal's free text.
     switch (code) {
       case 'PASSWORD_TOO_SHORT':
-        return l.fieldPasswordTooShort(_ruleLength(e, 'at least') ?? _minLength);
+        return l.fieldPasswordTooShort(policy.minLength);
       case 'PASSWORD_TOO_LONG':
-        return l.fieldPasswordTooLong(_ruleLength(e, 'at most') ?? _maxLength);
+        return l.fieldPasswordTooLong(policy.maxLength);
       case 'PASSWORD_IS_IDENTITY':
         return l.errPasswordIsIdentity;
       case 'PASSWORD_BREACHED':
@@ -276,24 +261,6 @@ class _LoginScreenState extends ConsumerState<LoginScreen> {
       return l.errNetwork;
     }
     return l.errGeneric;
-  }
-
-  /// Takes the policy's bounds from a refusal that names them, so the card
-  /// never shows two rules.
-  void _learnPolicy(Object e) {
-    switch (apiErrorCode(e)) {
-      case 'PASSWORD_TOO_SHORT':
-        _minLength = _ruleLength(e, 'at least') ?? _minLength;
-      case 'PASSWORD_TOO_LONG':
-        _maxLength = _ruleLength(e, 'at most') ?? _maxLength;
-    }
-  }
-
-  /// The number after [bound] ("at least", "at most") in the server's message.
-  static int? _ruleLength(Object e, String bound) {
-    final message = apiErrorOf(e)?.message ?? '';
-    final match = RegExp('$bound (\\d+)').firstMatch(message);
-    return match == null ? null : int.tryParse(match.group(1)!);
   }
 }
 

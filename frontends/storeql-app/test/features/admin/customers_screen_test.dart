@@ -12,6 +12,7 @@ import 'package:storeql_app/shared/widgets/loading_view.dart';
 
 import '../../support/fake_api.dart';
 
+import 'package:intl/intl.dart';
 // ---------------------------------------------------------------------------
 // Customers (back office): the search box asks customer-svc — every customer
 // the business has, not only the page loaded — once typing pauses; a server
@@ -154,6 +155,12 @@ Future<void> _settle(WidgetTester tester) async {
 }
 
 void main() {
+  // This file's UI dates (e.g. day-before-month, "Sept") are about
+  // AppFormat writing en_GB correctly, not about which locale the app
+  // defaults to (core/l10n/app_locales_test.dart owns that) — pinned
+  // explicitly so it stays true whatever the app's own fallback is.
+  setUp(() => Intl.defaultLocale = 'en_GB');
+  tearDown(() => Intl.defaultLocale = null);
   // The customer's card writes its dates with AppFormat, in the app's en_GB locale.
   setUpAll(initializeDateFormatting);
 

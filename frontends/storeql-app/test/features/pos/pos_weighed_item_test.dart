@@ -6,6 +6,7 @@ import 'package:storeql_app/features/pos/pos_providers.dart';
 import 'package:storeql_app/features/pos/pos_receipt_data.dart';
 import 'package:storeql_app/features/pos/pos_weighed_item.dart';
 
+import 'package:intl/intl.dart';
 // ---------------------------------------------------------------------------
 // Selling by weight at the till. The line quantity was a whole number, so the
 // till could not ring up 0.375 kg of anything.
@@ -41,6 +42,12 @@ const _cheese = PosLine(
 );
 
 void main() {
+  // This file's UI dates (e.g. day-before-month, "Sept") are about
+  // AppFormat writing en_GB correctly, not about which locale the app
+  // defaults to (core/l10n/app_locales_test.dart owns that) — pinned
+  // explicitly so it stays true whatever the app's own fallback is.
+  setUp(() => Intl.defaultLocale = 'en_GB');
+  tearDown(() => Intl.defaultLocale = null);
   setUpAll(initializeDateFormatting);
   group('fetchSaleUnit', () {
     test('an item sold by the each', () async {

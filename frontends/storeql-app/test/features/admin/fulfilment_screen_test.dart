@@ -5,6 +5,7 @@ import 'package:flutter/material.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:flutter_test/flutter_test.dart';
 import 'package:intl/date_symbol_data_local.dart';
+import 'package:intl/intl.dart';
 import 'package:storeql_app/core/auth/auth_notifier.dart';
 import 'package:storeql_app/core/network/api_client.dart';
 import 'package:storeql_app/features/admin/fulfilment_screen.dart';
@@ -54,10 +55,11 @@ class _Server implements HttpClientAdapter {
   @override
   void close({bool force = false}) {}
 
-  String _order(String id, String type, {String? handover}) {
+  String _order(String id, String type, {String? handover, String? slot}) {
     final tail = handover == null ? '' : ',"handover":$handover';
+    final slotTail = slot == null ? '' : ',"slot":$slot';
     return '{"id":"$id","storeId":"$_leeds","channel":"ONLINE","fulfilmentType":"$type","status":"FULFILLED",'
-        '"total":12.5,"currency":"GBP","createdAt":"2026-09-25T09:00:00Z"$tail}';
+        '"total":12.5,"currency":"GBP","createdAt":"2026-09-25T09:00:00Z"$tail$slotTail}';
   }
 
   @override
@@ -126,7 +128,7 @@ class _Server implements HttpClientAdapter {
         return jsonResponse('{"data":[${_order(_gone, 'DELIVERY', handover: '{"kind":"DISPATCHED","carrier":"DPD","reference":"1Z999","at":"2026-09-25T10:00:00Z"}')}]}');
       }
       if (q['fulfilmentType'] == 'DELIVERY') {
-        return jsonResponse('{"data":[${_order(_packed, 'DELIVERY')},${_order(_packed2, 'DELIVERY')}]}');
+        return jsonResponse('{"data":[${_order(_packed, 'DELIVERY', slot: '{"date":"2026-09-27","startTime":"17:00","endTime":"19:00","timeZone":"Europe/London"}')},${_order(_packed2, 'DELIVERY')}]}');
       }
       if (q['fulfilmentType'] == 'PICKUP') return jsonResponse('{"data":[${_order(_ready, 'PICKUP')}]}');
     }
@@ -176,6 +178,9 @@ String? _handedFrom(_Server server, String store) {
 
 void main() {
   setUpAll(initializeDateFormatting);
+  // The windows below are read the British way (Sun 27 Sept): pinned, since the
+  // app itself assumes no country for English.
+  setUp(() => Intl.defaultLocale = 'en_GB');
 
   testWidgets('the queue is shown by stage for the store, and a warehouse is never offered',
       (tester) async {
@@ -391,5 +396,38 @@ void main() {
     final local = now.toLocal();
     expect(_handedFrom(server, _dark),
         DateTime(local.year, local.month, local.day).toUtc().toIso8601String());
+  });
+
+  // ── delivery and collection slots ──────────────────────────────────────────
+
+  testWidgets('a packed order shows its window, in the store\'s own local clock',
+      (tester) async {
+    await _open(tester);
+    final says = find.descendant(
+        of: find.byKey(const Key('queued-$_packed')),
+        matching: find.textContaining('Sun 27 Sept, 17:00–19:00'));
+    expect(says, findsOneWidget);
+    // The row names the kind once, at its start — never again beside the window.
+    final text = tester.widget<Text>(says).data!;
+    expect(text.startsWith('Delivery · '), isTrue, reason: text);
+    expect('Delivery'.allMatches(text).length, 1, reason: text);
+    // The other packed order carries no window at all.
+    expect(
+        find.descendant(
+            of: find.byKey(const Key('queued-$_packed2')),
+            matching: find.textContaining('17:00–19:00')),
+        findsNothing);
+  });
+
+  testWidgets('packed and ready are asked in window order (sort=slot)', (tester) async {
+    final server = await _open(tester);
+    final packedRead = server.requests.lastWhere((r) =>
+        r.method == 'GET' && r.path.endsWith('/orders') && r.queryParameters['fulfilmentType'] == 'DELIVERY');
+    final readyRead = server.requests.lastWhere((r) =>
+        r.method == 'GET' && r.path.endsWith('/orders') && r.queryParameters['fulfilmentType'] == 'PICKUP');
+    expect(packedRead.queryParameters['sort'], 'slot');
+    expect(readyRead.queryParameters['sort'], 'slot');
+    // Handed over today is sorted by when it happened, not by any window.
+    expect(_handedToday(server, _leeds).queryParameters['sort'], isNull);
   });
 }

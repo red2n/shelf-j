@@ -10,6 +10,7 @@ import 'package:intl/date_symbol_data_local.dart';
 import 'package:storeql_app/core/network/api_client.dart';
 import 'package:storeql_app/features/admin/statutory_returns_screen.dart';
 
+import 'package:intl/intl.dart';
 // ---------------------------------------------------------------------------
 // The statutory calendar (07.14): what is outstanding, what each period says,
 // and what recording a filing sends.
@@ -108,6 +109,12 @@ String _period(String code, String start, String due, String state,
 }
 
 void main() {
+  // This file's UI dates (e.g. day-before-month, "Sept") are about
+  // AppFormat writing en_GB correctly, not about which locale the app
+  // defaults to (core/l10n/app_locales_test.dart owns that) — pinned
+  // explicitly so it stays true whatever the app's own fallback is.
+  setUp(() => Intl.defaultLocale = 'en_GB');
+  tearDown(() => Intl.defaultLocale = null);
   setUpAll(initializeDateFormatting);
 
   testWidgets('what is outstanding comes first, and an overdue one is named as overdue',

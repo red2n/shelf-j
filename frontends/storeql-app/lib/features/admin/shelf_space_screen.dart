@@ -2,6 +2,8 @@ import 'package:flutter/material.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:flutter_riverpod/legacy.dart';
 
+import '../../core/auth/auth_notifier.dart';
+import '../../core/auth/auth_state.dart';
 import '../../core/constants.dart';
 import '../../core/format.dart';
 import '../../core/network/api_client.dart';
@@ -247,6 +249,12 @@ class ShelfSpaceScreen extends ConsumerWidget {
   @override
   Widget build(BuildContext context, WidgetRef ref) {
     final storesAsync = ref.watch(storesProvider);
+    final auth = ref.watch(authNotifierProvider).value;
+    final isManager = auth is AuthAuthenticated && auth.isManager;
+    // A store-bound storekeeper sees only the stores they work in, which is
+    // also all the shelf-gap report will let them read.
+    final allowedStores =
+        auth is AuthAuthenticated ? auth.storeIds : const <String>[];
 
     if (storesAsync.hasError) {
       return ErrorView(
@@ -257,7 +265,9 @@ class ShelfSpaceScreen extends ConsumerWidget {
     if (!storesAsync.hasValue) {
       return const LoadingView(label: 'Loading stores…');
     }
-    final stores = storesAsync.value!;
+    final stores = storesAsync.value!
+        .where((s) => allowedStores.isEmpty || allowedStores.contains(s.id))
+        .toList();
     if (stores.isEmpty) {
       return const EmptyState(
         icon: Icons.store_outlined,
@@ -268,8 +278,23 @@ class ShelfSpaceScreen extends ConsumerWidget {
     final storeId = stores.any((s) => s.id == chosen) ? chosen! : stores.first.id;
     final gutter = context.pageGutter;
 
+    // A storekeeper works to the gaps only: shelving and range are a buyer's
+    // decisions, read from management-only endpoints the router already
+    // keeps a storekeeper's other pages off.
+    final tabs = [
+      const Tab(text: 'Gaps to fill'),
+      if (isManager) const Tab(text: 'Shelving'),
+      if (isManager) const Tab(text: 'Range'),
+    ];
+    final views = [
+      _GapsTab(storeId: storeId),
+      if (isManager) _FixturesTab(storeId: storeId),
+      if (isManager) const _RangeTab(),
+    ];
+
     return DefaultTabController(
-      length: 3,
+      key: ValueKey(isManager),
+      length: tabs.length,
       child: Column(
         crossAxisAlignment: CrossAxisAlignment.stretch,
         children: [
@@ -312,18 +337,10 @@ class ShelfSpaceScreen extends ConsumerWidget {
             padding: EdgeInsetsDirectional.only(start: gutter - AppSpacing.lg),
             labelPadding:
                 const EdgeInsetsDirectional.symmetric(horizontal: AppSpacing.lg),
-            tabs: const [
-              Tab(text: 'Gaps to fill'),
-              Tab(text: 'Shelving'),
-              Tab(text: 'Range'),
-            ],
+            tabs: tabs,
           ),
           Expanded(
-            child: TabBarView(children: [
-              _GapsTab(storeId: storeId),
-              _FixturesTab(storeId: storeId),
-              const _RangeTab(),
-            ]),
+            child: TabBarView(children: views),
           ),
         ],
       ),

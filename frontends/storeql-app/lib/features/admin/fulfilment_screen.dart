@@ -9,6 +9,7 @@ import '../../core/network/api_client.dart';
 import '../../core/network/api_error.dart';
 import '../../core/spacing.dart';
 import '../../shared/util/short_ref.dart';
+import '../../shared/util/slot_label.dart';
 import '../../shared/util/zone_day.dart';
 import '../../shared/widgets/empty_state.dart';
 import '../../shared/widgets/error_view.dart';
@@ -47,6 +48,10 @@ class QueuedOrder {
   final String? handoverCollectedBy;
   final String? handoverAt;
 
+  /// The window this order holds (delivery-and-collection-slots); null for an
+  /// order with none.
+  final OrderSlot? slot;
+
   const QueuedOrder({
     required this.id,
     required this.storeId,
@@ -60,6 +65,7 @@ class QueuedOrder {
     this.handoverReference,
     this.handoverCollectedBy,
     this.handoverAt,
+    this.slot,
   });
 
   factory QueuedOrder.fromJson(Map<String, dynamic> j) {
@@ -77,6 +83,7 @@ class QueuedOrder {
       handoverReference: h?['reference'] as String?,
       handoverCollectedBy: h?['collectedBy'] as String?,
       handoverAt: h?['at'] as String?,
+      slot: OrderSlot.maybe(j['slot']),
     );
   }
 
@@ -245,22 +252,25 @@ Future<List<QueuedOrder>> _queue(Ref ref, Map<String, dynamic> query) async {
       .toList();
 }
 
-/// Picked deliveries waiting for the courier.
+/// Picked deliveries waiting for the courier, in window order (a delivery
+/// with no window sorts last) — so the round due soonest is dispatched first.
 final packedProvider =
     FutureProvider.autoDispose.family<List<QueuedOrder>, String>((ref, storeId) => _queue(ref, {
           'store': storeId,
           'status': 'FULFILLED',
           'fulfilmentType': 'DELIVERY',
           'handover': 'PENDING',
+          'sort': 'slot',
         }));
 
-/// Picked pickups waiting for their shopper.
+/// Picked pickups waiting for their shopper, in window order.
 final readyProvider =
     FutureProvider.autoDispose.family<List<QueuedOrder>, String>((ref, storeId) => _queue(ref, {
           'store': storeId,
           'status': 'FULFILLED',
           'fulfilmentType': 'PICKUP',
           'handover': 'PENDING',
+          'sort': 'slot',
         }));
 
 /// Handed over today, dispatched or collected: since the store's own midnight,
@@ -899,10 +909,17 @@ class _Stage extends StatelessWidget {
                       Card(
                         key: Key('queued-${o.id}'),
                         child: Builder(builder: (context) {
+                          final slot = o.slot;
                           final says = Text(
                             '${o.fulfilmentType == 'DELIVERY' ? 'Delivery' : 'Collection'} · '
                             '${AppFormat.money(o.total, currencyCode: o.currency)} · placed ${AppFormat.dateTime(o.createdAt)}'
-                            '${o.handoverAt == null ? '' : ' · handed over ${AppFormat.dateTime(o.handoverAt)}'}',
+                            '${o.handoverAt == null ? '' : ' · handed over ${AppFormat.dateTime(o.handoverAt)}'}'
+                            // The window this order holds (delivery-and-collection-slots),
+                            // worded with which kind it is, in the store's own local date and
+                            // clock — never converted here.
+                            // The row already says delivery or collection first, so
+                            // the window is only when it is.
+                            '${slot == null ? '' : ' · ${slotWhen(date: slot.date, startTime: slot.startTime, endTime: slot.endTime)}'}',
                           );
                           final end = action != null
                               ? action!(o)

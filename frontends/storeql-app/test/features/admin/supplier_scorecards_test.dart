@@ -9,6 +9,7 @@ import 'package:storeql_app/features/admin/supplier_scorecards.dart';
 
 import '../../support/fake_api.dart';
 
+import 'package:intl/intl.dart';
 // ---------------------------------------------------------------------------
 // The Suppliers tab's scorecards: ranked by score with a grade each, the
 // figures the score is made from on one line, a supplier with nothing to judge
@@ -71,6 +72,12 @@ Future<_Server> _pump(WidgetTester tester) async {
 }
 
 void main() {
+  // This file's UI dates (e.g. day-before-month, "Sept") are about
+  // AppFormat writing en_GB correctly, not about which locale the app
+  // defaults to (core/l10n/app_locales_test.dart owns that) — pinned
+  // explicitly so it stays true whatever the app's own fallback is.
+  setUp(() => Intl.defaultLocale = 'en_GB');
+  tearDown(() => Intl.defaultLocale = null);
   setUpAll(initializeDateFormatting);
   testWidgets('suppliers are ranked with a grade and the figures the score is made from',
       (tester) async {

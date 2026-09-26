@@ -45,6 +45,14 @@ public class OrderRepository extends BaseOutboxRepository {
   /** processed_events key for the PaymentRefunded → order status/accumulation path (dedupe). */
   private static final String REFUND_CONSUMER = "order-svc/payment-refunded";
 
+  /**
+   * The sort key an order with no delivery or collection slot uses for {@code ?sort=slot} (delivery
+   * and collection slots): far enough in the future that a real occurrence never reaches it, so
+   * ordering by {@code COALESCE(slot_starts_at, this)} puts every windowless order after every one
+   * that holds a place, and ties among them are broken by id as usual.
+   */
+  public static final Instant NO_SLOT_SORT_KEY = Instant.parse("9999-12-31T23:59:59Z");
+
   // ── Orders ────────────────────────────────────────────────────────────────
 
   /**
@@ -82,13 +90,43 @@ public class OrderRepository extends BaseOutboxRepository {
       List<com.storeql.order.client.PricingClient.AppliedPromotion> appliedPromotions,
       List<com.storeql.order.domain.Domain.OrderDeposit> deposits) {
     return inTx(
-        c ->
-            createOrderTx(
+        c -> {
+          // Delivery and collection slots: the place is taken once, before the insert that would
+          // otherwise discover — too late to matter — that it was the one over capacity. Skipped
+          // entirely on a replay (this key already stands): the first placement already took the
+          // place, and the insert below will find the duplicate and let the caller replay it.
+          if (order.slotWindowId() != null
+              && !alreadyPlacedTx(c, order.tenantId(), order.idempotencyKey())) {
+            FulfilmentWindowRepository.claimTx(
                 c,
-                new NewOrder(order, items, event, discount, appliedPromotions, deposits),
-                null,
-                null),
+                order.tenantId(),
+                order.storeId(),
+                order.fulfilmentType(),
+                order.slotWindowId(),
+                order.slotStartsAt(),
+                java.time.ZoneId.of(order.slotTimeZone()));
+          }
+          return createOrderTx(
+              c,
+              new NewOrder(order, items, event, discount, appliedPromotions, deposits),
+              null,
+              null);
+        },
         "create order");
+  }
+
+  /** Whether an order under this key already stands (Idempotency-Key replay). */
+  private boolean alreadyPlacedTx(Connection c, UUID tenantId, String idempotencyKey)
+      throws SQLException {
+    if (idempotencyKey == null) return false;
+    try (PreparedStatement ps =
+        c.prepareStatement("SELECT 1 FROM orders WHERE tenant_id=? AND idempotency_key=?")) {
+      ps.setObject(1, tenantId);
+      ps.setString(2, idempotencyKey);
+      try (ResultSet rs = ps.executeQuery()) {
+        return rs.next();
+      }
+    }
   }
 
   /**
@@ -139,6 +177,21 @@ public class OrderRepository extends BaseOutboxRepository {
                   409, "ORDER_DUPLICATE_KEY", "duplicate idempotency key", List.of(), sqle);
             throw sqle;
           }
+          // The group's own insert having just succeeded (a replay would have failed above and
+          // never reached here), this checkout is placing for the first time: the window is
+          // claimed once for the whole group — every part carries the same occurrence and it
+          // takes one place (delivery and collection slots) — from whichever part carries it.
+          Order first = parts.get(0).order();
+          if (first.slotWindowId() != null) {
+            FulfilmentWindowRepository.claimTx(
+                c,
+                first.tenantId(),
+                first.storeId(),
+                first.fulfilmentType(),
+                first.slotWindowId(),
+                first.slotStartsAt(),
+                java.time.ZoneId.of(first.slotTimeZone()));
+          }
           for (int i = 0; i < parts.size(); i++) createOrderTx(c, parts.get(i), group.id(), i);
           return null;
         },
@@ -149,7 +202,8 @@ public class OrderRepository extends BaseOutboxRepository {
   public Optional<com.storeql.order.domain.OrderGroup> findGroup(UUID tenantId, UUID groupId) {
     List<com.storeql.order.domain.OrderGroup.Part> parts =
         query(
-            "SELECT o.id, o.store_id, o.status, o.total,"
+            "SELECT o.id, o.store_id, o.status, o.total, o.slot_starts_at, o.slot_ends_at,"
+                + " o.slot_time_zone,"
                 + " (SELECT COALESCE(SUM(i.qty), 0) FROM order_items i"
                 + "   WHERE i.tenant_id = o.tenant_id AND i.order_id = o.id) AS units"
                 + " FROM orders o WHERE o.tenant_id = ? AND o.group_id = ? ORDER BY o.group_part",
@@ -163,7 +217,10 @@ public class OrderRepository extends BaseOutboxRepository {
                     rs.getObject("store_id", UUID.class),
                     rs.getString("status"),
                     rs.getBigDecimal("total"),
-                    rs.getBigDecimal("units")),
+                    rs.getBigDecimal("units"),
+                    toInstant(rs.getObject("slot_starts_at", OffsetDateTime.class)),
+                    toInstant(rs.getObject("slot_ends_at", OffsetDateTime.class)),
+                    rs.getString("slot_time_zone")),
             "load order group parts");
     return query(
             "SELECT id, tenant_id, customer_id, login_id, total, currency, created_at"
@@ -231,8 +288,8 @@ public class OrderRepository extends BaseOutboxRepository {
                 + "  tax_exempt,exempt_reason,delivery_line1,delivery_line2,delivery_city,"
                 + "  delivery_postal_code,delivery_recipient_name,delivery_recipient_phone,contact_phone,"
                 + "  payment_method,promotion_discount,seller_user_id,group_id,group_part,"
-                + "  allow_substitutions)"
-                + " VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)")) {
+                + "  allow_substitutions,slot_window_id,slot_starts_at,slot_ends_at,slot_time_zone)"
+                + " VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)")) {
       ps.setObject(1, order.id());
       ps.setObject(2, order.tenantId());
       ps.setObject(3, order.storeId());
@@ -268,6 +325,12 @@ public class OrderRepository extends BaseOutboxRepository {
       if (groupPart == null) ps.setNull(29, java.sql.Types.SMALLINT);
       else ps.setInt(29, groupPart);
       ps.setBoolean(30, order.allowSubstitutions());
+      ps.setObject(31, order.slotWindowId());
+      ps.setObject(
+          32, order.slotStartsAt() != null ? java.sql.Timestamp.from(order.slotStartsAt()) : null);
+      ps.setObject(
+          33, order.slotEndsAt() != null ? java.sql.Timestamp.from(order.slotEndsAt()) : null);
+      ps.setString(34, order.slotTimeZone());
       ps.executeUpdate();
     } catch (java.sql.SQLException sqle) {
       if (UNIQUE_VIOLATION.equals(sqle.getSQLState()))
@@ -315,7 +378,8 @@ public class OrderRepository extends BaseOutboxRepository {
                 + " idempotency_key, created_at, updated_at, tax_exempt, exempt_reason,"
                 + " delivery_line1, delivery_line2, delivery_city, delivery_postal_code,"
                 + " delivery_recipient_name, delivery_recipient_phone, contact_phone, payment_method,"
-                + " seller_user_id, allow_substitutions"
+                + " seller_user_id, allow_substitutions, slot_window_id, slot_starts_at, slot_ends_at,"
+                + " slot_time_zone"
                 + " FROM orders WHERE tenant_id=? AND idempotency_key=?",
             ps -> {
               ps.setObject(1, tenantId);
@@ -348,8 +412,10 @@ public class OrderRepository extends BaseOutboxRepository {
    *     {@code handedFrom}
    * @param from inclusive lower bound on creation time, or {@code null}
    * @param to exclusive upper bound on creation time, or {@code null}
-   * @param afterCreatedAt cursor timestamp, or {@code null} for the first page
-   * @param afterId cursor id, breaking ties on identical timestamps
+   * @param afterKey cursor sort-key value, or {@code null} for the first page — {@code created_at}
+   *     for the usual order, or the slot's effective instant ({@link #NO_SLOT_SORT_KEY} for a
+   *     windowless order) when {@code sortBySlot}
+   * @param afterId cursor id, breaking ties on identical sort-key values
    * @param limit maximum rows; callers pass one more than the page size to detect a next page
    * @return the page of orders
    */
@@ -366,12 +432,60 @@ public class OrderRepository extends BaseOutboxRepository {
       Instant handedTo,
       Instant from,
       Instant to,
-      Instant afterCreatedAt,
+      Instant afterKey,
       UUID afterId,
       int limit) {
+    return listOrders(
+        tenantId,
+        storeId,
+        customerId,
+        loginId,
+        channel,
+        status,
+        fulfilmentType,
+        handedOver,
+        handedFrom,
+        handedTo,
+        from,
+        to,
+        afterKey,
+        afterId,
+        limit,
+        false);
+  }
+
+  /**
+   * As above; {@code sortBySlot} orders by the delivery or collection window's start instead of
+   * {@code created_at} (delivery and collection slots) — soonest first, an order with no window
+   * sorting after every one that has one (by comparing {@code COALESCE(slot_starts_at,
+   * NO_SLOT_SORT_KEY)}, a fixed sentinel far enough in the future that no real occurrence ever
+   * reaches it), then by id, so the Fulfilment queue can be worked in the order it must be.
+   */
+  public List<Order> listOrders(
+      UUID tenantId,
+      UUID storeId,
+      UUID customerId,
+      UUID loginId,
+      String channel,
+      String status,
+      String fulfilmentType,
+      Boolean handedOver,
+      Instant handedFrom,
+      Instant handedTo,
+      Instant from,
+      Instant to,
+      Instant afterKey,
+      UUID afterId,
+      int limit,
+      boolean sortBySlot) {
     if ((handedFrom != null || handedTo != null) && !Boolean.TRUE.equals(handedOver)) {
       throw new IllegalArgumentException("a handover window needs handedOver = true");
     }
+    // A fixed, hard-coded sentinel — never user input — so it is safe to inline rather than bind.
+    String sortExpr =
+        sortBySlot
+            ? "COALESCE(slot_starts_at, TIMESTAMPTZ '" + NO_SLOT_SORT_KEY + "')"
+            : "created_at";
     StringBuilder sql =
         new StringBuilder(
             "SELECT id, tenant_id, store_id, customer_id, login_id, channel, fulfilment_type, status,"
@@ -379,7 +493,8 @@ public class OrderRepository extends BaseOutboxRepository {
                 + " idempotency_key, created_at, updated_at, tax_exempt, exempt_reason,"
                 + " delivery_line1, delivery_line2, delivery_city, delivery_postal_code,"
                 + " delivery_recipient_name, delivery_recipient_phone, contact_phone, payment_method,"
-                + " seller_user_id, allow_substitutions"
+                + " seller_user_id, allow_substitutions, slot_window_id, slot_starts_at, slot_ends_at,"
+                + " slot_time_zone"
                 + " FROM orders o WHERE tenant_id=?");
     if (storeId != null) sql.append(" AND store_id=?");
     if (customerId != null) sql.append(" AND customer_id=?");
@@ -400,9 +515,19 @@ public class OrderRepository extends BaseOutboxRepository {
     }
     if (from != null) sql.append(" AND created_at >= ?");
     if (to != null) sql.append(" AND created_at <= ?");
-    // Keyset pagination: rows strictly after the cursor in (created_at DESC, id DESC) order.
-    if (afterCreatedAt != null && afterId != null) sql.append(" AND (created_at, id) < (?, ?)");
-    sql.append(" ORDER BY created_at DESC, id DESC LIMIT ?");
+    // Keyset pagination: rows strictly after the cursor in the chosen sort order.
+    if (afterKey != null && afterId != null) {
+      sql.append(
+          sortBySlot
+              ? " AND (" + sortExpr + ", id) > (?, ?)"
+              : " AND (" + sortExpr + ", id) < (?, ?)");
+    }
+    sql.append(" ORDER BY ")
+        .append(sortExpr)
+        .append(sortBySlot ? " ASC" : " DESC")
+        .append(", id ")
+        .append(sortBySlot ? "ASC" : "DESC")
+        .append(" LIMIT ?");
     return query(
         sql.toString(),
         ps -> {
@@ -419,8 +544,8 @@ public class OrderRepository extends BaseOutboxRepository {
           if (handedTo != null) ps.setObject(i++, handedTo.atOffset(java.time.ZoneOffset.UTC));
           if (from != null) ps.setObject(i++, from.atOffset(java.time.ZoneOffset.UTC));
           if (to != null) ps.setObject(i++, to.atOffset(java.time.ZoneOffset.UTC));
-          if (afterCreatedAt != null && afterId != null) {
-            ps.setObject(i++, afterCreatedAt.atOffset(java.time.ZoneOffset.UTC));
+          if (afterKey != null && afterId != null) {
+            ps.setObject(i++, afterKey.atOffset(java.time.ZoneOffset.UTC));
             ps.setObject(i++, afterId);
           }
           ps.setInt(i, limit);
@@ -835,7 +960,8 @@ public class OrderRepository extends BaseOutboxRepository {
             + " idempotency_key, created_at, updated_at, tax_exempt, exempt_reason,"
             + " delivery_line1, delivery_line2, delivery_city, delivery_postal_code,"
             + " delivery_recipient_name, delivery_recipient_phone, contact_phone, payment_method,"
-            + " seller_user_id, allow_substitutions"
+            + " seller_user_id, allow_substitutions, slot_window_id, slot_starts_at, slot_ends_at,"
+            + " slot_time_zone"
             + " FROM orders WHERE tenant_id=? AND store_id=? AND channel='ONLINE'"
             + " AND fulfilment_type IN ('PICKUP','DELIVERY')"
             + " AND status IN ('CONFIRMED','PARTIALLY_FULFILLED')"
@@ -997,7 +1123,8 @@ public class OrderRepository extends BaseOutboxRepository {
                 + " idempotency_key, created_at, updated_at, tax_exempt, exempt_reason,"
                 + " delivery_line1, delivery_line2, delivery_city, delivery_postal_code,"
                 + " delivery_recipient_name, delivery_recipient_phone, contact_phone, payment_method,"
-                + " seller_user_id, allow_substitutions"
+                + " seller_user_id, allow_substitutions, slot_window_id, slot_starts_at, slot_ends_at,"
+                + " slot_time_zone"
                 + " FROM orders WHERE tenant_id=? AND id=?",
             ps -> {
               ps.setObject(1, tenantId);
@@ -1935,7 +2062,8 @@ public class OrderRepository extends BaseOutboxRepository {
             + " idempotency_key, created_at, updated_at, tax_exempt, exempt_reason,"
             + " delivery_line1, delivery_line2, delivery_city, delivery_postal_code,"
             + " delivery_recipient_name, delivery_recipient_phone, contact_phone, payment_method,"
-            + " seller_user_id, allow_substitutions"
+            + " seller_user_id, allow_substitutions, slot_window_id, slot_starts_at, slot_ends_at,"
+            + " slot_time_zone"
             + " FROM orders WHERE tenant_id=? AND (customer_id=? OR login_id=?)"
             + " ORDER BY created_at DESC, id DESC LIMIT ?",
         ps -> {
@@ -2742,7 +2870,8 @@ public class OrderRepository extends BaseOutboxRepository {
                 + " idempotency_key, created_at, updated_at, tax_exempt, exempt_reason,"
                 + " delivery_line1, delivery_line2, delivery_city, delivery_postal_code,"
                 + " delivery_recipient_name, delivery_recipient_phone, contact_phone, payment_method,"
-                + " seller_user_id, allow_substitutions"
+                + " seller_user_id, allow_substitutions, slot_window_id, slot_starts_at, slot_ends_at,"
+                + " slot_time_zone"
                 + " FROM orders WHERE tenant_id=? AND id=?")) {
       ps.setObject(1, tenantId);
       ps.setObject(2, orderId);
@@ -2904,7 +3033,11 @@ public class OrderRepository extends BaseOutboxRepository {
         rs.getString("payment_method"),
         rs.getBigDecimal("promotion_discount"),
         rs.getObject("seller_user_id", UUID.class),
-        rs.getBoolean("allow_substitutions"));
+        rs.getBoolean("allow_substitutions"),
+        rs.getObject("slot_window_id", UUID.class),
+        toInstant(rs.getObject("slot_starts_at", OffsetDateTime.class)),
+        toInstant(rs.getObject("slot_ends_at", OffsetDateTime.class)),
+        rs.getString("slot_time_zone"));
   }
 
   /**

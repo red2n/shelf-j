@@ -48,8 +48,10 @@ List<Override> _shop({Future<List<StoreProduct>>? products}) => [
           ]),
       storefrontConfigProvider.overrideWith((ref) async =>
           const StorefrontConfig(showPrices: true, storeName: 'Corner Shop')),
-      storefrontAvailabilityProvider
-          .overrideWith((ref) async => const {'v-1': true, 'v-2': true}),
+      storefrontAvailabilityProvider.overrideWith((ref) async => const {
+        'v-1': StockInfo(inStock: true),
+        'v-2': StockInfo(inStock: true),
+      }),
       storefrontPromotionsProvider.overrideWith((ref) async => const []),
       storefrontCategoriesProvider.overrideWith((ref) async => const [
             StoreCategory(id: 'c-1', name: 'Pantry'),
@@ -354,6 +356,39 @@ void main() {
         expect(box.bottom, lessThanOrEqualTo(row.bottom + 0.5));
       }
       expect(tester.takeException(), isNull);
+      await _leave(tester);
+    });
+
+    testWidgets(
+        'the fallback offers promise nothing and name no currency — the '
+        "second banner is the store's own name, not a delivery threshold",
+        (tester) async {
+      await _pumpShop(tester, _shop());
+      final carousel = find.byType(PageView);
+      expect(
+          find.descendant(
+              of: carousel, matching: find.text('Everyday low prices')),
+          findsOneWidget);
+
+      await tester.tap(find.byWidgetPredicate(
+          (w) => w is Semantics && w.properties.label == 'Offer 2 of 3'));
+      await tester.pumpAndSettle();
+
+      expect(find.descendant(of: carousel, matching: find.text('Corner Shop')),
+          findsOneWidget,
+          reason: "the store's own name, from storefrontConfigProvider — "
+              'never a hard-coded price threshold that assumes a currency '
+              'no one set');
+      expect(
+          find.descendant(
+              of: carousel, matching: find.text('Thanks for shopping with us')),
+          findsOneWidget);
+      expect(find.descendant(of: carousel, matching: find.textContaining('£')),
+          findsNothing);
+      expect(
+          find.descendant(
+              of: carousel, matching: find.textContaining('delivery over')),
+          findsNothing);
       await _leave(tester);
     });
   });

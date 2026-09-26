@@ -150,6 +150,12 @@ const _adjustment = 'Stock adjustment · -3 × Oat milk 1L';
 const _discount = 'Discount · £2.00 · authorised as manager';
 
 void main() {
+  // This file's UI dates (e.g. day-before-month, "Sept") are about
+  // AppFormat writing en_GB correctly, not about which locale the app
+  // defaults to (core/l10n/app_locales_test.dart owns that) — pinned
+  // explicitly so it stays true whatever the app's own fallback is.
+  setUp(() => Intl.defaultLocale = 'en_GB');
+  tearDown(() => Intl.defaultLocale = null);
   setUpAll(initializeDateFormatting);
 
   testWidgets('both sources are one timeline, newest first, naming who did what', (tester) async {

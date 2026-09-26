@@ -126,7 +126,12 @@ public final class Dtos {
       String createdAt,
       String updatedAt,
       @Schema(description = "The language their messages are written in; null when not said")
-          String preferredLanguage) {}
+          String preferredLanguage,
+      @Schema(
+              description =
+                  "phone normalised to E.164 against the business's own countries; null"
+                      + " when phone is null or none of them parse it.")
+          String phoneE164) {}
 
   @Schema(name = "AddressResponse", description = "A customer address.")
   public record AddressResponse(
@@ -183,7 +188,7 @@ public final class Dtos {
 
   @Schema(
       name = "LoyaltyProgrammeResponse",
-      description = "The business's loyalty programme (13.x), or the platform's default.")
+      description = "The business's loyalty programme, or the platform's default.")
   public record LoyaltyProgrammeResponse(
       @Schema(description = "Months a point lives; absent for never.") Integer expiryMonths,
       @Schema(description = "Months of earning that count towards a tier; absent for a lifetime.")

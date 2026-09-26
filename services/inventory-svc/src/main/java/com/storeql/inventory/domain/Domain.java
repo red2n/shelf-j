@@ -205,8 +205,31 @@ public final class Domain {
   /**
    * Whether a shopper can buy a variant at a store: from the shelf, or from the supplier per order
    * (dropship — stock the business never holds).
+   *
+   * @param available the shelf quantity available at the store named on the read (on hand less
+   *     reservations and bonded stock, {@code Level.available()}); null for a dropship line, which
+   *     holds no shelf stock, and whenever the read named no store. Feeds {@link OnlyLeft#compute}
+   *     for the storefront's "only N left"; never returned to the storefront as a number itself.
    */
-  public record Availability(UUID variantId, boolean inStock, boolean dropship) {}
+  public record Availability(
+      UUID variantId, boolean inStock, boolean dropship, BigDecimal available) {}
+
+  /**
+   * "Only N left" on the storefront: the business-wide threshold, off until an owner or a
+   * business-wide manager sets one. One row per tenant.
+   *
+   * @param lowStockThreshold 1..1000, or null while the feature is off
+   * @param updatedBy who last changed it, or null when it has never been set
+   * @param updatedAt when, or null when it has never been set
+   */
+  public record StorefrontStockSettings(
+      UUID tenantId, Integer lowStockThreshold, UUID updatedBy, Instant updatedAt) {
+
+    /** The default before any business has ever set a threshold: off, and by nobody. */
+    public static StorefrontStockSettings off(UUID tenantId) {
+      return new StorefrontStockSettings(tenantId, null, null, null);
+    }
+  }
 
   /**
    * Who caused a stock movement, and why (SJ-D4).

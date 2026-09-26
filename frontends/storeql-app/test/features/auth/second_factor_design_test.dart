@@ -20,6 +20,7 @@ import 'package:storeql_app/features/auth/security_screen.dart';
 
 import '../../support/fake_api.dart';
 
+import 'package:intl/intl.dart';
 // ---------------------------------------------------------------------------
 // How the second-factor screens look (the design system's SignIn cards): the
 // security page's cards stand apart and its dates read as dates; the required
@@ -91,6 +92,12 @@ Future<void> _pump(
 }
 
 void main() {
+  // This file's UI dates (e.g. day-before-month, "Sept") are about
+  // AppFormat writing en_GB correctly, not about which locale the app
+  // defaults to (core/l10n/app_locales_test.dart owns that) — pinned
+  // explicitly so it stays true whatever the app's own fallback is.
+  setUp(() => Intl.defaultLocale = 'en_GB');
+  tearDown(() => Intl.defaultLocale = null);
   final realPasskeys = passkeys;
   setUpAll(initializeDateFormatting);
   tearDown(() => passkeys = realPasskeys);

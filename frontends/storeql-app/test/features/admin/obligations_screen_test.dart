@@ -8,6 +8,7 @@ import 'package:storeql_app/core/network/api_client.dart';
 import 'package:storeql_app/features/admin/obligations_screen.dart';
 import 'package:storeql_app/shared/widgets/status_badge.dart';
 
+import 'package:intl/intl.dart';
 // ---------------------------------------------------------------------------
 // The laws this business trades under: what is in force, what is coming, and
 // what the screen says when it has nothing or cannot find out.
@@ -67,6 +68,12 @@ const _gb = '{"data":{"country":"GB","on":"2026-09-14","obligations":['
     '"citation":"Tobacco and Vapes Act 2026","summary":"No tobacco is sold to anyone born on or after 1 January 2009.","status":"UPCOMING"}]}}';
 
 void main() {
+  // This file's UI dates (e.g. day-before-month, "Sept") are about
+  // AppFormat writing en_GB correctly, not about which locale the app
+  // defaults to (core/l10n/app_locales_test.dart owns that) — pinned
+  // explicitly so it stays true whatever the app's own fallback is.
+  setUp(() => Intl.defaultLocale = 'en_GB');
+  tearDown(() => Intl.defaultLocale = null);
   setUpAll(initializeDateFormatting);
 
   testWidgets('what is in force and what is coming, each with its day and instrument',

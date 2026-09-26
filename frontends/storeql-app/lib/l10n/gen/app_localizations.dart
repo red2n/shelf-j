@@ -367,6 +367,90 @@ abstract class AppLocalizations {
   /// In en, this message translates to:
   /// **'Your business\'s sign-in page could not sign you in. Ask its owner to check the settings.'**
   String get ssoErrGeneric;
+
+  /// Sign-in card / storefront sign-in dialog: link to the forgot-password request page (not shown on the platform console's login)
+  ///
+  /// In en, this message translates to:
+  /// **'Forgot password?'**
+  String get forgotPassword;
+
+  /// Forgot-password request page: heading
+  ///
+  /// In en, this message translates to:
+  /// **'Forgot your password?'**
+  String get forgotPasswordTitle;
+
+  /// Forgot-password request page: subheading, shown before anything is submitted
+  ///
+  /// In en, this message translates to:
+  /// **'Enter your email address. If an account uses it, we\'ll send a link to reset the password.'**
+  String get forgotPasswordIntro;
+
+  /// Forgot-password request page: submit button
+  ///
+  /// In en, this message translates to:
+  /// **'Send link'**
+  String get forgotPasswordSubmit;
+
+  /// Forgot-password request page: shown after ANY answer (known address, unknown, suspended, throttled, even a 400) — never a different word for a different case. Only a network failure (no answer at all) shows errNetwork instead.
+  ///
+  /// In en, this message translates to:
+  /// **'If an account uses that address, we have sent a link. It works for 30 minutes, once.'**
+  String get forgotPasswordSent;
+
+  /// Reset-password page (/reset-password/:token): heading
+  ///
+  /// In en, this message translates to:
+  /// **'Choose a new password'**
+  String get resetPasswordTitle;
+
+  /// Reset-password page: the new password field
+  ///
+  /// In en, this message translates to:
+  /// **'New password'**
+  String get resetPasswordNewLabel;
+
+  /// Reset-password page: the confirmation field
+  ///
+  /// In en, this message translates to:
+  /// **'Confirm new password'**
+  String get resetPasswordConfirmLabel;
+
+  /// Reset-password page: the confirmation field does not match the new password
+  ///
+  /// In en, this message translates to:
+  /// **'This does not match the new password above.'**
+  String get resetPasswordMismatch;
+
+  /// Reset-password page: submit button
+  ///
+  /// In en, this message translates to:
+  /// **'Change password'**
+  String get resetPasswordSubmit;
+
+  /// Reset-password page: success (200 reset:true) — no session is issued, so this leads to sign-in
+  ///
+  /// In en, this message translates to:
+  /// **'Password changed — sign in with it.'**
+  String get resetPasswordDone;
+
+  /// Reset-password page: success — a note for a shopper login, whose sign-in lives in the storefront, not the sign-in button shown alongside
+  ///
+  /// In en, this message translates to:
+  /// **'Shopping from the storefront? You can sign in from the shop.'**
+  String get resetPasswordDoneStorefront;
+
+  /// Reset-password page: 400 PASSWORD_RESET_TOKEN_INVALID (unknown, expired, used or replaced — one code, so the page cannot tell which)
+  ///
+  /// In en, this message translates to:
+  /// **'This link has expired or was already used — ask for a new one.'**
+  String get resetPasswordTokenInvalid;
+
+  /// Reset-password page: button on the token-invalid state, to the forgot-password request page
+  ///
+  /// In en, this message translates to:
+  /// **'Ask for a new link'**
+  String get resetPasswordRequestNew;
 }
 
 class _AppLocalizationsDelegate

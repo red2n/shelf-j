@@ -8,7 +8,7 @@ import java.util.List;
 import java.util.Map;
 import java.util.Optional;
 import java.util.Set;
-import java.util.function.Supplier;
+import java.util.function.Function;
 
 /**
  * Every message a business can put in its own words (13.x, message templates): what each is for,
@@ -84,7 +84,12 @@ public final class Catalogue {
       String why,
       List<Variable> variables,
       List<FormSpec> forms,
-      Supplier<Values> sample) {
+      /**
+       * The sample values a preview or a check is written out with, given the currency to show a
+       * money value in: the business's own home currency, or the platform's neutral one when it
+       * cannot be read. Never bakes in a literal currency itself.
+       */
+      Function<String, Values> sample) {
 
     public MessageType {
       variables = List.copyOf(variables);
@@ -133,22 +138,34 @@ public final class Catalogue {
           List.of(
               v("order", "TEXT", "The order's reference"),
               v("total", "MONEY", "What the order came to"),
+              v(
+                  "window",
+                  "TEXT",
+                  "The delivery or collection window, in the store's own time, when the order has"
+                      + " one; absent otherwise"),
               SHOP),
           List.of(
               new FormSpec(
                   Form.EMAIL,
                   "Your order is confirmed",
-                  "Thanks for your order!\n\nOrder {{order}}\nTotal: {{total}}\n\n— {{shop}}",
+                  "Thanks for your order!\n\nOrder {{order}}\nTotal:"
+                      + " {{total}}{{#window}}\n{{window}}{{/window}}\n\n— {{shop}}",
                   List.of(Set.of("order"))),
               new FormSpec(
                   Form.PUSH,
                   "Your order is confirmed",
                   "Order {{order}} — {{total}}",
                   List.of(Set.of("order")))),
-          () ->
+          currency ->
               Values.of()
                   .text("order", "01a0c42a-11a0-76f6-a69f-c3297150342e")
-                  .money("total", new BigDecimal("24.60"), "GBP")
+                  .money("total", new BigDecimal("24.60"), currency)
+                  .window(
+                      "window",
+                      true,
+                      Instant.parse("2026-09-26T16:00:00Z"),
+                      Instant.parse("2026-09-26T18:00:00Z"),
+                      "Europe/London")
                   .text("shop", "Hollins Grocers"));
 
   /**
@@ -175,7 +192,7 @@ public final class Catalogue {
                   "Ready to collect",
                   "Order {{order}} is ready to collect",
                   List.of(Set.of("order")))),
-          () ->
+          currency ->
               Values.of()
                   .text("order", "01a0c42a-11a0-76f6-a69f-c3297150342e")
                   .text("shop", "Hollins Grocers"));
@@ -205,7 +222,7 @@ public final class Catalogue {
                   "On its way",
                   "Order {{order}} left with {{carrier}}{{#reference}} — {{reference}}{{/reference}}",
                   List.of(Set.of("order")))),
-          () ->
+          currency ->
               Values.of()
                   .text("order", "01a0c42a-11a0-76f6-a69f-c3297150342e")
                   .text("carrier", "DPD")
@@ -239,12 +256,12 @@ public final class Catalogue {
                   "{{item}} was unavailable for order {{order}}{{#refund}} — {{refund}}"
                       + " refunded{{/refund}}",
                   List.of(Set.of("order")))),
-          () ->
+          currency ->
               Values.of()
                   .text("order", "01a0c42a-11a0-76f6-a69f-c3297150342e")
                   .text("item", "Braeburn apples 1kg")
                   .text("qty", "2")
-                  .money("refund", new BigDecimal("3.80"), "GBP")
+                  .money("refund", new BigDecimal("3.80"), currency)
                   .text("shop", "Hollins Grocers"));
 
   /** Substitutions for out-of-stock online lines: a stand-in went in the bag. */
@@ -279,13 +296,13 @@ public final class Catalogue {
                   "{{substitute}} replaces {{item}} in order {{order}}{{#refund}} — {{refund}}"
                       + " refunded{{/refund}}",
                   List.of(Set.of("order")))),
-          () ->
+          currency ->
               Values.of()
                   .text("order", "01a0c42a-11a0-76f6-a69f-c3297150342e")
                   .text("item", "Braeburn apples 1kg")
                   .text("substitute", "Gala apples 1kg")
                   .text("qty", "2")
-                  .money("refund", new BigDecimal("0.40"), "GBP")
+                  .money("refund", new BigDecimal("0.40"), currency)
                   .text("shop", "Hollins Grocers"));
 
   /** GPSR (EU) 2023/988 art.36(2): the parts a recall notice to a buyer must have. */
@@ -386,7 +403,7 @@ public final class Catalogue {
                   "Product safety recall — {{reference}}",
                   "Stop using {{product}}. Open the app for what to do and your remedy.",
                   List.of(Set.of("products", "product")))),
-          () ->
+          currency ->
               Values.of()
                   .text("reference", "RC-2026-014")
                   .items(
@@ -447,7 +464,7 @@ public final class Catalogue {
                       + "\nTotal paid: {{total}}\n\n"
                       + "Please quote {{reference}} in any query about this payment.\n",
                   List.of(Set.of("reference"), Set.of("total")))),
-          () ->
+          currency ->
               Values.of()
                   .text("reference", "PR-000031")
                   .day("payment_date", LocalDate.of(2026, 9, 24))
@@ -458,14 +475,14 @@ public final class Catalogue {
                           Values.of()
                               .text("reference", "INV-4410")
                               .day("document_date", LocalDate.of(2026, 8, 30))
-                              .money("amount", new BigDecimal("1250.00"), "GBP")
+                              .money("amount", new BigDecimal("1250.00"), currency)
                               .flag("credit", false),
                           Values.of()
                               .text("reference", "CN-118")
                               .day("document_date", LocalDate.of(2026, 9, 2))
-                              .money("amount", new BigDecimal("40.00"), "GBP")
+                              .money("amount", new BigDecimal("40.00"), currency)
                               .flag("credit", true)))
-                  .money("total", new BigDecimal("1210.00"), "GBP")
+                  .money("total", new BigDecimal("1210.00"), currency)
                   .text("shop", "Hollins Grocers"));
 
   // ── staff
@@ -489,7 +506,7 @@ public final class Catalogue {
                   "Variant {{variant}} at store {{store}}: available {{available}} (threshold"
                       + " {{threshold}})",
                   NONE)),
-          () ->
+          currency ->
               Values.of()
                   .text("variant", "01a0c42a-3d45-70cf-b661-39c95b6b542b")
                   .text("store", "01a0c42a-fede-7391-982e-4b81b74bdce4")
@@ -518,7 +535,7 @@ public final class Catalogue {
                       + "{{^reading}}{{point}} was recorded as failed.{{/reading}}"
                       + " Record what was done about it on the Food safety screen.",
                   List.of(Set.of("point")))),
-          () ->
+          currency ->
               Values.of()
                   .text("point", "Dairy chiller")
                   .number("reading", new BigDecimal("8.5"))
@@ -541,7 +558,7 @@ public final class Catalogue {
                   "{{point}} was due a check at {{due_since}} and none has been recorded. Take it"
                       + " now on the Food safety screen.",
                   List.of(Set.of("point")))),
-          () ->
+          currency ->
               Values.of()
                   .text("point", "Dairy chiller")
                   .moment("due_since", Instant.parse("2026-09-21T08:00:00Z")));
@@ -568,7 +585,7 @@ public final class Catalogue {
                       + "{{#required}}, and it is required{{/required}}."
                       + " Do it now if it still can be, or record why it was skipped.",
                   List.of(Set.of("title")))),
-          () ->
+          currency ->
               Values.of()
                   .text("title", "Lock up")
                   .flag("opening", false)
@@ -592,7 +609,8 @@ public final class Catalogue {
                   "Management has published \"{{title}}\". Read it on the notices screen"
                       + "{{#acknowledge}} and acknowledge it.{{/acknowledge}}{{^acknowledge}}.{{/acknowledge}}",
                   List.of(Set.of("title")))),
-          () -> Values.of().text("title", "Freezer 3 is out of use").flag("acknowledge", true));
+          currency ->
+              Values.of().text("title", "Freezer 3 is out of use").flag("acknowledge", true));
 
   static final MessageType RECALL_OPENED =
       new MessageType(
@@ -616,7 +634,7 @@ public final class Catalogue {
                       + "{{#recall}}, and display the recall notice at the tills.{{/recall}}"
                       + "{{^recall}}.{{/recall}}",
                   List.of(Set.of("reference")))),
-          () ->
+          currency ->
               Values.of()
                   .text("reference", "RC-2026-014")
                   .flag("recall", true)
@@ -643,9 +661,9 @@ public final class Catalogue {
                       + " is lost.{{/due_by}}{{^due_by}}Answer it on the Disputes screen as soon as"
                       + " you can.{{/due_by}}",
                   List.of(Set.of("amount")))),
-          () ->
+          currency ->
               Values.of()
-                  .money("amount", new BigDecimal("42.50"), "GBP")
+                  .money("amount", new BigDecimal("42.50"), currency)
                   .text("reason", "fraudulent")
                   .text("reason_code", "FRAUDULENT")
                   .moment("due_by", Instant.parse("2026-10-05T23:59:00Z")));
@@ -676,10 +694,10 @@ public final class Catalogue {
               "The day the service is interrupted if it stays unpaid; absent once it has been"),
           PLATFORM);
 
-  private static Values billingSample() {
+  private static Values billingSample(String currency) {
     return Values.of()
         .text("invoice", "INV-2026-000041")
-        .money("amount_due", new BigDecimal("29.00"), "EUR")
+        .money("amount_due", new BigDecimal("29.00"), currency)
         .day("due_date", LocalDate.of(2026, 9, 15))
         .number("days_overdue", new BigDecimal("3"))
         .text("pay_link", "https://app.example/#/pay/9m2xKq1vT8sHc4bYw7Lp3Q")
@@ -768,11 +786,11 @@ public final class Catalogue {
                       + " you would rather not continue, cancel before then from Billing and nothing"
                       + " is owed.\n\n— {{shop}}",
                   List.of(Set.of("plan"), Set.of("trial_end"), Set.of("price")))),
-          () ->
+          currency ->
               Values.of()
                   .text("plan", "Starter")
                   .day("trial_end", LocalDate.of(2026, 10, 6))
-                  .money("price", new BigDecimal("49.00"), "EUR")
+                  .money("price", new BigDecimal("49.00"), currency)
                   .text("interval", "MONTH")
                   .text("shop", "StoreQL Platform Ltd"));
 
@@ -792,14 +810,14 @@ public final class Catalogue {
                       + " {{amount_due}}, is due on {{due_date}}.\n\nPay it here, no sign-in"
                       + " needed:\n{{pay_link}}\n\nThank you for staying with us.\n\n— {{shop}}",
                   List.of(Set.of("invoice"), Set.of("amount_due"), Set.of("pay_link")))),
-          () ->
+          currency ->
               Values.of()
                   .text("plan", "Starter")
                   .day("trial_end", LocalDate.of(2026, 10, 6))
-                  .money("price", new BigDecimal("49.00"), "EUR")
+                  .money("price", new BigDecimal("49.00"), currency)
                   .text("interval", "MONTH")
                   .text("invoice", "INV-2026-000042")
-                  .money("amount_due", new BigDecimal("60.27"), "EUR")
+                  .money("amount_due", new BigDecimal("60.27"), currency)
                   .day("due_date", LocalDate.of(2026, 10, 13))
                   .text("pay_link", "https://app.example/#/pay/9m2xKq1vT8sHc4bYw7Lp3Q")
                   .text("shop", "StoreQL Platform Ltd"));

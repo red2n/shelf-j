@@ -6,6 +6,7 @@ import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:flutter/rendering.dart';
 import 'package:flutter_test/flutter_test.dart';
 import 'package:intl/date_symbol_data_local.dart';
+import 'package:intl/intl.dart';
 import 'package:storeql_app/core/network/api_client.dart';
 import 'package:storeql_app/features/platform/plans_screen.dart';
 
@@ -116,6 +117,11 @@ bool _wrapped(WidgetTester tester, Finder text) {
 void main() {
   // Prices are dated (1 Jan 2026), which needs the locale data.
   setUpAll(initializeDateFormatting);
+  // The dates here ("1 Jan 2026") are about AppFormat writing en_GB
+  // correctly, not about which locale the app defaults to — pinned
+  // explicitly so it stays true whatever the app's own fallback is.
+  setUp(() => Intl.defaultLocale = 'en_GB');
+  tearDown(() => Intl.defaultLocale = null);
 
   testWidgets('the price list says where each plan stands, and what it includes', (tester) async {
     await _pump(
@@ -299,10 +305,48 @@ void main() {
     await tester.enterText(find.byKey(const Key('meter-price-amount')), '0.035');
     await tester.tap(find.byKey(const Key('meter-price-save')));
     await tester.pumpAndSettle();
+    expect(find.text('Choose a currency — a three-letter code, such as USD or INR.'), findsOneWidget,
+        reason: 'no currency is preselected (SJ-D67) — the operator names one');
+    expect(server.requests.where((r) => r.method == 'POST'), isEmpty);
+
+    await tester.enterText(find.byKey(const Key('meter-price-currency')), 'gbp');
+    await tester.tap(find.byKey(const Key('meter-price-save')));
+    await tester.pumpAndSettle();
 
     final sent = server.requests.lastWhere((r) => r.method == 'POST');
     expect(sent.path, '/tenant-svc/platform/plans/id-GROWTH/meter-prices');
-    expect(sent.data, {'meter': 'SMS', 'currency': 'GBP', 'unitAmount': 0.035});
+    expect(sent.data, {'meter': 'SMS', 'currency': 'GBP', 'unitAmount': 0.035}, reason: 'typed lower-case, sent upper');
+  });
+
+  testWidgets('a plan price is not written without a currency: none is preselected, and the operator names one (SJ-D67)', (
+    tester,
+  ) async {
+    final plan = _plan('GROWTH', 'ACTIVE');
+    final server = await _pump(tester, [plan], const SetPriceDialog(planId: 'id-GROWTH'));
+    expect(
+      tester.widget<TextField>(find.byKey(const Key('price-currency'))).controller!.text,
+      isEmpty,
+      reason: 'not even the platform\'s own currency — a plan may be sold in any tenant\'s home currency',
+    );
+
+    await tester.enterText(find.byKey(const Key('price-amount')), '49.00');
+    await tester.tap(find.byKey(const Key('price-save')));
+    await tester.pumpAndSettle();
+    expect(find.text('Choose a currency — a three-letter code, such as USD or INR.'), findsOneWidget);
+    expect(server.requests.where((r) => r.method == 'POST'), isEmpty);
+
+    await tester.enterText(find.byKey(const Key('price-currency')), 'inr');
+    await tester.tap(find.byKey(const Key('price-save')));
+    await tester.pumpAndSettle();
+    final sent = server.requests.lastWhere((r) => r.method == 'POST');
+    expect(sent.data, {'currency': 'INR', 'amount': 49.0}, reason: 'typed lower-case, sent upper');
+
+    await tester.pumpWidget(const SizedBox());
+    await _pump(tester, [plan], const SetMeterPriceDialog(planId: 'id-GROWTH'));
+    expect(
+      tester.widget<TextField>(find.byKey(const Key('meter-price-currency'))).controller!.text,
+      isEmpty,
+    );
   });
 
   // ── how a plan reads (design system: AdminPanel_Plans) ──────────────────────

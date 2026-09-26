@@ -9,153 +9,202 @@ class AppLocalizationsRo extends AppLocalizations {
   AppLocalizationsRo([String locale = 'ro']) : super(locale);
 
   @override
-  String get signInToContinue => 'Sign in to continue';
+  String get signInToContinue => 'Conectează-te pentru a continua';
 
   @override
-  String get createYourAccount => 'Create your account';
+  String get createYourAccount => 'Creează-ți contul';
 
   @override
-  String get fieldEmail => 'Email';
+  String get fieldEmail => 'E-mail';
 
   @override
-  String get fieldEmailInvalid => 'Enter a valid email';
+  String get fieldEmailInvalid => 'Introdu o adresă de e-mail validă';
 
   @override
-  String get fieldPhoneOptional => 'Phone (optional)';
+  String get fieldPhoneOptional => 'Telefon (opțional)';
 
   @override
-  String get fieldPassword => 'Password';
+  String get fieldPassword => 'Parolă';
 
   @override
-  String get fieldPasswordRequired => 'Enter your password';
+  String get fieldPasswordRequired => 'Introdu parola';
 
   @override
   String fieldPasswordTooShort(int min) {
-    return 'Use at least $min characters. A phrase of a few words is easiest to remember and hardest to guess; spaces are fine.';
+    return 'Folosește cel puțin $min caractere. O expresie din câteva cuvinte este cel mai ușor de reținut și cel mai greu de ghicit; spațiile sunt permise.';
   }
 
   @override
   String fieldPasswordTooLong(int max) {
-    return 'Use at most $max characters.';
+    return 'Folosește cel mult $max caractere.';
   }
 
   @override
   String get errPasswordIsIdentity =>
-      'The password must not be, or contain, your email address.';
+      'Parola nu trebuie să fie, sau să conțină, adresa ta de e-mail.';
 
   @override
   String get errPasswordBreached =>
-      'This password appears in known data breaches and would be guessed. Choose another.';
+      'Această parolă apare în scurgeri de date cunoscute și ar putea fi ghicită. Alege alta.';
 
   @override
-  String get showPassword => 'Show password';
+  String get showPassword => 'Arată parola';
 
   @override
-  String get hidePassword => 'Hide password';
+  String get hidePassword => 'Ascunde parola';
 
   @override
-  String get signInWithBusiness => 'Sign in with your business';
+  String get signInWithBusiness => 'Conectează-te prin compania ta';
 
   @override
   String continueWithBusiness(String business) {
-    return 'Continue with $business';
+    return 'Continuă cu $business';
   }
 
   @override
   String get businessSignInNameHelp =>
-      'Your business\'s sign-in name. Your manager has it.';
+      'Numele de conectare al companiei tale. Managerul tău îl are.';
 
   @override
-  String get fieldBusinessSignInName => 'Sign-in name';
+  String get fieldBusinessSignInName => 'Nume de conectare';
 
   @override
-  String get fieldBusinessSignInNameHint => 'e.g. acme-foods';
+  String get fieldBusinessSignInNameHint => 'de ex. acme-foods';
 
   @override
-  String get actionSignIn => 'Sign in';
+  String get actionSignIn => 'Conectează-te';
 
   @override
-  String get actionCreateAccount => 'Create account';
+  String get actionCreateAccount => 'Creează un cont';
 
   @override
-  String get actionCancel => 'Cancel';
+  String get actionCancel => 'Anulează';
 
   @override
-  String get actionContinue => 'Continue';
+  String get actionContinue => 'Continuă';
 
   @override
-  String get toggleHaveAccount => 'Already have an account? Sign in';
+  String get toggleHaveAccount => 'Ai deja un cont? Conectează-te';
 
   @override
-  String get toggleNewHere => 'New here? Create an account';
+  String get toggleNewHere => 'Ești nou aici? Creează un cont';
 
   @override
-  String get errInvalidCredentials => 'Invalid email or password.';
+  String get errInvalidCredentials => 'E-mail sau parolă incorectă.';
 
   @override
-  String get errEmailExists => 'An account with this email already exists.';
+  String get errEmailExists => 'Există deja un cont cu acest e-mail.';
 
   @override
-  String get errNetwork => 'Cannot reach the server. Check your connection.';
+  String get errNetwork =>
+      'Serverul nu poate fi contactat. Verifică-ți conexiunea.';
 
   @override
-  String get errGeneric => 'Something went wrong. Please try again.';
+  String get errGeneric => 'Ceva nu a funcționat. Încearcă din nou.';
 
   @override
   String get ssoErrNotFound =>
-      'No business signs in with that name. Check it with your manager.';
+      'Nicio companie nu se conectează sub acest nume. Verifică-l cu managerul tău.';
 
   @override
   String get ssoErrRequired =>
-      'Your business signs you in through its own sign-in page. Use \"Sign in with your business\" below.';
+      'Compania ta te conectează prin propria ei pagină de conectare. Folosește „Conectează-te prin compania ta” mai jos.';
 
   @override
   String get ssoErrNoAccount =>
-      'You signed in with your business, but it has not added you here yet. Ask your manager to add you as staff.';
+      'Te-ai conectat prin compania ta, dar aceasta nu te-a adăugat încă aici. Cere-i managerului tău să te adauge ca angajat.';
 
   @override
   String get ssoErrEmailUnverified =>
-      'Your business\'s sign-in page has not verified your email address, so it could not be matched to your login.';
+      'Pagina de conectare a companiei tale nu a verificat adresa ta de e-mail, așa că nu a putut fi asociată cu contul tău.';
 
   @override
   String get ssoErrEmailMissing =>
-      'Your business\'s sign-in page did not share your email address.';
+      'Pagina de conectare a companiei tale nu a transmis adresa ta de e-mail.';
 
   @override
   String get ssoErrAlreadyLinked =>
-      'Your login is linked to someone else at your business. Ask the owner to unlink it.';
+      'Contul tău este asociat cu altcineva din compania ta. Cere-i proprietarului să anuleze această asociere.';
 
   @override
   String get ssoErrAccountUnavailable =>
-      'This login can no longer sign in here.';
+      'Acest cont nu mai poate fi folosit pentru a te conecta aici.';
 
   @override
-  String get ssoErrCancelled => 'Sign-in was cancelled.';
+  String get ssoErrCancelled => 'Conectarea a fost anulată.';
 
   @override
   String get ssoErrExpired =>
-      'That sign-in took too long or was already used. Start again.';
+      'Conectarea a durat prea mult sau a fost deja folosită. Începe din nou.';
 
   @override
-  String get ssoErrReauthRequired => 'Sign in with your business again.';
+  String get ssoErrReauthRequired => 'Conectează-te din nou prin compania ta.';
 
   @override
   String get ssoErrNotReady =>
-      'Your business\'s single sign-on is not finished. Ask its owner.';
+      'Conectarea unică a companiei tale nu este finalizată. Întreabă-l pe proprietar.';
 
   @override
   String get ssoErrUnavailable =>
-      'Signing in with your business is not available here.';
+      'Conectarea prin compania ta nu este disponibilă aici.';
 
   @override
   String get ssoErrProviderUnreachable =>
-      'Your business\'s sign-in page could not be reached. Try again shortly.';
+      'Pagina de conectare a companiei tale nu a putut fi contactată. Încearcă din nou în scurt timp.';
 
   @override
   String get errTenantInactive =>
-      'This business account is suspended. Contact support.';
+      'Contul acestei companii este suspendat. Contactează asistența.';
 
   @override
   String get ssoErrGeneric =>
-      'Your business\'s sign-in page could not sign you in. Ask its owner to check the settings.';
+      'Pagina de conectare a companiei tale nu a putut să te conecteze. Cere-i proprietarului să verifice setările.';
+
+  @override
+  String get forgotPassword => 'Ai uitat parola?';
+
+  @override
+  String get forgotPasswordTitle => 'Ai uitat parola?';
+
+  @override
+  String get forgotPasswordIntro =>
+      'Introdu adresa de e-mail. Dacă este folosită de un cont, îți vom trimite un link pentru resetarea parolei.';
+
+  @override
+  String get forgotPasswordSubmit => 'Trimite linkul';
+
+  @override
+  String get forgotPasswordSent =>
+      'Dacă un cont folosește această adresă, am trimis un link. Este valabil treizeci de minute și poate fi folosit o singură dată.';
+
+  @override
+  String get resetPasswordTitle => 'Alege o parolă nouă';
+
+  @override
+  String get resetPasswordNewLabel => 'Parolă nouă';
+
+  @override
+  String get resetPasswordConfirmLabel => 'Confirmă parola nouă';
+
+  @override
+  String get resetPasswordMismatch =>
+      'Nu se potrivește cu parola nouă introdusă mai sus.';
+
+  @override
+  String get resetPasswordSubmit => 'Schimbă parola';
+
+  @override
+  String get resetPasswordDone =>
+      'Parola a fost schimbată — conectează-te cu ea.';
+
+  @override
+  String get resetPasswordDoneStorefront =>
+      'Faci cumpărături din magazinul online? Te poți conecta din magazin.';
+
+  @override
+  String get resetPasswordTokenInvalid =>
+      'Acest link a expirat sau a fost deja folosit — cere unul nou.';
+
+  @override
+  String get resetPasswordRequestNew => 'Cere un link nou';
 }

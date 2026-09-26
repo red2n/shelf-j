@@ -5,6 +5,7 @@ import 'package:flutter/services.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:flutter_test/flutter_test.dart';
 import 'package:intl/date_symbol_data_local.dart';
+import 'package:intl/intl.dart';
 import 'package:storeql_app/features/storefront/privacy_screen.dart';
 import 'package:storeql_app/features/storefront/storefront_providers.dart';
 
@@ -34,11 +35,19 @@ class _Recorder {
   /// How long the server takes over a request, by key.
   final Map<String, Duration> delays;
 
+  /// A refusal's own code and message, by key — default to the export
+  /// screen's own (EXPORT_ORDERS_UNAVAILABLE) so every existing test that
+  /// only sets [statuses] keeps reading the same body it always has.
+  final Map<String, String> errorCodes;
+  final Map<String, String> errorMessages;
+
   _Recorder({
     this.responses = const {},
     this.statuses = const {},
     this.builders = const {},
     this.delays = const {},
+    this.errorCodes = const {},
+    this.errorMessages = const {},
   });
 
   Dio dio() {
@@ -57,8 +66,8 @@ class _Recorder {
             statusCode: status,
             data: {
               'error': {
-                'code': 'EXPORT_ORDERS_UNAVAILABLE',
-                'message':
+                'code': errorCodes[key] ?? 'EXPORT_ORDERS_UNAVAILABLE',
+                'message': errorMessages[key] ??
                     'order-svc could not be reached, so the export would be incomplete',
               }
             },
@@ -96,6 +105,13 @@ Future<void> _pump(WidgetTester tester, _Recorder recorder,
   tester.view.physicalSize = size;
   tester.view.devicePixelRatio = 1.0;
   addTearDown(tester.view.reset);
+
+  // This screen's dates ("13 May 2027", "30 Sept 2026") are about AppFormat
+  // writing a date correctly, not about which locale the app defaults to
+  // (core/l10n/app_locales_test.dart owns that) — pinned explicitly so it
+  // stays true whatever the app's own fallback is.
+  Intl.defaultLocale = 'en_GB';
+  addTearDown(() => Intl.defaultLocale = null);
 
   await tester.pumpWidget(ProviderScope(
     overrides: [
@@ -602,6 +618,76 @@ void main() {
       {'channel': 'EMAIL', 'granted': false},
     ]);
     expect((put.data as Map)['notice'], isNull);
+  });
+
+  testWidgets(
+      'a channel waiting on Marketing says so beside it, in the same words a refusal would use',
+      (tester) async {
+    final recorder = _Recorder(responses: {
+      'GET /customer-svc/customers/me/marketing': <dynamic>[],
+      'GET /customer-svc/customers/privacy/notice': _view(),
+      'GET /customer-svc/customers/me/privacy': _mine(),
+      'GET /customer-svc/customers/me/privacy/requests': <dynamic>[],
+    });
+    await _pump(tester, recorder);
+    for (final channel in const ['EMAIL', 'SMS', 'PHONE', 'POST']) {
+      expect(
+        find.descendant(
+            of: find.byKey(Key('marketing-$channel')),
+            matching: find.text('Switch on Marketing first')),
+        findsOneWidget,
+        reason: '$channel says why it cannot be switched on yet',
+      );
+    }
+  });
+
+  testWidgets(
+      "the hint stays at full contrast, never the switch's own disabled dimming",
+      (tester) async {
+    final recorder = _Recorder(responses: {
+      'GET /customer-svc/customers/me/marketing': <dynamic>[],
+      'GET /customer-svc/customers/privacy/notice': _view(),
+      'GET /customer-svc/customers/me/privacy': _mine(),
+      'GET /customer-svc/customers/me/privacy/requests': <dynamic>[],
+    });
+    await _pump(tester, recorder);
+    final theme =
+        Theme.of(tester.element(find.byKey(const Key('marketing-EMAIL'))));
+    final hint = tester.widget<Text>(
+        find.byKey(const Key('marketing-channel-hint')).first);
+    expect(hint.style?.color, theme.colorScheme.onSurfaceVariant);
+    expect(hint.style?.color, isNot(theme.disabledColor));
+  });
+
+  testWidgets(
+      '409 MARKETING_PURPOSE_NOT_GRANTED is worded the same as the disabled switch\'s own hint',
+      (tester) async {
+    final recorder = _Recorder(
+      responses: {
+        'GET /customer-svc/customers/me/marketing': <dynamic>[],
+        'GET /customer-svc/customers/privacy/notice': _view(),
+        // Marketing reads as granted here, so the switch is not disabled
+        // client-side — the refusal below is the server's alone, a race with
+        // another tab or device that withdrew it a moment before this PUT.
+        'GET /customer-svc/customers/me/privacy': _mine(marketing: true),
+        'GET /customer-svc/customers/me/privacy/requests': <dynamic>[],
+      },
+      statuses: {'PUT /customer-svc/customers/me/marketing': 409},
+      errorCodes: {'PUT /customer-svc/customers/me/marketing': 'MARKETING_PURPOSE_NOT_GRANTED'},
+      errorMessages: {
+        'PUT /customer-svc/customers/me/marketing':
+            'the person\'s MARKETING purpose stands withdrawn',
+      },
+    );
+    await _pump(tester, recorder);
+    expect(tester.widget<SwitchListTile>(find.byKey(const Key('marketing-EMAIL'))).onChanged,
+        isNotNull);
+
+    await tester.tap(find.byKey(const Key('marketing-EMAIL')));
+    await tester.pumpAndSettle();
+    expect(find.text('Switch on Marketing first'), findsOneWidget, reason: 'said by the SnackBar');
+    expect(find.textContaining('MARKETING_PURPOSE_NOT_GRANTED'), findsNothing);
+    expect(find.textContaining('purpose stands withdrawn'), findsNothing);
   });
 
   testWidgets(

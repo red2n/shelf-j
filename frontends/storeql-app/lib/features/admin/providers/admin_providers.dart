@@ -7,6 +7,27 @@ import '../../../shared/util/short_ref.dart';
 
 // ── Models ──────────────────────────────────────────────────────────────────
 
+/// The window an order holds (delivery-and-collection-slots), in the store's
+/// own local date and clock — computed server-side; the app never converts a
+/// time. Null for an order with none.
+class OrderSlot {
+  final String date;
+  final String startTime;
+  final String endTime;
+
+  const OrderSlot({required this.date, required this.startTime, required this.endTime});
+
+  factory OrderSlot.fromJson(Map<String, dynamic> j) => OrderSlot(
+        date: j['date'] as String? ?? '',
+        startTime: j['startTime'] as String? ?? '',
+        endTime: j['endTime'] as String? ?? '',
+      );
+
+  /// [raw] read as an [OrderSlot] when it is a map; null otherwise.
+  static OrderSlot? maybe(Object? raw) =>
+      raw is Map<String, dynamic> ? OrderSlot.fromJson(raw) : null;
+}
+
 class OrderSummary {
   final String id;
   final String storeId;
@@ -21,6 +42,10 @@ class OrderSummary {
   /// legacy orders and POS split-tender sales.
   final String? paymentMethod;
 
+  /// The window this order holds (delivery-and-collection-slots); null for an
+  /// order with none. Never on a till sale.
+  final OrderSlot? slot;
+
   const OrderSummary({
     required this.id,
     this.storeId = '',
@@ -31,6 +56,7 @@ class OrderSummary {
     required this.currency,
     required this.createdAt,
     this.paymentMethod,
+    this.slot,
   });
 
   factory OrderSummary.fromJson(Map<String, dynamic> j) => OrderSummary(
@@ -43,6 +69,7 @@ class OrderSummary {
         currency: j['currency'] as String? ?? '',
         createdAt: j['createdAt'] as String? ?? '',
         paymentMethod: j['paymentMethod'] as String?,
+        slot: OrderSlot.maybe(j['slot']),
       );
 }
 

@@ -88,6 +88,7 @@ public class OrderService {
   @Inject com.storeql.order.client.StockClient stock;
   @Inject com.storeql.order.repo.DepositRepository depositRepo;
   @Inject OrderRouter router;
+  @Inject FulfilmentWindowService windows;
 
   // ── Orders ────────────────────────────────────────────────────────────────
 
@@ -317,6 +318,11 @@ public class OrderService {
         storeId = resolved.get().storeId();
       }
     }
+    // Delivery and collection slots: the window belongs to the store that fills the order — for a
+    // delivery, the store the postcode just resolved to — captured before routing can reassign
+    // storeId to a different shop below, so a split (or reassigned single-store) delivery's window
+    // still comes from the area store's own offering, as the intent decided.
+    UUID areaStore = storeId;
     ctx.requireStoreAccess(storeId);
     if (!storeStatusRepo.isActive(tenantId, storeId))
       throw ApiException.conflict(
@@ -335,6 +341,21 @@ public class OrderService {
             "a dark store offers no collection; choose delivery, or a shop to collect from");
       }
     }
+    // Delivery and collection slots: ONLINE DELIVERY/PICKUP only; a slot sent on anything else
+    // (POS, or an online in-store sale) names a thing that does not apply to it.
+    boolean pickup = Order.FULFILMENT_PICKUP.equals(fulfilment);
+    boolean slotEligible = Order.CHANNEL_ONLINE.equals(req.channel()) && (delivery || pickup);
+    boolean slotNamed = !isBlank(req.slotWindowId()) || !isBlank(req.slotStartsAt());
+    if (!slotEligible && slotNamed) {
+      throw ApiException.badRequest(
+          "ORDER_SLOT_NOT_APPLICABLE",
+          "a fulfilment slot only applies to an online delivery or pickup order");
+    }
+    FulfilmentWindowService.ResolvedSlot slot =
+        slotEligible
+            ? windows.resolveForCheckout(
+                tenantId, areaStore, fulfilment, req.slotWindowId(), req.slotStartsAt())
+            : null;
     String paymentMethod = null;
     if (req.paymentMethod() != null && !req.paymentMethod().isBlank()) {
       paymentMethod = req.paymentMethod().trim().toUpperCase(java.util.Locale.ROOT);
@@ -474,7 +495,8 @@ public class OrderService {
                 paymentMethod,
                 items,
                 splitTax,
-                quoted == null ? List.of() : quoted.applied()),
+                quoted == null ? List.of() : quoted.applied(),
+                slot),
             routed,
             idempotencyKey);
       }
@@ -590,14 +612,28 @@ public class OrderService {
             seller,
             // The shopper's choice at checkout: substitutions welcome unless they said no
             // (substitutions for out-of-stock online lines).
-            req.allowSubstitutions() == null || req.allowSubstitutions());
+            req.allowSubstitutions() == null || req.allowSubstitutions(),
+            slot == null ? null : slot.windowId(),
+            slot == null ? null : slot.startsAt(),
+            slot == null ? null : slot.endsAt(),
+            slot == null ? null : slot.timeZone());
 
     try {
       Order placed =
           repo.createOrder(
               order,
               items,
-              Events.orderPlaced(tenantId, orderId, req.channel(), customerId, loginId, storeId),
+              Events.orderPlaced(
+                  tenantId,
+                  orderId,
+                  req.channel(),
+                  customerId,
+                  loginId,
+                  storeId,
+                  null,
+                  order.slotStartsAt(),
+                  order.slotEndsAt(),
+                  order.slotTimeZone()),
               discountAudit,
               quoted == null ? List.of() : quoted.applied(),
               containerDeposits);
@@ -1104,7 +1140,14 @@ public class OrderService {
       String paymentMethod,
       List<OrderItem> items,
       BigDecimal tax,
-      List<com.storeql.order.client.PricingClient.AppliedPromotion> applied) {
+      List<com.storeql.order.client.PricingClient.AppliedPromotion> applied,
+      /**
+       * The delivery or collection window the checkout holds, resolved once against the area store
+       * before it was known whether the order would split (delivery and collection slots): every
+       * part carries it, and it takes one place. Null when the area store offers no windows of this
+       * type.
+       */
+      FulfilmentWindowService.ResolvedSlot slot) {
     SplitCheckout {
       items = List.copyOf(items);
       applied = List.copyOf(applied);
@@ -1225,7 +1268,11 @@ public class OrderService {
                 co.paymentMethod(),
                 BigDecimal.ZERO,
                 null,
-                req.allowSubstitutions() == null || req.allowSubstitutions());
+                req.allowSubstitutions() == null || req.allowSubstitutions(),
+                co.slot() == null ? null : co.slot().windowId(),
+                co.slot() == null ? null : co.slot().startsAt(),
+                co.slot() == null ? null : co.slot().endsAt(),
+                co.slot() == null ? null : co.slot().timeZone());
         placed.add(
             new OrderRepository.NewOrder(
                 child,
@@ -1237,7 +1284,10 @@ public class OrderService {
                     co.customerId(),
                     co.loginId(),
                     part.storeId(),
-                    groupId),
+                    groupId,
+                    child.slotStartsAt(),
+                    child.slotEndsAt(),
+                    child.slotTimeZone()),
                 null,
                 promotions.get(k),
                 deposits));
@@ -1446,6 +1496,49 @@ public class OrderService {
       Instant to,
       String afterCursor,
       int limit) {
+    return listOrders(
+        tenantId,
+        storeId,
+        customerId,
+        loginId,
+        channel,
+        status,
+        fulfilmentType,
+        handedOver,
+        handedFrom,
+        handedTo,
+        from,
+        to,
+        null,
+        afterCursor,
+        limit);
+  }
+
+  /**
+   * As above, also by {@code sort}: {@code null} (or anything but {@code "slot"}) keeps the usual
+   * newest-first order; {@code "slot"} orders by the delivery or collection window's start instead
+   * (delivery and collection slots) — soonest first, an order with no window last, then id — so the
+   * Fulfilment queue can be worked in the order the vans and the counter need it.
+   *
+   * @param sort {@code "slot"} for slot order; anything else (including {@code null}) for the usual
+   *     newest-first order
+   */
+  public OrderPage listOrders(
+      UUID tenantId,
+      UUID storeId,
+      UUID customerId,
+      UUID loginId,
+      String channel,
+      String status,
+      String fulfilmentType,
+      Boolean handedOver,
+      Instant handedFrom,
+      Instant handedTo,
+      Instant from,
+      Instant to,
+      String sort,
+      String afterCursor,
+      int limit) {
     boolean handedWindow = handedFrom != null || handedTo != null;
     if (handedWindow && Boolean.FALSE.equals(handedOver)) {
       throw ApiException.badRequest(
@@ -1454,15 +1547,18 @@ public class OrderService {
               + " handover time");
     }
     Boolean handed = handedWindow ? Boolean.TRUE : handedOver;
-    Instant afterCreatedAt = null;
+    boolean bySlot = "slot".equalsIgnoreCase(sort);
+    Instant afterKey = null;
     UUID afterId = null;
     String rawKey = com.storeql.web.Cursor.decode(afterCursor);
     if (rawKey != null) {
-      // Raw cursor key is "<ISO created_at>|<order id>" — the keyset of the last row served.
+      // Raw cursor key is "<ISO instant>|<order id>" — the keyset of the last row served, on
+      // created_at for the usual order or on the slot's effective instant (a store with no window
+      // sorting as the far-future sentinel OrderRepository.NO_SLOT_SORT_KEY) for slot order.
       int sep = rawKey.indexOf('|');
       try {
         if (sep < 0) throw new IllegalArgumentException("missing separator");
-        afterCreatedAt = Instant.parse(rawKey.substring(0, sep));
+        afterKey = Instant.parse(rawKey.substring(0, sep));
         afterId = Ids.parse(rawKey.substring(sep + 1));
       } catch (RuntimeException e) {
         throw new ApiException(400, "INVALID_CURSOR", "Malformed pagination cursor", List.of(), e);
@@ -1483,16 +1579,20 @@ public class OrderService {
             handedTo,
             from,
             to,
-            afterCreatedAt,
+            afterKey,
             afterId,
-            limit + 1);
+            limit + 1,
+            bySlot);
     if (rows.size() <= limit) {
       return new OrderPage(rows, null);
     }
     List<Order> page = rows.subList(0, limit);
     Order last = page.get(page.size() - 1);
-    return new OrderPage(
-        page, com.storeql.web.Cursor.encode(last.createdAt().toString() + "|" + last.id()));
+    Instant lastKey =
+        bySlot
+            ? (last.slotStartsAt() != null ? last.slotStartsAt() : OrderRepository.NO_SLOT_SORT_KEY)
+            : last.createdAt();
+    return new OrderPage(page, com.storeql.web.Cursor.encode(lastKey + "|" + last.id()));
   }
 
   /** Hard cap on one export, so a data request cannot read an unbounded table into memory. */
@@ -1698,7 +1798,10 @@ public class OrderService {
             order.fulfilmentType(),
             deliveryAddressOf(order),
             order.deliveryRecipientName(),
-            order.deliveryRecipientPhone());
+            order.deliveryRecipientPhone(),
+            order.slotStartsAt(),
+            order.slotEndsAt(),
+            order.slotTimeZone());
     Order confirmed =
         isTillSale(order.channel(), order.fulfilmentType())
             ? repo.confirmAndFulfil(
@@ -2785,7 +2888,10 @@ public class OrderService {
                 order.fulfilmentType(),
                 deliveryAddressOf(order),
                 order.deliveryRecipientName(),
-                order.deliveryRecipientPhone()),
+                order.deliveryRecipientPhone(),
+                order.slotStartsAt(),
+                order.slotEndsAt(),
+                order.slotTimeZone()),
             fulfilEvent);
 
     // Till sales are confirmed here, not in confirmOrder, so this is where most receipts are

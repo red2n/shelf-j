@@ -42,6 +42,7 @@ import com.storeql.order.dto.Dtos.SpecialOrderResponse;
 import com.storeql.order.dto.Dtos.VoidResponse;
 import java.time.Instant;
 import java.util.List;
+import java.util.Map;
 
 /** Entity → DTO mappers. Entities never cross the HTTP boundary. */
 public final class Mappers {
@@ -255,7 +256,29 @@ public final class Mappers {
         str(o.sellerUserId()),
         group == null ? null : toDto(group),
         handover == null ? null : toDto(handover),
-        o.allowSubstitutions());
+        o.allowSubstitutions(),
+        slotOf(o.slotStartsAt(), o.slotEndsAt(), o.slotTimeZone()));
+  }
+
+  /**
+   * The delivery or collection window an order holds (delivery and collection slots), with the
+   * date/startTime/endTime already computed in the store's own zone — {@code null} when the order
+   * carries no window (a till sale, or a store with none), never a partly-filled shape.
+   */
+  static Dtos.SlotResponse slotOf(Instant startsAt, Instant endsAt, String timeZone) {
+    if (startsAt == null || endsAt == null || timeZone == null) {
+      return null;
+    }
+    java.time.ZoneId zone = java.time.ZoneId.of(timeZone);
+    java.time.ZonedDateTime localStart = startsAt.atZone(zone);
+    java.time.ZonedDateTime localEnd = endsAt.atZone(zone);
+    return new Dtos.SlotResponse(
+        startsAt.toString(),
+        endsAt.toString(),
+        timeZone,
+        localStart.toLocalDate().toString(),
+        localStart.toLocalTime().toString(),
+        localEnd.toLocalTime().toString());
   }
 
   /** A stand-in suggested for a line (substitutions for out-of-stock online lines). */
@@ -312,7 +335,12 @@ public final class Mappers {
             .map(
                 p ->
                     new com.storeql.order.dto.Dtos.OrderPartResponse(
-                        str(p.orderId()), str(p.storeId()), p.status(), p.total(), p.units()))
+                        str(p.orderId()),
+                        str(p.storeId()),
+                        p.status(),
+                        p.total(),
+                        p.units(),
+                        slotOf(p.slotStartsAt(), p.slotEndsAt(), p.slotTimeZone())))
             .toList());
   }
 
@@ -397,7 +425,8 @@ public final class Mappers {
         o.paymentMethod(),
         str(groupId),
         handover == null ? null : toDto(handover),
-        o.allowSubstitutions());
+        o.allowSubstitutions(),
+        slotOf(o.slotStartsAt(), o.slotEndsAt(), o.slotTimeZone()));
   }
 
   /**
@@ -731,5 +760,62 @@ public final class Mappers {
       com.storeql.order.domain.Domain.AgeVerificationSummary s) {
     return new com.storeql.order.dto.Dtos.AgeVerificationSummaryResponse(
         s.total(), s.passed(), s.refused(), s.refusedByReason(), s.byCategory());
+  }
+
+  // ── Delivery and collection slots ─────────────────────────────────────────
+
+  /** Converts a stored window to its wire form. */
+  public static com.storeql.order.dto.Dtos.FulfilmentWindowResponse toDto(
+      com.storeql.order.domain.Windows.WindowRecord r) {
+    com.storeql.order.domain.Windows.Window w = r.window();
+    return new com.storeql.order.dto.Dtos.FulfilmentWindowResponse(
+        str(w.id()),
+        str(w.storeId()),
+        w.fulfilmentType(),
+        w.weekday(),
+        w.startTime().toString(),
+        w.endTime().toString(),
+        w.capacity(),
+        w.cutoffMinutes(),
+        w.active(),
+        r.timeZone(),
+        ts(r.updatedAt()),
+        str(r.updatedBy()));
+  }
+
+  /**
+   * Converts the storefront's read of a store's next seven days to its wire form: each occurrence's
+   * server-computed local times, and how many places it has left.
+   */
+  public static com.storeql.order.dto.Dtos.FulfilmentSlotsResponse toDto(
+      com.storeql.order.service.FulfilmentWindowService.SlotsView v) {
+    List<com.storeql.order.dto.Dtos.FulfilmentSlotDayResponse> days =
+        v.days().stream()
+            .map(
+                day -> {
+                  List<com.storeql.order.dto.Dtos.FulfilmentSlotResponse> slots =
+                      day.occurrences().stream().map(occ -> toDto(occ, v)).toList();
+                  return new com.storeql.order.dto.Dtos.FulfilmentSlotDayResponse(
+                      day.date().toString(), slots);
+                })
+            .toList();
+    return new com.storeql.order.dto.Dtos.FulfilmentSlotsResponse(
+        str(v.storeId()), v.fulfilmentType(), v.timeZone(), v.offered(), days);
+  }
+
+  private static com.storeql.order.dto.Dtos.FulfilmentSlotResponse toDto(
+      com.storeql.order.domain.Windows.Occurrence occ,
+      com.storeql.order.service.FulfilmentWindowService.SlotsView v) {
+    long taken = v.taken().getOrDefault(occ.windowId(), Map.of()).getOrDefault(occ.startsAt(), 0L);
+    int capacity = v.capacityByWindow().getOrDefault(occ.windowId(), occ.capacity());
+    int left = (int) Math.max(0, capacity - taken);
+    return new com.storeql.order.dto.Dtos.FulfilmentSlotResponse(
+        str(occ.windowId()),
+        ts(occ.startsAt()),
+        ts(occ.endsAt()),
+        occ.localStartTime().toString(),
+        occ.localEndTime().toString(),
+        left,
+        taken >= capacity);
   }
 }

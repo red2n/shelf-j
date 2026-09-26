@@ -59,6 +59,7 @@ class SandboxAccessIT {
   @Inject WebTarget target;
   @Inject TenantCreatedHandler tenants;
   @Inject UserRepository users;
+  @Inject com.storeql.service.TenantDataErasureHandler erasure;
 
   @AfterAll
   static void stop() {
@@ -224,6 +225,51 @@ class SandboxAccessIT {
     Answer again = call("POST", "/auth/sandbox/token", live.owner(), null);
     assertThat(again.body().toString(), again.status(), is(200));
     assertThat(again.data().getString("tenantId"), is(second.toString()));
+  }
+
+  /**
+   * Deleting a sandbox switches it off and then erases its data in every service. The erasure took
+   * the switched-off status with it and left the pair naming the sandbox (the pair's erasure
+   * predicate was declared and never used), so the sandbox read as live again and its owner could
+   * enter a deleted sandbox (found by k6 sandbox-flow). Erased, the pair goes too.
+   */
+  @Test
+  @DisplayName("A sandbox switched off and then erased is never entered again")
+  void anErasedSandboxIsNeverEnteredAgain() {
+    Business live = business("erased");
+    UUID sandbox = sandboxOf(live);
+    assertThat(call("POST", "/auth/sandbox/token", live.owner(), null).status(), is(200));
+
+    exec(
+        PG,
+        "INSERT INTO iam.tenant_status (tenant_id, status) VALUES ('"
+            + sandbox
+            + "', 'INACTIVE')"
+            + " ON CONFLICT (tenant_id) DO UPDATE SET status = 'INACTIVE'");
+    erasure.handle(
+        "{\"eventType\":\"TenantDataErasureDue\",\"eventId\":\""
+            + Ids.newId()
+            + "\",\"tenantId\":\""
+            + sandbox
+            + "\"}");
+
+    assertThat(
+        "the pair naming the erased sandbox is gone",
+        com.storeql.test.Envelopes.scalar(
+            PG,
+            "SELECT count(*) FROM iam.tenant_sandboxes WHERE sandbox_tenant_id = '"
+                + sandbox
+                + "'"),
+        is("0"));
+    Answer gone = call("POST", "/auth/sandbox/token", live.owner(), null);
+    assertThat(gone.body().toString(), gone.status(), is(404));
+    assertThat(gone.code(), is("SANDBOX_NOT_FOUND"));
+
+    // The live business is untouched: its owner still makes and enters a new sandbox.
+    UUID next = sandboxOf(live);
+    Answer again = call("POST", "/auth/sandbox/token", live.owner(), null);
+    assertThat(again.body().toString(), again.status(), is(200));
+    assertThat(again.data().getString("tenantId"), is(next.toString()));
   }
 
   @Test

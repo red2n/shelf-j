@@ -338,10 +338,15 @@ class _VariantBuy extends ConsumerWidget {
     final showPrices = ref.watch(storefrontShowPricesProvider);
     // .select() so this only rebuilds when *its own* variant's availability changes,
     // not on every store switch's whole-map refetch.
-    final inStock = ref.watch(storefrontAvailabilityProvider.select((async) {
+    final (inStock, onlyLeft, dropship) =
+        ref.watch(storefrontAvailabilityProvider.select((async) {
       final map = async.value;
-      return map == null ? true : (map[variant.id] ?? false);
+      final info = map == null ? null : map[variant.id];
+      return (info?.inStock ?? true, info?.onlyLeft, info?.dropship ?? false);
     }));
+    // Out of stock holds Add back — unless the supplier ships it per order,
+    // which has no shelf to be out of.
+    final canAdd = inStock || dropship;
 
     void addLine(double unitPrice, String currency) {
       ref.read(cartProvider.notifier).add(CartLine(
@@ -383,8 +388,8 @@ class _VariantBuy extends ConsumerWidget {
     // Catalog mode: no price, no price-resolve call — stock + add only.
     if (!showPrices) {
       return layout(
-        StockBadge(inStock: inStock),
-        inStock
+        StockBadge(inStock: inStock, onlyLeft: onlyLeft),
+        canAdd
             ? FilledButton(
                 onPressed: () => addLine(0, ''),
                 child: const Text('Add'),
@@ -425,8 +430,8 @@ class _VariantBuy extends ConsumerWidget {
           ],
         ),
         FilledButton(
-          onPressed: () => addLine(p.totalWithVat, p.currency),
-          child: const Text('Add'),
+          onPressed: canAdd ? () => addLine(p.totalWithVat, p.currency) : null,
+          child: Text(canAdd ? 'Add' : 'Out of stock'),
         ),
       ),
     );

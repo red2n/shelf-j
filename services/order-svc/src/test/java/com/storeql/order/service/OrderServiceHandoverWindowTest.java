@@ -46,7 +46,7 @@ class OrderServiceHandoverWindowTest {
     verify(repo)
         .listOrders(
             TENANT, STORE, null, null, null, null, null, true, MIDNIGHT, null, null, null, null,
-            null, 21);
+            null, 21, false);
   }
 
   @Test
@@ -82,7 +82,8 @@ class OrderServiceHandoverWindowTest {
             null,
             null,
             null,
-            21);
+            21,
+            false);
   }
 
   @Test
@@ -106,6 +107,6 @@ class OrderServiceHandoverWindowTest {
     verify(repo)
         .listOrders(
             TENANT, STORE, null, null, null, null, null, false, null, null, null, null, null, null,
-            21);
+            21, false);
   }
 }

@@ -645,7 +645,9 @@ class SetPriceDialog extends ConsumerStatefulWidget {
 }
 
 class _SetPriceDialogState extends ConsumerState<SetPriceDialog> {
-  final _currency = TextEditingController(text: 'GBP');
+  // No currency preselected (SJ-D67): a plan can be priced in any tenant's
+  // home currency, and the operator names the one this price is in.
+  final _currency = TextEditingController();
   final _amount = TextEditingController();
   DateTime? _from;
   String? _error;
@@ -659,6 +661,11 @@ class _SetPriceDialogState extends ConsumerState<SetPriceDialog> {
   }
 
   Future<void> _save() async {
+    final currency = _currency.text.trim().toUpperCase();
+    if (currency.isEmpty) {
+      setState(() => _error = 'Choose a currency — a three-letter code, such as USD or INR.');
+      return;
+    }
     final amount = num.tryParse(_amount.text.trim());
     if (amount == null || amount < 0) {
       setState(() => _error = 'A price is a number, like 49.00.');
@@ -670,7 +677,7 @@ class _SetPriceDialogState extends ConsumerState<SetPriceDialog> {
     });
     try {
       await ref.read(apiClientProvider).dio.post('$_base/${widget.planId}/prices', data: {
-        'currency': _currency.text.trim().toUpperCase(),
+        'currency': currency,
         'amount': amount,
         'effectiveFrom': ?_from?.toIso8601String().substring(0, 10),
       });
@@ -679,7 +686,9 @@ class _SetPriceDialogState extends ConsumerState<SetPriceDialog> {
       if (!mounted) return;
       setState(() {
         _busy = false;
-        _error = apiErrorCode(e) == 'CURRENCY_INVALID' ? 'A currency is a three-letter code, like GBP.' : friendlyError(e);
+        _error = apiErrorCode(e) == 'CURRENCY_INVALID'
+            ? 'A currency is a three-letter code, such as USD or INR.'
+            : friendlyError(e);
       });
     }
   }
@@ -701,7 +710,12 @@ class _SetPriceDialogState extends ConsumerState<SetPriceDialog> {
               children: [
                 SizedBox(
                   width: 110,
-                  child: TextField(key: const Key('price-currency'), controller: _currency, decoration: const InputDecoration(labelText: 'Currency')),
+                  child: TextField(
+                    key: const Key('price-currency'),
+                    controller: _currency,
+                    textCapitalization: TextCapitalization.characters,
+                    decoration: const InputDecoration(labelText: 'Currency', hintText: 'e.g. USD'),
+                  ),
                 ),
                 const SizedBox(width: AppSpacing.md),
                 Expanded(
@@ -1035,7 +1049,9 @@ class SetMeterPriceDialog extends ConsumerStatefulWidget {
 }
 
 class _SetMeterPriceDialogState extends ConsumerState<SetMeterPriceDialog> {
-  final _currency = TextEditingController(text: 'GBP');
+  // No currency preselected (SJ-D67): a plan can be priced in any tenant's
+  // home currency, and the operator names the one this price is in.
+  final _currency = TextEditingController();
   final _amount = TextEditingController();
   String? _meter;
   DateTime? _from;
@@ -1050,9 +1066,14 @@ class _SetMeterPriceDialogState extends ConsumerState<SetMeterPriceDialog> {
   }
 
   Future<void> _save() async {
+    final currency = _currency.text.trim().toUpperCase();
     final amount = num.tryParse(_amount.text.trim());
     if (_meter == null) {
       setState(() => _error = 'Choose what is being priced.');
+      return;
+    }
+    if (currency.isEmpty) {
+      setState(() => _error = 'Choose a currency — a three-letter code, such as USD or INR.');
       return;
     }
     if (amount == null || amount < 0) {
@@ -1066,7 +1087,7 @@ class _SetMeterPriceDialogState extends ConsumerState<SetMeterPriceDialog> {
     try {
       await ref.read(apiClientProvider).dio.post('$_base/${widget.planId}/meter-prices', data: {
         'meter': _meter,
-        'currency': _currency.text.trim().toUpperCase(),
+        'currency': currency,
         'unitAmount': amount,
         'effectiveFrom': ?_from?.toIso8601String().substring(0, 10),
       });
@@ -1075,7 +1096,9 @@ class _SetMeterPriceDialogState extends ConsumerState<SetMeterPriceDialog> {
       if (!mounted) return;
       setState(() {
         _busy = false;
-        _error = apiErrorCode(e) == 'CURRENCY_INVALID' ? 'A currency is a three-letter code, like GBP.' : friendlyError(e);
+        _error = apiErrorCode(e) == 'CURRENCY_INVALID'
+            ? 'A currency is a three-letter code, such as USD or INR.'
+            : friendlyError(e);
       });
     }
   }
@@ -1109,7 +1132,12 @@ class _SetMeterPriceDialogState extends ConsumerState<SetMeterPriceDialog> {
               children: [
                 SizedBox(
                   width: 110,
-                  child: TextField(key: const Key('meter-price-currency'), controller: _currency, decoration: const InputDecoration(labelText: 'Currency')),
+                  child: TextField(
+                    key: const Key('meter-price-currency'),
+                    controller: _currency,
+                    textCapitalization: TextCapitalization.characters,
+                    decoration: const InputDecoration(labelText: 'Currency', hintText: 'e.g. USD'),
+                  ),
                 ),
                 const SizedBox(width: AppSpacing.md),
                 Expanded(

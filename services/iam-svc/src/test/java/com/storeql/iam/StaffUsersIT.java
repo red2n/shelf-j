@@ -6,6 +6,7 @@ import static org.hamcrest.Matchers.empty;
 import static org.hamcrest.Matchers.is;
 
 import com.storeql.iam.messaging.StaffAssignedHandler;
+import com.storeql.iam.repo.UserRepository;
 import com.storeql.ids.Ids;
 import com.storeql.test.Envelopes;
 import com.storeql.test.PostgresSupport;
@@ -22,10 +23,12 @@ import jakarta.ws.rs.core.Response;
 import java.util.ArrayList;
 import java.util.List;
 import java.util.Map;
+import java.util.Set;
 import java.util.TreeMap;
 import java.util.UUID;
 import java.util.stream.Collectors;
 import org.junit.jupiter.api.AfterAll;
+import org.junit.jupiter.api.DisplayName;
 import org.junit.jupiter.api.Test;
 
 /**
@@ -60,6 +63,7 @@ class StaffUsersIT {
 
   @Inject WebTarget target;
   @Inject StaffAssignedHandler staffAssigned;
+  @Inject UserRepository users;
 
   @AfterAll
   static void stopDb() {
@@ -125,6 +129,47 @@ class StaffUsersIT {
             + role
             + "\"}");
     return userId;
+  }
+
+  /**
+   * Provisions a staff login bound directly to a business-wide role ({@code store_id IS NULL}) —
+   * what a tenant-wide OWNER or MANAGER holds. There is no HTTP path to this today (tenant-svc's
+   * own {@code assignStaff} always names a store), so it is bound the way {@link
+   * StaffAssignedHandler} would with one, but with no store.
+   */
+  private UUID wideStaff(UUID tenant, String email, String role) {
+    Response r =
+        target
+            .path(PATH)
+            .request()
+            .header("X-Tenant-Id", tenant.toString())
+            .header("X-Roles", "OWNER")
+            .post(
+                Entity.entity(
+                    "{\"email\":\"" + email + "\",\"password\":\"" + PASSWORD + "\"}",
+                    MediaType.APPLICATION_JSON));
+    UUID userId = Ids.parse(Envelopes.ok(r).getString("userId"));
+    assertThat(
+        users.bindStaffOnce(Ids.newId(), "staff-users-it", userId, tenant, role, null), is(true));
+    return userId;
+  }
+
+  /** Binds an existing login to a store role, as tenant-svc's {@code StaffAssigned} would. */
+  private void assign(UUID tenant, UUID store, UUID userId, String role) {
+    staffAssigned.handle(
+        "{\"eventId\":\""
+            + Ids.newId()
+            + "\",\"eventType\":\"StaffAssigned\",\"tenantId\":\""
+            + tenant
+            + "\",\"aggregateId\":\""
+            + userId
+            + "\",\"occurredAt\":\"2026-09-25T00:00:00Z\",\"userId\":\""
+            + userId
+            + "\",\"storeId\":\""
+            + store
+            + "\",\"role\":\""
+            + role
+            + "\"}");
   }
 
   private UUID customer(String email) {
@@ -242,6 +287,45 @@ class StaffUsersIT {
       assertThat(body.contains("eve@ours.test"), is(false));
     }
     assertThat(lookup(of(OURS, null), csv(eve)).getStatus(), is(403));
+  }
+
+  @Test
+  @DisplayName(
+      "A caller held to a store names staff at it and business-wide staff, never another"
+          + " store's; another business names none of ours even holding our store id")
+  void namingIsScopedByTheCallersStores() {
+    UUID otherStore = Ids.newId();
+    UUID atOurStore = staff(OURS, OUR_STORE, "at-our-store@ours.test", "CASHIER");
+    UUID atOtherStore = staff(OURS, otherStore, "at-other-store@ours.test", "CASHIER");
+    UUID wide = wideStaff(OURS, "wide@ours.test", "MANAGER");
+    // A shopper first, then staff at the other store only: the CUSTOMER role from signing up is
+    // held at no store, and must not read as business-wide (found by the k6 flow on the stack).
+    UUID shopperFirst = customer("shopper-first@ours.test");
+    assign(OURS, otherStore, shopperFirst, "STOREKEEPER");
+    String ids = csv(atOurStore, atOtherStore, wide, shopperFirst);
+
+    // Held to OUR_STORE only: the login at that store and the business-wide one, never the
+    // other store's — whatever else its login holds.
+    Map<String, String> scoped = named(lookup(new Caller(OURS, "MANAGER", OUR_STORE), ids));
+    assertThat(scoped.keySet(), is(Set.of(atOurStore.toString(), wide.toString())));
+
+    // Held to no store at all: every one of them, as today.
+    Map<String, String> unrestricted = named(lookup(of(OURS, "OWNER"), ids));
+    assertThat(
+        unrestricted.keySet(),
+        is(
+            Set.of(
+                atOurStore.toString(),
+                atOtherStore.toString(),
+                wide.toString(),
+                shopperFirst.toString())));
+
+    // Another business, even naming our ids and holding the same store id as their own scope,
+    // names none of ours — the tenant is the first condition, before any store filter runs.
+    for (String role : new String[] {"OWNER", "MANAGER"}) {
+      assertThat(
+          role, named(lookup(new Caller(THEIRS, role, OUR_STORE), ids)).keySet(), is(empty()));
+    }
   }
 
   @Test

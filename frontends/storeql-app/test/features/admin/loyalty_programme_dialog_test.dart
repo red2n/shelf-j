@@ -9,6 +9,7 @@ import 'package:storeql_app/core/network/api_client.dart';
 import 'package:storeql_app/features/admin/customer_providers.dart';
 import 'package:storeql_app/features/admin/loyalty_programme_dialog.dart';
 
+import 'package:intl/intl.dart';
 // ---------------------------------------------------------------------------
 // The loyalty programme dialog (13.x): the platform's default shown as such,
 // the ladder edited and saved with its months and reason, a refusal shown by
@@ -94,6 +95,12 @@ Future<_Server> _pump(WidgetTester tester, {bool refuseSave = false}) async {
 }
 
 void main() {
+  // This file's UI dates (e.g. day-before-month, "Sept") are about
+  // AppFormat writing en_GB correctly, not about which locale the app
+  // defaults to (core/l10n/app_locales_test.dart owns that) — pinned
+  // explicitly so it stays true whatever the app's own fallback is.
+  setUp(() => Intl.defaultLocale = 'en_GB');
+  tearDown(() => Intl.defaultLocale = null);
   // The app loads intl's date data through flutter_localizations; a plain test loads it itself.
   setUpAll(initializeDateFormatting);
 

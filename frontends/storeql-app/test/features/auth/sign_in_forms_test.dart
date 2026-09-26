@@ -4,6 +4,7 @@ import 'package:flutter/services.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:flutter_test/flutter_test.dart';
 import 'package:storeql_app/core/auth/auth_notifier.dart';
+import 'package:storeql_app/core/auth/password_policy.dart';
 import 'package:storeql_app/core/auth/sso.dart';
 import 'package:storeql_app/core/network/api_client.dart';
 import 'package:storeql_app/features/auth/login_screen.dart';
@@ -91,12 +92,25 @@ const _iam = '/iam-svc/auth';
 ResponseBody _refused(String code, String message, [int status = 400]) =>
     jsonResponse('{"error":{"code":"$code","message":"$message"}}', status);
 
-Future<void> _pump(WidgetTester tester, _Server server, Widget screen, {Locale? locale}) async {
+Future<void> _pump(
+  WidgetTester tester,
+  _Server server,
+  Widget screen, {
+  Locale? locale,
+  // Every published policy this file's screens read resolves instantly to
+  // the app's own built-in default, never a real network call (which would
+  // hang the test on a pending Dio timer) — a test after the published
+  // policy itself overrides this.
+  PasswordPolicy policy = PasswordPolicy.fallback,
+}) async {
   tester.view.physicalSize = const Size(1200, 2400);
   tester.view.devicePixelRatio = 1;
   addTearDown(tester.view.reset);
   final dio = Dio(BaseOptions(baseUrl: 'http://test'))..httpClientAdapter = server;
-  final container = ProviderContainer(overrides: [apiClientProvider.overrideWithValue(FakeApiClient(dio))]);
+  final container = ProviderContainer(overrides: [
+    apiClientProvider.overrideWithValue(FakeApiClient(dio)),
+    passwordPolicyProvider.overrideWith((ref) async => policy),
+  ]);
   addTearDown(container.dispose);
   await tester.runAsync(() => container.read(authNotifierProvider.future));
   await tester.pumpWidget(UncontrolledProviderScope(
@@ -187,15 +201,14 @@ void main() {
     await tester.pumpAndSettle();
     expect(find.text('The password must not be, or contain, your email address.'), findsOneWidget);
 
-    // The server's own length, when it asks more than the app knows of.
+    // The app already knows the published policy's minimum (fetched, never
+    // learned from a refusal): said in that rule's own words, whatever number
+    // the server's free text happens to use.
     answer = _refused('PASSWORD_TOO_SHORT', 'use at least 20 characters — a phrase of a few words is easiest to remember');
     await tester.tap(find.text('Create account'));
     await tester.pumpAndSettle();
-    // Said twice now, the same: the refusal and the rule under the field.
-    expect(
-      find.text('Use at least 20 characters. A phrase of a few words is easiest to remember and hardest to guess; spaces are fine.'),
-      findsNWidgets(2),
-    );
+    expect(find.text(_rule15), findsNWidgets(2),
+        reason: 'the refusal and the helper agree — both are the published policy\'s');
 
     answer = _refused('PASSWORD_TOO_LONG', 'use at most 128 characters');
     await tester.tap(find.text('Create account'));
@@ -203,30 +216,46 @@ void main() {
     expect(find.text('Use at most 128 characters.'), findsOneWidget);
   });
 
-  testWidgets('a server that asks more than fifteen is taken at its word: the rule under the field and '
-      'the check before sending follow it', (tester) async {
+  testWidgets('the sign-up form takes the published policy at its word from the start — a policy of '
+      '12 shows 12', (tester) async {
     final server = _Server({
-      'POST $_iam/register': (_) =>
-          _refused('PASSWORD_TOO_SHORT', 'use at least 20 characters — a phrase of a few words is easiest to remember'),
+      'POST $_iam/register': (_) => _refused('PASSWORD_TOO_SHORT', 'use at least 12 characters'),
     });
-    await _pump(tester, server, const LoginScreen());
+    const policy = PasswordPolicy(
+        minLength: 12, maxLength: 64, breachScreened: true, mustNotContainLogin: true);
+    await _pump(tester, server, const LoginScreen(), policy: policy);
     await tester.tap(find.text('New here? Create an account'));
     await tester.pumpAndSettle();
-    expect(find.text(_rule15), findsOneWidget, reason: 'the rule this app knows, before the server says');
+    const rule12 =
+        'Use at least 12 characters. A phrase of a few words is easiest to remember and hardest to guess; spaces are fine.';
+    expect(find.text(rule12), findsOneWidget,
+        reason: 'the published rule, before anything is typed or sent — never this app\'s own default');
+    expect(find.text(_rule15), findsNothing);
 
-    await _fill(tester, email: 'ana@example.com', password: 'sixteen chars ok');
+    // Eleven characters is refused here, not sent — the field's own error
+    // replaces its helper text (Flutter shows one or the other), so it is
+    // said once, not twice, but never reaches the server at all.
+    await _fill(tester, email: 'ana@example.com', password: 'eleven char');
     await tester.tap(find.text('Create account'));
     await tester.pumpAndSettle();
-    expect(server.calls('$_iam/register'), 1);
-    const rule20 =
-        'Use at least 20 characters. A phrase of a few words is easiest to remember and hardest to guess; spaces are fine.';
-    expect(find.text(rule20), findsNWidgets(2), reason: 'the refusal and the helper agree');
-    expect(find.text(_rule15), findsNothing, reason: 'never two rules on one card');
+    expect(server.asked('$_iam/register'), isFalse);
+    expect(find.text(rule12), findsOneWidget);
 
-    // A second sixteen-character try is refused here, not sent.
+    // Twelve is enough, and is sent.
+    await _fill(tester, email: 'ana@example.com', password: 'twelve chars');
     await tester.tap(find.text('Create account'));
     await tester.pumpAndSettle();
-    expect(server.calls('$_iam/register'), 1);
+    expect(server.asked('$_iam/register'), isTrue);
+  });
+
+  testWidgets('the sign-in card offers a way back for a forgotten password; the platform console does not',
+      (tester) async {
+    await _pump(tester, _Server({}), const LoginScreen());
+    expect(find.byKey(const Key('forgot-password')), findsOneWidget);
+
+    await tester.pumpWidget(const SizedBox());
+    await _pump(tester, _Server({}), const PlatformLoginScreen());
+    expect(find.byKey(const Key('forgot-password')), findsNothing);
   });
 
   // ── translated ──────────────────────────────────────────────────────────────

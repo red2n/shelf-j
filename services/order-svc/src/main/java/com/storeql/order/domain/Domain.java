@@ -312,7 +312,92 @@ public final class Domain {
        * Whether the shopper allows the store to substitute a line it cannot fill (substitutions for
        * out-of-stock online lines): their choice at checkout, on unless they turned it off.
        */
-      boolean allowSubstitutions) {
+      boolean allowSubstitutions,
+      /**
+       * The delivery or collection window this order holds (delivery and collection slots): the
+       * {@code fulfilment_windows} row it was taken from. All four slot fields are set together or
+       * not at all — a till sale and an order at a store with no windows carry none.
+       */
+      UUID slotWindowId,
+      /** The chosen occurrence's start, in UTC. */
+      Instant slotStartsAt,
+      /** The chosen occurrence's end, in UTC. */
+      Instant slotEndsAt,
+      /**
+       * The IANA zone the occurrence was resolved in at the moment it was taken — the store's own
+       * zone, or the window's saved one when tenant-svc could not be read — so the server can
+       * always show the store's own local time again without asking tenant-svc a second time.
+       */
+      String slotTimeZone) {
+
+    /** An order as recorded before delivery and collection slots existed: no window. */
+    public Order(
+        UUID id,
+        UUID tenantId,
+        UUID storeId,
+        UUID customerId,
+        UUID loginId,
+        String channel,
+        String fulfilmentType,
+        String status,
+        BigDecimal subtotal,
+        BigDecimal taxAmount,
+        BigDecimal discountAmount,
+        BigDecimal total,
+        String currency,
+        String notes,
+        String idempotencyKey,
+        Instant createdAt,
+        Instant updatedAt,
+        boolean taxExempt,
+        String exemptReason,
+        String deliveryLine1,
+        String deliveryLine2,
+        String deliveryCity,
+        String deliveryPostalCode,
+        String deliveryRecipientName,
+        String deliveryRecipientPhone,
+        String contactPhone,
+        String paymentMethod,
+        BigDecimal promotionDiscount,
+        UUID sellerUserId,
+        boolean allowSubstitutions) {
+      this(
+          id,
+          tenantId,
+          storeId,
+          customerId,
+          loginId,
+          channel,
+          fulfilmentType,
+          status,
+          subtotal,
+          taxAmount,
+          discountAmount,
+          total,
+          currency,
+          notes,
+          idempotencyKey,
+          createdAt,
+          updatedAt,
+          taxExempt,
+          exemptReason,
+          deliveryLine1,
+          deliveryLine2,
+          deliveryCity,
+          deliveryPostalCode,
+          deliveryRecipientName,
+          deliveryRecipientPhone,
+          contactPhone,
+          paymentMethod,
+          promotionDiscount,
+          sellerUserId,
+          allowSubstitutions,
+          null,
+          null,
+          null,
+          null);
+    }
 
     /** An order as recorded before the shopper could say: substitutions allowed. */
     public Order(

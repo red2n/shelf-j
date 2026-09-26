@@ -64,6 +64,12 @@ public class JwtAuthFilter implements ContainerRequestFilter {
           "api/iam-svc/auth/mfa/login",
           "api/iam-svc/auth/mfa/login/passkey-options",
           "api/iam-svc/auth/refresh",
+          // A forgotten password (password reset): asking for a link answers the same for any
+          // address, and spending one needs the link's 256-bit token, the whole capability. The
+          // rules a new password must meet are read before anyone has signed in.
+          "api/iam-svc/auth/password/forgot",
+          "api/iam-svc/auth/password/reset",
+          "api/iam-svc/auth/password-policy",
           // Single sign-on through a business's identity provider (20.x): starting it, the
           // provider sending the browser back, and the app trading the ticket it came back with.
           // Nobody signing in holds a token yet; the random state and the ticket with the app's
@@ -532,6 +538,11 @@ public class JwtAuthFilter implements ContainerRequestFilter {
     }
     // Soft delivery-coverage check before checkout (pincode → fulfilling store).
     if ("GET".equals(method) && "api/tenant-svc/fulfilment/resolve".equals(path)) {
+      return true;
+    }
+    // The delivery and collection windows a store offers over the next week, with what each has
+    // left (delivery and collection slots): read by a guest choosing one at checkout.
+    if ("GET".equals(method) && "api/order-svc/storefront/fulfilment-slots".equals(path)) {
       return true;
     }
     if ("GET".equals(method) && path.startsWith("api/inventory-svc/inventory/availability")) {

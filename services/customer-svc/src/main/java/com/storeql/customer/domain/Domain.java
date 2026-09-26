@@ -16,6 +16,16 @@ public final class Domain {
    * login has at most one of these per tenant (SJ-D44). {@code firstName}/{@code lastName} are null
    * until someone gives them: a linked login starts with an email and nothing else.
    */
+  /**
+   * @param phoneE164 {@code phone} normalised to E.164 against the business's own regions; {@code
+   *     null} when {@code phone} is null, was typed with no reachable region, or parses under none
+   *     of the business's regions. Not the API's business to invent — filled wherever {@code phone}
+   *     is written, kept as a fast, exact-match read.
+   * @param phoneE164CheckedAt when {@code phoneE164} was last derived against regions that were
+   *     actually readable, whatever it found; {@code null} for a row the start-up backfill has not
+   *     yet reached, or last reached while the business's regions could not be read. Bookkeeping
+   *     only — never rendered over the API.
+   */
   public record Customer(
       UUID id,
       UUID tenantId,
@@ -31,7 +41,9 @@ public final class Domain {
       Instant anonymizedAt,
       Instant createdAt,
       Instant updatedAt,
-      String preferredLanguage) {
+      String preferredLanguage,
+      String phoneE164,
+      Instant phoneE164CheckedAt) {
 
     public static final String STATUS_ACTIVE = "ACTIVE";
     public static final String STATUS_SUSPENDED = "SUSPENDED";
@@ -88,6 +100,12 @@ public final class Domain {
     public static final String SOURCE_STAFF = "STAFF";
     public static final String SOURCE_UNSUBSCRIBE_LINK = "UNSUBSCRIBE_LINK";
     public static final String SOURCE_IMPORT = "IMPORT";
+
+    /**
+     * The cascade: withdrawing the MARKETING purpose switches this channel off in the same step,
+     * never disguised as a preference-centre click or a staff act.
+     */
+    public static final String SOURCE_PURPOSE_WITHDRAWN = "PURPOSE_WITHDRAWN";
   }
 
   public record CustomerAddress(
@@ -110,9 +128,9 @@ public final class Domain {
   }
 
   /**
-   * A customer's points (13.x): the balance they can spend, everything they ever earned, what
-   * counts towards their tier under the business's programme (lifetime, or the qualifying window),
-   * the tier that reaches, and since when they have held it.
+   * A customer's points: the balance they can spend, everything they ever earned, what counts
+   * towards their tier under the business's programme (lifetime, or the qualifying window), the
+   * tier that reaches, and since when they have held it.
    */
   public record LoyaltyAccount(
       UUID id,

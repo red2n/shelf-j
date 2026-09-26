@@ -71,6 +71,9 @@ public class OrderResource {
    *     null}; implies {@code handover=DONE}
    * @param from inclusive ISO-8601 lower bound on creation time, or {@code null}
    * @param to exclusive ISO-8601 upper bound, or {@code null}
+   * @param sort {@code "slot"} to order by the delivery or collection window's start (soonest
+   *     first, a windowless order last, then id) instead of the usual newest-first; {@code null} or
+   *     anything else keeps the usual order
    * @param after cursor from the previous page's {@code meta.nextCursor}, or {@code null} to start
    * @param limit page size, 1..100; clamped when absent or out of range
    * @return the page of order summaries, with the next cursor in {@code meta}
@@ -82,7 +85,9 @@ public class OrderResource {
               + " fulfilment type, whether handed over (ship-from-store: handover=PENDING is the"
               + " picked orders awaiting the courier or the shopper, DONE those handed over), when"
               + " handed over (handedFrom inclusive, handedTo exclusive; either implies"
-              + " handover=DONE), and creation-date range (from/to). Cursor-paginated.")
+              + " handover=DONE), and creation-date range (from/to). sort=slot (delivery and"
+              + " collection slots) orders by the window's start instead of newest-first, for the"
+              + " Fulfilment queue. Cursor-paginated.")
   @APIResponse(responseCode = "200", description = "Page of order summaries")
   @APIResponse(
       responseCode = "400",
@@ -100,6 +105,7 @@ public class OrderResource {
       @QueryParam("handedTo") String handedTo,
       @QueryParam("from") String from,
       @QueryParam("to") String to,
+      @QueryParam("sort") String sort,
       @QueryParam("after") String after,
       @QueryParam("limit") Integer limit) {
     UUID tenantId = ctx.requireTenantId();
@@ -133,6 +139,7 @@ public class OrderResource {
             handedToInst,
             fromInst,
             toInst,
+            sort,
             after,
             clamped);
     return ApiResponse.ok(

@@ -12,6 +12,7 @@ import 'package:storeql_app/features/admin/settlements_screen.dart';
 import '../../support/fake_api.dart';
 import '../../support/mid_word.dart';
 
+import 'package:intl/intl.dart';
 // ---------------------------------------------------------------------------
 // Card settlements (11.10): a payout says what it needs of the person looking
 // at it; a line that did not match is decided with a reason and sent as
@@ -136,6 +137,12 @@ Future<_Server> _pump(WidgetTester tester, Widget child,
 }
 
 void main() {
+  // This file's UI dates (e.g. day-before-month, "Sept") are about
+  // AppFormat writing en_GB correctly, not about which locale the app
+  // defaults to (core/l10n/app_locales_test.dart owns that) — pinned
+  // explicitly so it stays true whatever the app's own fallback is.
+  setUp(() => Intl.defaultLocale = 'en_GB');
+  tearDown(() => Intl.defaultLocale = null);
   // The list writes its dates with AppFormat, in the app's en_GB locale.
   setUpAll(initializeDateFormatting);
 

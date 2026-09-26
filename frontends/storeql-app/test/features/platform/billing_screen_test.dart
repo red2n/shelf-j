@@ -11,6 +11,7 @@ import 'package:storeql_app/features/platform/billing_screen.dart';
 
 import '../../support/fake_api.dart';
 
+import 'package:intl/intl.dart';
 // ---------------------------------------------------------------------------
 // The platform's own billing (21.9): what is owed, oldest first, and whether the
 // platform can invoice at all — which is worth its own card, because a platform
@@ -135,6 +136,12 @@ Future<void> _pump(
 }
 
 void main() {
+  // This file's UI dates (e.g. day-before-month, "Sept") are about
+  // AppFormat writing en_GB correctly, not about which locale the app
+  // defaults to (core/l10n/app_locales_test.dart owns that) — pinned
+  // explicitly so it stays true whatever the app's own fallback is.
+  setUp(() => Intl.defaultLocale = 'en_GB');
+  tearDown(() => Intl.defaultLocale = null);
   // Due dates are shown as dates (15 Aug 2026), which needs the locale data.
   setUpAll(initializeDateFormatting);
 

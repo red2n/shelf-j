@@ -57,7 +57,7 @@ class CustomerServiceEventsTest {
     service = new CustomerService();
     service.profiles = profiles;
     service.programmes = programmes;
-    // The platform's default programme unless a test says otherwise (13.x).
+    // The platform's default programme unless a test says otherwise.
     org.mockito.Mockito.lenient()
         .when(programmes.programme(org.mockito.ArgumentMatchers.any()))
         .thenAnswer(inv -> LoyaltyProgramme.defaults(inv.getArgument(0)));
@@ -94,6 +94,8 @@ class CustomerServiceEventsTest {
                     null,
                     Instant.now(),
                     Instant.now(),
+                    null,
+                    null,
                     null)));
   }
 

@@ -55,6 +55,7 @@ class OrderServiceDarkStoreTest {
   @Mock StoreStatusRepository storeStatusRepo;
   @Mock TenantClient tenants;
   @Mock TenantProfiles profiles;
+  @Mock FulfilmentWindowService windows;
 
   private OrderService svc;
 
@@ -69,6 +70,9 @@ class OrderServiceDarkStoreTest {
     svc.storeStatusRepo = storeStatusRepo;
     svc.tenants = tenants;
     svc.profiles = profiles;
+    // Delivery and collection slots: no window is named or offered in this fixture — the mock's
+    // default null answer is exactly "no slot".
+    svc.windows = windows;
     svc.jurisdictions = org.mockito.Mockito.mock(com.storeql.service.Jurisdictions.class);
     lenient().when(profiles.requireCurrency(TENANT)).thenReturn("USD");
     when(ctx.requireTenantId()).thenReturn(TENANT);
@@ -108,6 +112,8 @@ class OrderServiceDarkStoreTest {
         delivery ? "Sam Shopper" : null,
         delivery ? "07700900123" : null,
         "07700900123",
+        null,
+        null,
         null,
         null,
         null,

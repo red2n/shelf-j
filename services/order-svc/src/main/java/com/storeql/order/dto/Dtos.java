@@ -115,7 +115,20 @@ public final class Dtos {
               description =
                   "Whether the store may substitute a line it cannot fill (substitutions for"
                       + " out-of-stock online lines). On unless the shopper turns it off.")
-          Boolean allowSubstitutions) {}
+          Boolean allowSubstitutions,
+      @Schema(
+              description =
+                  "The delivery or collection window chosen at checkout (delivery and collection"
+                      + " slots): the fulfilment_windows id, from GET /storefront/fulfilment-slots."
+                      + " Both this and slotStartsAt are required together, only for an online"
+                      + " delivery or pickup order, and only where the fulfilling store offers"
+                      + " windows of that type.")
+          String slotWindowId,
+      @Schema(
+              description =
+                  "The chosen occurrence's start (ISO instant), exactly as"
+                      + " GET /storefront/fulfilment-slots gave it.")
+          String slotStartsAt) {}
 
   @Schema(
       name = "PriceOrderRequest",
@@ -245,7 +258,29 @@ public final class Dtos {
               description =
                   "Whether the shopper allows the store to substitute a line it cannot fill;"
                       + " their choice at checkout.")
-          Boolean allowSubstitutions) {}
+          Boolean allowSubstitutions,
+      @Schema(
+              description =
+                  "The delivery or collection window this order holds (delivery and collection"
+                      + " slots); null for a till sale or an order at a store with no windows.")
+          SlotResponse slot) {}
+
+  @Schema(
+      name = "SlotResponse",
+      description =
+          "The delivery or collection window an order holds: the chosen occurrence's UTC instants"
+              + " and the store's own zone, plus date/startTime/endTime already computed in that"
+              + " zone so a client shows the store's own local time without converting anything.")
+  public record SlotResponse(
+      String startsAt,
+      String endsAt,
+      @Schema(description = "IANA zone id, e.g. Europe/Warsaw.") String timeZone,
+      @Schema(description = "The occurrence's date in the store's own zone, yyyy-MM-dd.")
+          String date,
+      @Schema(description = "The occurrence's start, HH:mm in the store's own zone.")
+          String startTime,
+      @Schema(description = "The occurrence's end, HH:mm in the store's own zone.")
+          String endTime) {}
 
   @Schema(
       name = "DispatchRequest",
@@ -363,7 +398,12 @@ public final class Dtos {
       String storeId,
       String status,
       BigDecimal total,
-      @Schema(description = "How many items the part carries.") BigDecimal units) {}
+      @Schema(description = "How many items the part carries.") BigDecimal units,
+      @Schema(
+              description =
+                  "The delivery or collection window the checkout holds; the same for every"
+                      + " part, since it takes one place (delivery and collection slots).")
+          SlotResponse slot) {}
 
   @Schema(name = "OrderStatusHistoryResponse", description = "Append-only order status transition.")
   public record OrderStatusHistoryResponse(
@@ -451,7 +491,12 @@ public final class Dtos {
               description =
                   "Whether the shopper allows the store to substitute a line it cannot fill;"
                       + " their choice at checkout.")
-          Boolean allowSubstitutions) {}
+          Boolean allowSubstitutions,
+      @Schema(
+              description =
+                  "The delivery or collection window this order holds (delivery and collection"
+                      + " slots); null for a till sale or an order at a store with no windows.")
+          SlotResponse slot) {}
 
   @Schema(name = "VoidRequest")
   public record VoidRequest(
@@ -1132,4 +1177,83 @@ public final class Dtos {
       BigDecimal refundedAmount,
       BigDecimal unredeemedAmount,
       List<DepositReportRowResponse> byMaterial) {}
+
+  // ── Delivery and collection slots ─────────────────────────────────────────
+
+  @Schema(
+      name = "FulfilmentWindowResponse",
+      description = "One weekly window a store offers, for delivery or for collection.")
+  public record FulfilmentWindowResponse(
+      String id,
+      String storeId,
+      @Schema(description = "DELIVERY or PICKUP.") String fulfilmentType,
+      @Schema(description = "ISO weekday: 1=Monday .. 7=Sunday.") int weekday,
+      @Schema(description = "The store's own local time, HH:mm.") String startTime,
+      String endTime,
+      @Schema(description = "How many orders this occurrence takes.") int capacity,
+      @Schema(description = "Minutes before the start orders stop.") int cutoffMinutes,
+      boolean active,
+      @Schema(description = "The store's own IANA zone at the moment this was set.")
+          String timeZone,
+      String updatedAt,
+      String updatedBy) {}
+
+  @Schema(
+      name = "CreateFulfilmentWindowRequest",
+      description = "A new weekly window for one store and fulfilment type.")
+  public record CreateFulfilmentWindowRequest(
+      @NotBlank String storeId,
+      @Schema(description = "DELIVERY or PICKUP.") @NotBlank String fulfilmentType,
+      @Schema(description = "ISO weekday: 1=Monday .. 7=Sunday.") @NotNull Integer weekday,
+      @Schema(description = "The store's own local time, HH:mm.") @NotBlank String startTime,
+      @NotBlank String endTime,
+      @Schema(description = "How many orders this occurrence takes; at least 1.") @NotNull
+          Integer capacity,
+      @Schema(description = "Minutes before the start orders stop; 0 when omitted.")
+          Integer cutoffMinutes,
+      @Schema(description = "On when omitted.") Boolean active) {}
+
+  @Schema(
+      name = "UpdateFulfilmentWindowRequest",
+      description = "A window's shape. Its store and fulfilment type cannot be changed.")
+  public record UpdateFulfilmentWindowRequest(
+      @Schema(description = "ISO weekday: 1=Monday .. 7=Sunday.") @NotNull Integer weekday,
+      @NotBlank String startTime,
+      @NotBlank String endTime,
+      @NotNull Integer capacity,
+      Integer cutoffMinutes,
+      Boolean active) {}
+
+  @Schema(
+      name = "FulfilmentSlotResponse",
+      description = "One occurrence of a window, with what it has left.")
+  public record FulfilmentSlotResponse(
+      String windowId,
+      String startsAt,
+      String endsAt,
+      @Schema(description = "The occurrence's start, HH:mm in the store's own zone.")
+          String startTime,
+      @Schema(description = "The occurrence's end, HH:mm in the store's own zone.") String endTime,
+      @Schema(description = "Places still free; never above capacity.") int left,
+      boolean full) {}
+
+  @Schema(name = "FulfilmentSlotDayResponse", description = "One of the next seven days.")
+  public record FulfilmentSlotDayResponse(
+      @Schema(description = "yyyy-MM-dd in the store's own zone.") String date,
+      @Schema(description = "This day's occurrences, earliest first; empty when none is left.")
+          List<FulfilmentSlotResponse> slots) {}
+
+  @Schema(
+      name = "FulfilmentSlotsResponse",
+      description =
+          "The next seven days of a store's windows of one fulfilment type, in the store's own"
+              + " time, with what each occurrence has left.")
+  public record FulfilmentSlotsResponse(
+      String storeId,
+      @Schema(description = "DELIVERY or PICKUP.") String fulfilmentType,
+      @Schema(description = "IANA zone id, e.g. Europe/Warsaw.") String timeZone,
+      @Schema(description = "Whether the store offers at least one active window of this type.")
+          boolean offered,
+      @Schema(description = "Always exactly seven entries, today first.")
+          List<FulfilmentSlotDayResponse> days) {}
 }

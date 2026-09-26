@@ -30,7 +30,24 @@ public record OrderGroup(
    * One order of the group, as the group lists it.
    *
    * @param units how many items it carries, its lines' quantities added up
+   * @param slotStartsAt the delivery or collection window this checkout holds, in UTC — the same
+   *     for every part (delivery and collection slots); null when the checkout carries none
+   * @param slotEndsAt the window's end, in UTC
+   * @param slotTimeZone the IANA zone the window was resolved in
    */
   public record Part(
-      UUID orderId, UUID storeId, String status, BigDecimal total, BigDecimal units) {}
+      UUID orderId,
+      UUID storeId,
+      String status,
+      BigDecimal total,
+      BigDecimal units,
+      Instant slotStartsAt,
+      Instant slotEndsAt,
+      String slotTimeZone) {
+
+    /** A part as read before delivery and collection slots existed: no window. */
+    public Part(UUID orderId, UUID storeId, String status, BigDecimal total, BigDecimal units) {
+      this(orderId, storeId, status, total, units, null, null, null);
+    }
+  }
 }

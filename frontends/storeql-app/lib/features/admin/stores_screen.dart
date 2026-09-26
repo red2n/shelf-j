@@ -8,12 +8,14 @@ import '../../core/network/api_client.dart';
 import '../../core/network/api_error.dart';
 import '../../core/spacing.dart';
 import '../../core/theme.dart';
+import '../../shared/widgets/adaptive_sheet.dart';
 import '../../shared/widgets/empty_state.dart';
 import '../../shared/widgets/reference_fields.dart';
 import '../../shared/widgets/error_view.dart';
 import '../../shared/widgets/loading_view.dart';
 import '../../shared/widgets/page_header.dart';
 import '../../shared/widgets/status_badge.dart';
+import 'fulfilment_windows_screen.dart';
 import 'providers/admin_providers.dart';
 import 'store_instruments_dialog.dart';
 
@@ -26,7 +28,18 @@ String _storeStatusLabel(String status) => switch (status.toUpperCase()) {
     };
 
 /// What a store's ⋮ menu offers on a narrow list.
-enum _StoreAction { edit, zones, instruments, delivery, toggle }
+enum _StoreAction { edit, zones, instruments, delivery, slots, toggle }
+
+/// Whether [auth] may set [storeId]'s delivery/collection windows: an owner,
+/// anywhere; a manager only where they are store-held for it (empty
+/// [AuthAuthenticated.storeIds] is unrestricted, like an owner's) — never a
+/// storekeeper, who would only meet a refusal from order-svc.
+bool _canManageSlots(AuthState? auth, String storeId) {
+  if (auth is! AuthAuthenticated) return false;
+  if (auth.roles.contains(UserRoles.owner)) return true;
+  if (!auth.roles.contains(UserRoles.manager)) return false;
+  return auth.storeIds.isEmpty || auth.storeIds.contains(storeId);
+}
 
 class StoresScreen extends ConsumerWidget {
   const StoresScreen({super.key});
@@ -102,6 +115,7 @@ class StoresScreen extends ConsumerWidget {
                       return _StoreCard(
                         store: s,
                         inline: inline,
+                        canManageSlots: _canManageSlots(auth, s.id),
                         onAction: (action) {
                           switch (action) {
                             case _StoreAction.edit:
@@ -116,6 +130,8 @@ class StoresScreen extends ConsumerWidget {
                               );
                             case _StoreAction.delivery:
                               _showDeliveryAreasDialog(context, ref, s);
+                            case _StoreAction.slots:
+                              _showFulfilmentWindowsSheet(context, s);
                             case _StoreAction.toggle:
                               _toggleStoreStatus(context, ref, s, active);
                           }
@@ -163,6 +179,17 @@ class StoresScreen extends ConsumerWidget {
     showDialog(
       context: context,
       builder: (_) => _DeliveryAreasDialog(store: store),
+    );
+  }
+
+  /// Delivery & collection slots (delivery-and-collection-slots): the windows
+  /// this store offers, weekday by weekday, for delivery and collection each.
+  void _showFulfilmentWindowsSheet(BuildContext context, StoreInfo store) {
+    showAdaptiveSheet(
+      context: context,
+      title: 'Delivery & collection slots',
+      maxWidth: 720,
+      builder: (_) => FulfilmentWindowsScreen(store: store),
     );
   }
 
@@ -222,11 +249,17 @@ class _StoreCard extends StatelessWidget {
   const _StoreCard({
     required this.store,
     required this.inline,
+    required this.canManageSlots,
     required this.onAction,
   });
 
   final StoreInfo store;
   final bool inline;
+
+  /// Whether the signed-in staff member may set this store's delivery and
+  /// collection windows — an owner, or a manager store-held for it; never a
+  /// storekeeper, who order-svc would only refuse.
+  final bool canManageSlots;
   final void Function(_StoreAction action) onAction;
 
   @override
@@ -300,6 +333,14 @@ class _StoreCard extends StatelessWidget {
                     icon: const Icon(Icons.local_shipping_outlined, size: 18),
                     label: const Text('Delivery'),
                   ),
+                  if (canManageSlots)
+                    IconButton(
+                      key: Key('store-slots-${store.id}'),
+                      tooltip: 'Delivery & collection slots',
+                      onPressed: () => onAction(_StoreAction.slots),
+                      icon:
+                          const Icon(Icons.event_available_outlined, size: 18),
+                    ),
                   const SizedBox(width: AppSpacing.sm),
                   // The store's on/off switch, labelled with what it is now.
                   MergeSemantics(
@@ -334,6 +375,9 @@ class _StoreCard extends StatelessWidget {
                       'Instruments'),
                   _item(_StoreAction.delivery, Icons.local_shipping_outlined,
                       'Delivery'),
+                  if (canManageSlots)
+                    _item(_StoreAction.slots, Icons.event_available_outlined,
+                        'Delivery & collection slots'),
                   const PopupMenuDivider(),
                   _item(
                     _StoreAction.toggle,

@@ -103,13 +103,23 @@ Future<void> putMarketingChannels(Dio dio, Map<String, bool> choices) => dio.put
       },
     );
 
-/// Turns off every channel that is on, so none is left on once the Marketing purpose is off.
+/// Said wherever a channel is disabled for want of the Marketing purpose, and
+/// wherever the server refuses one switched on for the same reason (409
+/// MARKETING_PURPOSE_NOT_GRANTED) — one form of words, never a raw code.
+const switchOnMarketingFirst = 'Switch on Marketing first';
+
+/// Turns off every channel that is on, so none is left on once the Marketing
+/// purpose is off. customer-svc now does this itself, atomically, on the same
+/// transaction as the withdrawal — sending it again here is a no-op once
+/// that has already happened, and keeps this screen correct against an older
+/// server too; either way, the channels are re-read after, never assumed.
 Future<void> withdrawMarketingChannels(WidgetRef ref) async {
   final prefs = await ref.read(marketingPreferencesProvider.future) ??
       const <MarketingPreference>[];
   final on = {for (final p in prefs) if (p.granted) p.channel: false};
-  if (on.isEmpty) return;
-  await putMarketingChannels(ref.read(storefrontDioProvider), on);
+  if (on.isNotEmpty) {
+    await putMarketingChannels(ref.read(storefrontDioProvider), on);
+  }
   ref.invalidate(marketingPreferencesProvider);
 }
 
@@ -145,7 +155,16 @@ class _MarketingChannelsState extends ConsumerState<MarketingChannels> {
           ? 'Saved. We will only send what you have agreed to.'
           : 'Saved. We will stop sending you these.');
     } catch (e) {
-      _say(friendlyError(e, fallback: 'Could not save that just now.'));
+      // Worded the same as the disabled switch's own hint below — never the
+      // raw code — whether it is refused because Marketing was withdrawn
+      // since this screen last read it, or was never on to begin with.
+      _say(apiErrorCode(e) == 'MARKETING_PURPOSE_NOT_GRANTED'
+          ? switchOnMarketingFirst
+          : friendlyError(e, fallback: 'Could not save that just now.'));
+      // The purpose may no longer be what this screen last read — re-read it
+      // too, rather than leave a switch showing what the server just refused.
+      ref.invalidate(marketingPreferencesProvider);
+      ref.invalidate(myPrivacyProvider);
     } finally {
       if (mounted) setState(() => _saving = false);
     }
@@ -268,7 +287,15 @@ class _MarketingChannelsState extends ConsumerState<MarketingChannels> {
                         ? null
                         : (v) => _set(entry.key, v),
                     title: Text(entry.value.label),
-                    subtitle: Text(entry.value.detail),
+                    // Off, waiting on the purpose above: say why, in the same
+                    // words a refusal to switch it on uses. An explicit colour,
+                    // not the tile's own disabled dimming (38% opacity, under
+                    // 4.5:1) — the hint must stay as readable as any other text.
+                    subtitle: waiting && !(on[entry.key] ?? false)
+                        ? Text(switchOnMarketingFirst,
+                            key: const Key('marketing-channel-hint'),
+                            style: TextStyle(color: theme.colorScheme.onSurfaceVariant))
+                        : Text(entry.value.detail),
                   ),
                 Padding(
                   padding: EdgeInsetsDirectional.fromSTEB(

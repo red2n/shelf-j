@@ -10,6 +10,7 @@ import 'package:storeql_app/core/auth/auth_state.dart';
 import 'package:storeql_app/core/network/api_client.dart';
 import 'package:storeql_app/features/admin/recalls_screen.dart';
 
+import 'package:intl/intl.dart';
 // ---------------------------------------------------------------------------
 // Recalls, from the admin screen.
 //
@@ -155,6 +156,12 @@ Map<String, dynamic> _body(RequestOptions o) =>
     (o.data is String ? jsonDecode(o.data as String) : o.data) as Map<String, dynamic>;
 
 void main() {
+  // This file's UI dates (e.g. day-before-month, "Sept") are about
+  // AppFormat writing en_GB correctly, not about which locale the app
+  // defaults to (core/l10n/app_locales_test.dart owns that) — pinned
+  // explicitly so it stays true whatever the app's own fallback is.
+  setUp(() => Intl.defaultLocale = 'en_GB');
+  tearDown(() => Intl.defaultLocale = null);
   // Dates are written through AppFormat in the app's locale (en_GB here); the
   // app loads intl's date data through flutter_localizations, a test loads it here.
   setUpAll(initializeDateFormatting);

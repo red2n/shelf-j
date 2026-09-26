@@ -11,6 +11,7 @@ import 'package:storeql_app/core/network/api_client.dart';
 import 'package:storeql_app/features/admin/tenant_data_providers.dart';
 import 'package:storeql_app/features/admin/tenant_data_screen.dart';
 
+import 'package:intl/intl.dart';
 // ---------------------------------------------------------------------------
 // Data export and leaving (21.14). The owner sees what every service holds and
 // what each leaves out, and why; the export reads every page into one bundle;
@@ -238,6 +239,12 @@ String _bundle(List<Map<String, Object?>> lines) => [
 ].join('\n');
 
 void main() {
+  // This file's UI dates (e.g. day-before-month, "Sept") are about
+  // AppFormat writing en_GB correctly, not about which locale the app
+  // defaults to (core/l10n/app_locales_test.dart owns that) — pinned
+  // explicitly so it stays true whatever the app's own fallback is.
+  setUp(() => Intl.defaultLocale = 'en_GB');
+  tearDown(() => Intl.defaultLocale = null);
   setUpAll(initializeDateFormatting);
 
   testWidgets('anyone but the owner is told so and the API is never called', (

@@ -545,9 +545,33 @@ final storefrontPaymentMethodsProvider = Provider<List<String>>((ref) =>
     ref.watch(storefrontConfigProvider).value?.enabledPaymentMethods ??
     const ['CASH', 'CARD']);
 
-/// variantId → in-stock at the current store (real inventory). Empty/failed = treat as available.
+/// A variant's stock at the current store: whether it can be sold at all, and
+/// — only when the business set a storefront stock-signal threshold and this
+/// variant is at or under it — the whole units left. Never a count above the
+/// threshold, and never one at all with no threshold, out of stock, or a
+/// weighed good.
+class StockInfo {
+  final bool inStock;
+  final int? onlyLeft;
+
+  /// True when the supplier ships it per order: available with none on the
+  /// shelf (inventory-svc's own words for it). A variant sourced this way is
+  /// never held back from Add for being "out of stock" — there is no shelf
+  /// to be out of.
+  final bool dropship;
+
+  const StockInfo({required this.inStock, this.onlyLeft, this.dropship = false});
+
+  factory StockInfo.fromJson(Map<String, dynamic> j) => StockInfo(
+        inStock: j['inStock'] as bool? ?? false,
+        onlyLeft: (j['onlyLeft'] as num?)?.toInt(),
+        dropship: j['dropship'] as bool? ?? false,
+      );
+}
+
+/// variantId → stock at the current store (real inventory). Empty/failed = treat as available.
 final storefrontAvailabilityProvider =
-    FutureProvider.autoDispose<Map<String, bool>>((ref) async {
+    FutureProvider.autoDispose<Map<String, StockInfo>>((ref) async {
   final dio = ref.watch(storefrontDioProvider);
   final store = ref.watch(storefrontStoreProvider);
   if (store.isEmpty) return {};
@@ -556,9 +580,180 @@ final storefrontAvailabilityProvider =
   final data = (resp.data['data'] as List?) ?? [];
   return {
     for (final e in data)
-      (e['variantId'] as String): (e['inStock'] as bool? ?? false)
+      (e['variantId'] as String): StockInfo.fromJson(e as Map<String, dynamic>)
   };
 });
+
+// ── Delivery and collection slots ────────────────────────────────────────────
+//
+// A store's next seven days of delivery/collection windows, in the store's own
+// time (order-svc computes date/startTime/endTime server-side; the app never
+// converts them — a device in one time zone must show a store in another its
+// own hours, not the device's).
+
+/// The store's own bare calendar date ("2026-09-27"), read as its year/month/day
+/// only — never run through a timezone conversion, so a store on the other
+/// side of the world keeps its own day. Null when [ymd] is not that shape.
+DateTime? localYmd(String ymd) {
+  final parts = ymd.split('-');
+  if (parts.length != 3) return null;
+  final y = int.tryParse(parts[0]);
+  final m = int.tryParse(parts[1]);
+  final d = int.tryParse(parts[2]);
+  if (y == null || m == null || d == null) return null;
+  return DateTime(y, m, d);
+}
+
+/// One occurrence of a window a shopper may choose at checkout.
+class SlotOption {
+  final String windowId;
+
+  /// The store's own calendar day this occurrence falls on ("2026-09-27"),
+  /// from the day the server listed it under.
+  final String date;
+  final DateTime startsAt;
+  final DateTime endsAt;
+
+  /// The store's own local clock, exactly as the server sent it — never
+  /// converted on the device.
+  final String startTime;
+  final String endTime;
+  final int left;
+  final bool full;
+
+  const SlotOption({
+    required this.windowId,
+    this.date = '',
+    required this.startsAt,
+    required this.endsAt,
+    required this.startTime,
+    required this.endTime,
+    required this.left,
+    required this.full,
+  });
+
+  /// "17:00–19:00", the store's own local clock.
+  String get timeRange => '$startTime–$endTime';
+
+  factory SlotOption.fromJson(Map<String, dynamic> j, {String date = ''}) => SlotOption(
+        windowId: j['windowId'] as String? ?? '',
+        date: date,
+        startsAt: DateTime.tryParse(j['startsAt'] as String? ?? '') ?? DateTime.now(),
+        endsAt: DateTime.tryParse(j['endsAt'] as String? ?? '') ?? DateTime.now(),
+        startTime: j['startTime'] as String? ?? '',
+        endTime: j['endTime'] as String? ?? '',
+        left: (j['left'] as num?)?.toInt() ?? 0,
+        full: j['full'] as bool? ?? false,
+      );
+}
+
+/// One of the next seven days, and what it offers.
+class SlotDay {
+  final String date;
+  final List<SlotOption> slots;
+
+  const SlotDay({required this.date, required this.slots});
+
+  DateTime? get localDate => localYmd(date);
+
+  factory SlotDay.fromJson(Map<String, dynamic> j) {
+    final date = j['date'] as String? ?? '';
+    return SlotDay(
+      date: date,
+      slots: [
+        for (final s in (j['slots'] as List?) ?? const [])
+          if (s is Map<String, dynamic>) SlotOption.fromJson(s, date: date),
+      ],
+    );
+  }
+}
+
+/// A store's answer to "what windows can a shopper choose, and what is left".
+class FulfilmentSlots {
+  final String storeId;
+  final String fulfilmentType;
+  final String timeZone;
+
+  /// Whether the store offers windows of this type at all; false ⇒ no picker,
+  /// checkout exactly as before.
+  final bool offered;
+  final List<SlotDay> days;
+
+  const FulfilmentSlots({
+    required this.storeId,
+    required this.fulfilmentType,
+    required this.timeZone,
+    required this.offered,
+    required this.days,
+  });
+
+  factory FulfilmentSlots.fromJson(Map<String, dynamic> j) => FulfilmentSlots(
+        storeId: j['storeId'] as String? ?? '',
+        fulfilmentType: j['fulfilmentType'] as String? ?? '',
+        timeZone: j['timeZone'] as String? ?? '',
+        offered: j['offered'] as bool? ?? false,
+        days: [
+          for (final d in (j['days'] as List?) ?? const [])
+            if (d is Map<String, dynamic>) SlotDay.fromJson(d),
+        ],
+      );
+}
+
+/// Which store's windows, of which fulfilment type.
+typedef SlotsQuery = ({String store, String type});
+
+/// The next seven days of [q.store]'s windows for [q.type] (DELIVERY | PICKUP),
+/// with what each has left. Public storefront read; autoDispose.family — this
+/// is scoped to the checkout screen, unlike [storefrontConfigProvider].
+final fulfilmentSlotsProvider =
+    FutureProvider.autoDispose.family<FulfilmentSlots, SlotsQuery>((ref, q) async {
+  final dio = ref.watch(storefrontDioProvider);
+  final resp = await dio.get('/${ApiConstants.order}/storefront/fulfilment-slots',
+      queryParameters: {'store': q.store, 'type': q.type});
+  return FulfilmentSlots.fromJson(resp.data['data'] as Map<String, dynamic>);
+});
+
+/// The window an order was placed for (null when it has none): the store's own
+/// local date and clock, computed server-side — the app never converts a time.
+class OrderSlot {
+  final DateTime startsAt;
+  final DateTime endsAt;
+  final String timeZone;
+  final String date;
+  final String startTime;
+  final String endTime;
+
+  const OrderSlot({
+    required this.startsAt,
+    required this.endsAt,
+    required this.timeZone,
+    required this.date,
+    required this.startTime,
+    required this.endTime,
+  });
+
+  factory OrderSlot.fromJson(Map<String, dynamic> j) => OrderSlot(
+        startsAt: DateTime.tryParse(j['startsAt'] as String? ?? '') ?? DateTime.now(),
+        endsAt: DateTime.tryParse(j['endsAt'] as String? ?? '') ?? DateTime.now(),
+        timeZone: j['timeZone'] as String? ?? '',
+        date: j['date'] as String? ?? '',
+        startTime: j['startTime'] as String? ?? '',
+        endTime: j['endTime'] as String? ?? '',
+      );
+
+  Map<String, dynamic> toJson() => {
+        'startsAt': startsAt.toIso8601String(),
+        'endsAt': endsAt.toIso8601String(),
+        'timeZone': timeZone,
+        'date': date,
+        'startTime': startTime,
+        'endTime': endTime,
+      };
+
+  /// [raw] read as an [OrderSlot] when it is a map; null otherwise (no window).
+  static OrderSlot? maybe(Object? raw) =>
+      raw is Map<String, dynamic> ? OrderSlot.fromJson(raw) : null;
+}
 
 // ── Promotions (storefront offers banner) ────────────────────────────────────
 
@@ -894,6 +1089,10 @@ class StorefrontOrderRecord {
   final String storeName;
   final String fulfilmentType;
 
+  /// The window this order was placed for (delivery-and-collection-slots); null
+  /// for an order with none.
+  final OrderSlot? slot;
+
   const StorefrontOrderRecord({
     required this.orderId,
     required this.total,
@@ -902,6 +1101,7 @@ class StorefrontOrderRecord {
     required this.placedAt,
     this.storeName = '-',
     this.fulfilmentType = 'PICKUP',
+    this.slot,
   });
 
   Map<String, dynamic> toJson() => {
@@ -912,6 +1112,7 @@ class StorefrontOrderRecord {
         'placedAt': placedAt.toIso8601String(),
         'storeName': storeName,
         'fulfilmentType': fulfilmentType,
+        if (slot != null) 'slot': slot!.toJson(),
       };
 
   factory StorefrontOrderRecord.fromJson(Map<String, dynamic> j) =>
@@ -924,6 +1125,7 @@ class StorefrontOrderRecord {
             DateTime.tryParse(j['placedAt'] as String? ?? '') ?? DateTime.now(),
         storeName: j['storeName'] as String? ?? '-',
         fulfilmentType: j['fulfilmentType'] as String? ?? 'PICKUP',
+        slot: OrderSlot.maybe(j['slot']),
       );
 }
 
@@ -991,6 +1193,10 @@ class ServerOrderSummary {
   final String? handoverCarrier;
   final String? handoverReference;
 
+  /// The window this order was placed for (delivery-and-collection-slots); null
+  /// for an order with none.
+  final OrderSlot? slot;
+
   const ServerOrderSummary({
     required this.id,
     required this.storeId,
@@ -1003,6 +1209,7 @@ class ServerOrderSummary {
     this.handoverKind,
     this.handoverCarrier,
     this.handoverReference,
+    this.slot,
   });
 
   /// Where the order is, in the shopper's words: a picked pickup is *Ready to collect*, a picked
@@ -1036,6 +1243,7 @@ class ServerOrderSummary {
         handoverKind: (j['handover'] as Map<String, dynamic>?)?['kind'] as String?,
         handoverCarrier: (j['handover'] as Map<String, dynamic>?)?['carrier'] as String?,
         handoverReference: (j['handover'] as Map<String, dynamic>?)?['reference'] as String?,
+        slot: OrderSlot.maybe(j['slot']),
       );
 }
 

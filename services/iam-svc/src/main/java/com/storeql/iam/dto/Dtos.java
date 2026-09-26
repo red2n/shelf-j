@@ -71,6 +71,50 @@ public final class Dtos {
   @Schema(name = "LoginRequest")
   public record LoginRequest(@Email @NotBlank String email, @NotBlank String password) {}
 
+  // ── Forgotten password (public — no sign-in) ──────────────────────────────
+
+  /** {@code GET /auth/password-policy}: the published rules, before anyone types a password. */
+  @Schema(
+      name = "PasswordPolicyResponse",
+      description = "The password rules in force, so a form can show them before anyone types.")
+  public record PasswordPolicyResponse(
+      @Schema(description = "Fewest characters accepted.") int minLength,
+      @Schema(description = "Most characters accepted.") int maxLength,
+      @Schema(description = "Whether a password is screened against known data breaches.")
+          boolean breachScreened,
+      @Schema(description = "Always true: a password must not be, or contain, the login.")
+          boolean mustNotContainLogin) {}
+
+  /** Ask for a password reset link. Public — the same answer whatever the address. */
+  @Schema(
+      name = "ForgotPasswordRequest",
+      description = "Ask for a password reset link. Answered the same whatever the address.")
+  public record ForgotPasswordRequest(
+      @Schema(description = "The login email every eligible account with it is reset by.")
+          @Email
+          @NotBlank
+          @Size(max = 254)
+          String email,
+      @Schema(
+              description =
+                  "ISO 639 language code, [a-z]{2,3}. Anything else, or none, reads as English.")
+          String language) {}
+
+  /** What {@code POST /auth/password/forgot} always answers, whatever the address. */
+  @Schema(name = "ForgotPasswordResponse")
+  public record ForgotPasswordResponse(@Schema(description = "Always true.") boolean accepted) {}
+
+  /** Spend a password reset link. Public — the token from the link is the proof. */
+  @Schema(name = "ResetPasswordRequest", description = "Spend a password reset link.")
+  public record ResetPasswordRequest(
+      @Schema(description = "The token from the reset link.") @NotBlank String token,
+      @Schema(description = "The new password, checked against the published policy.") @NotBlank
+          String newPassword) {}
+
+  /** What {@code POST /auth/password/reset} answers on success. */
+  @Schema(name = "ResetPasswordResponse")
+  public record ResetPasswordResponse(@Schema(description = "Always true.") boolean reset) {}
+
   /** Refresh access token. */
   @Schema(name = "RefreshRequest")
   public record RefreshRequest(

@@ -50,7 +50,7 @@ class AdminAuthorizationFilterTest {
   void ownProfileAndAddressBookAreOpenToASignedInShopper() throws Exception {
     ctx.set(null, null, Set.of("CUSTOMER"), null, null);
     assertNotAborted(invoke("PUT", "/customers/me"));
-    // The shopper's own loyalty (13.x): the leaf, read only.
+    // The shopper's own loyalty: the leaf, read only.
     assertNotAborted(invoke("GET", "/customers/me/loyalty"));
     assertAborted(invoke("POST", "/customers/me/loyalty"), 403);
     assertAborted(invoke("GET", "/customers/me/loyalty/ledger"), 403);
@@ -418,6 +418,44 @@ class AdminAuthorizationFilterTest {
     ctx.set(null, null, Set.of("STOREKEEPER"), null, null);
     assertNotAborted(invoke("GET", "/admin/inventory/reports-config"));
     assertNotAborted(invoke("POST", "/admin/inventory/reportable-items"));
+  }
+
+  /**
+   * The one report opened to the shop floor: a storekeeper reads the shelf gaps (the resource then
+   * holds them to their own stores). Only the read, only that report, and nobody without a staff
+   * role.
+   */
+  @Test
+  void theShelfGapsAreTheOneReportStaffMayRead() throws Exception {
+    ctx.set(null, null, Set.of("STOREKEEPER"), null, null);
+    assertNotAborted(invoke("GET", "/admin/inventory/reports/shelf-gaps"));
+    assertAborted(invoke("POST", "/admin/inventory/reports/shelf-gaps"), 403);
+    assertAborted(invoke("GET", "/admin/inventory/reports/shelf-gaps/export"), 403);
+    assertAborted(invoke("GET", "/admin/inventory/reports/shelf-gapsx"), 403);
+    assertAborted(invoke("GET", "/admin/inventory/reports/low-stock"), 403);
+    ctx.set(null, null, Set.of("CUSTOMER"), null, null);
+    assertAborted(invoke("GET", "/admin/inventory/reports/shelf-gaps"), 403);
+    ctx.set(null, null, Set.of(), null, null);
+    assertAborted(invoke("GET", "/admin/inventory/reports/shelf-gaps"), 403);
+  }
+
+  // ── password reset ──────────────────────────────────────────────────────────
+
+  @Test
+  void aForgottenPasswordIsAskedForAndResetWithNoRoleAtAll() throws Exception {
+    assertNotAborted(invoke("POST", "/auth/password/forgot"));
+    assertNotAborted(invoke("POST", "/auth/password/reset"));
+    assertNotAborted(invoke("GET", "/auth/password-policy"));
+  }
+
+  @Test
+  void nothingBesideThePasswordResetPathsIsOpened() throws Exception {
+    assertAborted(invoke("POST", "/auth/password"), 403);
+    assertAborted(invoke("POST", "/auth/password/forgot/again"), 403);
+    assertAborted(invoke("POST", "/auth/password/resets"), 403);
+    assertAborted(invoke("GET", "/auth/password/reset"), 403);
+    assertAborted(invoke("POST", "/auth/password-policy"), 403);
+    assertAborted(invoke("GET", "/auth/password-policy/x"), 403);
   }
 
   @Test

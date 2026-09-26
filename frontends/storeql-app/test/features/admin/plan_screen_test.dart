@@ -10,6 +10,7 @@ import 'package:storeql_app/features/admin/plan_screen.dart';
 
 import '../../support/fake_api.dart';
 
+import 'package:intl/intl.dart';
 // ---------------------------------------------------------------------------
 // The plan a business is on (21.8): what it allows against what is in use, a
 // count the owning service could not give shown as unknown rather than guessed
@@ -103,6 +104,12 @@ Future<void> _pump(WidgetTester tester, Map<String, dynamic> body, [Map<String, 
 }
 
 void main() {
+  // This file's UI dates (e.g. day-before-month, "Sept") are about
+  // AppFormat writing en_GB correctly, not about which locale the app
+  // defaults to (core/l10n/app_locales_test.dart owns that) — pinned
+  // explicitly so it stays true whatever the app's own fallback is.
+  setUp(() => Intl.defaultLocale = 'en_GB');
+  tearDown(() => Intl.defaultLocale = null);
   // Dates are written out in words (`22 Sept 2026`), which needs the locale's date data.
   setUpAll(initializeDateFormatting);
 

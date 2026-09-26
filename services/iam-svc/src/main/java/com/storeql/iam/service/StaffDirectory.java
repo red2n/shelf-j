@@ -27,18 +27,23 @@ public class StaffDirectory {
   /**
    * The business's staff among the ids, each named once.
    *
+   * <p>{@code storeIds} scopes the answer to the caller's own stores and business-wide roles — pass
+   * {@code TenantContext.storeIds()} straight through; empty means the caller is held to no store
+   * (an owner, a business-wide manager, the platform admin) and every match is named.
+   *
    * @param tenantId the caller's business, from the token
    * @param idsCsv the {@code ids} query parameter as sent
+   * @param storeIds the caller's stores; empty means unrestricted
    * @return the staff found, ordered by email; empty when none of the ids is the business's
    * @throws ApiException {@code 400 STAFF_IDS_TOO_MANY} beyond {@value #MAX_IDS} ids; {@code 400
    *     INVALID_UUID} when one is not a UUIDv7
    */
-  public List<StaffUserResponse> logins(UUID tenantId, String idsCsv) {
+  public List<StaffUserResponse> logins(UUID tenantId, String idsCsv, Set<UUID> storeIds) {
     List<UUID> ids = parseIds(idsCsv);
     if (ids.isEmpty()) {
       return List.of();
     }
-    return users.staffLogins(tenantId, ids).stream()
+    return users.staffLogins(tenantId, ids, storeIds).stream()
         .map(s -> new StaffUserResponse(s.userId().toString(), s.email()))
         .toList();
   }

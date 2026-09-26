@@ -4,9 +4,10 @@ import 'package:storeql_app/features/admin/admin_shell.dart';
 
 // ---------------------------------------------------------------------------
 // A storekeeper's back-office menu and the router agree: every page the menu
-// offers a storekeeper is one the router lets them open, and the pages whose
-// reads are management-only (age checks, shelf space) are offered to neither.
-// The obligations register is a staff read, so a storekeeper may open it.
+// offers a storekeeper is one the router lets them open, and a page whose
+// reads are management-only (age checks) is offered to neither. The
+// obligations register and the shelf-gap report are staff reads, so a
+// storekeeper may open both (Shelf space shows the Gaps tab only there).
 // ---------------------------------------------------------------------------
 
 void main() {
@@ -17,12 +18,12 @@ void main() {
     }
   });
 
-  test('management-only pages are not offered, and the staff-readable register is', () {
+  test('a management-only page is not offered, and the staff-readable registers are', () {
     expect(storekeeperAdminRoutes, isNot(contains('/admin/age-checks')));
-    expect(storekeeperAdminRoutes, isNot(contains('/admin/shelf-space')));
     expect(storekeeperAdminAllowed('/admin/age-checks'), isFalse);
-    expect(storekeeperAdminAllowed('/admin/shelf-space'), isFalse);
     expect(storekeeperAdminRoutes, contains('/admin/obligations'));
     expect(storekeeperAdminAllowed('/admin/obligations'), isTrue);
+    expect(storekeeperAdminRoutes, contains('/admin/shelf-space'));
+    expect(storekeeperAdminAllowed('/admin/shelf-space'), isTrue);
   });
 }

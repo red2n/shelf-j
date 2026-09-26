@@ -23,14 +23,18 @@ class _FakeApiClient implements ApiClient {
 }
 
 class _Auth extends AuthNotifier {
+  final List<String> roles;
+  final List<String> storeIds;
+  _Auth({this.roles = const ['OWNER'], this.storeIds = const []});
+
   @override
-  Future<AuthState> build() async => const AuthAuthenticated(
+  Future<AuthState> build() async => AuthAuthenticated(
         accessToken: 'a',
         refreshToken: 'r',
         userId: 'user-1',
         tenantId: 'tenant-1',
-        roles: ['OWNER'],
-        storeIds: [],
+        roles: roles,
+        storeIds: storeIds,
       );
 }
 
@@ -85,9 +89,10 @@ String _store(
       'enabledPaymentMethods': ['CASH', 'CARD'],
     });
 
-/// [store] is one store's JSON, or several joined by commas.
+/// [store] is one store's JSON, or several joined by commas. [auth] is the
+/// signed-in staff member; an owner, unrestricted, unless a test says otherwise.
 Future<_Server> _pump(WidgetTester tester, String store,
-    {Size size = const Size(1400, 1600)}) async {
+    {Size size = const Size(1400, 1600), AuthNotifier Function()? auth}) async {
   final server = _Server(store);
   final dio = Dio(BaseOptions(baseUrl: 'http://test'))..httpClientAdapter = server;
   tester.view.physicalSize = size;
@@ -96,7 +101,7 @@ Future<_Server> _pump(WidgetTester tester, String store,
   await tester.pumpWidget(ProviderScope(
     overrides: [
       apiClientProvider.overrideWithValue(_FakeApiClient(dio)),
-      authNotifierProvider.overrideWith(_Auth.new),
+      authNotifierProvider.overrideWith(auth ?? _Auth.new),
     ],
     child: const MaterialApp(home: StoresScreen()),
   ));
@@ -105,6 +110,18 @@ Future<_Server> _pump(WidgetTester tester, String store,
 }
 
 void main() {
+  testWidgets('the Slots action opens the store\'s delivery & collection slots',
+      (tester) async {
+    await _pump(tester, _store(timezone: 'Europe/Warsaw'));
+
+    await tester.tap(find.byKey(const Key('store-slots-store-1')));
+    await tester.pumpAndSettle();
+
+    expect(find.text('Delivery & collection slots'), findsOneWidget);
+    expect(find.textContaining('Europe/Warsaw'), findsOneWidget);
+    expect(find.text('No delivery windows yet.'), findsOneWidget);
+  });
+
   testWidgets('editing a store sends its own time zone, never UTC', (tester) async {
     final server = await _pump(tester, _store(timezone: 'America/Chicago'));
     await tester.tap(find.text('Main').first);
@@ -231,6 +248,58 @@ void main() {
       expect(tester.takeException(), isNull);
       expect(find.byKey(const Key('store-menu-store-1')), findsOneWidget);
       expect(find.text('Open'), findsOneWidget);
+    });
+  });
+
+  group('who may set delivery & collection slots', () {
+    const phone = Size(390, 844);
+
+    testWidgets(
+        'a storekeeper is never offered it — not the inline button, not the phone menu',
+        (tester) async {
+      await _pump(tester, _store(timezone: 'UTC'),
+          auth: () =>
+              _Auth(roles: const ['STOREKEEPER'], storeIds: const ['store-1']));
+      expect(find.byKey(const Key('store-slots-store-1')), findsNothing);
+
+      await _pump(tester, _store(timezone: 'UTC'),
+          size: phone,
+          auth: () =>
+              _Auth(roles: const ['STOREKEEPER'], storeIds: const ['store-1']));
+      await tester.tap(find.byKey(const Key('store-menu-store-1')));
+      await tester.pumpAndSettle();
+      expect(find.text('Delivery & collection slots'), findsNothing);
+    });
+
+    testWidgets('a manager held to a different store is not offered it here',
+        (tester) async {
+      await _pump(tester, _store(timezone: 'UTC'),
+          auth: () =>
+              _Auth(roles: const ['MANAGER'], storeIds: const ['store-9']));
+      expect(find.byKey(const Key('store-slots-store-1')), findsNothing);
+    });
+
+    testWidgets('a manager held to this store is offered it', (tester) async {
+      await _pump(tester, _store(timezone: 'UTC'),
+          auth: () =>
+              _Auth(roles: const ['MANAGER'], storeIds: const ['store-1']));
+      expect(find.byKey(const Key('store-slots-store-1')), findsOneWidget);
+    });
+
+    testWidgets(
+        'a manager with no store held against them is unrestricted, like an owner',
+        (tester) async {
+      await _pump(tester, _store(timezone: 'UTC'),
+          auth: () => _Auth(roles: const ['MANAGER'], storeIds: const []));
+      expect(find.byKey(const Key('store-slots-store-1')), findsOneWidget);
+    });
+
+    testWidgets('an owner is always offered it, whatever storeIds the token carries',
+        (tester) async {
+      await _pump(tester, _store(timezone: 'UTC'),
+          auth: () =>
+              _Auth(roles: const ['OWNER'], storeIds: const ['store-9']));
+      expect(find.byKey(const Key('store-slots-store-1')), findsOneWidget);
     });
   });
 }

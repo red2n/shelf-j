@@ -4,6 +4,7 @@ import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:go_router/go_router.dart';
 import '../../core/auth/auth_notifier.dart';
 import '../../core/auth/auth_state.dart';
+import '../../core/auth/password_policy.dart';
 import '../../core/constants.dart';
 import '../../core/network/api_client.dart';
 import '../../core/network/api_error.dart';
@@ -143,10 +144,10 @@ const _navItems = [
       section: 'Products & stock',
     ),
     route: '/admin/shelf-space',
-    // Not offered to a storekeeper: the page reads product-svc's merchandising
-    // and inventory-svc's shelf-gap report, both management-only, so the
-    // router refuses it. A storekeeper filling the shelves would benefit from
-    // the gaps; opening that report to staff is a server-side decision first.
+    // The shelf-gap report is now a staff read: a
+    // storekeeper sees the Gaps tab only, at their own stores; Shelving and
+    // Range stay management-only inside the screen itself.
+    storekeeperVisible: true,
   ),
   // ── Safety & compliance ──
   _AdminNavItem(
@@ -512,9 +513,15 @@ class _ChangePasswordDialogState extends ConsumerState<ChangePasswordDialog> {
       setState(() {
         _loading = false;
         final status = e is DioException ? e.response?.statusCode : null;
-        _error = (status == 401 || status == 400)
+        // iam-svc answers 401 for a wrong current password, 400 for a policy
+        // refusal of the new one (PASSWORD_TOO_SHORT/TOO_LONG/IS_IDENTITY/
+        // BREACHED) — the same words the field's own rule already used, not
+        // "Current password is incorrect." for both.
+        final policy = ref.read(passwordPolicyProvider).value ?? PasswordPolicy.fallback;
+        _error = status == 401
             ? 'Current password is incorrect.'
-            : friendlyError(e, fallback: 'Could not change password.');
+            : passwordPolicyRefusal(apiErrorCode(e), policy) ??
+                friendlyError(e, fallback: 'Could not change password.');
       });
     }
   }
@@ -522,6 +529,7 @@ class _ChangePasswordDialogState extends ConsumerState<ChangePasswordDialog> {
   @override
   Widget build(BuildContext context) {
     final cs = Theme.of(context).colorScheme;
+    final policy = watchPasswordPolicy(ref);
     return AlertDialog(
       title: const Text('Change password'),
       content: SizedBox(
@@ -553,12 +561,18 @@ class _ChangePasswordDialogState extends ConsumerState<ChangePasswordDialog> {
               ),
               const SizedBox(height: 12),
               TextFormField(
+                key: const Key('change-password-new'),
                 controller: _newCtrl,
                 obscureText: true,
-                decoration: const InputDecoration(
-                    labelText: 'New password (15 characters or more)'),
-                validator: (v) =>
-                    v == null || v.length < 15 ? 'At least 15 characters — a phrase of a few words is easiest' : null,
+                decoration: InputDecoration(
+                  labelText: 'New password',
+                  // The published policy's rule, before it is typed — never
+                  // learned only from a refusal.
+                  helperText: passwordRuleText(policy),
+                  helperMaxLines: 2,
+                  errorMaxLines: 2,
+                ),
+                validator: (v) => passwordLengthProblemPlain(v, policy),
               ),
             ],
           ),

@@ -5,6 +5,9 @@ import 'package:flutter/material.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:flutter_test/flutter_test.dart';
 import 'package:intl/date_symbol_data_local.dart';
+import 'package:intl/intl.dart';
+import 'package:storeql_app/core/auth/auth_notifier.dart';
+import 'package:storeql_app/core/auth/auth_state.dart';
 import 'package:storeql_app/core/network/api_client.dart';
 import 'package:storeql_app/features/admin/shelf_space_screen.dart';
 
@@ -120,7 +123,9 @@ class _Server implements HttpClientAdapter {
 }
 
 Future<_Server> _pump(WidgetTester tester, Widget child,
-    {Map<String, dynamic>? sweep, Size size = const Size(1400, 2400)}) async {
+    {Map<String, dynamic>? sweep,
+    Size size = const Size(1400, 2400),
+    AuthNotifier Function() auth = _owner}) async {
   tester.view.physicalSize = size;
   tester.view.devicePixelRatio = 1;
   addTearDown(tester.view.reset);
@@ -129,13 +134,18 @@ Future<_Server> _pump(WidgetTester tester, Widget child,
     ..httpClientAdapter = server;
   await tester.pumpWidget(
     ProviderScope(
-      overrides: [apiClientProvider.overrideWithValue(FakeApiClient(dio))],
+      overrides: [
+        apiClientProvider.overrideWithValue(FakeApiClient(dio)),
+        authNotifierProvider.overrideWith(auth),
+      ],
       child: MaterialApp(home: Scaffold(body: child)),
     ),
   );
   await tester.pumpAndSettle();
   return server;
 }
+
+AuthNotifier _owner() => RoleAuth('OWNER');
 
 /// The card a row sits in.
 Finder _cardOf(String key) =>
@@ -144,6 +154,9 @@ Finder _cardOf(String key) =>
 void main() {
   // Dates are written in the app's own locale (en_GB), whose symbols load here.
   setUpAll(initializeDateFormatting);
+  // The dates below are read the British way (19 Sep): pinned, since the app itself assumes no
+  // country for English.
+  setUp(() => Intl.defaultLocale = 'en_GB');
 
   testWidgets('a bay below its presentation minimum is marked, a full one is not',
       (tester) async {
@@ -309,4 +322,54 @@ void main() {
 
     expect(find.text('Tinned peaches'), findsOneWidget);
   });
+
+  // ── a storekeeper: the Gaps tab only, at their own stores ──────────────────
+
+  group('a storekeeper', () {
+    testWidgets('sees only the Gaps tab, never Shelving or Range', (tester) async {
+      await _pump(tester, const ShelfSpaceScreen(), auth: () => RoleAuth('STOREKEEPER'));
+
+      expect(find.text('Gaps to fill'), findsOneWidget);
+      expect(find.text('Shelving'), findsNothing);
+      expect(find.text('Range'), findsNothing);
+    });
+
+    testWidgets('is offered only their own stores', (tester) async {
+      await _pump(
+        tester,
+        const ShelfSpaceScreen(),
+        auth: () => _StoreHeld('STOREKEEPER', const ['s2']),
+      );
+
+      // High Street (s1) is not theirs; Retail Park (s2) is, and its empty
+      // gaps report shows.
+      expect(find.text('Retail Park'), findsOneWidget);
+      expect(find.text('High Street'), findsNothing);
+      expect(find.byKey(const Key('gaps-empty')), findsOneWidget);
+    });
+
+    testWidgets('a manager keeps all three tabs', (tester) async {
+      await _pump(tester, const ShelfSpaceScreen(), auth: () => RoleAuth('MANAGER'));
+
+      expect(find.text('Gaps to fill'), findsOneWidget);
+      expect(find.text('Shelving'), findsOneWidget);
+      expect(find.text('Range'), findsOneWidget);
+    });
+  });
+}
+
+class _StoreHeld extends AuthNotifier {
+  final String role;
+  final List<String> storeIds;
+  _StoreHeld(this.role, this.storeIds);
+
+  @override
+  Future<AuthState> build() async => AuthAuthenticated(
+        accessToken: 'a',
+        refreshToken: 'r',
+        userId: 'u',
+        tenantId: 't',
+        roles: [role],
+        storeIds: storeIds,
+      );
 }

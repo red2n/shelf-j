@@ -138,7 +138,11 @@ export default function ({ tenant, store, manager, platform }) {
   // it cannot be renewed (no refresh token) or obtained again (below), and what it reads says so.
   const insideNow = call('GET', '/api/tenant-svc/admin/tenant', { token: inside });
   truthy('[+] ...and from inside, the sandbox reads as switched off for what is left of its token', insideNow.status === 200 && data(insideNow).status === 'INACTIVE' && data(insideNow).deactivatedReason === 'SANDBOX_DELETED', data(insideNow));
-  expect(call('POST', TOKEN, { token: owner }), '[-] there is nothing to enter', 404, 'SANDBOX_NOT_FOUND');
+  // iam-svc learns the sandbox is gone from tenant-svc's event, on its own consumer: the key above
+  // can stop first (revoked with the sandbox), so wait for the event as the key check waits.
+  let entry = null;
+  poll(60, () => { entry = call('POST', TOKEN, { token: owner }); return entry.status !== 200; });
+  expect(entry, '[-] there is nothing to enter', 404, 'SANDBOX_NOT_FOUND');
 
   // ── and another ──────────────────────────────────────────────────────────────────────────────
   const again = call('POST', SANDBOX, { token: owner });

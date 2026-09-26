@@ -9,6 +9,7 @@ import 'package:storeql_app/features/admin/deposits_report_screen.dart';
 
 import '../../support/mid_word.dart';
 
+import 'package:intl/intl.dart';
 // ---------------------------------------------------------------------------
 // Container deposits (09.16): what was charged, what was paid back, what the
 // scheme holds, by material — and what the screen says with nothing or an error.
@@ -81,6 +82,12 @@ Finder _inRow(String material, String text) =>
     find.descendant(of: find.byKey(Key('deposits-material-$material')), matching: find.text(text));
 
 void main() {
+  // This file's UI dates (e.g. day-before-month, "Sept") are about
+  // AppFormat writing en_GB correctly, not about which locale the app
+  // defaults to (core/l10n/app_locales_test.dart owns that) — pinned
+  // explicitly so it stays true whatever the app's own fallback is.
+  setUp(() => Intl.defaultLocale = 'en_GB');
+  tearDown(() => Intl.defaultLocale = null);
   // The period is written with AppFormat, in the app's en_GB locale.
   setUpAll(initializeDateFormatting);
 

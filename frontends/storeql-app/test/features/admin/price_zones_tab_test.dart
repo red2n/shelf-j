@@ -8,6 +8,7 @@ import 'package:intl/date_symbol_data_local.dart';
 import 'package:storeql_app/core/network/api_client.dart';
 import 'package:storeql_app/features/admin/price_zones_tab.dart';
 
+import 'package:intl/intl.dart';
 // ---------------------------------------------------------------------------
 // The Pricing screen's "Zones & repricing" tab (03.x): the zones with their
 // stores by name, a rule in a sentence, an open proposal with its figures;
@@ -113,6 +114,12 @@ Future<_Server> _pump(WidgetTester tester, {bool management = true, bool refuse 
 }
 
 void main() {
+  // This file's UI dates (e.g. day-before-month, "Sept") are about
+  // AppFormat writing en_GB correctly, not about which locale the app
+  // defaults to (core/l10n/app_locales_test.dart owns that) — pinned
+  // explicitly so it stays true whatever the app's own fallback is.
+  setUp(() => Intl.defaultLocale = 'en_GB');
+  tearDown(() => Intl.defaultLocale = null);
   setUpAll(initializeDateFormatting);
   testWidgets('zones show their stores by name, a rule reads as a sentence, a proposal shows its figures',
       (tester) async {

@@ -26,4 +26,9 @@ class TenantBusinesses implements Businesses {
   public boolean sandbox(UUID tenantId) {
     return profiles.isSandbox(tenantId);
   }
+
+  @Override
+  public Optional<String> currency(UUID tenantId) {
+    return profiles.find(tenantId).map(TenantProfiles.Profile::currency);
+  }
 }

@@ -196,6 +196,10 @@ class _VariantComplianceDialogState extends ConsumerState<VariantComplianceDialo
     final cs = Theme.of(context).colorScheme;
     final text = Theme.of(context).textTheme;
     final named = _presence.values.where((p) => p != AllergenPresence.none).length;
+    // A hint, not a default: the business's own country when it is known,
+    // never a country picked for it (multi-location, multi-tenant — SJ-D67).
+    final tenantCountry = ref.watch(tenantInfoProvider).value?.country;
+    final originHint = (tenantCountry == null || tenantCountry.isEmpty) ? null : tenantCountry;
     return AlertDialog(
       title: Text('Allergens and origin — ${widget.variant.sku}'),
       content: SizedBox(
@@ -285,8 +289,8 @@ class _VariantComplianceDialogState extends ConsumerState<VariantComplianceDialo
                             controller: _origin,
                             maxLength: 2,
                             textCapitalization: TextCapitalization.characters,
-                            decoration: const InputDecoration(
-                                labelText: 'Country', hintText: 'GB', counterText: ''),
+                            decoration: InputDecoration(
+                                labelText: 'Country', hintText: originHint, counterText: ''),
                           ),
                         ),
                         const SizedBox(width: 12),

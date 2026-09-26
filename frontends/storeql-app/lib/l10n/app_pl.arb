@@ -42,5 +42,19 @@
   "ssoErrUnavailable": "Logowanie przez firmę nie jest tutaj dostępne.",
   "ssoErrProviderUnreachable": "Nie udało się połączyć ze stroną logowania Twojej firmy. Spróbuj ponownie za chwilę.",
   "errTenantInactive": "Konto tej firmy jest zawieszone. Skontaktuj się z pomocą techniczną.",
-  "ssoErrGeneric": "Strona logowania Twojej firmy nie mogła Cię zalogować. Poproś jej właściciela o sprawdzenie ustawień."
+  "ssoErrGeneric": "Strona logowania Twojej firmy nie mogła Cię zalogować. Poproś jej właściciela o sprawdzenie ustawień.",
+  "forgotPassword": "Nie pamiętasz hasła?",
+  "forgotPasswordTitle": "Nie pamiętasz hasła?",
+  "forgotPasswordIntro": "Wpisz swój adres e-mail. Jeśli jest powiązany z kontem, wyślemy link do zresetowania hasła.",
+  "forgotPasswordSubmit": "Wyślij link",
+  "forgotPasswordSent": "Jeśli jakieś konto używa tego adresu, wysłaliśmy na niego link. Działa trzydzieści minut i tylko raz.",
+  "resetPasswordTitle": "Ustaw nowe hasło",
+  "resetPasswordNewLabel": "Nowe hasło",
+  "resetPasswordConfirmLabel": "Potwierdź nowe hasło",
+  "resetPasswordMismatch": "To nie zgadza się z nowym hasłem podanym powyżej.",
+  "resetPasswordSubmit": "Zmień hasło",
+  "resetPasswordDone": "Hasło zmienione — zaloguj się nim.",
+  "resetPasswordDoneStorefront": "Robisz zakupy w sklepie internetowym? Możesz zalogować się w sklepie.",
+  "resetPasswordTokenInvalid": "Ten link wygasł albo został już użyty — poproś o nowy.",
+  "resetPasswordRequestNew": "Poproś o nowy link"
 }

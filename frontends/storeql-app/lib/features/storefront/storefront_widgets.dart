@@ -6,7 +6,10 @@ import 'package:flutter_riverpod/flutter_riverpod.dart';
 import '../../core/format.dart';
 import '../../core/theme.dart';
 import '../../shared/util/image_budget.dart';
+import 'stock_badge.dart';
 import 'storefront_providers.dart';
+
+export 'stock_badge.dart' show StockBadge;
 
 /// A lively deterministic product placeholder (colored tile + initials) so the
 /// catalog looks alive without real product images. Same product → same colour.
@@ -244,13 +247,11 @@ class OfferPriceAdd extends ConsumerWidget {
         }
         // .select() so this tile only rebuilds when *its own* variant's availability changes,
         // not on every store switch's whole-map refetch.
-        final (inStock, hasAvailData) = ref.watch(
+        final (inStock, onlyLeft, hasAvailData) = ref.watch(
           storefrontAvailabilityProvider.select((async) {
             final map = async.value;
-            return (
-              map == null ? true : (map[offer.variant.id] ?? false),
-              map != null,
-            );
+            final info = map == null ? null : map[offer.variant.id];
+            return (info?.inStock ?? true, info?.onlyLeft, map != null);
           }),
         );
 
@@ -280,7 +281,7 @@ class OfferPriceAdd extends ConsumerWidget {
                   style: TextStyle(color: cs.onSurfaceVariant, fontSize: 12)),
             WasPriceText(price: offer.price),
             UnitPriceText(price: offer.price),
-            if (hasAvailData) StockBadge(inStock: inStock),
+            if (hasAvailData) StockBadge(inStock: inStock, onlyLeft: onlyLeft),
           ],
         );
 
@@ -324,17 +325,18 @@ class _CatalogAdd extends ConsumerWidget {
         }
         // .select() so this tile only rebuilds when *its own* variant's availability changes,
         // not on every store switch's whole-map refetch.
-        final inStock = ref.watch(
+        final (inStock, onlyLeft) = ref.watch(
           storefrontAvailabilityProvider.select((async) {
             final map = async.value;
-            return map == null ? true : (map[variant.id] ?? false);
+            final info = map == null ? null : map[variant.id];
+            return (info?.inStock ?? true, info?.onlyLeft);
           }),
         );
         // Catalog mode: no price — the server prices the order (when pricing enforcement is on) or
         // it's a quote.
         return Row(
           children: [
-            Expanded(child: StockBadge(inStock: inStock)),
+            Expanded(child: StockBadge(inStock: inStock, onlyLeft: onlyLeft)),
             _CartControl(
               productName: product.name,
               inStock: inStock,
@@ -404,40 +406,6 @@ class _CartControl extends ConsumerWidget {
       qty: qty,
       onDec: () => notifier.setQty(line.variantId, qty - 1),
       onInc: () => notifier.setQty(line.variantId, qty + 1),
-    );
-  }
-}
-
-/// In-stock / out-of-stock pill used when a store hides prices (catalog mode).
-class StockBadge extends StatelessWidget {
-  final bool inStock;
-  const StockBadge({super.key, required this.inStock});
-
-  @override
-  Widget build(BuildContext context) {
-    final color = inStock
-        ? context.status.success
-        : Theme.of(context).colorScheme.onSurfaceVariant;
-    return Row(
-      mainAxisSize: MainAxisSize.min,
-      children: [
-        Icon(
-          inStock ? Icons.check_circle : Icons.remove_circle_outline,
-          size: 15,
-          color: color,
-        ),
-        const SizedBox(width: 4),
-        Flexible(
-          child: Text(
-            inStock ? 'In stock' : 'Out of stock',
-            style: TextStyle(
-              color: color,
-              fontWeight: FontWeight.w600,
-              fontSize: 13,
-            ),
-          ),
-        ),
-      ],
     );
   }
 }

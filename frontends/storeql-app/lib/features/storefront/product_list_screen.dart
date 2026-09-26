@@ -132,7 +132,7 @@ class _ProductListScreenState extends ConsumerState<ProductListScreen> {
                   final variant =
                       ref.watch(productFirstVariantProvider(p.id)).value;
                   if (variant == null) return true; // include while loading
-                  return availMap[variant.id] ?? true;
+                  return availMap[variant.id]?.inStock ?? true;
                 }).toList();
               }
             }
@@ -354,30 +354,43 @@ class _Offer {
 
 class _OffersCarouselState extends ConsumerState<_OffersCarousel> {
   // Evergreen content shown when the tenant has no live promotions configured.
-  static const _fallbackOffers = [
-    _Offer(
-      'Everyday low prices',
-      'Stock up and save on the essentials',
-      Icons.local_offer_outlined,
-      _OfferTone.primary,
-    ),
-    _Offer(
-      'Free delivery over £25',
-      'On all online orders, no code needed',
-      Icons.local_shipping_outlined,
-      _OfferTone.secondary,
-    ),
-    _Offer(
-      'Fresh new arrivals',
-      'Just landed in store — shop the latest',
-      Icons.auto_awesome_outlined,
-      _OfferTone.tertiary,
-    ),
-  ];
+  // Never a price, a currency or a threshold: no delivery charge exists
+  // anywhere in the platform for this to promise against, and a business
+  // trading in yen or rupees is not a business that spends "over £25".
+  static List<_Offer> _fallbackOffers(String? storeName) {
+    final name = storeName?.trim();
+    return [
+      const _Offer(
+        'Everyday low prices',
+        'Stock up and save on the essentials',
+        Icons.local_offer_outlined,
+        _OfferTone.primary,
+      ),
+      (name == null || name.isEmpty || name == '-')
+          ? const _Offer(
+              'Welcome',
+              'Thanks for shopping with us',
+              Icons.storefront_outlined,
+              _OfferTone.secondary,
+            )
+          : _Offer(
+              name,
+              'Thanks for shopping with us',
+              Icons.storefront_outlined,
+              _OfferTone.secondary,
+            ),
+      const _Offer(
+        'Fresh new arrivals',
+        'Just landed in store — shop the latest',
+        Icons.auto_awesome_outlined,
+        _OfferTone.tertiary,
+      ),
+    ];
+  }
 
   // Current offers shown; updated each build from the promotions provider so the
   // rotation timer always reads a valid length.
-  List<_Offer> _offers = _fallbackOffers;
+  List<_Offer> _offers = _fallbackOffers(null);
 
   // A PageView (not CarouselView) so every banner keeps the full viewport
   // width instead of being squeezed by the Material "uncontained" carousel
@@ -429,9 +442,10 @@ class _OffersCarouselState extends ConsumerState<_OffersCarousel> {
     super.dispose();
   }
 
-  List<_Offer> _offersFrom(List<StorePromotion> all, String? currency) {
+  List<_Offer> _offersFrom(
+      List<StorePromotion> all, String? currency, String? storeName) {
     final promos = advertisedPromotions(all);
-    if (promos.isEmpty) return _fallbackOffers;
+    if (promos.isEmpty) return _fallbackOffers(storeName);
     return [
       for (var i = 0; i < promos.length; i++)
         _Offer(
@@ -458,7 +472,8 @@ class _OffersCarouselState extends ConsumerState<_OffersCarousel> {
     final promos = ref.watch(storefrontPromotionsProvider).value ?? const [];
     // Promotions are set in the shop's own currency.
     final currency = ref.watch(storefrontCurrenciesProvider).value?.home;
-    _offers = _offersFrom(promos, currency);
+    final storeName = ref.watch(storefrontConfigProvider).value?.storeName;
+    _offers = _offersFrom(promos, currency, storeName);
     if (_page >= _offers.length) {
       // Promotions arrived/expired and shrank the list under the current page —
       // snap back to the first banner once this frame is laid out.

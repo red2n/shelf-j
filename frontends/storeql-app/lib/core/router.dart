@@ -8,6 +8,8 @@ import '../features/auth/second_factor_screen.dart';
 import '../features/auth/second_factor_setup_screen.dart';
 import '../features/auth/security_screen.dart';
 import '../features/auth/pay_link_screen.dart';
+import '../features/auth/forgot_password_screen.dart';
+import '../features/auth/reset_password_screen.dart';
 import '../features/platform/platform_login_screen.dart';
 import '../features/onboarding/onboarding_wizard.dart';
 import '../features/admin/admin_shell.dart';
@@ -41,6 +43,15 @@ final routerProvider = Provider<GoRouter>((ref) {
       // The pay link in a dunning notice (21.12): the business it reaches has
       // been suspended and cannot sign in, so the page that pays needs no session.
       if (loc.startsWith('/pay/')) return null;
+
+      // Forgot/reset password (intent/password-reset.md): no session is ever
+      // needed to ask for a link or to spend one — the link itself is the
+      // proof — and a signed-in person opening either (a staff member on a
+      // shared device, say) is not bounced away mid-reset. Mirrors how the
+      // pay link above is let through, ahead of every other rule.
+      if (loc.startsWith('/forgot-password') || loc.startsWith('/reset-password/')) {
+        return null;
+      }
 
       // A sign-in between its password and its session (20.12): the second step,
       // or the set-up of one, and nowhere else until that is done or given up.
@@ -106,6 +117,19 @@ final routerProvider = Provider<GoRouter>((ref) {
       GoRoute(
         path: '/pay/:token',
         builder: (_, state) => PayLinkScreen(token: state.pathParameters['token'] ?? ''),
+      ),
+      GoRoute(
+        path: '/forgot-password',
+        // Named by whoever sent a shopper here (the storefront's own sign-in
+        // dialog, `?from=storefront`) so the page can lead back to the shop
+        // rather than to staff sign-in once they're done — never guessed from
+        // the referrer, which a deep link or a refresh would not carry.
+        builder: (_, state) => ForgotPasswordScreen(
+            from: state.uri.queryParameters['from']),
+      ),
+      GoRoute(
+        path: '/reset-password/:token',
+        builder: (_, state) => ResetPasswordScreen(token: state.pathParameters['token'] ?? ''),
       ),
 
       // ── Platform admin shell (PLATFORM_ADMIN only) ─────────────────────────
@@ -535,7 +559,8 @@ bool storekeeperAdminAllowed(String loc) {
       loc.startsWith('/admin/food-safety') ||
       loc.startsWith('/admin/recalls') ||
       loc.startsWith('/admin/obligations') ||
-      loc.startsWith('/admin/stores');
+      loc.startsWith('/admin/stores') ||
+      loc.startsWith('/admin/shelf-space');
 }
 
 class _AuthListenable extends ChangeNotifier {

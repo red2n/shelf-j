@@ -1016,6 +1016,10 @@ public class InventoryService {
   /**
    * What a shopper can buy at a store: each variant with stock available on the shelf, and each
    * variant the supplier fulfils per order (dropship) — available with none on the shelf.
+   *
+   * <p>Carries each level's raw available quantity too, so a caller with a store and a threshold in
+   * hand can turn it into "only N left" via {@link com.storeql.inventory.domain.OnlyLeft#compute}
+   * without a second read of the levels this method already loaded.
    */
   public List<com.storeql.inventory.domain.Domain.Availability> availability(
       UUID tenantId, UUID storeId) {
@@ -1025,11 +1029,14 @@ public class InventoryService {
       seen.add(l.variantId());
       out.add(
           new com.storeql.inventory.domain.Domain.Availability(
-              l.variantId(), l.available() != null && l.available().signum() > 0, false));
+              l.variantId(),
+              l.available() != null && l.available().signum() > 0,
+              false,
+              l.available()));
     }
     for (UUID variantId : repo.dropshipVariants(tenantId)) {
       if (seen.add(variantId)) {
-        out.add(new com.storeql.inventory.domain.Domain.Availability(variantId, true, true));
+        out.add(new com.storeql.inventory.domain.Domain.Availability(variantId, true, true, null));
       }
     }
     return out;

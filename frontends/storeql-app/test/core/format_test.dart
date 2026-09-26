@@ -10,6 +10,15 @@ void main() {
   // explicitly here so DateFormat(locale) works in a plain unit test.
   setUpAll(initializeDateFormatting);
 
+  // Most of this file is about how AppFormat writes a GIVEN locale, not about
+  // which locale the app defaults to (that is AppLocales' own job — see
+  // test/core/l10n/app_locales_test.dart and the 'the app locale' group
+  // below). Pin one explicitly so a change to the app's own fallback never
+  // changes what "23 Jun 2026" means here; tests that are themselves about
+  // the fallback set `Intl.defaultLocale` back to null and say so.
+  setUp(() => Intl.defaultLocale = 'en_GB');
+  tearDown(() => Intl.defaultLocale = null);
+
   group('AppFormat.money', () {
     test('formats GBP with the pound symbol, grouping and 2 decimals', () {
       final s = AppFormat.money(1234.5, currencyCode: 'GBP');
@@ -53,6 +62,22 @@ void main() {
     test('empty/null become empty string', () {
       expect(AppFormat.date(''), '');
       expect(AppFormat.date(null), '');
+    });
+  });
+
+  group('AppFormat.weekdayDate', () {
+    // A window read at a glance, in the reader's own order — never one
+    // country's pattern for everyone.
+    final sunday = DateTime(2026, 9, 27);
+    test('British English puts the day first', () {
+      expect(AppFormat.weekdayDate(sunday, locale: 'en_GB'), 'Sun 27 Sept');
+    });
+    test('American English puts the month first', () {
+      expect(AppFormat.weekdayDate(sunday, locale: 'en_US'), 'Sun, Sep 27');
+    });
+    test('Polish in its own words', () {
+      expect(AppFormat.weekdayDate(sunday, locale: 'pl'), contains('27'));
+      expect(AppFormat.weekdayDate(sunday, locale: 'pl'), isNot(contains('Sun')));
     });
   });
 
@@ -102,11 +127,9 @@ void main() {
   });
 
   group('the locale AppFormat writes in', () {
-    tearDown(() => Intl.defaultLocale = null);
-
-    test('is the UK fallback when the app has set none', () {
+    test('is plain English when the app has set none — no country assumed', () {
       Intl.defaultLocale = null;
-      expect(AppFormat.locale, 'en_GB');
+      expect(AppFormat.locale, 'en');
     });
 
     test('is the app\'s once the app has set it', () {
@@ -124,19 +147,30 @@ void main() {
       AppFormat.time('2026-09-01T10:00:00Z');
       AppFormat.dateOf(DateTime(2026, 9, 1));
       expect(Intl.defaultLocale, isNull);
-      expect(AppFormat.date('2026-09-01'), '1 Sept 2026');
+      // Plain English (no country assumed) with nothing set: month first, and
+      // "Sep" rather than "Sept" — the generic form, not the UK's.
+      expect(AppFormat.date('2026-09-01'), 'Sep 1, 2026');
     });
   });
 
   group('the app locale', () {
     test('a device language the app speaks resolves to it, whatever its region', () {
       expect(AppLocales.resolve(const Locale('pl', 'PL'), AppLocales.supported), const Locale('pl'));
-      expect(AppLocales.resolve(const Locale('en', 'US'), AppLocales.supported), const Locale('en', 'GB'));
     });
 
-    test('anything else, or nothing, is the UK fallback', () {
+    test('English resolves to the device\'s own region when intl has it, not the UK\'s', () {
+      expect(AppLocales.resolve(const Locale('en', 'US'), AppLocales.supported), const Locale('en', 'US'));
+      expect(AppLocales.resolve(const Locale('en', 'IN'), AppLocales.supported), const Locale('en', 'IN'));
+      expect(AppLocales.resolve(const Locale('en', 'GB'), AppLocales.supported), const Locale('en', 'GB'));
+    });
+
+    test('anything else, or nothing, is plain English — no country assumed', () {
       expect(AppLocales.resolve(const Locale('fr'), AppLocales.supported), AppLocales.fallback);
+      expect(AppLocales.resolve(const Locale('de', 'DE'), AppLocales.supported), AppLocales.fallback);
+      expect(AppLocales.resolve(const Locale('en', 'DE'), AppLocales.supported), AppLocales.fallback,
+          reason: 'English in a region intl has no data for this app ships — plain English, not a guess');
       expect(AppLocales.resolve(null, AppLocales.supported), AppLocales.fallback);
+      expect(AppLocales.fallback, const Locale('en'));
     });
 
     test('is named as intl names it', () {

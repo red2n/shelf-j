@@ -1,4 +1,5 @@
 import 'unit_price.dart';
+import 'dart:async';
 import 'dart:convert';
 
 import 'package:dio/dio.dart';
@@ -7,6 +8,7 @@ import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:go_router/go_router.dart';
 import '../../core/constants.dart';
 import '../../core/format.dart';
+import '../../shared/util/slot_label.dart';
 import '../../core/input_mode.dart';
 import '../../core/network/api_error.dart';
 import '../../core/spacing.dart';
@@ -14,6 +16,7 @@ import '../../core/storage/app_storage.dart';
 import '../../shared/widgets/empty_state.dart';
 import 'account_screen.dart' show MyCustomer, SavedAddress, myAddressesProvider, myCustomerProvider;
 import 'cart_line.dart';
+import 'delivery_slot_picker.dart';
 import 'storefront_widgets.dart' show ProductImageThumb;
 import 'order_summary.dart';
 import 'storefront_providers.dart';
@@ -57,11 +60,22 @@ class _StorefrontCartScreenState extends ConsumerState<StorefrontCartScreen> {
   /// The saved address the delivery form was last filled from, if any (12.10).
   String? _savedAddressId;
 
+  // ── Delivery and collection slots ──────────────────────────────────────
+  // The window the shopper chose, if any, and — for a delivery — the store
+  // the typed postcode resolves to (tenant-svc's soft delivery-coverage
+  // check), read fresh whenever the postcode changes so the picker always
+  // asks the right store for its windows.
+  SlotOption? _selectedSlot;
+  String? _resolvedStoreId;
+  String? _resolvedForPostcode;
+  Timer? _resolveDebounce;
+
   static const _addressStorage = AppStorage();
 
   @override
   void initState() {
     super.initState();
+    _postalCtrl.addListener(_scheduleResolveStore);
     _loadSavedAddress();
   }
 
@@ -136,6 +150,8 @@ class _StorefrontCartScreenState extends ConsumerState<StorefrontCartScreen> {
 
   @override
   void dispose() {
+    _resolveDebounce?.cancel();
+    _postalCtrl.removeListener(_scheduleResolveStore);
     _line1Ctrl.dispose();
     _line2Ctrl.dispose();
     _cityCtrl.dispose();
@@ -144,6 +160,53 @@ class _StorefrontCartScreenState extends ConsumerState<StorefrontCartScreen> {
     _recipientPhoneCtrl.dispose();
     _contactPhoneCtrl.dispose();
     super.dispose();
+  }
+
+  /// The postcode changed (typed, or a saved address filled it): re-resolve
+  /// which store would fulfil a delivery there, debounced so a shopper still
+  /// typing does not fire a request per keystroke. A blank postcode clears
+  /// the last resolution at once — nothing to resolve.
+  void _scheduleResolveStore() {
+    _resolveDebounce?.cancel();
+    final pincode = _postalCtrl.text.trim();
+    if (pincode.isEmpty) {
+      if (_resolvedStoreId != null || _resolvedForPostcode != null) {
+        setState(() {
+          _resolvedStoreId = null;
+          _resolvedForPostcode = null;
+          _selectedSlot = null;
+        });
+      }
+      return;
+    }
+    if (pincode == _resolvedForPostcode) return;
+    _resolveDebounce = Timer(const Duration(milliseconds: 500), () => _resolveStore(pincode));
+  }
+
+  /// Soft delivery-coverage check (tenant-svc `/fulfilment/resolve`), for the
+  /// slot picker's benefit only: the order's own placement resolves it again,
+  /// authoritatively. An unreadable postcode (not yet covered, no network)
+  /// leaves the picker unmounted rather than blocking anything here.
+  Future<void> _resolveStore(String pincode) async {
+    try {
+      final dio = ref.read(storefrontDioProvider);
+      final resp = await dio.get('/${ApiConstants.tenant}/fulfilment/resolve',
+          queryParameters: {'pincode': pincode});
+      final data = resp.data['data'] as Map<String, dynamic>;
+      if (!mounted) return;
+      setState(() {
+        _resolvedForPostcode = pincode;
+        _resolvedStoreId = data['storeId'] as String?;
+        _selectedSlot = null;
+      });
+    } catch (_) {
+      if (!mounted) return;
+      setState(() {
+        _resolvedForPostcode = pincode;
+        _resolvedStoreId = null;
+        _selectedSlot = null;
+      });
+    }
   }
 
   static String? _requiredField(String? v) =>
@@ -210,6 +273,25 @@ class _StorefrontCartScreenState extends ConsumerState<StorefrontCartScreen> {
         _payOptions(showPrices, enabledMethods, _fulfilment == 'DELIVERY');
     final selectedPay = _selectedOption(payOptions);
 
+    // Delivery and collection slots: for a collection, the store the shopper is
+    // browsing (chosen at the top of the storefront); for a delivery, the store
+    // the typed postcode resolves to — unknown until it does, in which case the
+    // picker simply is not mounted yet.
+    final currentStoreId = ref.watch(storefrontStoreProvider);
+    final resolvedPickerStoreId =
+        _fulfilment == 'DELIVERY' ? _resolvedStoreId : currentStoreId;
+    final pickerStoreId = (resolvedPickerStoreId != null && resolvedPickerStoreId.isNotEmpty)
+        ? resolvedPickerStoreId
+        : null;
+    final slotsOffered = pickerStoreId == null
+        ? false
+        : ref
+                .watch(fulfilmentSlotsProvider((store: pickerStoreId, type: _fulfilment)))
+                .value
+                ?.offered ??
+            false;
+    final slotMissing = slotsOffered && _selectedSlot == null;
+
     if (cart.isEmpty) {
       return EmptyState(
         icon: Icons.shopping_bag_outlined,
@@ -252,7 +334,8 @@ class _StorefrontCartScreenState extends ConsumerState<StorefrontCartScreen> {
             style: theme.textTheme.bodySmall,
           );
     final reviewButton = FilledButton.icon(
-      onPressed: _placing ? null : _checkout,
+      key: const Key('review-order-button'),
+      onPressed: (_placing || slotMissing) ? null : _checkout,
       icon: _placing
           ? SizedBox(
               height: 18,
@@ -317,8 +400,12 @@ class _StorefrontCartScreenState extends ConsumerState<StorefrontCartScreen> {
                         icon: Icon(Icons.local_shipping_outlined)),
                   ],
                   selected: {_fulfilment},
-                  onSelectionChanged: (s) =>
-                      setState(() => _fulfilment = s.first),
+                  onSelectionChanged: (s) => setState(() {
+                    _fulfilment = s.first;
+                    // A different fulfilment type offers a different store's
+                    // windows (or none) — last time's choice does not carry over.
+                    _selectedSlot = null;
+                  }),
                 ),
               )
             else
@@ -449,6 +536,16 @@ class _StorefrontCartScreenState extends ConsumerState<StorefrontCartScreen> {
                   isDense: true,
                   prefixIcon: Icon(Icons.phone_outlined),
                 ),
+              ),
+            ],
+            if (pickerStoreId != null) ...[
+              const SizedBox(height: 12),
+              DeliverySlotPicker(
+                key: ValueKey('slot-picker-$pickerStoreId-$_fulfilment'),
+                storeId: pickerStoreId,
+                fulfilmentType: _fulfilment,
+                selected: _selectedSlot,
+                onSelected: (s) => setState(() => _selectedSlot = s),
               ),
             ],
             const SizedBox(height: 12),
@@ -756,6 +853,16 @@ class _StorefrontCartScreenState extends ConsumerState<StorefrontCartScreen> {
                     delivery
                         ? '${_line1Ctrl.text.trim()}, ${_cityCtrl.text.trim()} ${_postalCtrl.text.trim()}\n${_recipientNameCtrl.text.trim()} · ${_recipientPhoneCtrl.text.trim()}'
                         : '$storeName\nWe\'ll call ${_contactPhoneCtrl.text.trim()} when it\'s ready'),
+                // The chosen delivery/collection window (delivery-and-collection-slots),
+                // the last look before the order holds it.
+                if (_selectedSlot != null)
+                  row(
+                      Icons.schedule_outlined,
+                      delivery ? 'Delivery window' : 'Collection window',
+                      slotWhen(
+                          date: _selectedSlot!.date,
+                          startTime: _selectedSlot!.startTime,
+                          endTime: _selectedSlot!.endTime)),
                 row(pay.icon, 'Payment',
                     pay.payNow ? '${pay.label} — charged now' : pay.label),
                 const SizedBox(height: 16),
@@ -839,6 +946,13 @@ class _StorefrontCartScreenState extends ConsumerState<StorefrontCartScreen> {
               // it's recorded as a 0-value request to be priced/fulfilled later.
               {'variantId': l.variantId, 'qty': l.qty, 'unitPrice': l.unitPrice},
           ],
+          // The chosen delivery/collection window (delivery-and-collection-slots):
+          // sent only when the store offered one and the shopper picked it — a
+          // store with no windows checks out exactly as before.
+          if (_selectedSlot != null) ...{
+            'slotWindowId': _selectedSlot!.windowId,
+            'slotStartsAt': _selectedSlot!.startsAt.toUtc().toIso8601String(),
+          },
           'contactPhone': delivery
               ? _recipientPhoneCtrl.text.trim()
               : _contactPhoneCtrl.text.trim(),
@@ -864,6 +978,10 @@ class _StorefrontCartScreenState extends ConsumerState<StorefrontCartScreen> {
       // 09.16: the server put the return-scheme deposit on the order as its own
       // line; the shopper sees it and pays the total that carries it.
       final depositAmount = (data['depositAmount'] as num?)?.toDouble() ?? 0;
+      // The window this order holds (delivery-and-collection-slots), for the
+      // confirmation and the on-device order history; null for an order with
+      // none, and never a price — the window carries no fee in this cut.
+      final orderSlot = OrderSlot.maybe(data['slot']);
       // Order orchestration: a delivery the shop serving the postcode cannot fill alone comes in
       // parts from several shops — one checkout, paid once for all of them.
       final group = data['group'] as Map<String, dynamic>?;
@@ -930,6 +1048,7 @@ class _StorefrontCartScreenState extends ConsumerState<StorefrontCartScreen> {
                   placedAt: DateTime.now(),
                   storeName: storeNames[p.storeId] ?? storeName,
                   fulfilmentType: _fulfilment,
+                  slot: orderSlot,
                 ),
               );
         }
@@ -943,6 +1062,7 @@ class _StorefrontCartScreenState extends ConsumerState<StorefrontCartScreen> {
                 placedAt: DateTime.now(),
                 storeName: storeName,
                 fulfilmentType: _fulfilment,
+                slot: orderSlot,
               ),
             );
       }
@@ -991,6 +1111,16 @@ class _StorefrontCartScreenState extends ConsumerState<StorefrontCartScreen> {
                   delivery ? 'Deliver to your address' : 'Collect from $storeName',
                   style: const TextStyle(fontWeight: FontWeight.bold),
                   textAlign: TextAlign.center),
+              if (orderSlot != null) ...[
+                const SizedBox(height: 6),
+                Text(
+                    slotWhen(
+                        date: orderSlot.date,
+                        startTime: orderSlot.startTime,
+                        endTime: orderSlot.endTime),
+                    key: const Key('order-slot-label'),
+                    style: TextStyle(color: Theme.of(ctx).colorScheme.outline)),
+              ],
               if (!payNow)
                 Text(
                     showPrices
@@ -1040,13 +1170,31 @@ class _StorefrontCartScreenState extends ConsumerState<StorefrontCartScreen> {
                 ? 'PICKUP'
                 : 'DELIVERY';
         _payMethod = '';
+        _selectedSlot = null;
       });
       // Refill the address form from the just-saved address so a follow-up
       // delivery order in the same session starts prefilled too.
       await _loadSavedAddress();
     } catch (e) {
       if (!mounted) return;
-      setState(() => _placing = false);
+      final code = apiErrorCode(e);
+      // The window filled or closed while the shopper was checking out: the
+      // choice no longer holds, so it is cleared and the picker re-reads
+      // rather than leaving a stale "Full" occurrence selected.
+      if (code == 'ORDER_SLOT_FULL' || code == 'ORDER_SLOT_CLOSED') {
+        final sid = _fulfilment == 'DELIVERY'
+            ? _resolvedStoreId
+            : ref.read(storefrontStoreProvider);
+        if (sid != null && sid.isNotEmpty) {
+          ref.invalidate(fulfilmentSlotsProvider((store: sid, type: _fulfilment)));
+        }
+        setState(() {
+          _placing = false;
+          _selectedSlot = null;
+        });
+      } else {
+        setState(() => _placing = false);
+      }
       ScaffoldMessenger.of(context).showSnackBar(
         SnackBar(
           content: Text(_checkoutErrorMessage(e)),
@@ -1071,6 +1219,18 @@ class _StorefrontCartScreenState extends ConsumerState<StorefrontCartScreen> {
       case 'PAYMENT_METHOD_DISABLED':
         return 'That payment method isn\'t available at this store any more. '
             'Please pick another one.';
+      // Delivery and collection slots (delivery-and-collection-slots): the
+      // window filled or closed while checking out, or the choice sent didn't
+      // hold — the picker above re-reads so another can be chosen.
+      case 'ORDER_SLOT_FULL':
+      case 'ORDER_SLOT_CLOSED':
+        return 'That window has just filled — pick another.';
+      case 'ORDER_SLOT_REQUIRED':
+        return 'Please choose a delivery or collection window.';
+      case 'ORDER_SLOT_UNKNOWN':
+        return 'That window is no longer available. Please choose another.';
+      case 'ORDER_SLOT_NOT_APPLICABLE':
+        return 'A window cannot be chosen for this order.';
       default:
         return friendlyError(e, fallback: 'Checkout failed.');
     }

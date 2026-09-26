@@ -10,6 +10,7 @@ import 'package:storeql_app/features/admin/providers/admin_providers.dart';
 
 import '../../support/fake_api.dart';
 
+import 'package:intl/intl.dart';
 // ---------------------------------------------------------------------------
 // Inventory's Transfers and Movements tabs read in words: a transfer's status
 // and a movement's kind as words, stores and products by name (the end of an
@@ -71,6 +72,12 @@ Future<void> _pump(WidgetTester tester, Widget tab, {Size size = const Size(1200
 }
 
 void main() {
+  // This file's UI dates (e.g. day-before-month, "Sept") are about
+  // AppFormat writing en_GB correctly, not about which locale the app
+  // defaults to (core/l10n/app_locales_test.dart owns that) — pinned
+  // explicitly so it stays true whatever the app's own fallback is.
+  setUp(() => Intl.defaultLocale = 'en_GB');
+  tearDown(() => Intl.defaultLocale = null);
   setUpAll(initializeDateFormatting);
 
   testWidgets('a transfer says its status in words, and a store it cannot name by the end of its id',

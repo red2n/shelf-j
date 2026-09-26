@@ -158,4 +158,51 @@ class AppLocalizationsEn extends AppLocalizations {
   @override
   String get ssoErrGeneric =>
       'Your business\'s sign-in page could not sign you in. Ask its owner to check the settings.';
+
+  @override
+  String get forgotPassword => 'Forgot password?';
+
+  @override
+  String get forgotPasswordTitle => 'Forgot your password?';
+
+  @override
+  String get forgotPasswordIntro =>
+      'Enter your email address. If an account uses it, we\'ll send a link to reset the password.';
+
+  @override
+  String get forgotPasswordSubmit => 'Send link';
+
+  @override
+  String get forgotPasswordSent =>
+      'If an account uses that address, we have sent a link. It works for 30 minutes, once.';
+
+  @override
+  String get resetPasswordTitle => 'Choose a new password';
+
+  @override
+  String get resetPasswordNewLabel => 'New password';
+
+  @override
+  String get resetPasswordConfirmLabel => 'Confirm new password';
+
+  @override
+  String get resetPasswordMismatch =>
+      'This does not match the new password above.';
+
+  @override
+  String get resetPasswordSubmit => 'Change password';
+
+  @override
+  String get resetPasswordDone => 'Password changed — sign in with it.';
+
+  @override
+  String get resetPasswordDoneStorefront =>
+      'Shopping from the storefront? You can sign in from the shop.';
+
+  @override
+  String get resetPasswordTokenInvalid =>
+      'This link has expired or was already used — ask for a new one.';
+
+  @override
+  String get resetPasswordRequestNew => 'Ask for a new link';
 }

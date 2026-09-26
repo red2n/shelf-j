@@ -11,6 +11,7 @@ import 'package:storeql_app/features/admin/billing_screen.dart';
 
 import '../../support/fake_api.dart';
 
+import 'package:intl/intl.dart';
 // ---------------------------------------------------------------------------
 // What a business pays the platform (21.9). The two things an owner needs to see
 // before they cost money: that the subscription ends at the period end, and that
@@ -131,6 +132,12 @@ Future<void> _pump(
 }
 
 void main() {
+  // This file's UI dates (e.g. day-before-month, "Sept") are about
+  // AppFormat writing en_GB correctly, not about which locale the app
+  // defaults to (core/l10n/app_locales_test.dart owns that) — pinned
+  // explicitly so it stays true whatever the app's own fallback is.
+  setUp(() => Intl.defaultLocale = 'en_GB');
+  tearDown(() => Intl.defaultLocale = null);
   setUpAll(initializeDateFormatting);
 
   testWidgets('the subscription says what it costs and for which period', (tester) async {

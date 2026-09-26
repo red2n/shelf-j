@@ -1258,17 +1258,50 @@ public final class Dtos {
       String completedAt,
       List<PhysicalInventoryTagResponse> tags) {}
 
-  /** Public storefront stock signal: whether a variant is buyable at a store (no quantities). */
+  /**
+   * Public storefront stock signal: whether a variant is buyable at a store. No quantities are
+   * exposed above a business's own configured threshold — {@code onlyLeft} is the one deliberate
+   * exception, and only ever at or below it.
+   */
   @Schema(
       name = "AvailabilityResponse",
-      description = "Public in-stock/out-of-stock signal for a variant; no quantities exposed.")
+      description =
+          "Public in-stock/out-of-stock signal for a variant; no quantities exposed above a"
+              + " business's own low-stock threshold.")
   public record AvailabilityResponse(
       @Schema(description = "UUID of the product variant.") String variantId,
       boolean inStock,
       @Schema(
               description =
                   "True when the supplier ships it per order: available with none on the shelf.")
-          boolean dropship) {}
+          boolean dropship,
+      @Schema(
+              description =
+                  "The whole units left at the store named on the read, when a business has set a"
+                      + " threshold and 0 < available <= threshold; null otherwise — no threshold"
+                      + " set, above the threshold, out of stock, dropship, no store named, or a"
+                      + " fractional (weighed) quantity. Never a count above the threshold.")
+          Integer onlyLeft) {}
+
+  // ── "Only N left" on the storefront ────────────────────────────────────
+
+  @Schema(
+      name = "StorefrontStockSettingsRequest",
+      description =
+          "The business-wide low-stock threshold shown to shoppers as \"only N left\"; null"
+              + " switches the feature off.")
+  public record StorefrontStockSettingsRequest(
+      @Schema(description = "1..1000, or null to switch the feature off.")
+          Integer lowStockThreshold) {}
+
+  @Schema(
+      name = "StorefrontStockSettingsResponse",
+      description = "The business's current \"only N left\" setting.")
+  public record StorefrontStockSettingsResponse(
+      @Schema(description = "1..1000, or null while the feature is off.") Integer lowStockThreshold,
+      @Schema(description = "When it was last changed; null if never.") String updatedAt,
+      @Schema(description = "UUID of the staff member who last changed it; null if never.")
+          String updatedBy) {}
 
   // ── Gross margin and GMROI (19.7) ─────────────────────────────────────────────
 

@@ -2,6 +2,7 @@ import 'package:dio/dio.dart';
 import 'package:flutter/material.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:go_router/go_router.dart';
+import '../../core/auth/password_policy.dart';
 import '../../core/format.dart';
 import '../../core/network/api_error.dart';
 import '../../core/spacing.dart';
@@ -499,6 +500,8 @@ class _StorefrontAuthDialogState extends ConsumerState<StorefrontAuthDialog> {
   @override
   Widget build(BuildContext context) {
     final cs = Theme.of(context).colorScheme;
+    // Only in sign-up mode: signing in never touches the policy endpoint.
+    final policy = _register ? watchPasswordPolicy(ref) : PasswordPolicy.fallback;
     return AlertDialog(
       title: Text(_register ? 'Create account' : 'Sign in'),
       content: SizedBox(
@@ -532,17 +535,42 @@ class _StorefrontAuthDialogState extends ConsumerState<StorefrontAuthDialog> {
               TextFormField(
                 controller: _passwordCtrl,
                 obscureText: true,
-                decoration: const InputDecoration(
-                    labelText: 'Password', prefixIcon: Icon(Icons.lock_outline)),
+                decoration: InputDecoration(
+                  labelText: 'Password',
+                  prefixIcon: const Icon(Icons.lock_outline),
+                  // The published policy's rule, before it is typed — never
+                  // learned only from a refusal.
+                  helperText: _register ? passwordRuleText(policy) : null,
+                  helperMaxLines: 2,
+                  errorMaxLines: 2,
+                ),
                 // A sign-in asks only that a password is typed — the server says
-                // whether it is the right one; a new password is held to
-                // iam-svc's fifteen characters before anything is sent.
+                // whether it is the right one; a new password is held to the
+                // published policy before anything is sent.
                 validator: (v) => v == null || v.isEmpty
                     ? 'Enter your password'
-                    : _register && v.length < 15
-                        ? 'At least 15 characters — a phrase of a few words is easiest'
+                    : _register
+                        ? passwordLengthProblemPlain(v, policy)
                         : null,
               ),
+              if (!_register) ...[
+                Align(
+                  alignment: AlignmentDirectional.centerEnd,
+                  child: TextButton(
+                    key: const Key('forgot-password'),
+                    onPressed: _loading
+                        ? null
+                        : () {
+                            Navigator.pop(context);
+                            // Named, so the forgot-password page can lead a
+                            // shopper back to the shop rather than to staff
+                            // sign-in once they're done.
+                            context.go('/forgot-password?from=storefront');
+                          },
+                    child: const Text('Forgot password?'),
+                  ),
+                ),
+              ],
               if (_register) ...[
                 const SizedBox(height: 12),
                 TextFormField(

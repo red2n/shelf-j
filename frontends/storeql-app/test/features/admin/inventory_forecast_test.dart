@@ -9,6 +9,7 @@ import 'package:storeql_app/core/network/api_client.dart';
 import 'package:storeql_app/features/admin/inventory_forecast_tab.dart';
 import 'package:storeql_app/features/admin/providers/admin_providers.dart';
 
+import 'package:intl/intl.dart';
 // ---------------------------------------------------------------------------
 // The demand forecast tab (06.x): a store's forecasts read with their method and
 // accuracy (a dash where the server could not compute one), the run posted for
@@ -82,6 +83,12 @@ Future<_Server> _pump(WidgetTester tester, {bool hasForecasts = true}) async {
 }
 
 void main() {
+  // This file's UI dates (e.g. day-before-month, "Sept") are about
+  // AppFormat writing en_GB correctly, not about which locale the app
+  // defaults to (core/l10n/app_locales_test.dart owns that) — pinned
+  // explicitly so it stays true whatever the app's own fallback is.
+  setUp(() => Intl.defaultLocale = 'en_GB');
+  tearDown(() => Intl.defaultLocale = null);
   setUpAll(initializeDateFormatting);
   testWidgets('a store with no forecasts says so and offers the run', (tester) async {
     await _pump(tester, hasForecasts: false);

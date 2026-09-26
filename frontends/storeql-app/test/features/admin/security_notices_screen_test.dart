@@ -8,6 +8,7 @@ import 'package:storeql_app/core/format.dart';
 import 'package:storeql_app/core/network/api_client.dart';
 import 'package:storeql_app/features/admin/security_notices_screen.dart';
 
+import 'package:intl/intl.dart';
 // ---------------------------------------------------------------------------
 // Security notices a business has been sent (21.15): what is unread, what was
 // acknowledged and when, and what the screen does when the server refuses.
@@ -73,6 +74,12 @@ String _breach(String id, {bool boardDone = false}) => '{"id":"$id","incidentId"
     '{"duty":"BOARD_REPORTED","citation":"DPDP Rules 2025 r.7(2)(b)","summary":"Reported within seventy-two hours","dueAt":"2026-09-17T08:00:00Z","state":"OVERDUE"}]}';
 
 void main() {
+  // This file's UI dates (e.g. day-before-month, "Sept") are about
+  // AppFormat writing en_GB correctly, not about which locale the app
+  // defaults to (core/l10n/app_locales_test.dart owns that) — pinned
+  // explicitly so it stays true whatever the app's own fallback is.
+  setUp(() => Intl.defaultLocale = 'en_GB');
+  tearDown(() => Intl.defaultLocale = null);
   // ── 13.12: the business's own duties on a breach ───────────────────────────
 
   testWidgets('a breach notice lists the DPDP duties with their clocks, and the date the Act binds from',

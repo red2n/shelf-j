@@ -70,8 +70,10 @@ List<Override> _shop({
         storefrontBusinessNameProvider
             .overrideWith((ref) async => 'Corner Stores Ltd'),
       ],
-      storefrontAvailabilityProvider
-          .overrideWith((ref) async => const {'v-1': true, 'v-2': false}),
+      storefrontAvailabilityProvider.overrideWith((ref) async => const {
+        'v-1': StockInfo(inStock: true),
+        'v-2': StockInfo(inStock: false),
+      }),
       storefrontPromotionsProvider.overrideWith((ref) async => const []),
       storefrontCategoriesProvider.overrideWith(
           (ref) async => const [StoreCategory(id: 'c-1', name: 'Pantry')]),

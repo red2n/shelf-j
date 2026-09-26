@@ -21,6 +21,7 @@ import 'providers/admin_providers.dart';
 import 'providers/orders_pagination.dart';
 import 'sales_invoices_dialog.dart';
 import '../../shared/util/short_ref.dart';
+import '../../shared/util/slot_label.dart';
 import 'package:storeql_app/core/ids.dart';
 
 /// The body of a cancel. The reason is optional, and the server takes "no
@@ -916,7 +917,13 @@ class _OrderTile extends StatelessWidget {
     final payment = method == null
         ? null
         : StatusBadge(_paymentLabel(method, o.fulfilmentType));
-    final placed = Text(AppFormat.dateTime(o.createdAt));
+    final slot = o.slot;
+    // The window this order holds (delivery-and-collection-slots), worded
+    // with which kind it is, in the store's own local date and clock — never
+    // converted on the device.
+    final placed = Text(slot == null
+        ? AppFormat.dateTime(o.createdAt)
+        : '${AppFormat.dateTime(o.createdAt)}\n${slotWindowLabel(fulfilmentType: o.fulfilmentType, date: slot.date, startTime: slot.startTime, endTime: slot.endTime)}');
 
     return ListTile(
       contentPadding: const EdgeInsetsDirectional.symmetric(

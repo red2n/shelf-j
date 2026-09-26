@@ -86,13 +86,17 @@ public class TenantProfiles {
    * @param dark the stores of type DARK_STORE: shops with no shop floor, which fill online orders
    *     for delivery only — no collection is offered there and no till opens (ship-from-store and
    *     dark-store picking)
+   * @param zones the IANA time zone id of each store that records one (delivery and collection
+   *     slots): a store's own hours and windows are set and shown in this zone, never a platform
+   *     default — no zone is assumed for a store that records none
    */
   public record Stores(
       Set<UUID> ids,
       Map<UUID, String> countries,
       Set<UUID> warehouses,
       Map<UUID, Point> points,
-      Set<UUID> dark) {
+      Set<UUID> dark,
+      Map<UUID, String> zones) {
 
     public Stores {
       ids = Set.copyOf(ids);
@@ -100,22 +104,33 @@ public class TenantProfiles {
       warehouses = Set.copyOf(warehouses);
       points = Map.copyOf(points);
       dark = Set.copyOf(dark);
+      zones = Map.copyOf(zones);
+    }
+
+    /** As before time zones were read: no store records one. */
+    public Stores(
+        Set<UUID> ids,
+        Map<UUID, String> countries,
+        Set<UUID> warehouses,
+        Map<UUID, Point> points,
+        Set<UUID> dark) {
+      this(ids, countries, warehouses, points, dark, Map.of());
     }
 
     /** As before dark stores were read: no store is one. */
     public Stores(
         Set<UUID> ids, Map<UUID, String> countries, Set<UUID> warehouses, Map<UUID, Point> points) {
-      this(ids, countries, warehouses, points, Set.of());
+      this(ids, countries, warehouses, points, Set.of(), Map.of());
     }
 
     /** As before warehouses were read: no store is one. */
     public Stores(Set<UUID> ids, Map<UUID, String> countries) {
-      this(ids, countries, Set.of(), Map.of(), Set.of());
+      this(ids, countries, Set.of(), Map.of(), Set.of(), Map.of());
     }
 
     /** As before coordinates were read. */
     public Stores(Set<UUID> ids, Map<UUID, String> countries, Set<UUID> warehouses) {
-      this(ids, countries, warehouses, Map.of(), Set.of());
+      this(ids, countries, warehouses, Map.of(), Set.of(), Map.of());
     }
 
     /**
@@ -140,6 +155,26 @@ public class TenantProfiles {
     public boolean isWarehouse(UUID storeId) {
       return storeId != null && warehouses.contains(storeId);
     }
+
+    /**
+     * The store's own IANA time zone (delivery and collection slots), or {@code null} when the
+     * store is unknown, records none, or what it records is not a zone {@link java.time.ZoneId} can
+     * resolve — never a guess, since a window set or shown in the wrong zone is wrong by hours, not
+     * by nothing.
+     *
+     * @param storeId the store
+     * @return the zone, or {@code null}
+     */
+    public java.time.ZoneId zoneOf(UUID storeId) {
+      if (storeId == null) return null;
+      String tz = zones.get(storeId);
+      if (tz == null || tz.isBlank()) return null;
+      try {
+        return java.time.ZoneId.of(tz);
+      } catch (RuntimeException e) {
+        return null;
+      }
+    }
   }
 
   /** A store's latitude and longitude, in degrees. */
@@ -152,6 +187,7 @@ public class TenantProfiles {
       Set<UUID> warehouses,
       Map<UUID, Point> points,
       Set<UUID> dark,
+      Map<UUID, String> zones,
       String nextCursor) {}
 
   private record CachedStores(Stores stores, Instant readAt) {}
@@ -247,6 +283,7 @@ public class TenantProfiles {
     Set<UUID> warehouses = new HashSet<>();
     Map<UUID, Point> points = new HashMap<>();
     Set<UUID> dark = new HashSet<>();
+    Map<UUID, String> zones = new HashMap<>();
     String after = null;
     for (int page = 0; page < MAX_STORE_PAGES; page++) {
       Optional<StorePage> read =
@@ -257,8 +294,9 @@ public class TenantProfiles {
       warehouses.addAll(read.get().warehouses());
       points.putAll(read.get().points());
       dark.addAll(read.get().dark());
+      zones.putAll(read.get().zones());
       if (read.get().nextCursor() == null) {
-        return Optional.of(new Stores(ids, countries, warehouses, points, dark));
+        return Optional.of(new Stores(ids, countries, warehouses, points, dark, zones));
       }
       after = read.get().nextCursor();
     }
@@ -269,7 +307,9 @@ public class TenantProfiles {
   /**
    * Reads one page of {@code GET /admin/stores}: each store's id and, when it records one, its
    * country, upper-cased but not otherwise judged — a country the rules cannot read is refused
-   * where the rules are asked, not quietly dropped here.
+   * where the rules are asked, not quietly dropped here. {@code timezone} is kept verbatim (an IANA
+   * zone id, e.g. {@code "Europe/Warsaw"}); {@link Stores#zoneOf} is where an unreadable one is
+   * turned into "none" rather than this parse.
    */
   static Optional<StorePage> parseStores(String body) {
     try (JsonReader reader = Json.createReader(new StringReader(body))) {
@@ -280,6 +320,7 @@ public class TenantProfiles {
       Set<UUID> warehouses = new HashSet<>();
       Map<UUID, Point> points = new HashMap<>();
       Set<UUID> dark = new HashSet<>();
+      Map<UUID, String> zones = new HashMap<>();
       for (JsonValue value : root.getJsonArray("data")) {
         JsonObject store = value.asJsonObject();
         UUID id = Ids.parse(store.getString("id"));
@@ -305,6 +346,12 @@ public class TenantProfiles {
                 ? upper(store.getString("country"))
                 : null;
         if (country != null && !country.isEmpty()) countries.put(id, country);
+        if (store.containsKey("timezone")
+            && !store.isNull("timezone")
+            && store.get("timezone").getValueType() == jakarta.json.JsonValue.ValueType.STRING) {
+          String tz = store.getString("timezone").strip();
+          if (!tz.isEmpty()) zones.put(id, tz);
+        }
       }
       JsonObject meta =
           root.containsKey("meta") && !root.isNull("meta") ? root.getJsonObject("meta") : null;
@@ -319,6 +366,7 @@ public class TenantProfiles {
               Set.copyOf(warehouses),
               Map.copyOf(points),
               Set.copyOf(dark),
+              Map.copyOf(zones),
               next == null || next.isBlank() ? null : next));
     } catch (RuntimeException e) {
       LOG.log(Level.WARNING, "unreadable page of stores: {0}", e.getMessage());

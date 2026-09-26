@@ -11,6 +11,7 @@ import 'package:storeql_app/features/admin/sourcing_tab.dart';
 
 import '../../support/fake_api.dart';
 
+import 'package:intl/intl.dart';
 // ---------------------------------------------------------------------------
 // The Procurement screen's "Sourcing" tab: the requests listed with how far the
 // asking has got; the detail's comparison with the lowest price per line marked
@@ -90,6 +91,12 @@ Future<void> _openDetail(WidgetTester tester) async {
 }
 
 void main() {
+  // This file's UI dates (e.g. day-before-month, "Sept") are about
+  // AppFormat writing en_GB correctly, not about which locale the app
+  // defaults to (core/l10n/app_locales_test.dart owns that) — pinned
+  // explicitly so it stays true whatever the app's own fallback is.
+  setUp(() => Intl.defaultLocale = 'en_GB');
+  tearDown(() => Intl.defaultLocale = null);
   setUpAll(initializeDateFormatting);
   testWidgets('the requests are listed with how far the asking has got', (tester) async {
     await _pump(tester);

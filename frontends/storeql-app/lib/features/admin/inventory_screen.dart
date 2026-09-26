@@ -3,6 +3,8 @@ import 'dart:async';
 import 'package:dio/dio.dart';
 import 'package:flutter/material.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
+import '../../core/auth/auth_notifier.dart';
+import '../../core/auth/auth_state.dart';
 import '../../core/constants.dart';
 import '../../core/format.dart';
 import '../../core/network/api_client.dart';
@@ -48,6 +50,14 @@ class _InventoryScreenState extends ConsumerState<InventoryScreen> {
   @override
   Widget build(BuildContext context) {
     final gutter = context.pageGutter;
+    final auth = ref.watch(authNotifierProvider).value;
+    // Storefront stock signal: a business-wide setting, so
+    // only an owner, or a manager held to no store, may see or set it — a
+    // store-held manager, storekeeper or cashier gets none of this button;
+    // the server refuses them too (403), worded, if they ever reach it.
+    final canSetStockSignal = auth is AuthAuthenticated &&
+        (auth.roles.contains(UserRoles.owner) ||
+            (auth.isManager && auth.storeIds.isEmpty));
     return DefaultTabController(
       length: 11,
       child: Column(
@@ -58,6 +68,16 @@ class _InventoryScreenState extends ConsumerState<InventoryScreen> {
             title: 'Inventory',
             padding: EdgeInsetsDirectional.fromSTEB(gutter, gutter, gutter, 0),
             actions: [
+              if (canSetStockSignal)
+                IconButton(
+                  key: const Key('storefront-stock-signal'),
+                  tooltip: 'Storefront stock signal',
+                  onPressed: () => showDialog<void>(
+                    context: context,
+                    builder: (_) => const StorefrontStockSignalDialog(),
+                  ),
+                  icon: const Icon(Icons.visibility_outlined),
+                ),
               FilledButton.icon(
                 onPressed: () => _showReceiveDialog(context, ref),
                 icon: const Icon(Icons.add),
@@ -2440,6 +2460,153 @@ class _ThresholdsTabState extends ConsumerState<_ThresholdsTab> {
               );
             },
           ),
+        ),
+      ],
+    );
+  }
+}
+
+// ---------------------------------------------------------------------------
+// Storefront stock signal: a business-wide "Only N left"
+// threshold — off until an owner (or a business-wide manager) sets it. Below
+// or at it, `GET /inventory/availability` starts naming a whole count; above
+// it, out of stock, dropship, or a weighed good, it never does.
+// ---------------------------------------------------------------------------
+
+const _stockSignal = '/${ApiConstants.inventory}/admin/inventory/storefront-settings';
+
+/// The business's storefront stock-signal threshold, or null while it is off.
+final storefrontStockSignalProvider = FutureProvider.autoDispose<int?>((ref) async {
+  final resp = await ref.read(apiClientProvider).dio.get(_stockSignal);
+  final data = resp.data['data'];
+  return data is Map ? (data['lowStockThreshold'] as num?)?.toInt() : null;
+});
+
+/// "Show 'Only N left' at or below …": on/off, and — while on — the whole
+/// number 1–1000 it takes effect at.
+class StorefrontStockSignalDialog extends ConsumerStatefulWidget {
+  const StorefrontStockSignalDialog({super.key});
+
+  @override
+  ConsumerState<StorefrontStockSignalDialog> createState() =>
+      _StorefrontStockSignalDialogState();
+}
+
+class _StorefrontStockSignalDialogState
+    extends ConsumerState<StorefrontStockSignalDialog> {
+  bool _on = false;
+  late final _thresholdCtrl = TextEditingController(text: '5');
+  bool _loaded = false;
+  bool _saving = false;
+  String? _error;
+
+  void _applyLoaded(int? threshold) {
+    if (_loaded) return;
+    _loaded = true;
+    _on = threshold != null;
+    if (threshold != null) _thresholdCtrl.text = '$threshold';
+  }
+
+  @override
+  void dispose() {
+    _thresholdCtrl.dispose();
+    super.dispose();
+  }
+
+  Future<void> _save() async {
+    int? threshold;
+    if (_on) {
+      threshold = int.tryParse(_thresholdCtrl.text.trim());
+      if (threshold == null || threshold < 1 || threshold > 1000) {
+        setState(() => _error = 'Enter a number from 1 to 1000, or switch it off.');
+        return;
+      }
+    }
+    setState(() {
+      _saving = true;
+      _error = null;
+    });
+    try {
+      await ref
+          .read(apiClientProvider)
+          .dio
+          .put(_stockSignal, data: {'lowStockThreshold': threshold});
+      ref.invalidate(storefrontStockSignalProvider);
+      if (!mounted) return;
+      Navigator.pop(context);
+      ScaffoldMessenger.of(context).showSnackBar(
+        SnackBar(
+          key: const Key('stock-signal-saved'),
+          content: Text(_on
+              ? 'Storefront stock signal saved.'
+              : 'Storefront stock signal switched off.'),
+        ),
+      );
+    } catch (e) {
+      if (!mounted) return;
+      setState(() {
+        _saving = false;
+        _error = friendlyError(e, fallback: 'Could not save the setting.');
+      });
+    }
+  }
+
+  @override
+  Widget build(BuildContext context) {
+    final cs = Theme.of(context).colorScheme;
+    final async = ref.watch(storefrontStockSignalProvider);
+    async.whenData(_applyLoaded);
+    return AlertDialog(
+      title: const Text('Storefront stock signal'),
+      content: SizedBox(
+        width: 360,
+        child: async.isLoading && !_loaded
+            ? const SizedBox(
+                height: 80, child: Center(child: CircularProgressIndicator()))
+            : Column(
+                mainAxisSize: MainAxisSize.min,
+                crossAxisAlignment: CrossAxisAlignment.stretch,
+                children: [
+                  Text(
+                    'When a variant is running low at a store, the storefront can '
+                    'say so instead of just "In stock" — never a number above what '
+                    'you set here, and never one at all while this is off.',
+                    style: TextStyle(color: cs.onSurfaceVariant),
+                  ),
+                  const SizedBox(height: AppSpacing.md),
+                  SwitchListTile.adaptive(
+                    key: const Key('stock-signal-on'),
+                    contentPadding: EdgeInsets.zero,
+                    title: const Text('Show "Only N left" at or below …'),
+                    value: _on,
+                    onChanged: (v) => setState(() => _on = v),
+                  ),
+                  if (_on)
+                    TextField(
+                      key: const Key('stock-signal-threshold'),
+                      controller: _thresholdCtrl,
+                      keyboardType: TextInputType.number,
+                      decoration: const InputDecoration(labelText: 'Units (1–1000)'),
+                    )
+                  else
+                    Text('Off', style: TextStyle(color: cs.onSurfaceVariant)),
+                  if (_error != null) ...[
+                    const SizedBox(height: AppSpacing.sm),
+                    Text(_error!, key: const Key('stock-signal-error'),
+                        style: TextStyle(color: cs.error)),
+                  ],
+                ],
+              ),
+      ),
+      actions: [
+        TextButton(onPressed: () => Navigator.pop(context), child: const Text('Cancel')),
+        FilledButton(
+          key: const Key('stock-signal-save'),
+          onPressed: _saving ? null : _save,
+          child: _saving
+              ? const SizedBox(
+                  height: 18, width: 18, child: CircularProgressIndicator(strokeWidth: 2))
+              : const Text('Save'),
         ),
       ],
     );

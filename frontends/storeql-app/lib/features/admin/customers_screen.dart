@@ -21,6 +21,7 @@ import 'send_text_dialog.dart';
 import 'providers/customer_search.dart';
 import 'providers/customers_pagination.dart';
 import 'guardian_consent_section.dart';
+import 'customer_marketing_section.dart';
 import 'loyalty_programme_dialog.dart';
 import '../../core/auth/auth_notifier.dart';
 import '../../core/auth/auth_state.dart';
@@ -701,6 +702,8 @@ class _CustomerDetailDialog extends ConsumerWidget {
               VatRegistrationSection(customerId: customer.id),
               const SizedBox(height: 12),
               GuardianConsentSection(customerId: customer.id),
+              const SizedBox(height: 12),
+              CustomerMarketingSection(customerId: customer.id),
               const SizedBox(height: 16),
               Text('Loyalty ledger',
                   style: Theme.of(context).textTheme.labelLarge),

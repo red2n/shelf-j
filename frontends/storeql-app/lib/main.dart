@@ -38,9 +38,11 @@ class ShelfApp extends ConsumerWidget {
       theme: AppTheme.light,
       darkTheme: AppTheme.dark,
       themeMode: ThemeMode.system,
-      // UK-first: en_GB is the resolution fallback (first in supported); otherwise
-      // the device locale is honoured among the UK's main community languages.
-      // Urdu/Arabic resolve to RTL automatically.
+      // No country assumed: English resolves to the device's own region when
+      // intl has it (AppLocales.englishRegions) and to plain English
+      // otherwise; a device already in one of the app's other shipped
+      // languages keeps it, whatever its region. Urdu/Arabic resolve to RTL
+      // automatically.
       supportedLocales: AppLocales.supported,
       localizationsDelegates: const [
         AppLocalizations.delegate,

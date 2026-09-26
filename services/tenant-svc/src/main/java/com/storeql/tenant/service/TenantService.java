@@ -1022,13 +1022,19 @@ public class TenantService {
     return repo.updateZoneStatus(tenantId, zoneId, req.status());
   }
 
-  /** Cursor-paginated staff assignments (admin list). */
+  /**
+   * Cursor-paginated staff assignments (admin list), scoped by the caller's stores: a store-held
+   * caller sees assignments at their stores and the business-wide ones only; an owner, a
+   * business-wide manager or the platform admin ({@code storeIds} empty) sees every assignment, as
+   * before.
+   */
   public Cursor.Page<com.storeql.tenant.domain.Domain.StaffAssignment> listStaff(
-      UUID tenantId, String after, int limit) {
+      UUID tenantId, Set<UUID> storeIds, String after, int limit) {
     Cursor.CreatedAtId key = Cursor.decodeCreatedAtId(after);
     var rows =
         repo.listStaff(
             tenantId,
+            storeIds,
             key == null ? null : key.createdAt(),
             key == null ? null : key.id(),
             limit + 1);

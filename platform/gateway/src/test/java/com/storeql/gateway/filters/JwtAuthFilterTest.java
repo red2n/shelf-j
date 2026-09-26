@@ -779,6 +779,88 @@ class JwtAuthFilterTest {
     }
   }
 
+  // ── password reset ────────────────────────────────────────────────────────
+
+  @Test
+  void aForgottenPasswordIsAskedForAndResetWithoutAToken() throws IOException {
+    String[][] routes = {
+      {"api/iam-svc/auth/password/forgot", "POST"},
+      {"api/iam-svc/auth/password/reset", "POST"},
+      {"api/iam-svc/auth/password-policy", "GET"},
+      {"api/v1/iam-svc/auth/password/forgot", "POST"},
+      {"api/v1/iam-svc/auth/password-policy", "GET"}
+    };
+    for (String[] route : routes) {
+      org.mockito.Mockito.reset(requestContext);
+      lenient().when(requestContext.getUriInfo()).thenReturn(uriInfo);
+      lenient().when(requestContext.getHeaders()).thenReturn(headers);
+      when(uriInfo.getPath()).thenReturn(route[0]);
+      lenient().when(requestContext.getMethod()).thenReturn(route[1]);
+
+      filter.filter(requestContext);
+
+      verify(requestContext, never()).abortWith(any());
+    }
+  }
+
+  @Test
+  void nothingBesideThePasswordResetPathsIsPublic() throws IOException {
+    for (String path :
+        new String[] {
+          "api/iam-svc/auth/password",
+          "api/iam-svc/auth/password/forgot/x",
+          "api/iam-svc/auth/password/resets",
+          "api/iam-svc/auth/password-policy/x",
+          "api/tenant-svc/auth/password/forgot"
+        }) {
+      org.mockito.Mockito.reset(requestContext);
+      lenient().when(requestContext.getUriInfo()).thenReturn(uriInfo);
+      lenient().when(requestContext.getHeaders()).thenReturn(headers);
+      when(uriInfo.getPath()).thenReturn(path);
+      lenient().when(requestContext.getMethod()).thenReturn("POST");
+
+      filter.filter(requestContext);
+
+      org.junit.jupiter.api.Assertions.assertEquals(401, abortedStatus(), path);
+    }
+  }
+
+  // ── delivery and collection slots ─────────────────────────────────────────
+
+  @Test
+  void aGuestReadsAStoresFulfilmentSlotsForTheStorefrontsTenant() throws IOException {
+    when(uriInfo.getPath()).thenReturn("api/order-svc/storefront/fulfilment-slots");
+    when(requestContext.getMethod()).thenReturn("GET");
+    when(requestContext.getHeaderString("X-Storefront-Tenant")).thenReturn("tenant-abc");
+
+    filter.filter(requestContext);
+
+    verify(requestContext, never()).abortWith(any());
+    org.junit.jupiter.api.Assertions.assertEquals("tenant-abc", headers.getFirst("X-Tenant-Id"));
+  }
+
+  @Test
+  void theSlotReadIsTheOnlyPublicOrderRouteAndOnlyForReading() throws IOException {
+    String[][] routes = {
+      {"api/order-svc/storefront/fulfilment-slots", "POST"},
+      {"api/order-svc/storefront/fulfilment-slots/x", "GET"},
+      {"api/order-svc/storefront", "GET"},
+      {"api/order-svc/admin/fulfilment-windows", "GET"}
+    };
+    for (String[] route : routes) {
+      org.mockito.Mockito.reset(requestContext);
+      lenient().when(requestContext.getUriInfo()).thenReturn(uriInfo);
+      lenient().when(requestContext.getHeaders()).thenReturn(headers);
+      when(uriInfo.getPath()).thenReturn(route[0]);
+      lenient().when(requestContext.getMethod()).thenReturn(route[1]);
+      lenient().when(requestContext.getHeaderString("X-Storefront-Tenant")).thenReturn("t");
+
+      filter.filter(requestContext);
+
+      org.junit.jupiter.api.Assertions.assertEquals(401, abortedStatus(), route[0]);
+    }
+  }
+
   @Test
   void theBusinesssProviderSettingsAndAnythingBesideTheSignInPathsNeedAToken() throws IOException {
     for (String path :

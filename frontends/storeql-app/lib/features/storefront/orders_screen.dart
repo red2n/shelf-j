@@ -9,6 +9,7 @@ import '../../core/theme.dart';
 import '../../shared/widgets/empty_state.dart';
 import '../../shared/widgets/error_view.dart';
 import '../../shared/widgets/page_header.dart';
+import '../../shared/util/slot_label.dart';
 import '../../shared/widgets/skeleton.dart';
 import '../../shared/widgets/status_badge.dart';
 import 'recall_notice_card.dart';
@@ -276,6 +277,8 @@ class _ServerOrderTile extends StatelessWidget {
     final delivery = order.fulfilmentType == 'DELIVERY';
     // Where a picked order is (ship-from-store); the status itself otherwise.
     final stage = order.stageLabel;
+    final slot = order.slot;
+    final placed = AppFormat.dateTime(order.placedAt.toIso8601String());
     return _OrderCard(
       orderId: order.id,
       detailKey: Key('order-subtitle-${order.id}'),
@@ -284,7 +287,12 @@ class _ServerOrderTile extends StatelessWidget {
               ? 'Part of a delivery in $parts parts · from $storeName'
               : 'Deliver to home')
           : 'Collect from $storeName',
-      detail: AppFormat.dateTime(order.placedAt.toIso8601String()),
+      // The window this order holds (delivery-and-collection-slots), worded
+      // with which kind it is, in the store's own local date and clock —
+      // never converted on the device.
+      detail: slot == null
+          ? placed
+          : '$placed\n${slotWindowLabel(fulfilmentType: order.fulfilmentType, date: slot.date, startTime: slot.startTime, endTime: slot.endTime)}',
       amount: showPrices
           ? AppFormat.money(order.total, currencyCode: order.currency)
           : (delivery ? 'Price on delivery' : 'Price in store'),
@@ -305,10 +313,16 @@ class _LocalOrderTile extends StatelessWidget {
     final delivery = order.fulfilmentType == 'DELIVERY';
     final hasKnownPrice = showPrices && order.currency.isNotEmpty;
     final placed = AppFormat.dateTime(order.placedAt.toIso8601String());
+    final slot = order.slot;
+    final itemsLine = '${order.itemCount} item${order.itemCount == 1 ? '' : 's'} · $placed';
     return _OrderCard(
       orderId: order.orderId,
       where: delivery ? 'Deliver to home' : 'Collect from ${order.storeName}',
-      detail: '${order.itemCount} item${order.itemCount == 1 ? '' : 's'} · $placed',
+      // The window this order holds (delivery-and-collection-slots), worded
+      // with which kind it is.
+      detail: slot == null
+          ? itemsLine
+          : '$itemsLine\n${slotWindowLabel(fulfilmentType: order.fulfilmentType, date: slot.date, startTime: slot.startTime, endTime: slot.endTime)}',
       amount: hasKnownPrice
           ? AppFormat.money(order.total, currencyCode: order.currency)
           : (delivery ? 'Price on delivery' : 'Price in store'),

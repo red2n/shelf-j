@@ -91,6 +91,7 @@ public class CustomerService {
     }
     Instant now = Instant.now();
     UUID id = Ids.newId();
+    PhoneResult phoneResult = phoneE164For(tenantId, req.phone());
     var customer =
         new Customer(
             id,
@@ -107,7 +108,9 @@ public class CustomerService {
             null,
             now,
             now,
-            null);
+            null,
+            phoneResult.e164(),
+            phoneResult.checkedAt());
     String payload =
         Json.createObjectBuilder()
             .add("customerId", id.toString())
@@ -123,8 +126,11 @@ public class CustomerService {
     // the customer row: PECR asks what the person agreed to and UK GDPR art.7(1) asks for evidence
     // of it, and a single column can answer neither. Written after the customer exists rather than
     // with it — if this fails, the shop has a customer it may not market to, which is the safe way
-    // round for the failure to land.
-    if (Boolean.TRUE.equals(req.gdprConsent())) {
+    // round for the failure to land. The MARKETING purpose gate can refuse it outright — a
+    // business under a per-purpose consent law needs the purpose granted on its own, which a
+    // signup tick alone is not — and that is skipped quietly rather than failing the registration
+    // the tick rides with; the shop still has a customer, just not yet one it may market to.
+    if (Boolean.TRUE.equals(req.gdprConsent()) && !marketing.purposeGateBlocks(tenantId, id)) {
       marketing.setPreferences(
           tenantId,
           created,
@@ -386,7 +392,9 @@ public class CustomerService {
    * @param tenantId owning tenant
    * @param q text to find, case-insensitively, anywhere in the first, last or full name, the email
    *     or the phone — a phone-shaped {@code q} of four digits or more on its digits alone,
-   *     whatever the spacing; trimmed, and {@code null} or blank lists every customer as before
+   *     whatever the spacing, and the same {@code q} parsed to E.164 against the business's own
+   *     countries, matched exactly; trimmed, and {@code null} or blank lists every customer as
+   *     before
    * @param afterId cursor — the last id from the previous page, or {@code null} to start
    * @param limit page size; silently capped at 100
    * @return the page of customers
@@ -403,7 +411,11 @@ public class CustomerService {
           List.of("q: at most " + CustomerSearch.MAX_LENGTH + " characters"));
     }
     int cap = Math.min(limit, 100);
-    return repo.listCustomers(tenantId, term, afterId, cap);
+    // Only attempted when the term is already phone-shaped: an ordinary name search never needs
+    // the business's countries, and so never depends on tenant-svc being reachable to run at all.
+    String phoneE164 =
+        CustomerSearch.phonePattern(term) != null ? phoneE164Quietly(tenantId, term) : null;
+    return repo.listCustomers(tenantId, term, phoneE164, afterId, cap);
   }
 
   /**
@@ -423,6 +435,7 @@ public class CustomerService {
     Customer existing = get(tenantId, customerId);
     Instant now = Instant.now();
     Instant gdprConsent = Boolean.TRUE.equals(req.gdprConsent()) ? now : existing.gdprConsentAt();
+    PhoneResult phoneResult = phoneE164For(tenantId, req.phone());
     var updated =
         new Customer(
             existing.id(),
@@ -439,13 +452,15 @@ public class CustomerService {
             existing.anonymizedAt(),
             existing.createdAt(),
             now,
-            language(req.preferredLanguage(), existing.preferredLanguage()));
+            language(req.preferredLanguage(), existing.preferredLanguage()),
+            phoneResult.e164(),
+            phoneResult.checkedAt());
     return repo.updateCustomer(updated);
   }
 
   /**
-   * The language to keep (13.x): unchanged when the request does not say, cleared by an empty one.
-   * A client that has never heard of languages cannot wipe one the shopper chose.
+   * The language to keep: unchanged when the request does not say, cleared by an empty one. A
+   * client that has never heard of languages cannot wipe one the shopper chose.
    */
   static String language(String requested, String current) {
     if (requested == null) return current;
@@ -510,7 +525,7 @@ public class CustomerService {
               () -> ApiException.notFound("CUSTOMER_NOT_FOUND", "No customer with that email"));
     }
     if (phone != null && !phone.isBlank()) {
-      return repo.findByPhone(tenantId, phone)
+      return repo.findByPhone(tenantId, phone, phoneE164Quietly(tenantId, phone))
           .orElseThrow(
               () -> ApiException.notFound("CUSTOMER_NOT_FOUND", "No customer with that phone"));
     }
@@ -753,7 +768,7 @@ public class CustomerService {
         programmes.expiringSoon(tenantId, customerId, within).orElse(null));
   }
 
-  /** The signed-in shopper's own loyalty (13.x). */
+  /** The signed-in shopper's own loyalty. */
   public LoyaltyView myLoyalty(UUID tenantId, UUID loginId) {
     return loyaltyView(tenantId, getByLogin(tenantId, loginId).id());
   }
@@ -1092,5 +1107,62 @@ public class CustomerService {
 
   private static LocalDate parseDate(String s) {
     return s == null || s.isBlank() ? null : com.storeql.web.Parsing.date(s, "dob");
+  }
+
+  // ── phones to E.164 ────────────────────────────────────────────
+
+  /**
+   * A write of {@code phone}: its E.164 form, and whether that was derived against regions that
+   * were actually readable (which decides {@code phoneE164CheckedAt} — see {@link Customer}).
+   */
+  private record PhoneResult(String e164, Instant checkedAt) {}
+
+  /**
+   * Normalises a phone being written, trying the business's home country then its stores' — no
+   * country is ever named here. Never fails the write it rides with. {@code checkedAt} is set only
+   * when the home country was actually read (store countries are the enhancement — a store list
+   * that could not be read falls back to none rather than abandoning the home country); left null,
+   * the phone is kept as typed and the row stays a candidate for the start-up backfill.
+   */
+  private PhoneResult phoneE164For(UUID tenantId, String rawPhone) {
+    if (rawPhone == null || rawPhone.isBlank()) {
+      return new PhoneResult(null, null);
+    }
+    String home = readableCountry(tenantId);
+    java.util.Collection<String> stores = readableStoreCountries(tenantId);
+    String e164 = com.storeql.customer.domain.PhoneNumbers.toE164(rawPhone, home, stores);
+    return new PhoneResult(e164, home == null ? null : Instant.now());
+  }
+
+  /**
+   * The same normalisation for a read (search {@code q=}, lookup {@code phone=}): never throws, and
+   * never marks anything, so a tenant-svc hiccup degrades to today's plain-text matching rather
+   * than failing the read. A number typed with a leading "+" still resolves even then — it needs no
+   * region at all.
+   */
+  private String phoneE164Quietly(UUID tenantId, String rawPhone) {
+    String home = readableCountry(tenantId);
+    java.util.Collection<String> stores = readableStoreCountries(tenantId);
+    return com.storeql.customer.domain.PhoneNumbers.toE164(rawPhone, home, stores);
+  }
+
+  private String readableCountry(UUID tenantId) {
+    try {
+      return profiles.requireCountry(tenantId);
+    } catch (ApiException e) {
+      return null;
+    }
+  }
+
+  /**
+   * The countries the business's stores are in, or none when they could not be read: the stores
+   * only add readings to the home country's, so a read that failed costs nothing but those.
+   */
+  private java.util.Collection<String> readableStoreCountries(UUID tenantId) {
+    try {
+      return profiles.stores(tenantId, null).countries().values();
+    } catch (ApiException e) {
+      return List.of();
+    }
   }
 }

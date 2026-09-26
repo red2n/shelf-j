@@ -424,4 +424,91 @@ class EventsTest {
     assertEquals("4.80", w.getJsonNumber("chargedAmount").toString());
     assertEquals("0", w.getJsonNumber("refundAmount").toString());
   }
+
+  // ── delivery and collection slots ─────────────────────────────────────────
+
+  private static final Instant SLOT_STARTS_AT = Instant.parse("2026-09-27T15:00:00Z");
+  private static final Instant SLOT_ENDS_AT = Instant.parse("2026-09-27T17:00:00Z");
+  private static final String SLOT_TIME_ZONE = "Europe/Warsaw";
+
+  @Test
+  void orderPlacedCarriesTheSlotWhenTheOrderHoldsOneAndNotWhenItDoesNot() {
+    var withSlot =
+        Events.orderPlaced(
+            TENANT,
+            ORDER,
+            "ONLINE",
+            null,
+            null,
+            STORE,
+            null,
+            SLOT_STARTS_AT,
+            SLOT_ENDS_AT,
+            SLOT_TIME_ZONE);
+    JsonObject json = Json.createReader(new StringReader(withSlot.payload())).readObject();
+    assertEquals(SLOT_STARTS_AT.toString(), json.getString("slotStartsAt"));
+    assertEquals(SLOT_ENDS_AT.toString(), json.getString("slotEndsAt"));
+    assertEquals(SLOT_TIME_ZONE, json.getString("slotTimeZone"));
+
+    // A split checkout's part still names its group alongside the window.
+    UUID group = Ids.newId();
+    var withGroupAndSlot =
+        Events.orderPlaced(
+            TENANT,
+            ORDER,
+            "ONLINE",
+            null,
+            null,
+            STORE,
+            group,
+            SLOT_STARTS_AT,
+            SLOT_ENDS_AT,
+            SLOT_TIME_ZONE);
+    JsonObject withGroup =
+        Json.createReader(new StringReader(withGroupAndSlot.payload())).readObject();
+    assertEquals(group.toString(), withGroup.getString("groupId"));
+    assertEquals(SLOT_STARTS_AT.toString(), withGroup.getString("slotStartsAt"));
+
+    // No window: the fields are absent, not present as JSON null — a till sale or a store with
+    // no windows looks exactly as it did before this feature existed.
+    var noSlot = Events.orderPlaced(TENANT, ORDER, "POS", null, null, STORE);
+    JsonObject plain = Json.createReader(new StringReader(noSlot.payload())).readObject();
+    assertEquals(false, plain.containsKey("slotStartsAt"));
+    assertEquals(false, plain.containsKey("slotEndsAt"));
+    assertEquals(false, plain.containsKey("slotTimeZone"));
+  }
+
+  @Test
+  void orderConfirmedCarriesTheSlotWhenTheOrderHoldsOneAndNotWhenItDoesNot() {
+    var withSlot =
+        Events.orderConfirmed(
+            TENANT,
+            ORDER,
+            STORE,
+            "ONLINE",
+            null,
+            BigDecimal.TEN,
+            BigDecimal.ZERO,
+            "GBP",
+            List.of(),
+            "DELIVERY",
+            "12 High Street, Leeds, LS1 1AA",
+            "Chris Carter",
+            "07700900123",
+            SLOT_STARTS_AT,
+            SLOT_ENDS_AT,
+            SLOT_TIME_ZONE);
+    JsonObject json = Json.createReader(new StringReader(withSlot.payload())).readObject();
+    assertEquals(SLOT_STARTS_AT.toString(), json.getString("slotStartsAt"));
+    assertEquals(SLOT_ENDS_AT.toString(), json.getString("slotEndsAt"));
+    assertEquals(SLOT_TIME_ZONE, json.getString("slotTimeZone"));
+
+    var noSlot =
+        Events.orderConfirmed(
+            TENANT, ORDER, STORE, "POS", null, BigDecimal.TEN, BigDecimal.ZERO, "GBP", List.of());
+    JsonObject plain = Json.createReader(new StringReader(noSlot.payload())).readObject();
+    assertEquals(false, plain.containsKey("slotStartsAt"));
+    assertEquals(false, plain.containsKey("slotEndsAt"));
+    assertEquals(false, plain.containsKey("slotTimeZone"));
+  }
 }

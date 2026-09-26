@@ -387,6 +387,80 @@ class TenantProfilesTest {
   }
 
   @Test
+  @DisplayName("Each store's time zone is kept where it records one; none or unreadable is none")
+  void storesKnowTheirTimeZone() {
+    var profiles =
+        TenantProfiles.forTest(
+            id -> Optional.empty(),
+            (tenant, after) ->
+                Optional.of(
+                    storesPage(
+                        null,
+                        "{\"id\":\"" + STORE_DE + "\",\"timezone\":\"Europe/Warsaw\"}",
+                        "{\"id\":\"" + STORE_NONE + "\",\"timezone\":null}")),
+            new Moving());
+    var stores = profiles.stores(TENANT, null);
+    assertEquals(java.time.ZoneId.of("Europe/Warsaw"), stores.zoneOf(STORE_DE));
+    assertEquals(null, stores.zoneOf(STORE_NONE), "no zone recorded is no zone");
+    assertEquals(null, stores.zoneOf(STORE_NEW), "an unknown store is no zone");
+    assertEquals(null, stores.zoneOf(null));
+  }
+
+  @Test
+  @DisplayName("A time zone tenant-svc could not have meant is none, never a guess")
+  void anUnreadableTimeZoneIsNone() {
+    var profiles =
+        TenantProfiles.forTest(
+            id -> Optional.empty(),
+            (tenant, after) ->
+                Optional.of(
+                    storesPage(
+                        null,
+                        "{\"id\":\"" + STORE_DE + "\",\"timezone\":\"Not/AZone\"}",
+                        "{\"id\":\"" + STORE_NONE + "\",\"timezone\":\"\"}",
+                        "{\"id\":\"" + STORE_NEW + "\",\"timezone\":123}")),
+            new Moving());
+    var stores = profiles.stores(TENANT, null);
+    assertEquals(null, stores.zoneOf(STORE_DE), "not a real IANA zone id");
+    assertEquals(null, stores.zoneOf(STORE_NONE), "blank is no zone");
+    assertEquals(null, stores.zoneOf(STORE_NEW), "a number, not text, is no zone");
+  }
+
+  @Test
+  @DisplayName("Every existing Stores constructor still compiles and carries no zones")
+  void everyExistingStoresConstructorStillWorks() {
+    assertEquals(
+        null,
+        new TenantProfiles.Stores(java.util.Set.of(STORE_DE), java.util.Map.of()).zoneOf(STORE_DE),
+        "the (ids, countries) constructor");
+    assertEquals(
+        null,
+        new TenantProfiles.Stores(
+                java.util.Set.of(STORE_DE), java.util.Map.of(), java.util.Set.of())
+            .zoneOf(STORE_DE),
+        "the (ids, countries, warehouses) constructor");
+    assertEquals(
+        null,
+        new TenantProfiles.Stores(
+                java.util.Set.of(STORE_DE),
+                java.util.Map.of(),
+                java.util.Set.of(),
+                java.util.Map.of())
+            .zoneOf(STORE_DE),
+        "the (ids, countries, warehouses, points) constructor");
+    assertEquals(
+        null,
+        new TenantProfiles.Stores(
+                java.util.Set.of(STORE_DE),
+                java.util.Map.of(),
+                java.util.Set.of(),
+                java.util.Map.of(),
+                java.util.Set.of())
+            .zoneOf(STORE_DE),
+        "the (ids, countries, warehouses, points, dark) constructor");
+  }
+
+  @Test
   @DisplayName("Stores that cannot be read are refused, never taken to be none, and not cached")
   void unreadableStoresAreRefused() {
     AtomicInteger reads = new AtomicInteger();

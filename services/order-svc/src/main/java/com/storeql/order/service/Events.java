@@ -157,6 +157,26 @@ public final class Events {
       UUID loginId,
       UUID storeId,
       UUID groupId) {
+    return orderPlaced(
+        tenantId, orderId, channel, customerId, loginId, storeId, groupId, null, null, null);
+  }
+
+  /**
+   * As above, naming the delivery or collection window the order holds, when it has one (delivery
+   * and collection slots); an order with no window (a till sale, or a store with none) carries
+   * none.
+   */
+  static OutboxRow orderPlaced(
+      UUID tenantId,
+      UUID orderId,
+      String channel,
+      UUID customerId,
+      UUID loginId,
+      UUID storeId,
+      UUID groupId,
+      Instant slotStartsAt,
+      Instant slotEndsAt,
+      String slotTimeZone) {
     String customerPart =
         customerId != null ? ",\"customerId\":\"" + customerId + "\"" : ",\"customerId\":null";
     // Both ids, because consumers key on different ones: loyalty wants the shop's customer record,
@@ -180,7 +200,26 @@ public final class Events {
             + customerPart
             + loginPart
             + (groupId != null ? ",\"groupId\":\"" + groupId + "\"" : "")
+            + slotFields(slotStartsAt, slotEndsAt, slotTimeZone)
             + "}");
+  }
+
+  /**
+   * The three fields OrderPlaced and OrderConfirmed carry only when the order holds a delivery or
+   * collection window (delivery and collection slots) — absent, not JSON null, so an order with no
+   * window looks exactly as it did before this feature existed.
+   */
+  private static String slotFields(Instant slotStartsAt, Instant slotEndsAt, String slotTimeZone) {
+    if (slotStartsAt == null || slotEndsAt == null || slotTimeZone == null) {
+      return "";
+    }
+    return ",\"slotStartsAt\":\""
+        + slotStartsAt
+        + "\",\"slotEndsAt\":\""
+        + slotEndsAt
+        + "\",\"slotTimeZone\":\""
+        + esc(slotTimeZone)
+        + "\"";
   }
 
   /**
@@ -238,6 +277,47 @@ public final class Events {
       String deliveryAddress,
       String deliveryRecipientName,
       String deliveryRecipientPhone) {
+    return orderConfirmed(
+        tenantId,
+        orderId,
+        storeId,
+        channel,
+        customerId,
+        total,
+        taxAmount,
+        currency,
+        lines,
+        fulfilmentType,
+        deliveryAddress,
+        deliveryRecipientName,
+        deliveryRecipientPhone,
+        null,
+        null,
+        null);
+  }
+
+  /**
+   * As above, naming the delivery or collection window the order holds, when it has one (delivery
+   * and collection slots): notification-svc says the window in the confirmation; an order with no
+   * window carries none.
+   */
+  static OutboxRow orderConfirmed(
+      UUID tenantId,
+      UUID orderId,
+      UUID storeId,
+      String channel,
+      UUID customerId,
+      BigDecimal total,
+      BigDecimal taxAmount,
+      String currency,
+      List<OrderItem> lines,
+      String fulfilmentType,
+      String deliveryAddress,
+      String deliveryRecipientName,
+      String deliveryRecipientPhone,
+      Instant slotStartsAt,
+      Instant slotEndsAt,
+      String slotTimeZone) {
     String customerPart = customerId != null ? "\"" + customerId + "\"" : "null";
     String amount = total != null ? total.toPlainString() : "0";
     // The VAT inside the total, so the ledger can post revenue net of it (17.7).
@@ -281,6 +361,7 @@ public final class Events {
             + jsonText(deliveryRecipientPhone)
             + ",\"lines\":"
             + confirmedLines(lines)
+            + slotFields(slotStartsAt, slotEndsAt, slotTimeZone)
             + "}");
   }
 

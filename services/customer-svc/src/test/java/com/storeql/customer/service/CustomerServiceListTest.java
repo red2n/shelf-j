@@ -36,14 +36,15 @@ class CustomerServiceListTest {
   void aBlankQueryListsExactlyAsNoQueryDoes() {
     service.list(TENANT, "   ", null, 20);
     service.list(TENANT, null, null, 20);
-    verify(repo, org.mockito.Mockito.times(2)).listCustomers(TENANT, null, null, 20);
+    verify(repo, org.mockito.Mockito.times(2)).listCustomers(TENANT, null, null, null, 20);
   }
 
   @Test
   void theQueryIsTrimmedAndThePageStillCapped() {
     String after = Ids.newId().toString();
+    // "ada" is not phone-shaped, so no E.164 lookup is attempted (and none is stubbed here).
     service.list(TENANT, "  ada  ", after, 500);
-    verify(repo).listCustomers(TENANT, "ada", after, 100);
+    verify(repo).listCustomers(TENANT, "ada", null, after, 100);
   }
 
   @Test
@@ -60,6 +61,6 @@ class CustomerServiceListTest {
   void aHundredCharactersAfterTrimmingIsAccepted() {
     String hundred = "x".repeat(100);
     service.list(TENANT, "  " + hundred + "  ", null, 20);
-    verify(repo).listCustomers(TENANT, hundred, null, 20);
+    verify(repo).listCustomers(TENANT, hundred, null, null, 20);
   }
 }

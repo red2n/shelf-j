@@ -27,8 +27,9 @@ import java.util.Set;
  *       any staff role ({@code STOREKEEPER}/{@code CASHIER} included):
  *       <ul>
  *         <li>{@code /admin/inventory/**} (receive, adjust, levels, batches, planning, …), but
- *             <b>not</b> {@code /admin/inventory/reports/**}, which is management-only — see {@link
- *             #requiresStaffAdmin}
+ *             <b>not</b> {@code /admin/inventory/reports/**}, which is management-only save the one
+ *             read the shop floor needs, {@code GET /admin/inventory/reports/shelf-gaps} — see
+ *             {@link #requiresStaffAdmin}
  *         <li>{@code /admin/cash/**} (till open/close, drops, pay-in/out — resource layer still
  *             enforces finer rules, e.g. Z-report stays MANAGER+)
  *         <li>Read support for those UIs: {@code GET /admin/tenant}, {@code GET /admin/stores…},
@@ -88,7 +89,12 @@ public class AdminAuthorizationFilter implements ContainerRequestFilter {
           "/auth/change-password",
           // The account holder deleting their own login — same object-level rule as changing its
           // password: the user id comes from the verified token, never from the request.
-          "/auth/delete-account");
+          "/auth/delete-account",
+          // A forgotten password (password reset): asking for a link, which answers the same
+          // whatever the address, and spending one — the 256-bit token in the body is the whole
+          // capability, and it resets exactly the one login it was minted for.
+          "/auth/password/forgot",
+          "/auth/password/reset");
 
   @Inject TenantContext ctx;
 
@@ -342,7 +348,7 @@ public class AdminAuthorizationFilter implements ContainerRequestFilter {
         // asymmetry with /customers/{id} above is deliberate — this shape cannot name a subject.
         || "/customers/me".equals(path)
         || "/customers/me/export".equals(path)
-        // The shopper's own points, tier and what is about to expire (13.x): the leaf only.
+        // The shopper's own points, tier and what is about to expire: the leaf only.
         || "/customers/me/loyalty".equals(path)
         || "/customers/me/marketing".equals(path)
         // The shopper's own privacy (13.12), and the notice anyone may read before signing up.
@@ -357,6 +363,9 @@ public class AdminAuthorizationFilter implements ContainerRequestFilter {
         || "/promotions".equals(path)
         // The caller's own principal — it describes the caller, so it leaks nothing new.
         || "/auth/me".equals(path)
+        // The password rules (password reset): read by a sign-up form and the reset page before
+        // anyone has signed in. The same for every login, and nothing about any of them.
+        || "/auth/password-policy".equals(path)
         // Where the caller's own login stands with second factors (20.12): a shopper's as much as
         // a member of staff's, and the login comes from the token.
         || "/auth/mfa".equals(path)
@@ -630,6 +639,14 @@ public class AdminAuthorizationFilter implements ContainerRequestFilter {
     // An allowlist entry for nobody is surface for nobody (SJ-D11's reasoning for /customers/{id},
     // applied again). Whoever builds that screen adds the carve-out deliberately, here, rather
     // than discovering the gate never existed.
+    //
+    // That screen is now built for one report (the storekeeper's Shelf space, gaps only): what it
+    // would take to fill the shelves is the shop floor's question. The read only — the resource
+    // holds a storekeeper to the stores they keep and refuses a cashier; every other report stays
+    // with management.
+    if ("GET".equalsIgnoreCase(method) && "/admin/inventory/reports/shelf-gaps".equals(path)) {
+      return true;
+    }
     if (pathEqualsOrUnder(path, "/admin/inventory/reports")) return false;
     // Warehouse ops — the storekeeper's primary job.
     if (pathEqualsOrUnder(path, "/admin/inventory")) return true;

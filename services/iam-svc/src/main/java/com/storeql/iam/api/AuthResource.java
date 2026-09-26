@@ -76,6 +76,12 @@ public class AuthResource {
    *
    * <p>Role asserted here as well as by AdminAuthorizationFilter, as for {@link #provisionStaff}.
    *
+   * <p>Scoped by the caller's stores ({@link TenantContext#storeIds()}). Held to no store — an
+   * owner, a business-wide manager, the platform admin — every match in the business is named, as
+   * before. Held to one or more stores, only staff who hold a role at one of those stores or a
+   * business-wide role in the caller's business are named; the rest are left out, never refused one
+   * by one.
+   *
    * @param ids comma-separated UUIDv7s, at most 100
    * @return {@code [{userId, email}]} for the staff found
    */
@@ -84,7 +90,10 @@ public class AuthResource {
       description =
           "The login email of each of the caller's business's staff among ?ids= (comma-separated,"
               + " at most 100). Another business's staff, customers and unknown ids are left out"
-              + " of the answer. Requires PLATFORM_ADMIN, OWNER, or MANAGER.")
+              + " of the answer. A caller held to one or more stores is answered only staff at"
+              + " those stores or with a business-wide role; an owner, a business-wide manager or"
+              + " the platform admin is answered every match. Requires PLATFORM_ADMIN, OWNER, or"
+              + " MANAGER.")
   @APIResponse(responseCode = "200", description = "The staff found among the ids")
   @APIResponse(
       responseCode = "400",
@@ -94,7 +103,7 @@ public class AuthResource {
   @Path("/admin/staff-users")
   public ApiResponse<List<StaffUserResponse>> staffUsers(@QueryParam("ids") String ids) {
     ctx.requireAnyRole("PLATFORM_ADMIN", "OWNER", "MANAGER");
-    return ApiResponse.ok(staff.logins(ctx.requireTenantId(), ids));
+    return ApiResponse.ok(staff.logins(ctx.requireTenantId(), ids, ctx.storeIds()));
   }
 
   /**

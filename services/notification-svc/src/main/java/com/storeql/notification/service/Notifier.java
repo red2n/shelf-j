@@ -77,7 +77,7 @@ public class Notifier {
       return;
     }
     Messages.Composed m = messages.compose(tenantId, message);
-    boolean suppressed = suppressed(tenantId, c);
+    boolean suppressed = suppressed(tenantId, c, recipient);
     if (!suppressed) {
       c.send(tenantId, recipient, m.subject(), m.body());
     }
@@ -86,7 +86,7 @@ public class Notifier {
         subjectId,
         eventId,
         type,
-        c.name(),
+        c.nameFor(recipient),
         recipient,
         m.subject(),
         m.body(),
@@ -100,8 +100,8 @@ public class Notifier {
    * push — but its own in-app log still shows what would have gone and to whom, which is what an
    * integrator testing against it needs to see.
    */
-  private boolean suppressed(UUID tenantId, NotificationChannel c) {
-    if (Domain.Channel.APP.equals(c.name())) {
+  private boolean suppressed(UUID tenantId, NotificationChannel c, String recipient) {
+    if (Domain.Channel.APP.equals(c.nameFor(recipient))) {
       return false;
     }
     boolean sandbox = businesses.sandbox(tenantId);
@@ -132,7 +132,7 @@ public class Notifier {
     }
     // Send first: a failure here throws and is NOT recorded, so the consumer redelivers and
     // retries.
-    boolean suppressed = suppressed(tenantId, channel);
+    boolean suppressed = suppressed(tenantId, channel, recipient);
     if (!suppressed) {
       channel.send(tenantId, recipient, subject, body);
     }
@@ -141,7 +141,7 @@ public class Notifier {
         subjectId,
         eventId,
         type,
-        channel.name(),
+        channel.nameFor(recipient),
         recipient,
         subject,
         body,
@@ -174,7 +174,7 @@ public class Notifier {
     if (repo.alreadyNotified(eventId, type)) {
       return;
     }
-    boolean suppressed = suppressed(tenantId, c);
+    boolean suppressed = suppressed(tenantId, c, recipient);
     if (!suppressed) {
       c.send(tenantId, recipient, subject, body);
     }
@@ -183,7 +183,7 @@ public class Notifier {
         subjectId,
         eventId,
         type,
-        c.name(),
+        c.nameFor(recipient),
         recipient,
         subject,
         body,

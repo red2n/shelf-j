@@ -47,7 +47,8 @@ public final class Mappers {
         ts(c.gdprConsentAt()),
         ts(c.createdAt()),
         ts(c.updatedAt()),
-        c.preferredLanguage());
+        c.preferredLanguage(),
+        c.phoneE164());
   }
 
   /**

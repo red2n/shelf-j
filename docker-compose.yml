@@ -434,6 +434,20 @@ services:
   # the signature and the body as they arrived and a test can verify them. notification-svc reaches
   # it as webhook-sink over plain HTTP (storeql.webhooks.insecure-hosts); it opens no host port and
   # is never deployed.
+  # A mail catcher for the dev stack (password reset): notification-svc sends real email to it over
+  # SMTP, a person reads it at http://localhost:8025 and k6/password-reset-flow.js reads it through
+  # its API to follow the link as a person would. Never deployed: an operator points
+  # storeql.notification.smtp.* at their own mail service.
+  mailpit:
+    image: axllent/mailpit:v1.31.2
+    container_name: storeql-mailpit
+    restart: unless-stopped
+    ports: ["127.0.0.1:${MAILPIT_UI_PORT:-8025}:8025"]
+    environment:
+      MP_MAX_MESSAGES: "5000"
+    mem_limit: ${MAILPIT_MEM_LIMIT:-128m}
+    networks: [storeql_network]
+
   webhook-sink:
     image: mendhak/http-https-echo:37
     container_name: storeql-webhook-sink
@@ -740,6 +754,9 @@ services:
       storeql.sso.callback-url: ${SSO_CALLBACK_URL:-http://localhost:8090/api/iam-svc/auth/sso/callback}
       storeql.sso.return-origins: ${SSO_RETURN_ORIGINS:-http://localhost:8088,http://127.0.0.1:8088,http://localhost:40015,http://127.0.0.1:40015}
       storeql.sso.insecure-hosts: ${SSO_INSECURE_HOSTS:-mock-idp}
+      # The link in a password-reset email opens the web app from outside: the address a person
+      # can reach, not the container's.
+      storeql.platform.web-url: ${UI_PUBLIC_URL:-http://localhost:${UI_HOST_PORT:-8088}}
     mem_limit: ${IAM_MEM_LIMIT:-700m}
     networks: [storeql_network]
     depends_on: *svc-depends
@@ -986,10 +1003,16 @@ services:
       storeql.db.password: ${NOTIFICATION_DB_PASSWORD:-notification_dev_change_me}
       JAVA_TOOL_OPTIONS: "${NOTIFICATION_JAVA_OPTS:--Xms128m -Xmx384m -XX:+UseG1GC}"
       STOREQL_ADVERTISE_HOST: notification-svc
-      # Only used when storeql.notification.channel is overridden to mqtt (default: app). The
-      # publisher connection has its own broker password (20.15): notification-svc holds nothing
-      # that can sign a platform token.
-      storeql.notification.channel: ${NOTIFICATION_CHANNEL:-app}
+      # Email on in the dev stack: every message is emailed to the mail catcher as well as kept in
+      # the in-app feed, and a password reset — which goes by email only — can be delivered at all.
+      # NOTIFICATION_CHANNEL=app turns email off (resets are then logged NOT_SENT); mqtt adds the
+      # device push instead. The publisher connection has its own broker password (20.15):
+      # notification-svc holds nothing that can sign a platform token.
+      storeql.notification.channel: ${NOTIFICATION_CHANNEL:-email}
+      storeql.notification.smtp.host: ${SMTP_HOST:-mailpit}
+      storeql.notification.smtp.port: ${SMTP_PORT:-1025}
+      storeql.notification.smtp.starttls: ${SMTP_STARTTLS:-false}
+      storeql.notification.from: ${NOTIFICATION_FROM:-no-reply@storeql.local}
       storeql.notification.mqtt.host: mqtt
       storeql.notification.mqtt.publisher-password: ${MQTT_PUBLISHER_PASSWORD:?MQTT_PUBLISHER_PASSWORD must be set - see .env.example}
       # Webhooks to a business's own systems (22.6): each endpoint's signing secret is sealed under

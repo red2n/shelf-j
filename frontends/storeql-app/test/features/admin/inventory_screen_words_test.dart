@@ -11,6 +11,7 @@ import 'package:storeql_app/shared/widgets/status_badge.dart';
 
 import '../../support/fake_api.dart';
 
+import 'package:intl/intl.dart';
 // ---------------------------------------------------------------------------
 // The Inventory screen reads in words and dates:
 //   * the Batches tab shows a batch's material status as a badge in words
@@ -118,6 +119,12 @@ void _expectNoCodesOrIsoDates() {
 }
 
 void main() {
+  // This file's UI dates (e.g. day-before-month, "Sept") are about
+  // AppFormat writing en_GB correctly, not about which locale the app
+  // defaults to (core/l10n/app_locales_test.dart owns that) — pinned
+  // explicitly so it stays true whatever the app's own fallback is.
+  setUp(() => Intl.defaultLocale = 'en_GB');
+  tearDown(() => Intl.defaultLocale = null);
   setUpAll(initializeDateFormatting);
 
   group('Batches', () {

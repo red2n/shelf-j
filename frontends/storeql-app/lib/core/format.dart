@@ -97,6 +97,13 @@ class AppFormat {
   static String dateOf(DateTime dt, {String? locale}) =>
       DateFormat.yMMMd(locale ?? AppFormat.locale).format(dt);
 
+  /// A short weekday and date with no year, in the reader's own order: `Sun 27
+  /// Sept` in en_GB, `Sun, Sep 27` in en_US, `niedz., 27 wrz` in Polish — a
+  /// window or slot read at a glance. [dt] is taken as it is (no conversion to
+  /// local time): a store's own calendar day stays its own.
+  static String weekdayDate(DateTime dt, {String? locale}) =>
+      DateFormat.MMMEd(locale ?? AppFormat.locale).format(dt);
+
   /// A locale-formatted date + time, e.g. `23 Jun 2026 14:05` (en_GB).
   static String dateTime(String? iso, {String? locale}) {
     final dt = _parse(iso);
