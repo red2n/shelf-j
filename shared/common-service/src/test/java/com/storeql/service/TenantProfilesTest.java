@@ -427,8 +427,47 @@ class TenantProfilesTest {
   }
 
   @Test
+  @DisplayName("Each store says what its till asks for a phone; anything else is not recorded")
+  void storesKnowWhatTheirTillAsks() {
+    UUID storeText = Ids.parse("01a090ae-611e-702c-a97b-d1b8025478f4");
+    UUID storeNumber = Ids.parse("01a090ae-611e-702c-a97b-d1b8025478f5");
+    var profiles =
+        TenantProfiles.forTest(
+            id -> Optional.empty(),
+            (tenant, after) ->
+                Optional.of(
+                    storesPage(
+                        null,
+                        "{\"id\":\"" + STORE_DE + "\",\"tillPhone\":\"REQUIRED\"}",
+                        "{\"id\":\"" + STORE_NEW + "\",\"tillPhone\":\" off \"}",
+                        "{\"id\":\"" + STORE_NONE + "\",\"tillPhone\":null}",
+                        "{\"id\":\"" + storeText + "\",\"tillPhone\":\"SOMETIMES\"}",
+                        "{\"id\":\"" + storeNumber + "\",\"tillPhone\":1}")),
+            new Moving());
+    var stores = profiles.stores(TENANT, null);
+    assertEquals("REQUIRED", stores.tillPhoneOf(STORE_DE));
+    assertEquals("OFF", stores.tillPhoneOf(STORE_NEW), "read as tenant-svc meant it");
+    assertEquals(null, stores.tillPhoneOf(STORE_NONE), "none recorded");
+    assertEquals(null, stores.tillPhoneOf(storeText), "not one of the three: not recorded");
+    assertEquals(null, stores.tillPhoneOf(storeNumber), "a number, not text, is not recorded");
+    assertEquals(null, stores.tillPhoneOf(Ids.parse("01a090ae-611e-702c-a97b-d1b8025478f6")));
+    assertEquals(null, stores.tillPhoneOf(null));
+  }
+
+  @Test
   @DisplayName("Every existing Stores constructor still compiles and carries no zones")
   void everyExistingStoresConstructorStillWorks() {
+    assertEquals(
+        null,
+        new TenantProfiles.Stores(
+                java.util.Set.of(STORE_DE),
+                java.util.Map.of(),
+                java.util.Set.of(),
+                java.util.Map.of(),
+                java.util.Set.of(),
+                java.util.Map.of())
+            .tillPhoneOf(STORE_DE),
+        "the (ids, countries, warehouses, points, dark, zones) constructor records no till choice");
     assertEquals(
         null,
         new TenantProfiles.Stores(java.util.Set.of(STORE_DE), java.util.Map.of()).zoneOf(STORE_DE),

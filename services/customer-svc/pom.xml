@@ -79,13 +79,6 @@
             <artifactId>common-service</artifactId>
         </dependency>
 
-        <!-- Phones to E.164, read in the business's own country: the parent manages
-             the version. -->
-        <dependency>
-            <groupId>com.googlecode.libphonenumber</groupId>
-            <artifactId>libphonenumber</artifactId>
-        </dependency>
-
         <!-- Persistence -->
         <dependency>
             <groupId>org.postgresql</groupId>

@@ -77,7 +77,12 @@ public final class Dtos {
                   "Null defaults to true (show prices). false = availability-only storefront.")
           Boolean showPrices,
       @Schema(description = "Null defaults to CASH,CARD. Subset of CASH, CARD, UPI, WALLET.")
-          List<String> enabledPaymentMethods) {}
+          List<String> enabledPaymentMethods,
+      @Schema(
+              description =
+                  "What the till asks for the customer's phone: REQUIRED, OPTIONAL or OFF. Null"
+                      + " defaults to OPTIONAL.")
+          String tillPhone) {}
 
   @Schema(name = "UpdateStoreRequest")
   public record UpdateStoreRequest(
@@ -97,7 +102,12 @@ public final class Dtos {
               description =
                   "Null keeps current value. Subset of CASH, CARD, UPI, WALLET; must not be"
                       + " empty.")
-          List<String> enabledPaymentMethods) {}
+          List<String> enabledPaymentMethods,
+      @Schema(
+              description =
+                  "What the till asks for the customer's phone: REQUIRED, OPTIONAL or OFF. Null"
+                      + " keeps the current value.")
+          String tillPhone) {}
 
   @Schema(name = "PatchStatusRequest")
   public record PatchStatusRequest(
@@ -214,6 +224,10 @@ public final class Dtos {
       String businessHours,
       boolean showPrices,
       List<String> enabledPaymentMethods,
+      @Schema(
+              description =
+                  "What the till asks for the customer's phone: REQUIRED, OPTIONAL or OFF.")
+          String tillPhone,
       String createdAt,
       String updatedAt) {}
 
@@ -247,7 +261,13 @@ public final class Dtos {
                   "The business the store belongs to: the tenant's legal name, else its name. Always"
                       + " the business whose storefront is asked. The storefront's accessibility"
                       + " statement names it as the service provider, never a store.")
-          String businessName) {}
+          String businessName,
+      @Schema(
+              description =
+                  "What the store's till asks for the customer's phone: REQUIRED, OPTIONAL or OFF"
+                      + " (a phone at the till). The till reads it here, from the list a cashier"
+                      + " may read; it names nobody.")
+          String tillPhone) {}
 
   @Schema(name = "ZoneResponse")
   public record ZoneResponse(

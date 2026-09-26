@@ -86,6 +86,8 @@ public final class Domain {
       boolean showPrices,
       // CSV subset of PAYMENT_METHODS, e.g. "CASH,CARD,UPI" — the tenders this store accepts.
       String enabledPaymentMethods,
+      // What the till asks for the customer's phone (a phone at the till): one of TILL_PHONE.
+      String tillPhone,
       Instant createdAt,
       Instant updatedAt) {
     public static final String TYPE_STORE = "STORE";
@@ -102,6 +104,16 @@ public final class Domain {
     public static final java.util.List<String> PAYMENT_METHODS =
         java.util.List.of("CASH", "CARD", "UPI", "WALLET");
     public static final String DEFAULT_PAYMENT_METHODS = "CASH,CARD";
+
+    /**
+     * What a store's till asks for the customer's phone (a phone at the till): REQUIRED refuses a
+     * till sale with neither a number nor a customer, OPTIONAL asks and takes a blank, OFF never
+     * asks. OPTIONAL until the owner or a manager chooses.
+     */
+    public static final java.util.List<String> TILL_PHONE =
+        java.util.List.of("REQUIRED", "OPTIONAL", "OFF");
+
+    public static final String DEFAULT_TILL_PHONE = "OPTIONAL";
     public static final String STATUS_ACTIVE = "ACTIVE";
     public static final String STATUS_SUSPENDED = "SUSPENDED";
     public static final String STATUS_CLOSED = "CLOSED";

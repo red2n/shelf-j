@@ -87,6 +87,7 @@ public final class Mappers {
         s.businessHours(),
         s.showPrices(),
         paymentMethodsList(s.enabledPaymentMethods()),
+        s.tillPhone(),
         ts(s.createdAt()),
         ts(s.updatedAt()));
   }

@@ -899,7 +899,7 @@ public class CustomerRepository extends BaseOutboxRepository {
                       + " WHERE tenant_id = ? AND id = ?")) {
             for (Candidate candidate : candidates) {
               String e164 =
-                  com.storeql.customer.domain.PhoneNumbers.toE164(
+                  com.storeql.service.PhoneNumbers.toE164(
                       candidate.phone(), homeCountry, storeCountries);
               ps.setString(1, e164);
               ps.setObject(2, now.atOffset(ZoneOffset.UTC));

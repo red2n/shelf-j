@@ -1130,7 +1130,7 @@ public class CustomerService {
     }
     String home = readableCountry(tenantId);
     java.util.Collection<String> stores = readableStoreCountries(tenantId);
-    String e164 = com.storeql.customer.domain.PhoneNumbers.toE164(rawPhone, home, stores);
+    String e164 = com.storeql.service.PhoneNumbers.toE164(rawPhone, home, stores);
     return new PhoneResult(e164, home == null ? null : Instant.now());
   }
 
@@ -1143,7 +1143,7 @@ public class CustomerService {
   private String phoneE164Quietly(UUID tenantId, String rawPhone) {
     String home = readableCountry(tenantId);
     java.util.Collection<String> stores = readableStoreCountries(tenantId);
-    return com.storeql.customer.domain.PhoneNumbers.toE164(rawPhone, home, stores);
+    return com.storeql.service.PhoneNumbers.toE164(rawPhone, home, stores);
   }
 
   private String readableCountry(UUID tenantId) {

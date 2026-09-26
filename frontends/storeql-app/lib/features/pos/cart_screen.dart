@@ -1369,10 +1369,12 @@ class _CustomerBarState extends ConsumerState<_CustomerBar> {
   @override
   Widget build(BuildContext context) {
     final customer = ref.watch(posCustomerProvider);
+    final tillPhone = ref.watch(posTillPhoneProvider);
+    final walkInPhone = ref.watch(posWalkInPhoneProvider);
     final cs = Theme.of(context).colorScheme;
 
     // When a customer is attached, clear the walk-in phone so it doesn't linger.
-    if (customer != null && ref.read(posWalkInPhoneProvider).isNotEmpty) {
+    if (customer != null && walkInPhone.isNotEmpty) {
       WidgetsBinding.instance.addPostFrameCallback((_) {
         if (mounted) {
           ref.read(posWalkInPhoneProvider.notifier).state = '';
@@ -1381,28 +1383,34 @@ class _CustomerBarState extends ConsumerState<_CustomerBar> {
       });
     }
 
-    // Walk-in phone — mandatory when no customer account is linked.
-    final phoneField = customer != null
+    // Walk-in phone (phone-at-the-till): shown whenever no customer account is
+    // linked and this store's till asks at all — hidden outright under Don't ask.
+    final phoneField = (customer != null || tillPhone == 'OFF')
         ? null
         : TextField(
+            key: const Key('pos-customer-phone-field'),
             controller: _phoneCtrl,
             keyboardType: TextInputType.phone,
             decoration: InputDecoration(
               isDense: true,
-              labelText: 'Customer phone *',
-              hintText: 'Required for all orders',
+              labelText: posPhoneFieldLabel(tillPhone),
+              hintText: posPhoneFieldHint(tillPhone),
               prefixIcon: const Icon(Icons.phone_outlined, size: 18),
-              suffixIcon: ref.watch(posWalkInPhoneProvider).isEmpty
+              // A blank field is only a warning where the store requires a
+              // number; under Optional it is exactly what the customer chose.
+              suffixIcon: walkInPhone.isNotEmpty
                   ? Icon(
-                      Icons.warning_amber_outlined,
-                      size: 18,
-                      color: context.status.warning,
-                    )
-                  : Icon(
                       Icons.check_circle_outline,
                       size: 18,
                       color: context.status.success,
-                    ),
+                    )
+                  : (tillPhone == 'REQUIRED'
+                      ? Icon(
+                          Icons.warning_amber_outlined,
+                          size: 18,
+                          color: context.status.warning,
+                        )
+                      : null),
             ),
             onChanged: (v) =>
                 ref.read(posWalkInPhoneProvider.notifier).state = v.trim(),

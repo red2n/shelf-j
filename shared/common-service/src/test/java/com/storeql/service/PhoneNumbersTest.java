@@ -1,8 +1,7 @@
-package com.storeql.customer.domain;
+package com.storeql.service;
 
-import static org.hamcrest.MatcherAssert.assertThat;
-import static org.hamcrest.Matchers.is;
-import static org.hamcrest.Matchers.nullValue;
+import static org.junit.jupiter.api.Assertions.assertEquals;
+import static org.junit.jupiter.api.Assertions.assertNull;
 
 import java.util.Arrays;
 import java.util.List;
@@ -36,10 +35,10 @@ class PhoneNumbersTest {
     "JP, '090-1234-5678',        +819012345678",
   })
   void nationalFormsResolveUnderTheirOwnCountry(String country, String national, String e164) {
-    assertThat(
-        "spaces, dashes and brackets are just formatting",
+    assertEquals(
+        e164,
         PhoneNumbers.toE164(national, country, List.of()),
-        is(e164));
+        "spaces, dashes and brackets are just formatting");
   }
 
   @ParameterizedTest(name = "international form {0} -> {1}")
@@ -57,70 +56,86 @@ class PhoneNumbersTest {
   })
   void aPlusNumberNeedsNoRegionAtAll(String international, String e164) {
     // No home country, no stores at all — a "+" number carries its own country calling code.
-    assertThat(PhoneNumbers.toE164(international, null, null), is(e164));
+    assertEquals(e164, PhoneNumbers.toE164(international, null, null));
     // And it is unmoved by a region being offered that has nothing to do with it.
-    assertThat(PhoneNumbers.toE164(international, "JP", List.of("BR")), is(e164));
+    assertEquals(e164, PhoneNumbers.toE164(international, "JP", List.of("BR")));
   }
 
   @Test
   void aPlusNumberThatIsNotAValidNumberIsNullNotARegionGuess() {
     // Ofcom's reserved "drama" mobile range: shaped like a UK mobile, not one libphonenumber
     // accepts — proving this returns null rather than silently accepting anything with a "+".
-    assertThat(PhoneNumbers.toE164("+44 7700 900111", "GB", List.of()), is(nullValue()));
+    assertNull(PhoneNumbers.toE164("+44 7700 900111", "GB", List.of()));
   }
 
   @Test
   void theHomeCountryIsTriedBeforeAnyStoreCountry() {
     // "512 345 678" is a valid number shape under both DE and PL (the library's own metadata),
     // so whichever wins tells us the trying order, not luck.
-    assertThat(
-        "the home country, DE, wins over the store country, PL",
+    assertEquals(
+        "+49512345678",
         PhoneNumbers.toE164("512 345 678", "DE", List.of("PL")),
-        is("+49512345678"));
-    assertThat(
-        "swap them: the home country, PL, wins over the store country, DE",
+        "the home country, DE, wins over the store country, PL");
+    assertEquals(
+        "+48512345678",
         PhoneNumbers.toE164("512 345 678", "PL", List.of("DE")),
-        is("+48512345678"));
+        "swap them: the home country, PL, wins over the store country, DE");
+  }
+
+  @Test
+  void aTillReadsTheNumberInItsOwnStoresCountryFirst() {
+    // "06 12 34 56 78" is a mobile in both the Netherlands and France (the library's own
+    // metadata), so the order decides it. A business at home in France with a shop in the
+    // Netherlands: a number given at the Dutch till is Dutch, the same digits at a French till
+    // French — the store a sale is made at is the first country order-svc hands in.
+    assertEquals(
+        "+31612345678",
+        PhoneNumbers.toE164("06 12 34 56 78", "NL", List.of("FR")),
+        "at the Dutch shop of a French business");
+    assertEquals(
+        "+33612345678",
+        PhoneNumbers.toE164("06 12 34 56 78", "FR", List.of("NL")),
+        "at its French shop");
   }
 
   @Test
   void aStoreCountryIsTriedWhenTheHomeCountryDoesNotParseIt() {
     // A ten-digit Indian mobile shape: not a valid number under GB, so the business's own home
     // country alone (no stores) finds nothing —
-    assertThat(PhoneNumbers.toE164("98765 43210", "GB", List.of()), is(nullValue()));
+    assertNull(PhoneNumbers.toE164("98765 43210", "GB", List.of()));
     // — but a store trading in IN is enough for the very same typed number to resolve.
-    assertThat(
-        "a business based in GB with a store in IN: the store's country is tried too",
+    assertEquals(
+        "+919876543210",
         PhoneNumbers.toE164("98765 43210", "GB", List.of("IN")),
-        is("+919876543210"));
+        "a business based in GB with a store in IN: the store's country is tried too");
   }
 
   @Test
   void duplicateAndBlankRegionsAreSkippedHarmlessly() {
-    assertThat(
-        PhoneNumbers.toE164("512 345 678", "PL", Arrays.asList(null, "", "  ", "pl", "PL", "de")),
-        is("+48512345678"));
+    assertEquals(
+        "+48512345678",
+        PhoneNumbers.toE164("512 345 678", "PL", Arrays.asList(null, "", "  ", "pl", "PL", "de")));
   }
 
   @Test
   void noRegionListMeansOnlyPlusNumbersParse() {
-    assertThat(PhoneNumbers.toE164("512 345 678", null, null), is(nullValue()));
-    assertThat(PhoneNumbers.toE164("512 345 678", null, List.of()), is(nullValue()));
-    assertThat(PhoneNumbers.toE164("+48 512 345 678", null, null), is("+48512345678"));
+    assertNull(PhoneNumbers.toE164("512 345 678", null, null));
+    assertNull(PhoneNumbers.toE164("512 345 678", null, List.of()));
+    assertEquals("+48512345678", PhoneNumbers.toE164("+48 512 345 678", null, null));
   }
 
   @Test
   void garbageIsNullNotAGuess() {
-    assertThat(PhoneNumbers.toE164("not a phone number", "GB", List.of()), is(nullValue()));
-    assertThat(PhoneNumbers.toE164("banana", "GB", List.of()), is(nullValue()));
-    assertThat(PhoneNumbers.toE164("12345", "GB", List.of()), is(nullValue()));
-    assertThat(PhoneNumbers.toE164("++123", "GB", List.of()), is(nullValue()));
+    assertNull(PhoneNumbers.toE164("not a phone number", "GB", List.of()));
+    assertNull(PhoneNumbers.toE164("banana", "GB", List.of()));
+    assertNull(PhoneNumbers.toE164("12345", "GB", List.of()));
+    assertNull(PhoneNumbers.toE164("++123", "GB", List.of()));
   }
 
   @Test
   void nullOrBlankRawIsNullWithNoAttemptAtAll() {
-    assertThat(PhoneNumbers.toE164(null, "GB", List.of()), is(nullValue()));
-    assertThat(PhoneNumbers.toE164("", "GB", List.of()), is(nullValue()));
-    assertThat(PhoneNumbers.toE164("   ", "GB", List.of()), is(nullValue()));
+    assertNull(PhoneNumbers.toE164(null, "GB", List.of()));
+    assertNull(PhoneNumbers.toE164("", "GB", List.of()));
+    assertNull(PhoneNumbers.toE164("   ", "GB", List.of()));
   }
 }

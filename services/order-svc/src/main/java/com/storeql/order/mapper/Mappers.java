@@ -257,7 +257,8 @@ public final class Mappers {
         group == null ? null : toDto(group),
         handover == null ? null : toDto(handover),
         o.allowSubstitutions(),
-        slotOf(o.slotStartsAt(), o.slotEndsAt(), o.slotTimeZone()));
+        slotOf(o.slotStartsAt(), o.slotEndsAt(), o.slotTimeZone()),
+        o.contactPhoneE164());
   }
 
   /**

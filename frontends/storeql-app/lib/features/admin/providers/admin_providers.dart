@@ -201,6 +201,12 @@ class StoreInfo {
   /// Tenders the owner enabled for this store (subset of CASH, CARD, UPI, WALLET).
   final List<String> enabledPaymentMethods;
 
+  /// Whether this store's till asks for the customer's phone (phone-at-the-till):
+  /// REQUIRED, OPTIONAL or OFF (don't ask). Always normalised — an absent, null
+  /// or unrecognised value already reads as OPTIONAL, the data-minimising
+  /// default and what an older server with no opinion means.
+  final String tillPhone;
+
   const StoreInfo({
     required this.id,
     required this.name,
@@ -219,6 +225,7 @@ class StoreInfo {
     this.businessHours,
     this.showPrices = true,
     this.enabledPaymentMethods = const ['CASH', 'CARD'],
+    this.tillPhone = 'OPTIONAL',
   });
 
   factory StoreInfo.fromJson(Map<String, dynamic> j) => StoreInfo(
@@ -242,7 +249,17 @@ class StoreInfo {
                 ?.map((e) => e.toString().toUpperCase())
                 .toList() ??
             const ['CASH', 'CARD'],
+        tillPhone: normaliseTillPhone(j['tillPhone']),
       );
+}
+
+/// A store's till-phone choice, read the same way everywhere it arrives from
+/// the server (phone-at-the-till): REQUIRED, OPTIONAL or OFF. Absent, null or
+/// anything else this app does not know yet reads as OPTIONAL — an older
+/// server has no opinion, and Optional is the data-minimising default.
+String normaliseTillPhone(Object? raw) {
+  final v = (raw as String? ?? '').toUpperCase();
+  return const {'REQUIRED', 'OPTIONAL', 'OFF'}.contains(v) ? v : 'OPTIONAL';
 }
 
 class ZoneInfo {

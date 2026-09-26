@@ -328,7 +328,87 @@ public final class Domain {
        * zone, or the window's saved one when tenant-svc could not be read — so the server can
        * always show the store's own local time again without asking tenant-svc a second time.
        */
-      String slotTimeZone) {
+      String slotTimeZone,
+      /**
+       * {@code contactPhone} in international form (a phone at the till): read at placement in the
+       * store's own country, then the business's, and what a recall text goes to. Null when no
+       * number was given or the one given could not be read.
+       */
+      String contactPhoneE164) {
+
+    /** An order as recorded before its contact number was kept in international form. */
+    public Order(
+        UUID id,
+        UUID tenantId,
+        UUID storeId,
+        UUID customerId,
+        UUID loginId,
+        String channel,
+        String fulfilmentType,
+        String status,
+        BigDecimal subtotal,
+        BigDecimal taxAmount,
+        BigDecimal discountAmount,
+        BigDecimal total,
+        String currency,
+        String notes,
+        String idempotencyKey,
+        Instant createdAt,
+        Instant updatedAt,
+        boolean taxExempt,
+        String exemptReason,
+        String deliveryLine1,
+        String deliveryLine2,
+        String deliveryCity,
+        String deliveryPostalCode,
+        String deliveryRecipientName,
+        String deliveryRecipientPhone,
+        String contactPhone,
+        String paymentMethod,
+        BigDecimal promotionDiscount,
+        UUID sellerUserId,
+        boolean allowSubstitutions,
+        UUID slotWindowId,
+        Instant slotStartsAt,
+        Instant slotEndsAt,
+        String slotTimeZone) {
+      this(
+          id,
+          tenantId,
+          storeId,
+          customerId,
+          loginId,
+          channel,
+          fulfilmentType,
+          status,
+          subtotal,
+          taxAmount,
+          discountAmount,
+          total,
+          currency,
+          notes,
+          idempotencyKey,
+          createdAt,
+          updatedAt,
+          taxExempt,
+          exemptReason,
+          deliveryLine1,
+          deliveryLine2,
+          deliveryCity,
+          deliveryPostalCode,
+          deliveryRecipientName,
+          deliveryRecipientPhone,
+          contactPhone,
+          paymentMethod,
+          promotionDiscount,
+          sellerUserId,
+          allowSubstitutions,
+          slotWindowId,
+          slotStartsAt,
+          slotEndsAt,
+          slotTimeZone,
+          null);
+    }
 
     /** An order as recorded before delivery and collection slots existed: no window. */
     public Order(

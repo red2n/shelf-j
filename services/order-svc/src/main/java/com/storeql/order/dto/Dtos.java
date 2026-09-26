@@ -263,7 +263,13 @@ public final class Dtos {
               description =
                   "The delivery or collection window this order holds (delivery and collection"
                       + " slots); null for a till sale or an order at a store with no windows.")
-          SlotResponse slot) {}
+          SlotResponse slot,
+      @Schema(
+              description =
+                  "contactPhone in international form, e.g. +919886021001 (a phone at the till):"
+                      + " read in the store's own country, then the business's. Absent when no"
+                      + " number was given, or the one given could not be read.")
+          String contactPhoneE164) {}
 
   @Schema(
       name = "SlotResponse",

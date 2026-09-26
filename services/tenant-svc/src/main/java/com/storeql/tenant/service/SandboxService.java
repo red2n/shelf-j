@@ -216,6 +216,7 @@ public class SandboxService {
         s.timezone(),
         s.businessHours(),
         s.showPrices(),
-        tenders);
+        tenders,
+        s.tillPhone());
   }
 }

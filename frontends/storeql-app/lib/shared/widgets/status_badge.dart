@@ -12,7 +12,9 @@ export '../util/status_labels.dart'
         channelLabel,
         batchMaterialStatuses,
         materialStatusLabel,
-        materialStatusTone;
+        materialStatusTone,
+        tillPhoneChoices,
+        tillPhoneLabel;
 
 /// A status in words on its tone's container colour: *Pending*, *Part
 /// fulfilled*, *Overdue*. The one badge for every list, card and table, so a

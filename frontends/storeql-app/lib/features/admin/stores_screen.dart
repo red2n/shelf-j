@@ -933,6 +933,7 @@ class _EditStoreDialogState extends ConsumerState<_EditStoreDialog> {
   String? _timezone;
   late bool _showPrices;
   late List<String> _payMethods;
+  late String _tillPhone;
   bool _loading = false;
   String? _error;
 
@@ -949,6 +950,7 @@ class _EditStoreDialogState extends ConsumerState<_EditStoreDialog> {
     _timezone = s.timezone;
     _showPrices = s.showPrices;
     _payMethods = [...s.enabledPaymentMethods];
+    _tillPhone = s.tillPhone;
   }
 
   @override
@@ -990,6 +992,7 @@ class _EditStoreDialogState extends ConsumerState<_EditStoreDialog> {
           'businessHours': s.businessHours,
           'showPrices': _showPrices,
           'enabledPaymentMethods': _payMethods,
+          'tillPhone': _tillPhone,
         },
       );
       if (!mounted) return;
@@ -1125,6 +1128,11 @@ class _EditStoreDialogState extends ConsumerState<_EditStoreDialog> {
                   selected: _payMethods,
                   onChanged: (v) => setState(() => _payMethods = v),
                 ),
+                const SizedBox(height: 12),
+                TillPhonePicker(
+                  value: _tillPhone,
+                  onChanged: (v) => setState(() => _tillPhone = v),
+                ),
               ],
             ),
           ),
@@ -1212,6 +1220,43 @@ class PaymentMethodsPicker extends StatelessWidget {
   }
 }
 
+/// The till's phone choice (phone-at-the-till): required on every sale,
+/// optional, or not asked at all. Sits with the till settings, beside the
+/// payment methods it is read together with.
+class TillPhonePicker extends StatelessWidget {
+  final String value;
+  final ValueChanged<String> onChanged;
+  const TillPhonePicker(
+      {super.key, required this.value, required this.onChanged});
+
+  @override
+  Widget build(BuildContext context) {
+    final cs = Theme.of(context).colorScheme;
+    return Column(
+      crossAxisAlignment: CrossAxisAlignment.start,
+      children: [
+        Text("At the till, ask for the customer's phone",
+            style: Theme.of(context).textTheme.titleSmall),
+        const SizedBox(height: 4),
+        Text(
+          'Used to warn the buyer if something they bought is recalled. '
+          'Optional lets the customer say no.',
+          style: TextStyle(color: cs.outline, fontSize: 12),
+        ),
+        const SizedBox(height: 8),
+        SegmentedButton<String>(
+          segments: [
+            for (final choice in tillPhoneChoices)
+              ButtonSegment(value: choice, label: Text(tillPhoneLabel(choice))),
+          ],
+          selected: {value},
+          onSelectionChanged: (s) => onChanged(s.first),
+        ),
+      ],
+    );
+  }
+}
+
 class _AddStoreDialog extends ConsumerStatefulWidget {
   final VoidCallback onCreated;
   const _AddStoreDialog({required this.onCreated});
@@ -1232,6 +1277,9 @@ class _AddStoreDialogState extends ConsumerState<_AddStoreDialog> {
   String? _timezone;
   bool _showPrices = true;
   List<String> _payMethods = ['CASH', 'CARD'];
+  // Data-minimising default (phone-at-the-till): a new store starts by not
+  // insisting on a number, same as an existing store this app cannot read.
+  String _tillPhone = 'OPTIONAL';
   bool _loading = false;
   String? _error;
 
@@ -1265,6 +1313,7 @@ class _AddStoreDialogState extends ConsumerState<_AddStoreDialog> {
           'timezone': _timezone,
           'showPrices': _showPrices,
           'enabledPaymentMethods': _payMethods,
+          'tillPhone': _tillPhone,
         },
       );
       if (!mounted) return;
@@ -1373,14 +1422,23 @@ class _AddStoreDialogState extends ConsumerState<_AddStoreDialog> {
                     Expanded(
                       child: DropdownButtonFormField<String>(
                         initialValue: _type,
+                        // Fills its half of the row and ellipsizes the widest
+                        // type, which used to overflow it by 102px.
+                        isExpanded: true,
                         decoration: const InputDecoration(labelText: 'Type'),
                         items: const [
-                          DropdownMenuItem(value: 'STORE', child: Text('Retail Store')),
                           DropdownMenuItem(
-                              value: 'WAREHOUSE', child: Text('Warehouse')),
+                              value: 'STORE',
+                              child: Text('Retail Store',
+                                  overflow: TextOverflow.ellipsis)),
+                          DropdownMenuItem(
+                              value: 'WAREHOUSE',
+                              child: Text('Warehouse',
+                                  overflow: TextOverflow.ellipsis)),
                           DropdownMenuItem(
                               value: 'DARK_STORE',
-                              child: Text('Dark store (online only)')),
+                              child: Text('Dark store (online only)',
+                                  overflow: TextOverflow.ellipsis)),
                         ],
                         onChanged: (v) => setState(() => _type = v!),
                       ),
@@ -1453,6 +1511,11 @@ class _AddStoreDialogState extends ConsumerState<_AddStoreDialog> {
                 PaymentMethodsPicker(
                   selected: _payMethods,
                   onChanged: (v) => setState(() => _payMethods = v),
+                ),
+                const SizedBox(height: 12),
+                TillPhonePicker(
+                  value: _tillPhone,
+                  onChanged: (v) => setState(() => _tillPhone = v),
                 ),
               ],
               ),

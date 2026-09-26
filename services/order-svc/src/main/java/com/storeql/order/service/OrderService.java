@@ -364,6 +364,20 @@ public class OrderService {
             "ORDER_PAYMENT_METHOD_INVALID",
             "paymentMethod must be one of CASH, CARD, UPI, WALLET — got: " + req.paymentMethod());
     }
+    // A phone at the till (intent/phone-at-the-till.md): the store says whether its till asks for
+    // the customer's number. A Required store refuses a till sale with neither a number nor a
+    // customer. A number given is read in the store's own country, then the business's; at the
+    // till one that is no phone anywhere the business trades is refused, while the customer is
+    // still there to correct it. Online it is read the same way and never refused over.
+    boolean tillSale = "POS".equalsIgnoreCase(req.channel());
+    if (tillSale
+        && TillPhone.missing(tillPhoneAsk(tenantId, storeId), customerId, req.contactPhone())) {
+      throw ApiException.conflict(
+          "ORDER_CONTACT_PHONE_REQUIRED",
+          "this store asks for a phone number on every till sale; give the customer's, or name the"
+              + " customer");
+    }
+    String contactPhoneE164 = contactPhoneE164(tenantId, storeId, req.contactPhone(), tillSale);
 
     boolean enforcePricing = config.pricingEnforce();
 
@@ -496,7 +510,8 @@ public class OrderService {
                 items,
                 splitTax,
                 quoted == null ? List.of() : quoted.applied(),
-                slot),
+                slot,
+                contactPhoneE164),
             routed,
             idempotencyKey);
       }
@@ -616,7 +631,8 @@ public class OrderService {
             slot == null ? null : slot.windowId(),
             slot == null ? null : slot.startsAt(),
             slot == null ? null : slot.endsAt(),
-            slot == null ? null : slot.timeZone());
+            slot == null ? null : slot.timeZone(),
+            contactPhoneE164);
 
     try {
       Order placed =
@@ -681,6 +697,69 @@ public class OrderService {
           e.code(),
           storeId);
       return false;
+    }
+  }
+
+  /**
+   * What the store's till asks for the customer's phone (a phone at the till). A store whose choice
+   * cannot be read asks it optionally: a sale is never refused over a store tenant-svc could not
+   * answer about.
+   */
+  private String tillPhoneAsk(UUID tenantId, UUID storeId) {
+    try {
+      var stores = profiles.stores(tenantId, storeId);
+      return TillPhone.ask(stores == null ? null : stores.tillPhoneOf(storeId));
+    } catch (ApiException e) {
+      LOG.log(
+          System.Logger.Level.WARNING,
+          "stores unreadable ({0}); the till at {1} taken to ask for a phone optionally",
+          e.code(),
+          storeId);
+      return TillPhone.OPTIONAL;
+    }
+  }
+
+  /**
+   * A contact number in international form (a phone at the till): read in the store's own country,
+   * then the business's home and its other stores'. With no country readable a national number is
+   * kept as typed and never refused.
+   *
+   * @param tillSale whether the number was given at a till, where one that reads nowhere the
+   *     business trades is refused
+   * @return the international form, or {@code null} when none was given or it did not read
+   * @throws ApiException 400 {@code ORDER_CONTACT_PHONE_INVALID} at a till, for a number that is no
+   *     phone anywhere the business trades
+   */
+  private String contactPhoneE164(UUID tenantId, UUID storeId, String typed, boolean tillSale) {
+    if (isBlank(typed)) return null;
+    Map<UUID, String> countries = storeCountries(tenantId, storeId);
+    TillPhone.Reading reading =
+        TillPhone.read(typed, countries.get(storeId), homeCountry(tenantId), countries.values());
+    if (tillSale && reading.unreadable()) {
+      throw ApiException.badRequest(
+          "ORDER_CONTACT_PHONE_INVALID",
+          "the contact phone is not a phone number in any country this business trades in; check"
+              + " it, or leave it out");
+    }
+    return reading.e164();
+  }
+
+  /** The country of each of the tenant's stores, or none when they cannot be read. */
+  private Map<UUID, String> storeCountries(UUID tenantId, UUID storeId) {
+    try {
+      var stores = profiles.stores(tenantId, storeId);
+      return stores == null ? Map.of() : stores.countries();
+    } catch (ApiException e) {
+      return Map.of();
+    }
+  }
+
+  /** The business's own country, or {@code null} when it cannot be read. */
+  private String homeCountry(UUID tenantId) {
+    try {
+      return profiles.requireCountry(tenantId);
+    } catch (ApiException e) {
+      return null;
     }
   }
 
@@ -1147,7 +1226,9 @@ public class OrderService {
        * part carries it, and it takes one place. Null when the area store offers no windows of this
        * type.
        */
-      FulfilmentWindowService.ResolvedSlot slot) {
+      FulfilmentWindowService.ResolvedSlot slot,
+      /** The contact number in international form (a phone at the till); every part carries it. */
+      String contactPhoneE164) {
     SplitCheckout {
       items = List.copyOf(items);
       applied = List.copyOf(applied);
@@ -1272,7 +1353,8 @@ public class OrderService {
                 co.slot() == null ? null : co.slot().windowId(),
                 co.slot() == null ? null : co.slot().startsAt(),
                 co.slot() == null ? null : co.slot().endsAt(),
-                co.slot() == null ? null : co.slot().timeZone());
+                co.slot() == null ? null : co.slot().timeZone(),
+                co.contactPhoneE164());
         placed.add(
             new OrderRepository.NewOrder(
                 child,

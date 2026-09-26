@@ -356,7 +356,8 @@ public class TenantRepository extends BaseOutboxRepository {
   public List<Store> listStores(UUID tenantId) {
     return many(
         "SELECT id, tenant_id, name, code, type, line1, line2, city, state, country, pincode,"
-            + " geo_lat, geo_lng, timezone, business_hours, status, is_default, show_prices, enabled_payment_methods, created_at, updated_at"
+            + " geo_lat, geo_lng, timezone, business_hours, status, is_default, show_prices, enabled_payment_methods, till_phone, created_at,"
+            + " updated_at"
             + " FROM stores WHERE tenant_id = ? ORDER BY created_at",
         tenantId,
         TenantRepository::mapStore);
@@ -376,7 +377,7 @@ public class TenantRepository extends BaseOutboxRepository {
         new StringBuilder(
             "SELECT id, tenant_id, name, code, type, line1, line2, city, state, country, pincode,"
                 + " geo_lat, geo_lng, timezone, business_hours, status, is_default, show_prices,"
-                + " enabled_payment_methods, created_at, updated_at"
+                + " enabled_payment_methods, till_phone, created_at, updated_at"
                 + " FROM stores WHERE tenant_id = ?");
     if (afterCreatedAt != null && afterId != null) sql.append(" AND (created_at, id) > (?, ?)");
     sql.append(" ORDER BY created_at, id LIMIT ?");
@@ -407,7 +408,8 @@ public class TenantRepository extends BaseOutboxRepository {
   public Optional<Store> findStore(UUID tenantId, UUID storeId) {
     return query(
             "SELECT id, tenant_id, name, code, type, line1, line2, city, state, country, pincode,"
-                + " geo_lat, geo_lng, timezone, business_hours, status, is_default, show_prices, enabled_payment_methods, created_at, updated_at"
+                + " geo_lat, geo_lng, timezone, business_hours, status, is_default, show_prices, enabled_payment_methods, till_phone, created_at,"
+                + " updated_at"
                 + " FROM stores WHERE tenant_id = ? AND id = ?",
             ps -> {
               ps.setObject(1, tenantId);
@@ -440,6 +442,7 @@ public class TenantRepository extends BaseOutboxRepository {
    * @param businessHours opening hours, may be {@code null}
    * @param showPrices whether the storefront shows prices or runs as a catalogue
    * @param enabledPaymentMethods the canonicalised comma-separated tender list
+   * @param tillPhone what the till asks for the customer's phone: REQUIRED, OPTIONAL or OFF
    * @return the store as stored
    */
   public Store updateStore(
@@ -457,12 +460,13 @@ public class TenantRepository extends BaseOutboxRepository {
       String timezone,
       String businessHours,
       boolean showPrices,
-      String enabledPaymentMethods) {
+      String enabledPaymentMethods,
+      String tillPhone) {
     Instant now = Instant.now();
     exec(
         "UPDATE stores SET name=?, line1=?, line2=?, city=?, state=?, country=?, pincode=?,"
             + " geo_lat=?, geo_lng=?, timezone=?, business_hours=?, show_prices=?,"
-            + " enabled_payment_methods=?, updated_at=?"
+            + " enabled_payment_methods=?, till_phone=?, updated_at=?"
             + " WHERE tenant_id=? AND id=?",
         ps -> {
           ps.setString(1, name);
@@ -478,9 +482,10 @@ public class TenantRepository extends BaseOutboxRepository {
           ps.setString(11, businessHours);
           ps.setBoolean(12, showPrices);
           ps.setString(13, enabledPaymentMethods);
-          ps.setObject(14, now.atOffset(ZoneOffset.UTC));
-          ps.setObject(15, tenantId);
-          ps.setObject(16, storeId);
+          ps.setString(14, tillPhone);
+          ps.setObject(15, now.atOffset(ZoneOffset.UTC));
+          ps.setObject(16, tenantId);
+          ps.setObject(17, storeId);
         },
         "update store");
     return findStore(tenantId, storeId)
@@ -978,8 +983,8 @@ public class TenantRepository extends BaseOutboxRepository {
             "INSERT INTO stores"
                 + " (id, tenant_id, name, code, type, line1, line2, city, state, country, pincode,"
                 + " geo_lat, geo_lng, timezone, business_hours, status, is_default, show_prices,"
-                + " enabled_payment_methods, created_at, updated_at)"
-                + " VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)")) {
+                + " enabled_payment_methods, till_phone, created_at, updated_at)"
+                + " VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)")) {
       ps.setObject(1, s.id());
       ps.setObject(2, s.tenantId());
       ps.setString(3, s.name());
@@ -999,8 +1004,9 @@ public class TenantRepository extends BaseOutboxRepository {
       ps.setBoolean(17, s.isDefault());
       ps.setBoolean(18, s.showPrices());
       ps.setString(19, s.enabledPaymentMethods());
-      ps.setObject(20, s.createdAt().atOffset(ZoneOffset.UTC));
+      ps.setString(20, s.tillPhone());
       ps.setObject(21, s.createdAt().atOffset(ZoneOffset.UTC));
+      ps.setObject(22, s.createdAt().atOffset(ZoneOffset.UTC));
       ps.executeUpdate();
     }
   }
@@ -1105,6 +1111,7 @@ public class TenantRepository extends BaseOutboxRepository {
         rs.getBoolean("is_default"),
         rs.getBoolean("show_prices"),
         rs.getString("enabled_payment_methods"),
+        rs.getString("till_phone"),
         rs.getObject("created_at", OffsetDateTime.class).toInstant(),
         rs.getObject("updated_at", OffsetDateTime.class).toInstant());
   }

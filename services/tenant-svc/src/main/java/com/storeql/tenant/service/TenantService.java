@@ -189,6 +189,7 @@ public class TenantService {
             req.storeTimezone(),
             null,
             null,
+            null,
             null);
     StoreWithZone storeWithZone = createDefaultStore(tenant.id(), ownerUserId, storeReq);
     return new TenantWithStore(tenant, storeWithZone.store());
@@ -296,6 +297,7 @@ public class TenantService {
             isDefault,
             req.showPrices() == null || req.showPrices(),
             normalizePaymentMethods(req.enabledPaymentMethods(), Store.DEFAULT_PAYMENT_METHODS),
+            normalizeTillPhone(req.tillPhone(), Store.DEFAULT_TILL_PHONE),
             nowStore,
             nowStore);
 
@@ -890,12 +892,13 @@ public class TenantService {
    *
    * @param tenantId owning tenant
    * @param storeId the store to update
-   * @param req the replacement details; null {@code showPrices}/{@code enabledPaymentMethods} keep
-   *     the current values
+   * @param req the replacement details; null {@code showPrices}/{@code
+   *     enabledPaymentMethods}/{@code tillPhone} keep the current values
    * @return the updated store
    * @throws ApiException {@code STORE_NOT_FOUND} (404) when it does not exist in this tenant;
    *     {@code STORE_PAYMENT_METHOD_INVALID} or {@code STORE_PAYMENT_METHODS_EMPTY} (400) when the
-   *     tender list is unusable
+   *     tender list is unusable; {@code STORE_TILL_PHONE_INVALID} (400) for a till choice that is
+   *     none of the three
    */
   public Store updateStore(UUID tenantId, UUID storeId, UpdateStoreRequest req) {
     Store existing = getStore(tenantId, storeId);
@@ -918,7 +921,25 @@ public class TenantService {
         req.businessHours(),
         // keep current value when the client omits the flag
         req.showPrices() == null ? existing.showPrices() : req.showPrices(),
-        normalizePaymentMethods(req.enabledPaymentMethods(), existing.enabledPaymentMethods()));
+        normalizePaymentMethods(req.enabledPaymentMethods(), existing.enabledPaymentMethods()),
+        normalizeTillPhone(req.tillPhone(), existing.tillPhone()));
+  }
+
+  /**
+   * What the store's till asks for the customer's phone (a phone at the till), read the way it was
+   * meant ({@code null} keeps {@code fallback}).
+   *
+   * @throws ApiException 400 {@code STORE_TILL_PHONE_INVALID} for anything but REQUIRED, OPTIONAL
+   *     or OFF
+   */
+  private static String normalizeTillPhone(String tillPhone, String fallback) {
+    if (tillPhone == null) return fallback;
+    String upper = tillPhone.strip().toUpperCase(Locale.ROOT);
+    if (!Store.TILL_PHONE.contains(upper))
+      throw ApiException.badRequest(
+          "STORE_TILL_PHONE_INVALID",
+          "tillPhone must be one of " + Store.TILL_PHONE + " — got: " + tillPhone);
+    return upper;
   }
 
   /**

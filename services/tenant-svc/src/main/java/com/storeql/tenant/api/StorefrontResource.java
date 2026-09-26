@@ -161,6 +161,7 @@ public class StorefrontResource {
         scheme.map(d -> com.storeql.tenant.mapper.Mappers.toDepositScheme(d, today)).orElse(null),
         s.type(),
         !Store.TYPE_DARK_STORE.equals(s.type()),
-        tenant.businessName());
+        tenant.businessName(),
+        s.tillPhone());
   }
 }

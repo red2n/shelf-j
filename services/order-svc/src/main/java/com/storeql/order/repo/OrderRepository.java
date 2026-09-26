@@ -288,8 +288,9 @@ public class OrderRepository extends BaseOutboxRepository {
                 + "  tax_exempt,exempt_reason,delivery_line1,delivery_line2,delivery_city,"
                 + "  delivery_postal_code,delivery_recipient_name,delivery_recipient_phone,contact_phone,"
                 + "  payment_method,promotion_discount,seller_user_id,group_id,group_part,"
-                + "  allow_substitutions,slot_window_id,slot_starts_at,slot_ends_at,slot_time_zone)"
-                + " VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)")) {
+                + "  allow_substitutions,slot_window_id,slot_starts_at,slot_ends_at,slot_time_zone,"
+                + "  contact_phone_e164)"
+                + " VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)")) {
       ps.setObject(1, order.id());
       ps.setObject(2, order.tenantId());
       ps.setObject(3, order.storeId());
@@ -331,6 +332,7 @@ public class OrderRepository extends BaseOutboxRepository {
       ps.setObject(
           33, order.slotEndsAt() != null ? java.sql.Timestamp.from(order.slotEndsAt()) : null);
       ps.setString(34, order.slotTimeZone());
+      ps.setString(35, order.contactPhoneE164());
       ps.executeUpdate();
     } catch (java.sql.SQLException sqle) {
       if (UNIQUE_VIOLATION.equals(sqle.getSQLState()))
@@ -379,7 +381,7 @@ public class OrderRepository extends BaseOutboxRepository {
                 + " delivery_line1, delivery_line2, delivery_city, delivery_postal_code,"
                 + " delivery_recipient_name, delivery_recipient_phone, contact_phone, payment_method,"
                 + " seller_user_id, allow_substitutions, slot_window_id, slot_starts_at, slot_ends_at,"
-                + " slot_time_zone"
+                + " slot_time_zone, contact_phone_e164"
                 + " FROM orders WHERE tenant_id=? AND idempotency_key=?",
             ps -> {
               ps.setObject(1, tenantId);
@@ -494,7 +496,7 @@ public class OrderRepository extends BaseOutboxRepository {
                 + " delivery_line1, delivery_line2, delivery_city, delivery_postal_code,"
                 + " delivery_recipient_name, delivery_recipient_phone, contact_phone, payment_method,"
                 + " seller_user_id, allow_substitutions, slot_window_id, slot_starts_at, slot_ends_at,"
-                + " slot_time_zone"
+                + " slot_time_zone, contact_phone_e164"
                 + " FROM orders o WHERE tenant_id=?");
     if (storeId != null) sql.append(" AND store_id=?");
     if (customerId != null) sql.append(" AND customer_id=?");
@@ -961,7 +963,7 @@ public class OrderRepository extends BaseOutboxRepository {
             + " delivery_line1, delivery_line2, delivery_city, delivery_postal_code,"
             + " delivery_recipient_name, delivery_recipient_phone, contact_phone, payment_method,"
             + " seller_user_id, allow_substitutions, slot_window_id, slot_starts_at, slot_ends_at,"
-            + " slot_time_zone"
+            + " slot_time_zone, contact_phone_e164"
             + " FROM orders WHERE tenant_id=? AND store_id=? AND channel='ONLINE'"
             + " AND fulfilment_type IN ('PICKUP','DELIVERY')"
             + " AND status IN ('CONFIRMED','PARTIALLY_FULFILLED')"
@@ -1124,7 +1126,7 @@ public class OrderRepository extends BaseOutboxRepository {
                 + " delivery_line1, delivery_line2, delivery_city, delivery_postal_code,"
                 + " delivery_recipient_name, delivery_recipient_phone, contact_phone, payment_method,"
                 + " seller_user_id, allow_substitutions, slot_window_id, slot_starts_at, slot_ends_at,"
-                + " slot_time_zone"
+                + " slot_time_zone, contact_phone_e164"
                 + " FROM orders WHERE tenant_id=? AND id=?",
             ps -> {
               ps.setObject(1, tenantId);
@@ -1195,7 +1197,8 @@ public class OrderRepository extends BaseOutboxRepository {
       "('FULFILLED','CANCELLED','VOIDED','REFUNDED','PARTIALLY_REFUNDED')";
 
   private static final String REDACT_ORDER =
-      " SET contact_phone = NULL, delivery_line1 = NULL, delivery_line2 = NULL,"
+      " SET contact_phone = NULL, contact_phone_e164 = NULL, delivery_line1 = NULL,"
+          + " delivery_line2 = NULL,"
           + " delivery_city = NULL, delivery_postal_code = NULL, delivery_recipient_name = NULL,"
           + " delivery_recipient_phone = NULL, notes = NULL, updated_at = now()";
 
@@ -1214,7 +1217,8 @@ public class OrderRepository extends BaseOutboxRepository {
       " l.status IN ('COMPLETED','CANCELLED') AND l.notes IS NOT NULL";
 
   private static final String ORDER_STILL_IDENTIFIES =
-      " (o.contact_phone IS NOT NULL OR o.delivery_line1 IS NOT NULL"
+      " (o.contact_phone IS NOT NULL OR o.contact_phone_e164 IS NOT NULL"
+          + " OR o.delivery_line1 IS NOT NULL"
           + " OR o.delivery_line2 IS NOT NULL OR o.delivery_city IS NOT NULL"
           + " OR o.delivery_postal_code IS NOT NULL OR o.delivery_recipient_name IS NOT NULL"
           + " OR o.delivery_recipient_phone IS NOT NULL OR o.notes IS NOT NULL)";
@@ -2063,7 +2067,7 @@ public class OrderRepository extends BaseOutboxRepository {
             + " delivery_line1, delivery_line2, delivery_city, delivery_postal_code,"
             + " delivery_recipient_name, delivery_recipient_phone, contact_phone, payment_method,"
             + " seller_user_id, allow_substitutions, slot_window_id, slot_starts_at, slot_ends_at,"
-            + " slot_time_zone"
+            + " slot_time_zone, contact_phone_e164"
             + " FROM orders WHERE tenant_id=? AND (customer_id=? OR login_id=?)"
             + " ORDER BY created_at DESC, id DESC LIMIT ?",
         ps -> {
@@ -2871,7 +2875,7 @@ public class OrderRepository extends BaseOutboxRepository {
                 + " delivery_line1, delivery_line2, delivery_city, delivery_postal_code,"
                 + " delivery_recipient_name, delivery_recipient_phone, contact_phone, payment_method,"
                 + " seller_user_id, allow_substitutions, slot_window_id, slot_starts_at, slot_ends_at,"
-                + " slot_time_zone"
+                + " slot_time_zone, contact_phone_e164"
                 + " FROM orders WHERE tenant_id=? AND id=?")) {
       ps.setObject(1, tenantId);
       ps.setObject(2, orderId);
@@ -3037,7 +3041,8 @@ public class OrderRepository extends BaseOutboxRepository {
         rs.getObject("slot_window_id", UUID.class),
         toInstant(rs.getObject("slot_starts_at", OffsetDateTime.class)),
         toInstant(rs.getObject("slot_ends_at", OffsetDateTime.class)),
-        rs.getString("slot_time_zone"));
+        rs.getString("slot_time_zone"),
+        rs.getString("contact_phone_e164"));
   }
 
   /**

@@ -89,6 +89,8 @@ public class TenantProfiles {
    * @param zones the IANA time zone id of each store that records one (delivery and collection
    *     slots): a store's own hours and windows are set and shown in this zone, never a platform
    *     default — no zone is assumed for a store that records none
+   * @param tillPhones what each store's till asks for a phone (a phone at the till): {@code
+   *     REQUIRED}, {@code OPTIONAL} or {@code OFF}, for each store that records one of the three
    */
   public record Stores(
       Set<UUID> ids,
@@ -96,7 +98,11 @@ public class TenantProfiles {
       Set<UUID> warehouses,
       Map<UUID, Point> points,
       Set<UUID> dark,
-      Map<UUID, String> zones) {
+      Map<UUID, String> zones,
+      Map<UUID, String> tillPhones) {
+
+    /** What a store's till may ask for a phone; tenant-svc's {@code stores.till_phone}. */
+    public static final Set<String> TILL_PHONE = Set.of("REQUIRED", "OPTIONAL", "OFF");
 
     public Stores {
       ids = Set.copyOf(ids);
@@ -105,6 +111,18 @@ public class TenantProfiles {
       points = Map.copyOf(points);
       dark = Set.copyOf(dark);
       zones = Map.copyOf(zones);
+      tillPhones = Map.copyOf(tillPhones);
+    }
+
+    /** As before a till's phone choice was read: no store records one. */
+    public Stores(
+        Set<UUID> ids,
+        Map<UUID, String> countries,
+        Set<UUID> warehouses,
+        Map<UUID, Point> points,
+        Set<UUID> dark,
+        Map<UUID, String> zones) {
+      this(ids, countries, warehouses, points, dark, zones, Map.of());
     }
 
     /** As before time zones were read: no store records one. */
@@ -175,6 +193,19 @@ public class TenantProfiles {
         return null;
       }
     }
+
+    /**
+     * What the store's till asks for a phone (a phone at the till): {@code REQUIRED}, {@code
+     * OPTIONAL} or {@code OFF}, or {@code null} when the store is unknown or records none of the
+     * three. What a {@code null} means is the caller's to say; order-svc takes it for {@code
+     * OPTIONAL}, so a store it cannot read never refuses a sale.
+     *
+     * @param storeId the store
+     * @return the choice, or {@code null}
+     */
+    public String tillPhoneOf(UUID storeId) {
+      return storeId == null ? null : tillPhones.get(storeId);
+    }
   }
 
   /** A store's latitude and longitude, in degrees. */
@@ -188,6 +219,7 @@ public class TenantProfiles {
       Map<UUID, Point> points,
       Set<UUID> dark,
       Map<UUID, String> zones,
+      Map<UUID, String> tillPhones,
       String nextCursor) {}
 
   private record CachedStores(Stores stores, Instant readAt) {}
@@ -284,6 +316,7 @@ public class TenantProfiles {
     Map<UUID, Point> points = new HashMap<>();
     Set<UUID> dark = new HashSet<>();
     Map<UUID, String> zones = new HashMap<>();
+    Map<UUID, String> tillPhones = new HashMap<>();
     String after = null;
     for (int page = 0; page < MAX_STORE_PAGES; page++) {
       Optional<StorePage> read =
@@ -295,8 +328,9 @@ public class TenantProfiles {
       points.putAll(read.get().points());
       dark.addAll(read.get().dark());
       zones.putAll(read.get().zones());
+      tillPhones.putAll(read.get().tillPhones());
       if (read.get().nextCursor() == null) {
-        return Optional.of(new Stores(ids, countries, warehouses, points, dark, zones));
+        return Optional.of(new Stores(ids, countries, warehouses, points, dark, zones, tillPhones));
       }
       after = read.get().nextCursor();
     }
@@ -321,6 +355,7 @@ public class TenantProfiles {
       Map<UUID, Point> points = new HashMap<>();
       Set<UUID> dark = new HashSet<>();
       Map<UUID, String> zones = new HashMap<>();
+      Map<UUID, String> tillPhones = new HashMap<>();
       for (JsonValue value : root.getJsonArray("data")) {
         JsonObject store = value.asJsonObject();
         UUID id = Ids.parse(store.getString("id"));
@@ -352,6 +387,12 @@ public class TenantProfiles {
           String tz = store.getString("timezone").strip();
           if (!tz.isEmpty()) zones.put(id, tz);
         }
+        if (store.containsKey("tillPhone")
+            && !store.isNull("tillPhone")
+            && store.get("tillPhone").getValueType() == jakarta.json.JsonValue.ValueType.STRING) {
+          String ask = upper(store.getString("tillPhone"));
+          if (Stores.TILL_PHONE.contains(ask)) tillPhones.put(id, ask);
+        }
       }
       JsonObject meta =
           root.containsKey("meta") && !root.isNull("meta") ? root.getJsonObject("meta") : null;
@@ -367,6 +408,7 @@ public class TenantProfiles {
               Map.copyOf(points),
               Set.copyOf(dark),
               Map.copyOf(zones),
+              Map.copyOf(tillPhones),
               next == null || next.isBlank() ? null : next));
     } catch (RuntimeException e) {
       LOG.log(Level.WARNING, "unreadable page of stores: {0}", e.getMessage());

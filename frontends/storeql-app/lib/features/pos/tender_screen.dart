@@ -27,6 +27,20 @@ import 'customer_display.dart';
 import 'customer_display_channel.dart';
 import 'package:storeql_app/core/ids.dart';
 
+/// Words for the two refusals a till sale's contact phone can hit
+/// (phone-at-the-till). Shown at the field, never a snackbar, so the cashier
+/// fixes it right there while the customer is still at the counter.
+String _phoneServerErrorMessage(String code, String tillPhone) => switch (code) {
+      'ORDER_CONTACT_PHONE_REQUIRED' => 'This store asks for a number on every sale',
+      // Required leaves no room to say "or leave it blank" — blank is exactly
+      // what got it refused.
+      'ORDER_CONTACT_PHONE_INVALID' => tillPhone == 'REQUIRED'
+          ? "That isn't a phone number where this business trades — check it"
+          : "That isn't a phone number where this business trades — check it, "
+              'or leave it blank',
+      _ => '',
+    };
+
 /// Multi-tender payment screen: a sale can be split across cash, card, gift card
 /// and store credit. The cashier stages tenders until the balance is cleared,
 /// then completes — placing one order and recording each tender against it.
@@ -40,6 +54,27 @@ class TenderScreen extends ConsumerStatefulWidget {
 class _TenderScreenState extends ConsumerState<TenderScreen> {
   final List<PosTender> _tenders = [];
   bool _processing = false;
+
+  /// The walk-in phone field shown on this screen (phone-at-the-till): the
+  /// same value as the Sale tab's, so typing in either shows in both.
+  late final TextEditingController _phoneCtrl;
+
+  /// A reason the sale cannot complete, or a server refusal, shown at the
+  /// phone field rather than a snackbar — the cashier fixes it right there
+  /// while the customer is still at the counter.
+  String? _phoneError;
+
+  @override
+  void initState() {
+    super.initState();
+    _phoneCtrl = TextEditingController(text: ref.read(posWalkInPhoneProvider));
+  }
+
+  @override
+  void dispose() {
+    _phoneCtrl.dispose();
+    super.dispose();
+  }
 
   /// The discount actually applied to this sale, clamped to the subtotal.
   ///
@@ -197,21 +232,28 @@ class _TenderScreenState extends ConsumerState<TenderScreen> {
     final storeId = ref.read(posStoreProvider);
     final customer = ref.read(posCustomerProvider);
     final walkInPhone = ref.read(posWalkInPhoneProvider);
+    final tillPhone = ref.read(posTillPhoneProvider);
     final discount = _discount;
     if (cart.isEmpty) return;
     if (storeId == null) {
       _snack('Select a store before tendering.', error: true);
       return;
     }
-    if (customer == null && walkInPhone.isEmpty) {
-      _snack('Enter a contact phone number for this sale.', error: true);
+    // Only a Required store blocks here (phone-at-the-till) — Optional and
+    // Don't ask complete with the field blank, or absent altogether.
+    if (tillPhone == 'REQUIRED' && customer == null && walkInPhone.isEmpty) {
+      setState(() =>
+          _phoneError = "Enter the customer's number, or attach the customer");
       return;
     }
     if (_remaining > 0.001) {
       _snack('Balance not fully tendered.', error: true);
       return;
     }
-    setState(() => _processing = true);
+    setState(() {
+      _processing = true;
+      _phoneError = null;
+    });
     final dio = ref.read(apiClientProvider).dio;
     final currency = _currency;
 
@@ -448,6 +490,15 @@ class _TenderScreenState extends ConsumerState<TenderScreen> {
         // so the sale must not be queued — the cashier has to deal with it now.
         if (!mounted) return;
         setState(() => _processing = false);
+        // A refusal about the contact phone (phone-at-the-till) sits at the
+        // field, the same place the cashier would go to fix it — never a
+        // snackbar — and the sale is kept exactly as it was, ready to retry.
+        final code = apiErrorCode(e);
+        if (code == 'ORDER_CONTACT_PHONE_REQUIRED' ||
+            code == 'ORDER_CONTACT_PHONE_INVALID') {
+          setState(() => _phoneError = _phoneServerErrorMessage(code!, tillPhone));
+          return;
+        }
         _snack(friendlyError(e, fallback: 'Sale failed.'), error: true);
         return;
       }
@@ -870,8 +921,13 @@ class _TenderScreenState extends ConsumerState<TenderScreen> {
       _snack('Select a store before placing the order.', error: true);
       return;
     }
-    if (customer == null && walkInPhone.isEmpty) {
-      _snack('Enter a contact phone number for this sale.', error: true);
+    // The same rule as a priced sale (phone-at-the-till): only a store whose
+    // till requires a number insists on one.
+    if (ref.read(posTillPhoneProvider) == 'REQUIRED' &&
+        customer == null &&
+        walkInPhone.isEmpty) {
+      _snack("Enter the customer's number, or attach the customer.",
+          error: true);
       return;
     }
     setState(() => _processing = true);
@@ -1059,6 +1115,8 @@ class _TenderScreenState extends ConsumerState<TenderScreen> {
     final cs = theme.colorScheme;
     final cart = ref.watch(posCartProvider);
     final showPrices = ref.watch(posShowPricesProvider);
+    final customer = ref.watch(posCustomerProvider);
+    final tillPhone = ref.watch(posTillPhoneProvider);
     final currency = _currency;
     // Recompute reactively (watch so discount/cart edits refresh the figures).
     ref.watch(posDiscountProvider);
@@ -1172,6 +1230,31 @@ class _TenderScreenState extends ConsumerState<TenderScreen> {
           _tenderTile(i, money),
         ],
     ];
+
+    // The walk-in phone field (phone-at-the-till): the same field as the Sale
+    // tab's, right above the action that completes the sale, whenever no
+    // registered customer is attached and this store's till asks at all.
+    if (customer == null && tillPhone != 'OFF') {
+      details.addAll([
+        const SizedBox(height: 16),
+        TextField(
+          key: const Key('tender-phone-field'),
+          controller: _phoneCtrl,
+          keyboardType: TextInputType.phone,
+          decoration: InputDecoration(
+            labelText: posPhoneFieldLabel(tillPhone),
+            hintText: posPhoneFieldHint(tillPhone),
+            errorText: _phoneError,
+            errorMaxLines: 3,
+            prefixIcon: const Icon(Icons.phone_outlined, size: 18),
+          ),
+          onChanged: (v) {
+            ref.read(posWalkInPhoneProvider.notifier).state = v.trim();
+            if (_phoneError != null) setState(() => _phoneError = null);
+          },
+        ),
+      ]);
+    }
 
     final complete = FilledButton.icon(
       style: FilledButton.styleFrom(

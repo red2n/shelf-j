@@ -8,6 +8,7 @@ import 'package:storeql_app/shared/widgets/status_badge.dart';
 import 'package:storeql_app/core/auth/auth_notifier.dart';
 import 'package:storeql_app/core/auth/auth_state.dart';
 import 'package:storeql_app/core/network/api_client.dart';
+import 'package:storeql_app/features/admin/providers/admin_providers.dart';
 import 'package:storeql_app/features/admin/stores_screen.dart';
 
 // ---------------------------------------------------------------------------
@@ -76,7 +77,8 @@ String _store(
         {String? timezone,
         String id = 'store-1',
         String name = 'Main',
-        String status = 'ACTIVE'}) =>
+        String status = 'ACTIVE',
+        String? tillPhone}) =>
     jsonEncode({
       'id': id,
       'name': name,
@@ -87,6 +89,7 @@ String _store(
       'timezone': ?timezone,
       'showPrices': true,
       'enabledPaymentMethods': ['CASH', 'CARD'],
+      'tillPhone': ?tillPhone,
     });
 
 /// [store] is one store's JSON, or several joined by commas. [auth] is the
@@ -300,6 +303,75 @@ void main() {
           auth: () =>
               _Auth(roles: const ['OWNER'], storeIds: const ['store-9']));
       expect(find.byKey(const Key('store-slots-store-1')), findsOneWidget);
+    });
+  });
+
+  group('phone-at-the-till (the store form)', () {
+    test('StoreInfo reads tillPhone; absent reads as Optional', () {
+      expect(StoreInfo.fromJson(jsonDecode(_store())).tillPhone, 'OPTIONAL');
+      expect(
+          StoreInfo.fromJson(jsonDecode(_store(tillPhone: 'REQUIRED'))).tillPhone,
+          'REQUIRED');
+      expect(StoreInfo.fromJson(jsonDecode(_store(tillPhone: 'OFF'))).tillPhone,
+          'OFF');
+    });
+
+    testWidgets(
+        'Add Store offers the three choices, Optional preselected, and sends it',
+        (tester) async {
+      final server = await _pump(tester, _store(timezone: 'UTC'));
+      await tester.tap(find.text('Add Store').first);
+      await tester.pumpAndSettle();
+      // The Type dropdown's widest item ("Dark store (online only)") used to
+      // overflow its half of the Code/Type row by 102px on every open.
+      expect(tester.takeException(), isNull);
+
+      expect(find.text('Required'), findsOneWidget);
+      expect(find.text('Optional'), findsOneWidget);
+      expect(find.text("Don't ask"), findsOneWidget);
+      final picker =
+          tester.widget<SegmentedButton<String>>(find.byType(SegmentedButton<String>));
+      expect(picker.selected, {'OPTIONAL'});
+
+      await tester.enterText(
+          find.widgetWithText(TextFormField, 'Store name *'), 'Branch 2');
+      await tester.enterText(find.widgetWithText(TextFormField, 'Code *'), 'BR2');
+      await tester.tap(find.byKey(const ValueKey('timezone-null')));
+      await tester.pumpAndSettle();
+      await tester.tap(find.text('UTC').first);
+      await tester.pumpAndSettle();
+
+      await tester.ensureVisible(find.text('Create store'));
+      await tester.tap(find.text('Create store'));
+      await tester.pumpAndSettle();
+
+      final created = server.requests.singleWhere(
+          (r) => r.method == 'POST' && r.path.endsWith('/admin/stores'));
+      final body = (created.data is String
+          ? jsonDecode(created.data as String)
+          : created.data) as Map<String, dynamic>;
+      expect(body['tillPhone'], 'OPTIONAL');
+    });
+
+    testWidgets('editing a store preselects its choice and saves a change',
+        (tester) async {
+      final server =
+          await _pump(tester, _store(timezone: 'UTC', tillPhone: 'REQUIRED'));
+      await tester.tap(find.text('Main').first);
+      await tester.pumpAndSettle();
+
+      final picker =
+          tester.widget<SegmentedButton<String>>(find.byType(SegmentedButton<String>));
+      expect(picker.selected, {'REQUIRED'});
+
+      await tester.ensureVisible(find.text("Don't ask"));
+      await tester.tap(find.text("Don't ask"));
+      await tester.pumpAndSettle();
+      await tester.ensureVisible(find.text('Save changes'));
+      await tester.tap(find.text('Save changes'));
+      await tester.pumpAndSettle();
+
+      expect(server.saved!['tillPhone'], 'OFF');
     });
   });
 }

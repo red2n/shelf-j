@@ -121,3 +121,15 @@ StatusTone materialStatusTone(String? status) =>
       'REJECTED' => StatusTone.error,
       _ => StatusTone.neutral,
     };
+
+/// A store's till-phone choices (phone-at-the-till), in the order a person
+/// picks from on the store form.
+const tillPhoneChoices = ['REQUIRED', 'OPTIONAL', 'OFF'];
+
+/// What a store's till-phone choice asks the cashier for, in words — the same
+/// on the store form wherever the choice is shown or picked from.
+String tillPhoneLabel(String? choice) => switch ((choice ?? '').toUpperCase()) {
+      'REQUIRED' => 'Required',
+      'OFF' => "Don't ask",
+      _ => 'Optional',
+    };
