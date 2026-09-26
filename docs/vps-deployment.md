@@ -263,7 +263,8 @@ These are the URLs you use when running `docker compose up` on your laptop (base
 
 1. Go to `https://app.storeql.com/#/platform/login`
 2. Enter email and password set in `PLATFORM_ADMIN_EMAIL` / `PLATFORM_ADMIN_PASSWORD`
-3. Lands on the **Platform Dashboard** — lists all tenants, can suspend/reactivate them, manage platform-wide settings
+3. Enter the six-digit code (*One more step*): the platform administrator always has a second factor (20.12). The code comes from an authenticator app holding `PLATFORM_ADMIN_TOTP_SECRET` — `scripts/platform-code.sh --setup` prints the key and an `otpauth://` link to add it once — or, on a local stack, from `scripts/platform-code.sh`, which prints the current code. A code works once; a wrong one counts as a failed sign-in.
+4. Lands on the **Platform Dashboard** — lists all tenants, can suspend/reactivate them, manage platform-wide settings
 
 ### Tenant owner (first login after onboarding)
 
