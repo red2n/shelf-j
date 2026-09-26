@@ -7,7 +7,7 @@
 | **Roadmap** | new: the design system's *Screen_SignIn_Login* card, "no way back from a forgotten password" |
 | **Services** | iam-svc owns logins and reset tokens · notification-svc sends the email (from an event) · the gateway opens the two routes to the public |
 | **Builds on** | `users` (one email may hold a shopper login and staff logins in several businesses), `refresh_tokens.revokeAllForUser`, `PasswordPolicy`, the login card and the storefront's sign-in dialog, `Catalogue` message types, the notification log |
-| **Built in** | 3ff301ff (branch `test/k6-gross-margin`, 26 Sep 2026) |
+| **Built in** | 577f5106 (branch `test/k6-gross-margin`, 26 Sep 2026) |
 
 ## Problem
 

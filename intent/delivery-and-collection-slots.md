@@ -7,7 +7,7 @@
 | **Roadmap** | new: the design system's *DeliverySlotPicker* ("needs slot data the backend doesn't serve yet") |
 | **Services** | order-svc owns each store's windows and what they hold (a window is taken on the order's own transaction) · tenant-svc owns the stores and their time zones, read through `TenantProfiles` |
 | **Builds on** | `orders` (DELIVERY and PICKUP, PENDING until paid, the pending sweeper's lapse), pincode → store (`TenantClient.resolveFulfilment`), split checkouts (`order_groups`), the Fulfilment screen's queue, the storefront cart, `OrderConfirmed`, the design system's *DeliverySlotPicker* |
-| **Built in** | 3ff301ff (branch `test/k6-gross-margin`, 26 Sep 2026) |
+| **Built in** | 577f5106 (branch `test/k6-gross-margin`, 26 Sep 2026) |
 
 ## Problem
 
