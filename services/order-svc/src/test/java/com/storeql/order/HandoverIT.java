@@ -36,8 +36,11 @@ class HandoverIT {
 
   private static final String T = "01a0d920-611e-702c-a97b-d1b8025478e1";
   private static final String T2 = "01a0d920-611e-702c-a97b-d1b8025478e2";
+  // A third business that does hand things over, so what the second is spared stays spared.
+  private static final String T3 = "01a0d920-611e-702c-a97b-d1b8025478e3";
   private static final String S = "01a0d920-611e-703c-a378-a4972ea461e1";
   private static final String S2 = "01a0d920-611e-703c-a378-a4972ea461e2";
+  private static final String S3 = "01a0d920-611e-703c-a378-a4972ea461e3";
   private static final String V = "01a0d920-611e-7037-a4b7-c854f0266ae1";
   private static final String SHOPPER = "01a0d920-611e-700b-bde4-50df0324c3e1";
   private static final String STRANGER = "01a0d920-611e-700b-bde4-50df0324c3e2";
@@ -52,8 +55,10 @@ class HandoverIT {
         TenantSvcStub.start()
             .with(T, "GBP", "GB")
             .with(T2, "GBP", "GB")
+            .with(T3, "GBP", "GB")
             .withStoreAt(T, S, 53.8008, -1.5491)
-            .withStoreAt(T, S2, 53.9600, -1.0873);
+            .withStoreAt(T, S2, 53.9600, -1.0873)
+            .withStoreAt(T3, S3, 51.5072, -0.1276);
     System.setProperty("storeql.db.url", PG.jdbcUrl());
     System.setProperty("storeql.db.migration-url", PG.jdbcUrl());
     System.setProperty("storeql.db.user", PG.username());
@@ -105,10 +110,15 @@ class HandoverIT {
 
   /** The shopper places an online order at S: a delivery with an address, or a pickup. */
   private UUID place(String fulfilment) {
+    return placeAt(T, S, fulfilment);
+  }
+
+  /** The shopper places an online order at a store of a business. */
+  private UUID placeAt(String tenant, String store, String fulfilment) {
     boolean delivery = "DELIVERY".equals(fulfilment);
     String body =
         "{\"storeId\":\""
-            + S
+            + store
             + "\",\"channel\":\"ONLINE\",\"fulfilmentType\":\""
             + fulfilment
             + "\",\"currency\":\"GBP\",\"contactPhone\":\"07700900123\",\"items\":[{\"variantId\":\""
@@ -121,7 +131,7 @@ class HandoverIT {
                 : "")
             + "}";
     JsonObject placed =
-        Envelopes.created(call("POST", "/orders", body, T, SHOPPER, "CUSTOMER", null));
+        Envelopes.created(call("POST", "/orders", body, tenant, SHOPPER, "CUSTOMER", null));
     return Ids.parse(placed.getString("id"));
   }
 
@@ -419,6 +429,152 @@ class HandoverIT {
         scalar(
             PG, "SELECT count(*) FROM \"order\".order_handovers WHERE order_id = '" + gone + "'"),
         is("1"));
+  }
+
+  // ── handed over today: when it was handed over, not when it was placed ─────
+
+  @Test
+  void handedOverTodayIsWhenItWasHandedOverNotWhenItWasPlaced() {
+    // Yesterday's order dispatched today — the usual delivery; today's pickup collected today; one
+    // of yesterday's still waiting; and one placed and dispatched yesterday.
+    UUID lateDelivery = picked("DELIVERY");
+    UUID todaysPickup = picked("PICKUP");
+    UUID stillWaiting = picked("DELIVERY");
+    UUID goneYesterday = picked("DELIVERY");
+    Envelopes.exec(
+        PG,
+        "UPDATE \"order\".orders SET created_at = now() - interval '1 day' WHERE id IN ('"
+            + lateDelivery
+            + "','"
+            + stillWaiting
+            + "','"
+            + goneYesterday
+            + "')");
+    assertThat(dispatch(lateDelivery, "{\"carrier\":\"DPD\"}", "CASHIER", S).getStatus(), is(200));
+    assertThat(collect(todaysPickup, "{}", "CASHIER", S).getStatus(), is(200));
+    assertThat(
+        dispatch(goneYesterday, "{\"carrier\":\"Evri\"}", "CASHIER", S).getStatus(), is(200));
+    Envelopes.exec(
+        PG,
+        "UPDATE \"order\".order_handovers SET handed_at = now() - interval '1 day' WHERE"
+            + " order_id = '"
+            + goneYesterday
+            + "'");
+    // The store's midnight, as the back office works it out: after yesterday, before today's.
+    String since =
+        java.time.Instant.now()
+            .minus(java.time.Duration.ofHours(1))
+            .truncatedTo(java.time.temporal.ChronoUnit.SECONDS)
+            .toString();
+
+    // from= is still when the order was placed: yesterday's order is not among today's.
+    java.util.List<String> placedToday =
+        ids(
+            Envelopes.okArray(
+                asOwner("GET", "/orders?store=" + S + "&handover=DONE&from=" + since, null)));
+    assertThat(placedToday, org.hamcrest.Matchers.hasItem(todaysPickup.toString()));
+    assertThat(placedToday, not(org.hamcrest.Matchers.hasItem(lateDelivery.toString())));
+
+    // handedFrom= is when it was handed over, and on its own it means handover=DONE.
+    for (String query :
+        new String[] {
+          "/orders?store=" + S + "&handedFrom=" + since,
+          "/orders?store=" + S + "&handover=DONE&handedFrom=" + since,
+          "/orders?store=" + S + "&handover=done&handedFrom=" + since
+        }) {
+      java.util.List<String> handedToday = ids(Envelopes.okArray(asOwner("GET", query, null)));
+      assertThat(query, handedToday, org.hamcrest.Matchers.hasItem(lateDelivery.toString()));
+      assertThat(query, handedToday, org.hamcrest.Matchers.hasItem(todaysPickup.toString()));
+      assertThat(query, handedToday, not(org.hamcrest.Matchers.hasItem(stillWaiting.toString())));
+      assertThat(query, handedToday, not(org.hamcrest.Matchers.hasItem(goneYesterday.toString())));
+    }
+    // handedTo= is exclusive, the end of the window: yesterday's handover, not today's.
+    java.util.List<String> handedBefore =
+        ids(Envelopes.okArray(asOwner("GET", "/orders?store=" + S + "&handedTo=" + since, null)));
+    assertThat(handedBefore, org.hamcrest.Matchers.hasItem(goneYesterday.toString()));
+    assertThat(handedBefore, not(org.hamcrest.Matchers.hasItem(lateDelivery.toString())));
+    assertThat(handedBefore, not(org.hamcrest.Matchers.hasItem(stillWaiting.toString())));
+    // Both filters together: placed today AND handed over today.
+    java.util.List<String> both =
+        ids(
+            Envelopes.okArray(
+                asOwner(
+                    "GET",
+                    "/orders?store=" + S + "&handedFrom=" + since + "&from=" + since,
+                    null)));
+    assertThat(both, org.hamcrest.Matchers.hasItem(todaysPickup.toString()));
+    assertThat(both, not(org.hamcrest.Matchers.hasItem(lateDelivery.toString())));
+
+    // Refused: a handover window on the orders not yet handed over, and a date that is not one.
+    assertThat(
+        code(asOwner("GET", "/orders?handover=PENDING&handedFrom=" + since, null), 400),
+        is("ORDER_HANDOVER_FILTER_INVALID"));
+    assertThat(
+        code(asOwner("GET", "/orders?handover=PENDING&handedTo=" + since, null), 400),
+        is("ORDER_HANDOVER_FILTER_INVALID"));
+    assertThat(code(asOwner("GET", "/orders?handedFrom=yesterday", null), 400), is("INVALID_DATE"));
+    assertThat(
+        code(asOwner("GET", "/orders?handedTo=2026-13-01T00:00:00Z", null), 400),
+        is("INVALID_DATE"));
+  }
+
+  @Test
+  void anotherBusinessesHandoversAreNeverListedEitherWay() {
+    // Both businesses hand something over today.
+    UUID ours = picked("DELIVERY");
+    assertThat(dispatch(ours, "{\"carrier\":\"DPD\"}", "CASHIER", S).getStatus(), is(200));
+    UUID theirs = placeAt(T3, S3, "PICKUP");
+    assertThat(
+        call("POST", "/orders/" + theirs + "/confirm", "{}", T3, STAFF, "OWNER", null).getStatus(),
+        is(200));
+    assertThat(
+        call("POST", "/orders/" + theirs + "/fulfil", "{}", T3, STAFF, "OWNER", null).getStatus(),
+        is(200));
+    assertThat(
+        call("POST", "/orders/" + theirs + "/collect", "{}", T3, STAFF, "OWNER", null).getStatus(),
+        is(200));
+    String since =
+        java.time.Instant.now()
+            .minus(java.time.Duration.ofHours(1))
+            .truncatedTo(java.time.temporal.ChronoUnit.SECONDS)
+            .toString();
+
+    // Ours lists ours and never theirs, with or without a store.
+    for (String query :
+        new String[] {
+          "/orders?handedFrom=" + since, "/orders?store=" + S + "&handedFrom=" + since
+        }) {
+      java.util.List<String> listed = ids(Envelopes.okArray(asOwner("GET", query, null)));
+      assertThat(query, listed, org.hamcrest.Matchers.hasItem(ours.toString()));
+      assertThat(query, listed, not(org.hamcrest.Matchers.hasItem(theirs.toString())));
+    }
+    // Theirs, whatever the role and even naming our store, list none of ours.
+    for (String roles : new String[] {"OWNER", "MANAGER", "CASHIER", "STOREKEEPER"}) {
+      assertThat(
+          roles,
+          Envelopes.okArray(
+              call(
+                  "GET", "/orders?store=" + S + "&handedFrom=" + since, null, T3, STAFF, roles, S)),
+          hasSize(0));
+      assertThat(
+          roles,
+          Envelopes.okArray(
+              call(
+                  "GET",
+                  "/orders?store=" + S + "&handover=DONE&handedTo=" + since,
+                  null,
+                  T3,
+                  STAFF,
+                  roles,
+                  S)),
+          hasSize(0));
+    }
+    java.util.List<String> theirList =
+        ids(
+            Envelopes.okArray(
+                call("GET", "/orders?handedFrom=" + since, null, T3, STAFF, "OWNER", null)));
+    assertThat(theirList, org.hamcrest.Matchers.hasItem(theirs.toString()));
+    assertThat(theirList, not(org.hamcrest.Matchers.hasItem(ours.toString())));
   }
 
   private static java.util.List<String> ids(JsonArray orders) {

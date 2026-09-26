@@ -1405,6 +1405,8 @@ public class OrderService {
         status,
         null,
         null,
+        null,
+        null,
         from,
         to,
         afterCursor,
@@ -1416,9 +1418,18 @@ public class OrderService {
    * and dark-store picking): a store's packed parcels awaiting the courier are {@code
    * fulfilmentType=DELIVERY}, {@code status=FULFILLED}, {@code handedOver=false}.
    *
+   * <p>{@code handedFrom}/{@code handedTo} bound when the order was <em>handed over</em>, not when
+   * it was placed ({@code from}/{@code to} stay on creation): yesterday's delivery dispatched this
+   * morning is among today's handovers. A window implies {@code handedOver = true}; asked of the
+   * orders not yet handed over it is refused, since they have no handover time.
+   *
    * @param fulfilmentType restrict to PICKUP, DELIVERY or INSTORE, or {@code null}
    * @param handedOver {@code false} for orders not yet handed over, {@code true} for those that
-   *     were, or {@code null} for either
+   *     were, or {@code null} for either (or for {@code true} when a window is given)
+   * @param handedFrom inclusive lower bound on the handover time, or {@code null}
+   * @param handedTo exclusive upper bound on the handover time, or {@code null}
+   * @throws ApiException 400 {@code ORDER_HANDOVER_FILTER_INVALID} for a window with {@code
+   *     handedOver = false}
    */
   public OrderPage listOrders(
       UUID tenantId,
@@ -1429,10 +1440,20 @@ public class OrderService {
       String status,
       String fulfilmentType,
       Boolean handedOver,
+      Instant handedFrom,
+      Instant handedTo,
       Instant from,
       Instant to,
       String afterCursor,
       int limit) {
+    boolean handedWindow = handedFrom != null || handedTo != null;
+    if (handedWindow && Boolean.FALSE.equals(handedOver)) {
+      throw ApiException.badRequest(
+          "ORDER_HANDOVER_FILTER_INVALID",
+          "handedFrom and handedTo are for handover=DONE: an order not handed over has no"
+              + " handover time");
+    }
+    Boolean handed = handedWindow ? Boolean.TRUE : handedOver;
     Instant afterCreatedAt = null;
     UUID afterId = null;
     String rawKey = com.storeql.web.Cursor.decode(afterCursor);
@@ -1457,7 +1478,9 @@ public class OrderService {
             channel,
             status,
             fulfilmentType,
-            handedOver,
+            handed,
+            handedFrom,
+            handedTo,
             from,
             to,
             afterCreatedAt,

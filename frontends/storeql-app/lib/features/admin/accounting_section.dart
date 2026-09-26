@@ -3,12 +3,15 @@ import 'package:flutter_riverpod/flutter_riverpod.dart';
 
 import '../../core/format.dart';
 import '../../core/spacing.dart';
+import '../../core/theme.dart';
+import '../../shared/util/short_ref.dart';
 import '../../shared/widgets/status_badge.dart';
-import 'integrations_screen.dart' show SectionHeading;
+import 'integrations_screen.dart' show SectionHeading, codeInWords;
 import '../../core/network/api_error.dart';
 import '../../shared/widgets/error_view.dart';
 import '../../shared/widgets/loading_view.dart';
 import 'accounting_api.dart';
+import 'providers/admin_providers.dart' show tenantInfoProvider;
 
 // ---------------------------------------------------------------------------
 // Accounting (17.9), on the Integrations screen: the package the business keeps
@@ -143,8 +146,41 @@ String _providerName(String code) => switch (code) {
       'QUICKBOOKS' => 'QuickBooks Online',
       'SAGE' => 'Sage Business Cloud Accounting',
       'SIMULATED' => 'Simulated package',
-      _ => code,
+      _ => humanizeCode(code),
     };
+
+/// What each of a package's settings is, in words (`Accounting.CATALOGUE` in
+/// purchase-svc names them by key): the organisation, company or business the
+/// journals go to, QuickBooks' environment, the stand-in's refused account.
+String _settingLabel(String key) => switch (key) {
+      'tenantId' => 'Xero organisation',
+      'realmId' => 'QuickBooks company',
+      'businessId' => 'Sage business',
+      'environment' => 'Environment',
+      'refuse' => 'Account it refuses',
+      _ => codeInWords(key),
+    };
+
+/// Where to find a setting's value, under its field.
+String? _settingHelp(String key) => switch (key) {
+      'tenantId' => 'The organisation\'s tenant id, from the Xero connection',
+      'realmId' => 'The company\'s realm id, from the Intuit app',
+      'businessId' => 'The business id, from the Sage developer app',
+      'environment' => 'Production, unless the company is a QuickBooks sandbox',
+      'refuse' => 'A nominal code the stand-in turns away, to rehearse a refusal',
+      _ => null,
+    };
+
+/// A setting on the connection's card: the package's own id by a short ref
+/// (the end of it, which is what differs), the environment in words.
+String _settingPhrase(String key, String value) => switch (key) {
+      'environment' => '${humanizeCode(value)} environment',
+      'refuse' => 'refuses account $value',
+      _ => '${_settingLabel(key)} ${_ref(value)}',
+    };
+
+/// A package's id as a short ref; one short enough to read stays whole.
+String _ref(String id) => id.length <= 8 ? id : '…${shortRef(id)}';
 
 class _ConnectionCard extends ConsumerWidget {
   final AccountingConnection c;
@@ -168,24 +204,28 @@ class _ConnectionCard extends ConsumerWidget {
                 Expanded(
                   child: Text(_providerName(c.provider), style: Theme.of(context).textTheme.titleMedium?.copyWith(fontWeight: FontWeight.bold)),
                 ),
-                Chip(
-                  key: const Key('accounting-status'),
-                  label: Text(c.active ? 'Pushing' : 'Switched off'),
-                  backgroundColor: c.active ? cs.primaryContainer : cs.surfaceContainerHighest,
-                ),
               ],
             ),
             const SizedBox(height: 6),
             Text(
-              'Journals from ${AppFormat.date(c.syncFrom)} · '
-              '${c.lastSyncAt == null ? 'never pushed yet' : 'last push ${AppFormat.dateTime(c.lastSyncAt)}'}'
-              '${c.settings.isEmpty ? '' : ' · ${c.settings.entries.map((e) => '${e.key} ${e.value}').join(', ')}'}',
+              [
+                'Journals from ${AppFormat.date(c.syncFrom)}',
+                c.lastSyncAt == null ? 'never pushed yet' : 'last push ${AppFormat.dateTime(c.lastSyncAt)}',
+                for (final e in c.settings.entries) _settingPhrase(e.key, e.value),
+              ].join(' · '),
               style: Theme.of(context).textTheme.bodySmall,
             ),
             if (c.lastError != null) ...[
               const SizedBox(height: 6),
               Text(c.lastError!, key: const Key('accounting-last-error'), style: TextStyle(color: cs.error)),
             ],
+            const SizedBox(height: AppSpacing.sm),
+            // Whether it pushes, as a badge under the details.
+            StatusBadge(
+              c.active ? 'Pushing' : 'Switched off',
+              key: const Key('accounting-status'),
+              tone: c.active ? StatusTone.success : StatusTone.neutral,
+            ),
             const SizedBox(height: 10),
             Wrap(
               spacing: 8,
@@ -263,6 +303,9 @@ class _SyncList extends ConsumerWidget {
   @override
   Widget build(BuildContext context, WidgetRef ref) {
     final syncs = ref.watch(accountingSyncsProvider);
+    // The ledger is kept in the business's own currency, and a push carries
+    // none: its total is money in that currency.
+    final currency = ref.watch(tenantInfoProvider).value?.currency;
     final theme = Theme.of(context);
     return Padding(
       padding: const EdgeInsets.only(top: 12),
@@ -283,7 +326,7 @@ class _SyncList extends ConsumerWidget {
                     padding: EdgeInsets.symmetric(vertical: 8),
                     child: Text('Nothing pushed yet. Post a journal, or press Push now.'),
                   )
-                : Column(children: [for (final s in list) _SyncTile(s: s)]),
+                : Column(children: [for (final s in list) _SyncTile(s: s, currency: currency)]),
           ),
         ],
       ),
@@ -293,7 +336,10 @@ class _SyncList extends ConsumerWidget {
 
 class _SyncTile extends ConsumerWidget {
   final AccountingSync s;
-  const _SyncTile({required this.s});
+
+  /// The business's home currency, or null while it is unknown.
+  final String? currency;
+  const _SyncTile({required this.s, required this.currency});
 
   @override
   Widget build(BuildContext context, WidgetRef ref) {
@@ -301,18 +347,22 @@ class _SyncTile extends ConsumerWidget {
       'DELIVERED' => StatusTone.success,
       'FAILED' => StatusTone.error,
       'UNCERTAIN' => StatusTone.warning,
+      // Waiting is the info tone everywhere (UI-GUIDE §7.2), as a webhook
+      // delivery that waits is on the same page.
+      'PENDING' => StatusTone.info,
       _ => StatusTone.neutral,
     };
+    final total = s.total == null ? null : num.tryParse(s.total!);
     final detail = [
       if (s.entryDate != null) AppFormat.date(s.entryDate),
-      if (s.total != null) s.total!,
-      if (s.externalId != null) 'in the package as ${s.externalId}',
+      if (total != null) AppFormat.money(total, currencyCode: currency),
+      if (s.externalId != null) 'in the package as ${_ref(s.externalId!)}',
       if (s.lastError != null && !s.delivered) s.lastError!,
       if (s.status == 'PENDING' && s.nextAttemptAt != null && s.attempts > 0) 'next try ${AppFormat.dateTime(s.nextAttemptAt)}',
     ].join(' · ');
     return Card(
       key: Key('sync-${s.id}'),
-      margin: const EdgeInsets.only(bottom: 6),
+      margin: const EdgeInsetsDirectional.only(bottom: AppSpacing.sm),
       child: ListTile(
         title: Text(s.description ?? s.journalId),
         // The state as a badge under the details; the two actions at the end
@@ -365,7 +415,7 @@ class _SyncTile extends ConsumerWidget {
         'FAILED' => 'Failed',
         'UNCERTAIN' => 'Uncertain',
         'SKIPPED' => 'Skipped',
-        _ => status,
+        _ => humanizeCode(status),
       };
 
   Future<void> _retry(BuildContext context, WidgetRef ref) async {
@@ -449,15 +499,27 @@ class _ConnectAccountingDialogState extends ConsumerState<ConnectAccountingDialo
   final _refresh = TextEditingController();
   final _clientId = TextEditingController();
   final _clientSecret = TextEditingController();
-  late final TextEditingController _syncFrom;
+
+  /// Journals dated from this day are pushed; the first of this month unless
+  /// another day is chosen on the calendar.
+  DateTime _syncFrom = DateTime(DateTime.now().year, DateTime.now().month);
   bool _busy = false;
   String? _error;
 
-  @override
-  void initState() {
-    super.initState();
-    final now = DateTime.now();
-    _syncFrom = TextEditingController(text: '${now.year}-${now.month.toString().padLeft(2, '0')}-01');
+  /// The day as the server reads it: yyyy-MM-dd.
+  String get _syncFromIso =>
+      '${_syncFrom.year.toString().padLeft(4, '0')}-${_syncFrom.month.toString().padLeft(2, '0')}-${_syncFrom.day.toString().padLeft(2, '0')}';
+
+  Future<void> _pickSyncFrom() async {
+    final today = DateTime.now();
+    final picked = await showDatePicker(
+      context: context,
+      helpText: 'Push journals from',
+      initialDate: _syncFrom,
+      firstDate: DateTime(2000),
+      lastDate: DateTime(today.year + 1, 12, 31),
+    );
+    if (picked != null && mounted) setState(() => _syncFrom = DateTime(picked.year, picked.month, picked.day));
   }
 
   @override
@@ -469,7 +531,6 @@ class _ConnectAccountingDialogState extends ConsumerState<ConnectAccountingDialo
     _refresh.dispose();
     _clientId.dispose();
     _clientSecret.dispose();
-    _syncFrom.dispose();
     super.dispose();
   }
 
@@ -497,7 +558,7 @@ class _ConnectAccountingDialogState extends ConsumerState<ConnectAccountingDialo
                     if (_clientSecret.text.trim().isNotEmpty) 'clientSecret': _clientSecret.text.trim(),
                   }
                 : null,
-            syncFrom: _syncFrom.text.trim(),
+            syncFrom: _syncFromIso,
           );
       if (mounted) Navigator.pop(context, made);
     } catch (e) {
@@ -537,22 +598,36 @@ class _ConnectAccountingDialogState extends ConsumerState<ConnectAccountingDialo
                     ),
                     const SizedBox(height: 8),
                     Text(chosen.tokens, style: Theme.of(context).textTheme.bodySmall),
+                    // Each setting by what it is — the Xero organisation, the
+                    // QuickBooks company — with where to find it underneath.
                     for (final name in chosen.settings) ...[
                       const SizedBox(height: 8),
                       TextFormField(
                         key: Key('acct-setting-$name'),
                         controller: _setting(name),
-                        decoration: InputDecoration(labelText: '$name *'),
+                        decoration: InputDecoration(labelText: '${_settingLabel(name)} *', helperText: _settingHelp(name)),
                         validator: (v) => v == null || v.trim().isEmpty ? 'Required' : null,
                       ),
                     ],
                     for (final name in chosen.optional) ...[
                       const SizedBox(height: 8),
-                      TextFormField(
-                        key: Key('acct-setting-$name'),
-                        controller: _setting(name),
-                        decoration: InputDecoration(labelText: name),
-                      ),
+                      if (name == 'environment')
+                        DropdownButtonFormField<String>(
+                          key: Key('acct-setting-$name'),
+                          initialValue: _setting(name).text.isEmpty ? null : _setting(name).text,
+                          decoration: InputDecoration(labelText: _settingLabel(name), helperText: _settingHelp(name)),
+                          items: const [
+                            DropdownMenuItem(value: 'PRODUCTION', child: Text('Production')),
+                            DropdownMenuItem(value: 'SANDBOX', child: Text('Sandbox')),
+                          ],
+                          onChanged: (v) => _setting(name).text = v ?? '',
+                        )
+                      else
+                        TextFormField(
+                          key: Key('acct-setting-$name'),
+                          controller: _setting(name),
+                          decoration: InputDecoration(labelText: _settingLabel(name), helperText: _settingHelp(name)),
+                        ),
                     ],
                     if (chosen.needsCredentials) ...[
                       const SizedBox(height: 8),
@@ -581,11 +656,19 @@ class _ConnectAccountingDialogState extends ConsumerState<ConnectAccountingDialo
                       ),
                     ],
                     const SizedBox(height: 8),
-                    TextFormField(
+                    // The day on a calendar, never typed; sent as yyyy-MM-dd.
+                    InkWell(
                       key: const Key('acct-sync-from'),
-                      controller: _syncFrom,
-                      decoration: const InputDecoration(labelText: 'Push journals from (yyyy-MM-dd) *'),
-                      validator: (v) => v == null || !RegExp(r'^\d{4}-\d{2}-\d{2}$').hasMatch(v.trim()) ? 'A day, yyyy-MM-dd' : null,
+                      borderRadius: AppRadius.input,
+                      onTap: _busy ? null : _pickSyncFrom,
+                      child: InputDecorator(
+                        decoration: const InputDecoration(
+                          labelText: 'Push journals from *',
+                          helperText: 'Journals dated from this day on go to the package.',
+                          suffixIcon: Icon(Icons.calendar_today_outlined),
+                        ),
+                        child: Text(AppFormat.dateOf(_syncFrom)),
+                      ),
                     ),
                     if (_error != null) ...[
                       const SizedBox(height: 8),

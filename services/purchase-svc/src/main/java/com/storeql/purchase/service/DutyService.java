@@ -4,6 +4,7 @@ import com.storeql.ids.Ids;
 import com.storeql.purchase.domain.Domain;
 import com.storeql.purchase.domain.Domain.DutyRelease;
 import com.storeql.purchase.domain.Domain.NominalLedgerEntry;
+import com.storeql.purchase.domain.Handle;
 import com.storeql.purchase.domain.LedgerPosting;
 import com.storeql.purchase.repo.DutyRepository;
 import com.storeql.service.TenantProfiles;
@@ -75,7 +76,7 @@ public class DutyService {
             "Duty on "
                 + r.qty().toPlainString()
                 + " x variant "
-                + Ids.shortRef(r.variantId())
+                + Handle.of(r.variantId())
                 + " released from bond"
                 + (r.reference() == null ? "" : " (" + r.reference() + ")"),
             Domain.SOURCE_DUTY_RELEASE,

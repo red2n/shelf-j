@@ -214,6 +214,22 @@ void main() {
       expect(find.textContaining('holders carry it from their next sign-in'), findsOneWidget);
     });
 
+    testWidgets('deleting a role names it by its name, in the question and the answer',
+        (tester) async {
+      final server = await _pump(tester);
+      await _openRoles(tester);
+      await tester.tap(find.byKey(const Key('delete-role-SHIFT_LEAD')));
+      await tester.pumpAndSettle();
+      expect(find.text('Delete Shift lead?'), findsOneWidget);
+      expect(find.textContaining('SHIFT_LEAD'), findsNothing);
+      await tester.tap(find.byKey(const Key('role-delete-confirm')));
+      await tester.pumpAndSettle();
+      final sent = server.requests.singleWhere((r) => r.method == 'DELETE');
+      expect(sent.path, endsWith('/admin/roles/SHIFT_LEAD'));
+      expect(find.text('Shift lead deleted.'), findsOneWidget);
+      expect(find.textContaining('SHIFT_LEAD'), findsNothing);
+    });
+
     testWidgets('a role in use cannot be deleted, and the reason is shown', (tester) async {
       final server = await _pump(tester, server: _Server()..deleteStatus = 409);
       await _openRoles(tester);

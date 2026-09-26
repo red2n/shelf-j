@@ -4,6 +4,7 @@ import static org.hamcrest.MatcherAssert.assertThat;
 import static org.hamcrest.Matchers.comparesEqualTo;
 import static org.hamcrest.Matchers.containsString;
 import static org.hamcrest.Matchers.is;
+import static org.hamcrest.Matchers.not;
 
 import com.storeql.ids.Ids;
 import com.storeql.purchase.messaging.SalesEventHandler;
@@ -143,6 +144,11 @@ class DropshipIT {
     return out;
   }
 
+  /** How people see an id: "#" and its last eight characters, as every screen shows it. */
+  private static String handle(String id) {
+    return "#" + id.substring(id.length() - 8);
+  }
+
   private static JsonObject trialBalanceRow(JsonObject tb, String code) {
     for (JsonValue v : tb.getJsonArray("rows")) {
       if (code.equals(v.asJsonObject().getString("nominalCode"))) return v.asJsonObject();
@@ -223,6 +229,9 @@ class DropshipIT {
     assertThat(
         lines.getJsonObject(0).getJsonNumber("unitPrice").bigDecimalValue(),
         comparesEqualTo(new BigDecimal("4.00")));
+    assertThat(
+        lines.getJsonObject(0).getString("proposalReason"),
+        is("dropship for sale " + handle(orderId) + ", shipped to the customer"));
     // An order with no dropship line raises nothing.
     sales.orderConfirmed(
         confirmed(Ids.newId().toString(), T, Ids.newId().toString(), line(STOCKED, 3, "9.00")));
@@ -248,6 +257,22 @@ class DropshipIT {
         trialBalanceRow(tb, "2109").getJsonNumber("balance").bigDecimalValue(),
         comparesEqualTo(new BigDecimal("-8.00")));
     assertThat(trialBalanceRow(tb, "1001") == null, is(true));
+    // Read in the accounting package and on the Integrations screen: the order and the sale it
+    // filled named as people see them ("PO #…", "sale #…"), never by a whole id.
+    JsonArray delivery = Envelopes.okArray(get("/nominal-ledger?code=5020"));
+    assertThat(delivery.size(), is(1));
+    String described = delivery.getJsonObject(0).getString("description");
+    assertThat(
+        described,
+        is(
+            "Dropship PO "
+                + handle(poId)
+                + " for sale "
+                + handle(orderId)
+                + " delivered to the customer"));
+    assertThat(described, not(containsString(poId)));
+    assertThat(described, not(containsString(orderId)));
+    assertThat(delivery.getJsonObject(0).getString("sourceRef"), is(poId));
     assertThat(
         code(post("/purchase-orders/" + poId + "/dropship-delivered", "{}"), 409),
         is("PURCHASE_PO_NOT_DELIVERABLE"));

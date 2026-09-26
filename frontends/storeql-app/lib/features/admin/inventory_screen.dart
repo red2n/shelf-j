@@ -1,3 +1,5 @@
+import 'dart:async';
+
 import 'package:dio/dio.dart';
 import 'package:flutter/material.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
@@ -24,8 +26,16 @@ import 'inventory_waves_tab.dart';
 import 'inventory_yield_tab.dart';
 import 'inventory_warehouse_tabs.dart';
 import 'procurement_providers.dart';
+import 'widgets/variant_search.dart';
 import '../../shared/util/short_ref.dart';
 import 'package:storeql_app/core/ids.dart';
+
+/// Reads a barcode with the camera and answers it, or null when the person
+/// closes the scanner; a provider so tests hand one in.
+final inventoryBarcodeScannerProvider =
+    Provider<Future<String?> Function(BuildContext)>(
+      (ref) => scanBarcodeWithCamera,
+    );
 
 class InventoryScreen extends ConsumerStatefulWidget {
   const InventoryScreen({super.key});
@@ -785,6 +795,10 @@ class _ReceiveStockDialogState extends ConsumerState<_ReceiveStockDialog> {
   }
 
   final _formKey = GlobalKey<FormState>();
+
+  /// The product being received, found by name or SKU or scanned; the
+  /// request carries its variant id. [_variantCtrl] shows it in words.
+  VariantChoice? _variant;
   final _variantCtrl = TextEditingController();
   final _qtyCtrl = TextEditingController();
   final _costCtrl = TextEditingController();
@@ -807,7 +821,6 @@ class _ReceiveStockDialogState extends ConsumerState<_ReceiveStockDialog> {
   bool _loading = false;
   bool _resolving = false;
   String? _error;
-  String? _resolvedLabel;
 
   @override
   void dispose() {
@@ -820,11 +833,10 @@ class _ReceiveStockDialogState extends ConsumerState<_ReceiveStockDialog> {
   }
 
   Future<void> _scanVariant() async {
-    final code = await scanBarcodeWithCamera(context);
+    final code = await ref.read(inventoryBarcodeScannerProvider)(context);
     if (code == null || code.isEmpty || !mounted) return;
     setState(() {
       _resolving = true;
-      _resolvedLabel = null;
       _fromLabel = const [];
       _error = null;
     });
@@ -849,9 +861,14 @@ class _ReceiveStockDialogState extends ConsumerState<_ReceiveStockDialog> {
       final batch = scanned?['batch'] as String?;
       final expiry = scanned?['expiry'] as String?;
       setState(() {
-        _variantCtrl.text = variantId;
-        _resolvedLabel =
-            '${v['productName'] ?? v['sku'] ?? variantId} (${v['sku'] ?? code})';
+        _choose(
+          VariantChoice(
+            variantId: variantId,
+            productName: v['productName'] as String? ?? '',
+            sku: v['sku'] as String? ?? '',
+            variant: variantWords(v['attributes']),
+          ),
+        );
         // Filled from the label, never overwritten: what somebody typed is their
         // decision, and a scan silently replacing it would be the worse of the
         // two errors. An empty field is filled; a filled one is left alone.
@@ -864,7 +881,7 @@ class _ReceiveStockDialogState extends ConsumerState<_ReceiveStockDialog> {
         }
         _fromLabel = [
           if (batch != null) 'lot $batch',
-          if (expiry != null) 'expiry $expiry',
+          if (expiry != null) 'expiry ${AppFormat.date(expiry)}',
         ];
       });
     } catch (e) {
@@ -874,12 +891,28 @@ class _ReceiveStockDialogState extends ConsumerState<_ReceiveStockDialog> {
     }
   }
 
+  void _choose(VariantChoice choice) {
+    _variant = choice;
+    _variantCtrl.text = choice.label;
+  }
+
+  Future<void> _findVariant() async {
+    final choice = await showVariantSearch(context);
+    if (choice == null || !mounted) return;
+    setState(() {
+      _choose(choice);
+      _error = null;
+    });
+  }
+
   Future<void> _submit() async {
     if (!_formKey.currentState!.validate()) return;
     if (_storeId == null) {
       setState(() => _error = 'Select a store.');
       return;
     }
+    final variant = _variant;
+    if (variant == null) return;
     if (_ownership == 'CONSIGNMENT' && _supplierId == null) {
       setState(
         () => _error = 'Consignment stock belongs to a supplier: pick one.',
@@ -898,7 +931,7 @@ class _ReceiveStockDialogState extends ConsumerState<_ReceiveStockDialog> {
             '/${ApiConstants.inventory}/admin/inventory/receive',
             data: {
               'storeId': _storeId,
-              'variantId': _variantCtrl.text.trim(),
+              'variantId': variant.variantId,
               'qty': double.parse(_qtyCtrl.text.trim()),
               if (_batchCtrl.text.trim().isNotEmpty)
                 'batchNo': _batchCtrl.text.trim(),
@@ -929,10 +962,10 @@ class _ReceiveStockDialogState extends ConsumerState<_ReceiveStockDialog> {
     // Read the backend's structured error; fall back to a screen-specific hint.
     final code = apiErrorCode(e);
     if (code == 'INVALID_UUID') {
-      return 'Check the variant ID (UUID) and quantity.';
+      return 'Check the product and the quantity.';
     }
     if (e is DioException && e.response?.statusCode == 404) {
-      return 'No variant with that ID exists.';
+      return 'That product is no longer in the catalogue: find it again.';
     }
     return friendlyError(e, fallback: 'Could not receive stock.');
   }
@@ -1036,18 +1069,11 @@ class _ReceiveStockDialogState extends ConsumerState<_ReceiveStockDialog> {
                   crossAxisAlignment: CrossAxisAlignment.start,
                   children: [
                     Expanded(
-                      child: TextFormField(
+                      child: VariantField(
                         controller: _variantCtrl,
-                        decoration: InputDecoration(
-                          labelText: 'Variant ID (UUID) *',
-                          prefixIcon: const Icon(Icons.qr_code_2_outlined),
-                          helperText: _resolvedLabel != null
-                              ? 'Resolved: $_resolvedLabel'
-                              : 'Scan a barcode or paste the variant UUID',
-                        ),
-                        onChanged: (_) => setState(() => _resolvedLabel = null),
-                        validator: (v) =>
-                            v == null || v.trim().isEmpty ? 'Required' : null,
+                        onTap: _findVariant,
+                        helperText:
+                            'Find it by name or SKU, or scan its barcode',
                       ),
                     ),
                     const SizedBox(width: 8),
@@ -2024,6 +2050,10 @@ class _SetThresholdDialogState extends ConsumerState<_SetThresholdDialog> {
   final _formKey = GlobalKey<FormState>();
   final _thresholdCtrl = TextEditingController();
   final _maxQtyCtrl = TextEditingController();
+
+  /// The product found by name or SKU when the dialog was not opened on one;
+  /// [_variantCtrl] shows it in words.
+  VariantChoice? _variant;
   final _variantCtrl = TextEditingController();
   String? _storeId;
   bool _loading = false;
@@ -2036,9 +2066,16 @@ class _SetThresholdDialogState extends ConsumerState<_SetThresholdDialog> {
   void initState() {
     super.initState();
     _storeId = widget.storeId.isEmpty ? null : widget.storeId;
-    if (widget.variantId.isNotEmpty) {
-      _variantCtrl.text = widget.variantId;
-    }
+  }
+
+  Future<void> _findVariant() async {
+    final choice = await showVariantSearch(context);
+    if (choice == null || !mounted) return;
+    setState(() {
+      _variant = choice;
+      _variantCtrl.text = choice.label;
+      _error = null;
+    });
   }
 
   @override
@@ -2052,15 +2089,13 @@ class _SetThresholdDialogState extends ConsumerState<_SetThresholdDialog> {
   Future<void> _submit() async {
     if (!_formKey.currentState!.validate()) return;
     final storeId = _storeId ?? widget.storeId;
-    final variantId = _variantCtrl.text.trim().isNotEmpty
-        ? _variantCtrl.text.trim()
-        : widget.variantId;
+    final variantId = _variant?.variantId ?? widget.variantId;
     if (storeId.isEmpty) {
       setState(() => _error = 'Select a store.');
       return;
     }
     if (variantId.isEmpty) {
-      setState(() => _error = 'Enter a variant ID.');
+      setState(() => _error = 'Choose a product.');
       return;
     }
     setState(() {
@@ -2161,14 +2196,10 @@ class _SetThresholdDialogState extends ConsumerState<_SetThresholdDialog> {
                 ],
                 if (_needsVariantPick) ...[
                   const SizedBox(height: 12),
-                  TextFormField(
+                  VariantField(
                     controller: _variantCtrl,
-                    decoration: const InputDecoration(
-                      labelText: 'Variant ID (UUID) *',
-                      prefixIcon: Icon(Icons.qr_code_2_outlined),
-                    ),
-                    validator: (v) =>
-                        v == null || v.trim().isEmpty ? 'Required' : null,
+                    onTap: _findVariant,
+                    helperText: 'Find it by name or SKU',
                   ),
                 ],
                 const SizedBox(height: 12),

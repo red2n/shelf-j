@@ -8,6 +8,7 @@ import 'package:intl/date_symbol_data_local.dart';
 import 'package:storeql_app/core/auth/auth_notifier.dart';
 import 'package:storeql_app/core/network/api_client.dart';
 import 'package:storeql_app/features/admin/integrations_screen.dart';
+import 'package:storeql_app/shared/widgets/status_badge.dart';
 
 import '../../support/fake_api.dart';
 
@@ -104,8 +105,8 @@ class _Server implements HttpClientAdapter {
   }
 }
 
-Future<_Server> _pump(WidgetTester tester, String role) async {
-  tester.view.physicalSize = const Size(1400, 2800);
+Future<_Server> _pump(WidgetTester tester, String role, {Size size = const Size(1400, 2800), double textScale = 1}) async {
+  tester.view.physicalSize = size;
   tester.view.devicePixelRatio = 1;
   addTearDown(tester.view.reset);
   final server = _Server();
@@ -116,7 +117,13 @@ Future<_Server> _pump(WidgetTester tester, String role) async {
         apiClientProvider.overrideWithValue(FakeApiClient(dio)),
         authNotifierProvider.overrideWith(() => RoleAuth(role)),
       ],
-      child: const MaterialApp(home: IntegrationsScreen()),
+      child: MaterialApp(
+        builder: (context, child) => MediaQuery(
+          data: MediaQuery.of(context).copyWith(textScaler: TextScaler.linear(textScale)),
+          child: child!,
+        ),
+        home: const IntegrationsScreen(),
+      ),
     ),
   );
   await tester.pumpAndSettle();
@@ -130,9 +137,12 @@ void main() {
     await _pump(tester, 'OWNER');
     expect(find.text('Warehouse ERP'), findsOneWidget);
     expect(find.text('https://erp.example.com/storeql/Warehouse ERP'), findsOneWidget);
-    expect(find.textContaining('OrderPlaced, StockReceived · last delivered'), findsOneWidget);
+    expect(find.textContaining('Order placed, Stock received · last delivered'), findsOneWidget, reason: 'the events in words');
+    expect(find.textContaining('OrderPlaced'), findsNothing);
     expect(find.textContaining('never delivered'), findsOneWidget);
-    expect(find.text('Off'), findsOneWidget);
+    expect(find.widgetWithText(StatusBadge, 'Active'), findsOneWidget);
+    expect(find.widgetWithText(StatusBadge, 'Off'), findsOneWidget);
+    expect(find.byType(Chip), findsNothing, reason: 'a state is a badge, not a hand-coloured chip');
     expect(find.textContaining('Switched off: 20 deliveries failed in a row'), findsOneWidget);
     expect(find.byKey(const Key('add-webhook')), findsOneWidget);
     expect(find.byKey(const Key('rotate-$_live')), findsOneWidget);
@@ -157,6 +167,10 @@ void main() {
     final server = await _pump(tester, 'OWNER');
     await tester.tap(find.byKey(const Key('add-webhook')));
     await tester.pumpAndSettle();
+    // Each event by its name in words, with its sentence under it.
+    expect(find.descendant(of: find.byKey(const Key('event-OrderPlaced')), matching: find.text('Order placed')), findsOneWidget);
+    expect(find.descendant(of: find.byKey(const Key('event-OrderPlaced')), matching: find.text('An order was placed')), findsOneWidget);
+    expect(find.text('StockReceived'), findsNothing);
     await tester.enterText(find.byKey(const Key('webhook-url')), 'http://erp.example.com/hook');
     await tester.enterText(find.byKey(const Key('webhook-description')), 'Accounts package');
     await tester.tap(find.byKey(const Key('webhook-submit')));
@@ -191,8 +205,13 @@ void main() {
     final server = await _pump(tester, 'OWNER');
     await tester.tap(find.byKey(const Key('deliveries-$_live')));
     await tester.pumpAndSettle();
-    expect(find.text('Ping · delivered'), findsOneWidget);
-    expect(find.text('OrderPlaced · dead'), findsOneWidget);
+    final ping = find.byKey(const Key('delivery-$_delivered'));
+    final dead = find.byKey(const Key('delivery-$_dead'));
+    expect(find.descendant(of: ping, matching: find.text('Test delivery')), findsOneWidget);
+    expect(find.descendant(of: ping, matching: find.widgetWithText(StatusBadge, 'Delivered')), findsOneWidget);
+    expect(find.descendant(of: dead, matching: find.text('Order placed')), findsOneWidget);
+    expect(find.descendant(of: dead, matching: find.widgetWithText(StatusBadge, 'Failed')), findsOneWidget);
+    expect(find.textContaining('dead'), findsNothing, reason: 'the status in words, never the code');
     expect(find.textContaining('5 tries · last answer 503 · HTTP 503'), findsOneWidget);
     await tester.tap(find.byKey(const Key('redeliver-$_dead')));
     await tester.pumpAndSettle();
@@ -223,5 +242,40 @@ void main() {
     await tester.pumpAndSettle();
     expect(server.of('DELETE').single.path, endsWith('/webhooks/endpoints/$_live'));
     expect(find.text('Warehouse ERP removed'), findsOneWidget);
+  });
+
+  for (final scale in [1.0, 2.0]) {
+    testWidgets('on a phone at ${scale}x text an endpoint reads across the card and its actions sit in one menu', (tester) async {
+      final server = await _pump(tester, 'OWNER', size: const Size(390, 3200), textScale: scale);
+      expect(tester.takeException(), isNull);
+      final card = find.byKey(const Key('webhook-$_live'));
+      final icon = tester.getRect(find.descendant(of: card, matching: find.byIcon(Icons.webhook_outlined)));
+      final url = tester.getRect(find.text('https://erp.example.com/storeql/Warehouse ERP'));
+      expect(url.left, moreOrLessEquals(icon.left), reason: 'the details under the icon, not indented beside it');
+      expect(find.descendant(of: card, matching: find.widgetWithText(StatusBadge, 'Active')), findsOneWidget);
+      expect(find.byKey(const Key('ping-$_live')), findsNothing, reason: 'no row of five buttons on a phone');
+      expect(find.byKey(const Key('remove-$_live')), findsNothing);
+
+      await tester.ensureVisible(find.byKey(const Key('webhook-actions-$_live')));
+      await tester.pumpAndSettle();
+      await tester.tap(find.byKey(const Key('webhook-actions-$_live')));
+      await tester.pumpAndSettle();
+      expect(find.byKey(const Key('remove-$_live')), findsOneWidget);
+      await tester.tap(find.byKey(const Key('ping-$_live')));
+      await tester.pumpAndSettle();
+      expect(server.of('POST').single.path, endsWith('/webhooks/endpoints/$_live/ping'));
+      expect(find.text('Test delivery queued'), findsOneWidget);
+    });
+  }
+
+  testWidgets('on a phone a manager\'s menu holds only Ping and Deliveries', (tester) async {
+    await _pump(tester, 'MANAGER', size: const Size(390, 3200));
+    await tester.tap(find.byKey(const Key('webhook-actions-$_live')));
+    await tester.pumpAndSettle();
+    expect(find.byKey(const Key('ping-$_live')), findsOneWidget);
+    expect(find.byKey(const Key('deliveries-$_live')), findsOneWidget);
+    expect(find.byKey(const Key('toggle-$_live')), findsNothing);
+    expect(find.byKey(const Key('rotate-$_live')), findsNothing);
+    expect(find.byKey(const Key('remove-$_live')), findsNothing);
   });
 }

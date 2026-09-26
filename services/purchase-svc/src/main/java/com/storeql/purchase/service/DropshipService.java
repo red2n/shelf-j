@@ -8,6 +8,7 @@ import com.storeql.purchase.domain.Domain.NominalLedgerEntry;
 import com.storeql.purchase.domain.Domain.PurchaseOrder;
 import com.storeql.purchase.domain.Domain.PurchaseOrderLine;
 import com.storeql.purchase.domain.Domain.Supplier;
+import com.storeql.purchase.domain.Handle;
 import com.storeql.purchase.domain.LedgerPosting;
 import com.storeql.purchase.domain.Totals;
 import com.storeql.purchase.dto.Dtos.CreateDropshipArrangementRequest;
@@ -184,7 +185,7 @@ public class DropshipService {
                 a.unitCost(),
                 a.vatCode(),
                 now,
-                "dropship for sale " + Ids.shortRef(orderId) + ", shipped to the customer"),
+                "dropship for sale " + Handle.of(orderId) + ", shipped to the customer"),
             currency,
             vatRates);
       }
@@ -255,7 +256,10 @@ public class DropshipService {
     return LedgerPosting.of(
             po.tenantId(),
             LocalDate.now(ZoneOffset.UTC),
-            "Dropship order " + Ids.shortRef(po.id()) + " delivered to the customer",
+            "Dropship "
+                + po.reference()
+                + (po.salesOrderId() == null ? "" : " for sale " + Handle.of(po.salesOrderId()))
+                + " delivered to the customer",
             Domain.SOURCE_DROPSHIP_DELIVERY,
             po.id(),
             po.storeId())

@@ -150,6 +150,18 @@ class IntegrationsScreen extends ConsumerWidget {
   }
 }
 
+/// A camel-case name from the wire in words: `OrderPlaced` → *Order placed*,
+/// `StockBelowThreshold` → *Stock below threshold*, `tenantId` → *Tenant ID*.
+/// The fallback for a name no screen map knows yet.
+String codeInWords(String code) =>
+    humanizeCode(code.replaceAllMapped(RegExp(r'([a-z0-9])([A-Z])'), (m) => '${m[1]}_${m[2]}'));
+
+/// Whether a card's content goes under its icon and its actions under the
+/// text or into one ⋮: below 600px, or below 840px with large text.
+bool _narrow(BuildContext context, double width) =>
+    width < AppBreakpoints.medium ||
+    (MediaQuery.textScalerOf(context).scale(16) > 16 * 1.3 && width < AppBreakpoints.expanded);
+
 class _KeyTile extends StatelessWidget {
   final ApiKey k;
   final bool owner;
@@ -438,30 +450,48 @@ class _SandboxSection extends ConsumerWidget {
     final theme = Theme.of(context);
     final cs = theme.colorScheme;
     if (inSandbox) {
+      // Beside the icon where there is room; on a phone, or with large text,
+      // the sentence goes under the icon at the card's width and the way back
+      // under the sentence, rather than a column a third of the card wide.
       return Card(
         key: const Key('sandbox-inside'),
         color: cs.tertiaryContainer,
         child: Padding(
-          padding: const EdgeInsets.all(16),
-          child: Row(
-            children: [
-              Icon(Icons.science_outlined, color: cs.onTertiaryContainer),
-              const SizedBox(width: 12),
-              Expanded(
-                child: Text(
-                  'You are in the sandbox. Everything here — products, stock, orders, keys, webhooks — is a rehearsal: '
-                  'no message leaves it, no money moves, nothing is billed. Keys minted here start sqk_test_.',
-                  style: TextStyle(color: cs.onTertiaryContainer),
-                ),
-              ),
-              const SizedBox(width: 12),
-              FilledButton.tonal(
-                key: const Key('sandbox-leave'),
-                onPressed: () => ref.read(authNotifierProvider.notifier).leaveSandbox(),
-                child: const Text('Back to live'),
-              ),
-            ],
-          ),
+          padding: const EdgeInsetsDirectional.all(AppSpacing.lg),
+          child: LayoutBuilder(builder: (context, constraints) {
+            final icon = Icon(Icons.science_outlined, color: cs.onTertiaryContainer);
+            final notice = Text(
+              'You are in the sandbox. Everything here — products, stock, orders, keys, webhooks — is a rehearsal: '
+              'no message leaves it, no money moves, nothing is billed. Keys minted here start sqk_test_.',
+              style: TextStyle(color: cs.onTertiaryContainer),
+            );
+            final back = FilledButton.tonal(
+              key: const Key('sandbox-leave'),
+              onPressed: () => ref.read(authNotifierProvider.notifier).leaveSandbox(),
+              child: const Text('Back to live'),
+            );
+            if (_narrow(context, constraints.maxWidth)) {
+              return Column(
+                crossAxisAlignment: CrossAxisAlignment.start,
+                children: [
+                  icon,
+                  const SizedBox(height: AppSpacing.sm),
+                  notice,
+                  const SizedBox(height: AppSpacing.md),
+                  back,
+                ],
+              );
+            }
+            return Row(
+              children: [
+                icon,
+                const SizedBox(width: AppSpacing.md),
+                Expanded(child: notice),
+                const SizedBox(width: AppSpacing.md),
+                back,
+              ],
+            );
+          }),
         ),
       );
     }
@@ -530,7 +560,7 @@ class _SandboxSection extends ConsumerWidget {
                     subtitle: Column(
                       crossAxisAlignment: CrossAxisAlignment.start,
                       children: [
-                        Text('Sandbox plan · made ${AppFormat.date(s.createdAt)} · tenant ${s.id}'),
+                        Text('Sandbox plan · made ${AppFormat.date(s.createdAt)}'),
                         const SizedBox(height: AppSpacing.xs),
                         StatusBadge(
                           s.active ? 'Active' : humanizeCode(s.status),
@@ -730,88 +760,138 @@ class _EndpointTile extends ConsumerWidget {
 
   @override
   Widget build(BuildContext context, WidgetRef ref) {
-    final cs = Theme.of(context).colorScheme;
+    final theme = Theme.of(context);
+    final cs = theme.colorScheme;
     final api = ref.read(webhooksApiProvider);
     final last = e.lastDeliveredAt == null ? 'never delivered' : 'last delivered ${AppFormat.date(e.lastDeliveredAt)}';
+    // What the owner may do, and what anyone may: the same five whether they
+    // show as buttons or in the phone's one menu.
+    final actions = <({Key key, String label, IconData icon, VoidCallback onPressed})>[
+      (
+        key: Key('ping-${e.id}'),
+        label: 'Ping',
+        icon: Icons.send_outlined,
+        onPressed: () => _run(context, ref, () async {
+              await api.ping(e.id);
+              return 'Test delivery queued';
+            }),
+      ),
+      (
+        key: Key('deliveries-${e.id}'),
+        label: 'Deliveries',
+        icon: Icons.receipt_long_outlined,
+        onPressed: () => showDialog<void>(context: context, builder: (_) => _DeliveriesDialog(endpoint: e)),
+      ),
+      if (owner) ...[
+        (
+          key: Key('toggle-${e.id}'),
+          label: e.enabled ? 'Switch off' : 'Switch on',
+          icon: e.enabled ? Icons.pause_circle_outline : Icons.play_circle_outline,
+          onPressed: () => _run(context, ref, () async {
+                await api.setEnabled(e.id, !e.enabled);
+                return e.enabled ? 'Switched off' : 'Switched on';
+              }),
+        ),
+        (key: Key('rotate-${e.id}'), label: 'Rotate secret', icon: Icons.key_outlined, onPressed: () => _rotate(context, ref)),
+        (key: Key('remove-${e.id}'), label: 'Remove', icon: Icons.delete_outline, onPressed: () => _remove(context, ref)),
+      ],
+    ];
+    final icon = Icon(Icons.webhook_outlined, color: e.enabled ? cs.primary : cs.outline);
+    final title = Text(e.description, style: theme.textTheme.titleMedium);
+    // The address, the events in words, why the service stopped it, and its
+    // state as a badge under the details, as the keys and the pushes have.
+    final details = <Widget>[
+      Text(e.url, style: theme.textTheme.bodySmall, maxLines: 1, overflow: TextOverflow.ellipsis),
+      Text('${e.events.map(_eventName).join(', ')} · $last', style: theme.textTheme.bodySmall),
+      if (!e.enabled && e.disabledReason != null)
+        Text('Switched off: ${e.disabledReason}', style: theme.textTheme.bodySmall?.copyWith(color: cs.error)),
+      const SizedBox(height: AppSpacing.xs),
+      StatusBadge(
+        e.enabled ? 'Active' : 'Off',
+        key: Key('webhook-status-${e.id}'),
+        // Stopped by the service after failing again and again, or by a person.
+        tone: e.enabled ? StatusTone.success : (e.disabledReason != null ? StatusTone.error : StatusTone.neutral),
+      ),
+    ];
     return Card(
       key: Key('webhook-${e.id}'),
-      margin: const EdgeInsets.only(bottom: 8),
-      child: Padding(
-        padding: const EdgeInsets.fromLTRB(16, 12, 8, 8),
-        child: Column(
-          crossAxisAlignment: CrossAxisAlignment.start,
-          children: [
-            Row(
+      margin: const EdgeInsetsDirectional.only(bottom: AppSpacing.sm),
+      child: LayoutBuilder(builder: (context, constraints) {
+        if (_narrow(context, constraints.maxWidth)) {
+          // On a phone the details go under the icon at the card's width and
+          // the actions into one ⋮ at the end of the name's row.
+          return Padding(
+            padding: const EdgeInsetsDirectional.fromSTEB(AppSpacing.lg, AppSpacing.xs, AppSpacing.xs, AppSpacing.md),
+            child: Column(
+              crossAxisAlignment: CrossAxisAlignment.start,
               children: [
-                Icon(Icons.webhook_outlined, color: e.enabled ? cs.primary : cs.outline),
-                const SizedBox(width: 12),
-                Expanded(
-                  child: Column(
-                    crossAxisAlignment: CrossAxisAlignment.start,
-                    children: [
-                      Text(e.description, style: Theme.of(context).textTheme.titleMedium),
-                      Text(e.url, style: Theme.of(context).textTheme.bodySmall, overflow: TextOverflow.ellipsis),
-                      Text('${e.events.join(', ')} · $last', style: Theme.of(context).textTheme.bodySmall),
-                      if (!e.enabled && e.disabledReason != null)
-                        Text('Switched off: ${e.disabledReason}', style: TextStyle(color: cs.error, fontSize: 12)),
-                    ],
-                  ),
+                Row(
+                  children: [
+                    icon,
+                    const SizedBox(width: AppSpacing.md),
+                    Expanded(child: title),
+                    PopupMenuButton<int>(
+                      key: Key('webhook-actions-${e.id}'),
+                      tooltip: 'Actions for ${e.description}',
+                      icon: const Icon(Icons.more_vert),
+                      onSelected: (i) => actions[i].onPressed(),
+                      itemBuilder: (_) => [
+                        for (var i = 0; i < actions.length; i++)
+                          PopupMenuItem<int>(
+                            key: actions[i].key,
+                            value: i,
+                            child: Row(
+                              children: [
+                                Icon(actions[i].icon, size: 20),
+                                const SizedBox(width: AppSpacing.md),
+                                Flexible(child: Text(actions[i].label)),
+                              ],
+                            ),
+                          ),
+                      ],
+                    ),
+                  ],
                 ),
-                Chip(
-                  label: Text(e.enabled ? 'Active' : 'Off'),
-                  backgroundColor: e.enabled ? cs.primaryContainer : cs.surfaceContainerHighest,
+                Padding(
+                  padding: const EdgeInsetsDirectional.only(end: AppSpacing.md),
+                  child: Column(crossAxisAlignment: CrossAxisAlignment.start, children: details),
                 ),
               ],
             ),
-            Wrap(
-              spacing: 4,
-              children: [
-                TextButton.icon(
-                  key: Key('ping-${e.id}'),
-                  onPressed: () => _run(context, ref, () async {
-                    await api.ping(e.id);
-                    return 'Test delivery queued';
-                  }),
-                  icon: const Icon(Icons.send_outlined, size: 18),
-                  label: const Text('Ping'),
-                ),
-                TextButton.icon(
-                  key: Key('deliveries-${e.id}'),
-                  onPressed: () => showDialog<void>(
-                    context: context,
-                    builder: (_) => _DeliveriesDialog(endpoint: e),
-                  ),
-                  icon: const Icon(Icons.receipt_long_outlined, size: 18),
-                  label: const Text('Deliveries'),
-                ),
-                if (owner) ...[
-                  TextButton.icon(
-                    key: Key('toggle-${e.id}'),
-                    onPressed: () => _run(context, ref, () async {
-                      await api.setEnabled(e.id, !e.enabled);
-                      return e.enabled ? 'Switched off' : 'Switched on';
-                    }),
-                    icon: Icon(e.enabled ? Icons.pause_circle_outline : Icons.play_circle_outline, size: 18),
-                    label: Text(e.enabled ? 'Switch off' : 'Switch on'),
-                  ),
-                  TextButton.icon(
-                    key: Key('rotate-${e.id}'),
-                    onPressed: () => _rotate(context, ref),
-                    icon: const Icon(Icons.key_outlined, size: 18),
-                    label: const Text('Rotate secret'),
-                  ),
-                  TextButton.icon(
-                    key: Key('remove-${e.id}'),
-                    onPressed: () => _remove(context, ref),
-                    icon: const Icon(Icons.delete_outline, size: 18),
-                    label: const Text('Remove'),
+          );
+        }
+        return Padding(
+          padding: const EdgeInsetsDirectional.fromSTEB(AppSpacing.lg, AppSpacing.md, AppSpacing.sm, AppSpacing.sm),
+          child: Column(
+            crossAxisAlignment: CrossAxisAlignment.start,
+            children: [
+              Row(
+                crossAxisAlignment: CrossAxisAlignment.start,
+                children: [
+                  icon,
+                  const SizedBox(width: AppSpacing.md),
+                  Expanded(
+                    child: Column(crossAxisAlignment: CrossAxisAlignment.start, children: [title, ...details]),
                   ),
                 ],
-              ],
-            ),
-          ],
-        ),
-      ),
+              ),
+              const SizedBox(height: AppSpacing.xs),
+              Wrap(
+                spacing: AppSpacing.xs,
+                children: [
+                  for (final a in actions)
+                    TextButton.icon(
+                      key: a.key,
+                      onPressed: a.onPressed,
+                      icon: Icon(a.icon, size: 18),
+                      label: Text(a.label),
+                    ),
+                ],
+              ),
+            ],
+          ),
+        );
+      }),
     );
   }
 
@@ -877,6 +957,22 @@ class _EndpointTile extends ConsumerWidget {
       return '${e.description} removed';
     });
   }
+}
+
+/// An event by its name in words: *Order placed*, and the hand-made one a
+/// ping sends, *Test delivery*.
+String _eventName(String type) => type == 'Ping' ? 'Test delivery' : codeInWords(type);
+
+/// A delivery's status as a badge in words: waiting for its next try,
+/// delivered, or given up on after every try failed.
+Widget _deliveryBadge(String status) {
+  final (label, tone) = switch (status) {
+    'PENDING' => ('Waiting', StatusTone.info),
+    'DELIVERED' => ('Delivered', StatusTone.success),
+    'DEAD' => ('Failed', StatusTone.error),
+    _ => (humanizeCode(status), StatusTone.neutral),
+  };
+  return StatusBadge(label, tone: tone);
 }
 
 /// The form that registers an endpoint: an address, what it is, the events it wants.
@@ -967,7 +1063,7 @@ class _AddWebhookDialogState extends ConsumerState<AddWebhookDialog> {
                           key: Key('event-${t.type}'),
                           dense: true,
                           controlAffinity: ListTileControlAffinity.leading,
-                          title: Text(t.type),
+                          title: Text(_eventName(t.type)),
                           subtitle: Text(t.description),
                           value: _events.contains(t.type),
                           onChanged: (on) => setState(() => on == true ? _events.add(t.type) : _events.remove(t.type)),
@@ -1051,12 +1147,20 @@ class _DeliveriesDialogState extends ConsumerState<_DeliveriesDialog> {
                       d.status == 'DELIVERED' ? Icons.check_circle_outline : (d.status == 'DEAD' ? Icons.error_outline : Icons.schedule),
                       color: d.status == 'DELIVERED' ? cs.primary : (d.status == 'DEAD' ? cs.error : cs.outline),
                     ),
-                    title: Text('${d.eventType} · ${d.status.toLowerCase()}'),
-                    subtitle: Text(
-                      '${d.attempts} ${d.attempts == 1 ? 'try' : 'tries'}'
-                      '${d.lastStatus != null ? ' · last answer ${d.lastStatus}' : ''}'
-                      '${d.lastError != null ? ' · ${d.lastError}' : ''}'
-                      ' · ${AppFormat.date(d.createdAt)}',
+                    title: Text(_eventName(d.eventType)),
+                    // How it went as a badge under the details, as the pushes have.
+                    subtitle: Column(
+                      crossAxisAlignment: CrossAxisAlignment.start,
+                      children: [
+                        Text(
+                          '${d.attempts} ${d.attempts == 1 ? 'try' : 'tries'}'
+                          '${d.lastStatus != null ? ' · last answer ${d.lastStatus}' : ''}'
+                          '${d.lastError != null ? ' · ${d.lastError}' : ''}'
+                          ' · ${AppFormat.date(d.createdAt)}',
+                        ),
+                        const SizedBox(height: AppSpacing.xs),
+                        _deliveryBadge(d.status),
+                      ],
                     ),
                     trailing: TextButton(
                       key: Key('redeliver-${d.id}'),

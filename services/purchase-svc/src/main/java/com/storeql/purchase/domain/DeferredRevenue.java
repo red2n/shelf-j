@@ -164,7 +164,8 @@ public final class DeferredRevenue {
         LedgerPosting.of(
             src.tenantId(),
             src.date(),
-            (fromSale ? "Loyalty points earned on sale " : "Loyalty points awarded, ") + src.ref(),
+            (fromSale ? "Loyalty points earned on sale " : "Loyalty points awarded, ")
+                + Handle.of(src.ref()),
             Domain.SOURCE_LOYALTY_DEFERRAL,
             src.ref(),
             src.storeId());
@@ -254,7 +255,7 @@ public final class DeferredRevenue {
         LedgerPosting.of(
                 src.tenantId(),
                 src.date(),
-                description + src.ref(),
+                description + Handle.of(src.ref()),
                 Domain.SOURCE_LOYALTY_RELEASE,
                 src.ref(),
                 src.storeId())
@@ -348,7 +349,7 @@ public final class DeferredRevenue {
             src.tenantId(),
             src.date(),
             (reversed ? "Gift card breakage reversed on sale " : "Gift card breakage on sale ")
-                + src.ref(),
+                + Handle.of(src.ref()),
             Domain.SOURCE_GIFT_CARD_BREAKAGE,
             src.ref(),
             src.storeId());

@@ -141,16 +141,18 @@ class StorefrontOrdersScreen extends ConsumerWidget {
     }
 
     // Guest: device-local fallback + a nudge to sign in for synced history.
+    // The list is kept as each order is placed here, so there is nothing to
+    // pull or click to read again.
     final orders = ref.watch(storefrontOrdersProvider);
     return Column(
       children: [
         const _SignInBanner(),
-        const _OrdersHeader(),
+        const _OrdersHeader.deviceOnly(),
         Expanded(
           child: orders.isEmpty
               ? const _NoOrders()
               : ListView.separated(
-                  padding: EdgeInsets.fromLTRB(
+                  padding: EdgeInsetsDirectional.fromSTEB(
                       gutter, 0, gutter, AppSpacing.lg),
                   itemCount: orders.length,
                   separatorBuilder: (_, _) =>
@@ -166,14 +168,25 @@ class StorefrontOrdersScreen extends ConsumerWidget {
   }
 }
 
-/// The page's title, over the orders' reading width, and — given
-/// [onRefresh] and a mouse — a button that reads them again.
+/// The page's title, starting at the orders' edge, and — on the signed-in
+/// history, with a mouse — a button that reads them again.
 class _OrdersHeader extends StatelessWidget {
+  /// Whether there is anything to read again: the signed-in history, which
+  /// the server holds. A guest's is this device's own list, written as each
+  /// order is placed, so it is already current and gets no button.
+  final bool _reloadable;
+
   /// Reads the orders again; null while they are loading. Offered as a button
   /// only where people mostly use a mouse: touch screens pull to refresh.
   final Future<void> Function()? onRefresh;
 
-  const _OrdersHeader({this.onRefresh});
+  /// The signed-in history's heading.
+  const _OrdersHeader({required this.onRefresh}) : _reloadable = true;
+
+  /// A guest's heading: the device's own orders, nothing to reload.
+  const _OrdersHeader.deviceOnly()
+      : onRefresh = null,
+        _reloadable = false;
 
   @override
   Widget build(BuildContext context) {
@@ -182,17 +195,24 @@ class _OrdersHeader extends StatelessWidget {
       // The form column the cards keep to, plus the gutters either side, so
       // the title lines up with the cards' edges.
       maxWidth: AppBreakpoints.formMaxWidth + 2 * context.pageGutter,
-      child: PageHeader(
-        title: 'My orders',
-        actions: [
-          if (pointerFirst)
-            IconButton(
-              key: const Key('orders-refresh'),
-              icon: const Icon(Icons.refresh),
-              tooltip: 'Refresh',
-              onPressed: refresh == null ? null : () => refresh(),
-            ),
-        ],
+      // The column's whole width, not the title's: with no button beside it
+      // (a touch screen, a guest) or with the button wrapped under it (a
+      // narrow window) the heading is only as wide as what it holds, and
+      // would otherwise shrink to the title and sit centred over the cards.
+      child: SizedBox(
+        width: double.infinity,
+        child: PageHeader(
+          title: 'My orders',
+          actions: [
+            if (_reloadable && pointerFirst)
+              IconButton(
+                key: const Key('orders-refresh'),
+                icon: const Icon(Icons.refresh),
+                tooltip: 'Refresh',
+                onPressed: refresh == null ? null : () => refresh(),
+              ),
+          ],
+        ),
       ),
     );
   }

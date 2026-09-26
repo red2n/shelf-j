@@ -163,8 +163,10 @@ void main() {
     final server = await _pump(tester, 'OWNER');
     expect(find.byKey(const Key('sandbox-card')), findsOneWidget);
     expect(find.text('Hollins Grocers (sandbox)'), findsOneWidget);
-    expect(find.textContaining('Sandbox plan'), findsOneWidget);
+    expect(find.textContaining('Sandbox plan · made'), findsOneWidget);
     expect(find.textContaining('SANDBOX'), findsNothing);
+    expect(find.textContaining(_sandbox), findsNothing, reason: 'the sandbox by its name, never its id');
+    expect(find.descendant(of: find.byKey(const Key('sandbox-card')), matching: find.textContaining('tenant')), findsNothing);
     expect(find.byKey(const Key('sandbox-enter')), findsOneWidget);
 
     await tester.tap(find.byKey(const Key('sandbox-delete')));
@@ -244,6 +246,19 @@ void main() {
   });
 
   for (final scale in [1.0, 2.0]) {
+    testWidgets('inside the sandbox on a phone at ${scale}x text the notice reads across the card, the way back under it', (tester) async {
+      await _pump(tester, 'OWNER', inside: true, size: const Size(390, 3200), textScale: scale);
+      expect(tester.takeException(), isNull);
+      final card = tester.getRect(find.byKey(const Key('sandbox-inside')));
+      final notice = find.textContaining('You are in the sandbox.');
+      final text = tester.getRect(notice);
+      final back = tester.getRect(find.byKey(const Key('sandbox-leave')));
+      final icon = tester.getRect(find.descendant(of: find.byKey(const Key('sandbox-inside')), matching: find.byIcon(Icons.science_outlined)));
+      expect(text.top, greaterThanOrEqualTo(icon.bottom), reason: 'the sentence under the icon, not squeezed beside it');
+      expect(text.width, greaterThan(card.width * 0.8), reason: 'the sentence keeps the card\'s width');
+      expect(back.top, greaterThanOrEqualTo(text.bottom), reason: 'Back to live under the sentence');
+    });
+
     testWidgets('on a phone at ${scale}x text the section headings and key tiles fit', (tester) async {
       await _pump(tester, 'OWNER', size: const Size(390, 3200), textScale: scale);
       expect(tester.takeException(), isNull);

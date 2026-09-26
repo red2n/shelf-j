@@ -1,4 +1,5 @@
 import 'dart:async';
+import 'dart:math' as math;
 
 import 'package:flutter/foundation.dart';
 import 'package:flutter/material.dart';
@@ -9,6 +10,7 @@ import 'package:flutter_secure_storage/flutter_secure_storage.dart';
 import 'package:flutter_test/flutter_test.dart';
 import 'package:intl/date_symbol_data_local.dart';
 import 'package:storeql_app/core/constants.dart';
+import 'package:storeql_app/core/spacing.dart';
 import 'package:storeql_app/core/theme.dart';
 import 'package:storeql_app/features/storefront/cart_line.dart';
 import 'package:storeql_app/features/storefront/cart_screen.dart';
@@ -25,8 +27,10 @@ import 'package:storeql_app/shared/widgets/status_badge.dart';
 // ---------------------------------------------------------------------------
 // The storefront's shared pieces from the design system — Skeleton,
 // ProductCard, CartLine and OrderSummary — as the shop, the cart and the order
-// history use them, and two open issues on those screens: the category chips
-// keep their height at 200% text, and a mouse can reload the order history.
+// history use them, and open issues on those screens: the category chips
+// keep their height at 200% text, a mouse can reload the order history (a
+// guest's, already current, offers no button), and the history's heading
+// starts at the cards' edge.
 // ---------------------------------------------------------------------------
 
 const _butter = StoreProduct(id: 'p-1', name: 'Crunchy peanut butter');
@@ -136,6 +140,36 @@ List<Override> _history(FutureOr<List<ServerOrderSummary>?> Function() load) => 
           ]),
       myRecallNoticesProvider.overrideWith((ref) async => const []),
     ];
+
+/// A guest's history: the orders placed on this device, nothing more.
+class _DeviceOrders extends StorefrontOrdersNotifier {
+  _DeviceOrders(List<StorefrontOrderRecord> records) {
+    state = records;
+  }
+}
+
+List<Override> _guestHistory() => [
+      storefrontConfigProvider.overrideWith((ref) async =>
+          const StorefrontConfig(showPrices: true, storeName: 'Leeds')),
+      storefrontOrdersProvider.overrideWith((ref) => _DeviceOrders([
+            StorefrontOrderRecord(
+              orderId: '01a0d950-611e-702d-bfe9-b7296be05941',
+              total: 7.5,
+              currency: 'GBP',
+              itemCount: 2,
+              placedAt: DateTime.utc(2026, 9, 20, 10, 30),
+              storeName: 'Leeds',
+            ),
+          ])),
+    ];
+
+/// Where the order cards' column starts: the page gutter, or on a window
+/// wider than the 640 reading width and its gutters, where that width,
+/// centred, begins.
+double _columnStart(double width) {
+  final gutter = width < AppBreakpoints.medium ? AppSpacing.lg : AppSpacing.xl;
+  return math.max(gutter, (width - AppBreakpoints.formMaxWidth) / 2);
+}
 
 CartLine _line(String variantId, String name,
         {double price = 2.5, String? productId}) =>
@@ -390,6 +424,88 @@ void main() {
       expect(loads, 1);
       await _leave(tester);
     });
+
+    testWidgets(
+        "the heading starts at the cards' edge with no button beside it — "
+        'signed in on a touch screen, as a guest, and over an error',
+        (tester) async {
+      Future<void> check(String what, Size size, List<Override> overrides,
+          {bool cards = true, bool rtl = false}) async {
+        await _pump(
+            tester,
+            Directionality(
+              textDirection: rtl ? TextDirection.rtl : TextDirection.ltr,
+              child: const StorefrontOrdersScreen(),
+            ),
+            overrides,
+            size: size);
+        await tester.pump(const Duration(seconds: 1));
+        await tester.pumpAndSettle();
+        final title = tester.getRect(find.text('My orders'));
+        final edge = _columnStart(size.width);
+        final reason = '$what at ${size.width.toInt()} wide';
+        if (rtl) {
+          expect(title.right, moreOrLessEquals(size.width - edge),
+              reason: reason);
+        } else {
+          expect(title.left, moreOrLessEquals(edge), reason: reason);
+        }
+        if (cards) {
+          final card = tester.getRect(find.byType(Card).first);
+          expect(rtl ? title.right : title.left,
+              moreOrLessEquals(rtl ? card.right : card.left),
+              reason: reason);
+        }
+        await _leave(tester);
+      }
+
+      expect(defaultTargetPlatform, TargetPlatform.android);
+      for (final size in const [
+        Size(390, 844),
+        Size(820, 1180),
+        Size(1280, 900),
+      ]) {
+        await check('signed in', size, _history(() => [_order('CONFIRMED')]));
+        await check('a guest', size, _guestHistory());
+        await check('an error', size,
+            _history(() => throw Exception('offline')),
+            cards: false);
+      }
+      // The start is the reading direction's: the right-hand edge in Arabic.
+      await check('right to left', const Size(1280, 900),
+          _history(() => [_order('CONFIRMED')]),
+          rtl: true);
+      expect(tester.takeException(), isNull);
+    });
+
+    testWidgets(
+        'on a desktop browser only the signed-in history offers Refresh — a '
+        "guest's is this device's own, with nothing to read again",
+        (tester) async {
+      await _pump(tester, const StorefrontOrdersScreen(), _guestHistory());
+      await tester.pumpAndSettle();
+      expect(find.text('My orders'), findsOneWidget);
+      expect(find.text('Deliver to home'), findsNothing);
+      expect(find.textContaining('Collect from Leeds'), findsOneWidget);
+      expect(find.byTooltip('Refresh'), findsNothing,
+          reason: 'a button that could only ever be grey');
+      await _leave(tester);
+
+      // Signed in, in a window too narrow for one row: the button wraps
+      // under the heading, and the heading keeps to the cards' edge.
+      await _pump(tester, const StorefrontOrdersScreen(),
+          _history(() => [_order('CONFIRMED')]),
+          size: const Size(400, 800));
+      await tester.pumpAndSettle();
+      final refresh = find.byTooltip('Refresh');
+      expect(refresh, findsOneWidget);
+      final title = tester.getRect(find.text('My orders'));
+      final card = tester.getRect(find.byType(Card).first);
+      expect(title.left, moreOrLessEquals(card.left));
+      expect(tester.getRect(refresh).top, greaterThan(title.bottom));
+      expect(tester.getRect(refresh).left, moreOrLessEquals(card.left));
+      await _leave(tester);
+    }, variant: TargetPlatformVariant.only(TargetPlatform.linux));
 
     testWidgets('touch screens pull to refresh and get no button',
         (tester) async {

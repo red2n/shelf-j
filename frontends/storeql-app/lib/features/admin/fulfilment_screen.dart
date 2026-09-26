@@ -9,10 +9,13 @@ import '../../core/network/api_client.dart';
 import '../../core/network/api_error.dart';
 import '../../core/spacing.dart';
 import '../../shared/util/short_ref.dart';
+import '../../shared/util/zone_day.dart';
 import '../../shared/widgets/empty_state.dart';
 import '../../shared/widgets/error_view.dart';
 import '../../shared/widgets/loading_view.dart';
+import '../../shared/widgets/page_header.dart';
 import 'providers/admin_providers.dart';
+import 'widgets/variant_search.dart';
 
 // ---------------------------------------------------------------------------
 // Ship-from-store and dark-store picking: one store's online orders as work.
@@ -171,6 +174,9 @@ class SubstituteSuggestion {
       );
 }
 
+/// Now, for *Handed over today*; a provider so a test can stop the clock.
+final fulfilmentClockProvider = Provider<DateTime Function()>((ref) => DateTime.now);
+
 /// The store whose queue is shown; null until the stores are known.
 final fulfilmentStoreProvider = StateProvider<String?>((ref) => null);
 
@@ -207,6 +213,28 @@ String qtyText(double q) => q == q.roundToDouble() ? q.toStringAsFixed(0) : q.to
 
 num _qtyNumber(double q) => q == q.roundToDouble() ? q.toInt() : q;
 
+/// A variant by name, from product-svc's resolve: its product's name, else its
+/// SKU, and a few words while the lookup is under way. Only a variant the
+/// catalogue does not know falls back to the end of its id.
+String _nameOf(String variantId, AsyncValue<Map<String, VariantLabel>> labels) {
+  final l = labels.value?[variantId];
+  if (l != null && l.productName.isNotEmpty) return l.productName;
+  if (l != null && l.sku.isNotEmpty) return 'SKU ${l.sku}';
+  if (labels.isLoading) return 'Finding its name…';
+  return variantDisplayName(variantId, const {});
+}
+
+/// [cards] one under another, 8 apart, so two outlines never meet.
+Widget _cardList(List<Widget> cards) => Column(
+      crossAxisAlignment: CrossAxisAlignment.stretch,
+      children: [
+        for (var i = 0; i < cards.length; i++) ...[
+          if (i > 0) const SizedBox(height: AppSpacing.sm),
+          cards[i],
+        ],
+      ],
+    );
+
 Future<List<QueuedOrder>> _queue(Ref ref, Map<String, dynamic> query) async {
   final resp = await ref
       .read(apiClientProvider)
@@ -235,12 +263,20 @@ final readyProvider =
           'handover': 'PENDING',
         }));
 
-/// Handed over today (UTC), dispatched or collected.
+/// Handed over today, dispatched or collected: since the store's own midnight,
+/// in its time zone (the device's when it names none), never UTC's. Asked by
+/// when the order was handed over (`handedFrom`), not when it was placed
+/// (`from`), so yesterday's delivery dispatched this morning is among today's.
 final handedOverTodayProvider =
-    FutureProvider.autoDispose.family<List<QueuedOrder>, String>((ref, storeId) {
-  final now = DateTime.now().toUtc();
-  final from = DateTime.utc(now.year, now.month, now.day).toIso8601String();
-  return _queue(ref, {'store': storeId, 'handover': 'DONE', 'from': from});
+    FutureProvider.autoDispose.family<List<QueuedOrder>, String>((ref, storeId) async {
+  final stores = await ref.watch(storesProvider.future);
+  String? zone;
+  for (final s in stores) {
+    if (s.id == storeId) zone = s.timezone;
+  }
+  final now = ref.read(fulfilmentClockProvider)();
+  final midnight = startOfDayIn(zone, now: now).toIso8601String();
+  return _queue(ref, {'store': storeId, 'handover': 'DONE', 'handedFrom': midnight});
 });
 
 /// How many confirmed orders wait to be picked at the store (inventory-svc's list).
@@ -256,100 +292,124 @@ final awaitingPickCountProvider =
 class FulfilmentScreen extends ConsumerWidget {
   const FulfilmentScreen({super.key});
 
+  /// Shops and dark stores fill online orders; a warehouse serves shops and
+  /// takes no shopper's order.
+  static List<StoreInfo> _fulfilling(List<StoreInfo> all) =>
+      all.where((s) => s.type.toUpperCase() != 'WAREHOUSE').toList();
+
   @override
   Widget build(BuildContext context, WidgetRef ref) {
     final storesAsync = ref.watch(storesProvider);
-    return storesAsync.when(
-      loading: () => const LoadingView(label: 'Loading stores…'),
-      error: (e, _) => ErrorView(
-        message: friendlyError(e, fallback: 'Could not load the stores.'),
-        onRetry: () => ref.invalidate(storesProvider),
+    final stores = _fulfilling(storesAsync.value ?? const []);
+    final chosen = ref.watch(fulfilmentStoreProvider);
+    final store = stores.isEmpty
+        ? null
+        : stores.firstWhere((s) => s.id == chosen, orElse: () => stores.first);
+    return ContentBounds(
+      child: Column(
+        crossAxisAlignment: CrossAxisAlignment.stretch,
+        children: [
+          PageHeader(
+            title: 'Fulfilment',
+            actions: [
+              IconButton(
+                tooltip: 'Refresh',
+                onPressed: () => store == null
+                    ? ref.invalidate(storesProvider)
+                    : _refresh(ref, store.id),
+                icon: const Icon(Icons.refresh),
+              ),
+            ],
+          ),
+          Expanded(
+            child: storesAsync.when(
+              loading: () => const LoadingView(label: 'Loading stores…'),
+              error: (e, _) => ErrorView(
+                message: friendlyError(e, fallback: 'Could not load the stores.'),
+                onRetry: () => ref.invalidate(storesProvider),
+              ),
+              data: (_) => store == null
+                  ? const EmptyState(icon: Icons.store_outlined, title: 'No store yet')
+                  : _queues(context, ref, stores, store),
+            ),
+          ),
+        ],
       ),
-      data: (all) {
-        // Shops and dark stores fill online orders; a warehouse serves shops and takes no
-        // shopper's order.
-        final stores = all.where((s) => s.type.toUpperCase() != 'WAREHOUSE').toList();
-        if (stores.isEmpty) {
-          return const EmptyState(icon: Icons.store_outlined, title: 'No store yet');
-        }
-        final chosen = ref.watch(fulfilmentStoreProvider) ?? stores.first.id;
-        final store = stores.firstWhere((s) => s.id == chosen, orElse: () => stores.first);
-        return ListView(
-          padding: context.pagePadding,
-          children: [
-            Row(
-              children: [
-                Expanded(
-                  child: DropdownButtonFormField<String>(
-                    key: const Key('fulfilment-store'),
-                    initialValue: store.id,
-                    isExpanded: true,
-                    decoration: const InputDecoration(labelText: 'Store'),
-                    items: [
-                      for (final s in stores)
-                        DropdownMenuItem(
-                          value: s.id,
-                          child: Text(
-                            s.type.toUpperCase() == 'DARK_STORE' ? '${s.name} · dark store' : s.name,
-                            overflow: TextOverflow.ellipsis,
-                          ),
-                        ),
-                    ],
-                    onChanged: (v) => ref.read(fulfilmentStoreProvider.notifier).state = v,
+    );
+  }
+
+  /// The chosen store's work, under the Store field, inset by the page gutter
+  /// so its edges line up with the title.
+  Widget _queues(BuildContext context, WidgetRef ref, List<StoreInfo> stores, StoreInfo store) {
+    final gutter = context.pageGutter;
+    return ListView(
+      padding: EdgeInsetsDirectional.fromSTEB(gutter, 0, gutter, gutter),
+      children: [
+        Align(
+          alignment: AlignmentDirectional.centerStart,
+          child: ConstrainedBox(
+            constraints: const BoxConstraints(maxWidth: AppBreakpoints.formMaxWidth),
+            child: DropdownButtonFormField<String>(
+              key: const Key('fulfilment-store'),
+              initialValue: store.id,
+              isExpanded: true,
+              decoration: const InputDecoration(labelText: 'Store'),
+              items: [
+                for (final s in stores)
+                  DropdownMenuItem(
+                    value: s.id,
+                    child: Text(
+                      s.type.toUpperCase() == 'DARK_STORE' ? '${s.name} · dark store' : s.name,
+                      overflow: TextOverflow.ellipsis,
+                    ),
                   ),
-                ),
-                const SizedBox(width: AppSpacing.md),
-                IconButton(
-                  tooltip: 'Refresh',
-                  onPressed: () => _refresh(ref, store.id),
-                  icon: const Icon(Icons.refresh),
-                ),
               ],
+              onChanged: (v) => ref.read(fulfilmentStoreProvider.notifier).state = v,
             ),
-            const SizedBox(height: AppSpacing.lg),
-            _ToPick(storeId: store.id),
-            const SizedBox(height: AppSpacing.lg),
-            _Outstanding(storeId: store.id),
-            const SizedBox(height: AppSpacing.lg),
-            _Stage(
-              title: 'Packed — awaiting courier',
-              icon: Icons.inventory_2_outlined,
-              empty: 'Nothing packed is waiting for the courier',
-              orders: ref.watch(packedProvider(store.id)),
-              onRetry: () => ref.invalidate(packedProvider(store.id)),
-              action: (o) => FilledButton.icon(
-                key: Key('dispatch-${o.id}'),
-                onPressed: () => _dispatch(context, ref, o),
-                icon: const Icon(Icons.local_shipping_outlined, size: 18),
-                label: const Text('Dispatch'),
-              ),
-            ),
-            const SizedBox(height: AppSpacing.lg),
-            _Stage(
-              title: 'Ready for collection',
-              icon: Icons.shopping_bag_outlined,
-              empty: 'Nothing is waiting to be collected',
-              orders: ref.watch(readyProvider(store.id)),
-              onRetry: () => ref.invalidate(readyProvider(store.id)),
-              action: (o) => FilledButton.icon(
-                key: Key('collect-${o.id}'),
-                onPressed: () => _collect(context, ref, o),
-                icon: const Icon(Icons.check, size: 18),
-                label: const Text('Collected'),
-              ),
-            ),
-            const SizedBox(height: AppSpacing.lg),
-            _Stage(
-              title: 'Handed over today',
-              icon: Icons.outbox_outlined,
-              empty: 'Nothing handed over yet today',
-              orders: ref.watch(handedOverTodayProvider(store.id)),
-              onRetry: () => ref.invalidate(handedOverTodayProvider(store.id)),
-              trailing: (o) => Text(o.handoverLabel, key: Key('handed-${o.id}')),
-            ),
-          ],
-        );
-      },
+          ),
+        ),
+        const SizedBox(height: AppSpacing.lg),
+        _ToPick(storeId: store.id),
+        const SizedBox(height: AppSpacing.lg),
+        _Outstanding(storeId: store.id),
+        const SizedBox(height: AppSpacing.lg),
+        _Stage(
+          title: 'Packed — awaiting courier',
+          icon: Icons.inventory_2_outlined,
+          empty: 'Nothing packed is waiting for the courier',
+          orders: ref.watch(packedProvider(store.id)),
+          onRetry: () => ref.invalidate(packedProvider(store.id)),
+          action: (o) => FilledButton.icon(
+            key: Key('dispatch-${o.id}'),
+            onPressed: () => _dispatch(context, ref, o),
+            icon: const Icon(Icons.local_shipping_outlined, size: 18),
+            label: const Text('Dispatch'),
+          ),
+        ),
+        const SizedBox(height: AppSpacing.lg),
+        _Stage(
+          title: 'Ready for collection',
+          icon: Icons.shopping_bag_outlined,
+          empty: 'Nothing is waiting to be collected',
+          orders: ref.watch(readyProvider(store.id)),
+          onRetry: () => ref.invalidate(readyProvider(store.id)),
+          action: (o) => FilledButton.icon(
+            key: Key('collect-${o.id}'),
+            onPressed: () => _collect(context, ref, o),
+            icon: const Icon(Icons.check, size: 18),
+            label: const Text('Collected'),
+          ),
+        ),
+        const SizedBox(height: AppSpacing.lg),
+        _Stage(
+          title: 'Handed over today',
+          icon: Icons.outbox_outlined,
+          empty: 'Nothing handed over yet today',
+          orders: ref.watch(handedOverTodayProvider(store.id)),
+          onRetry: () => ref.invalidate(handedOverTodayProvider(store.id)),
+          trailing: (o) => Text(o.handoverLabel, key: Key('handed-${o.id}')),
+        ),
+      ],
     );
   }
 
@@ -415,7 +475,9 @@ class _Outstanding extends ConsumerWidget {
     final cs = Theme.of(context).colorScheme;
     final owing = ref.watch(owingProvider(storeId));
     final ids = owing.value?.expand((o) => o.lines.map((l) => l.variantId)) ?? const <String>[];
-    final labels = ref.watch(variantLabelsProvider(variantIdsKey(ids))).value ?? const {};
+    final labels = ref.watch(variantLabelsProvider(variantIdsKey(ids)));
+    // The heading promises lines, so the count is of lines, not of orders.
+    final lineCount = owing.value?.fold<int>(0, (n, o) => n + o.lines.length);
     return Column(
       crossAxisAlignment: CrossAxisAlignment.stretch,
       children: [
@@ -424,8 +486,8 @@ class _Outstanding extends ConsumerWidget {
           const SizedBox(width: AppSpacing.sm),
           Text('Outstanding lines', style: Theme.of(context).textTheme.titleMedium),
           const SizedBox(width: AppSpacing.sm),
-          if (owing.value != null)
-            Text('${owing.value!.length}',
+          if (lineCount != null)
+            Text('$lineCount',
                 key: const Key('owing-count'), style: TextStyle(color: cs.onSurfaceVariant)),
         ]),
         const SizedBox(height: AppSpacing.sm),
@@ -438,8 +500,7 @@ class _Outstanding extends ConsumerWidget {
           data: (list) => list.isEmpty
               ? Text('Nothing is owed: every confirmed order is picked or closed.',
                   style: TextStyle(color: cs.onSurfaceVariant))
-              : Column(
-                  children: [
+              : _cardList([
                     for (final o in list)
                       Card(
                         key: Key('owing-${o.id}'),
@@ -480,7 +541,7 @@ class _Outstanding extends ConsumerWidget {
                                 final compact = context.isCompact;
                                 return ListTile(
                                   dense: true,
-                                  title: Text(variantDisplayName(l.variantId, labels)),
+                                  title: Text(_nameOf(l.variantId, labels)),
                                   subtitle: compact
                                       ? Column(
                                           crossAxisAlignment: CrossAxisAlignment.start,
@@ -493,8 +554,7 @@ class _Outstanding extends ConsumerWidget {
                           ],
                         ),
                       ),
-                  ],
-                ),
+                  ]),
         ),
       ],
     );
@@ -549,92 +609,132 @@ class _SubstituteInput {
   const _SubstituteInput(this.variantId, this.qty, this.reason);
 }
 
-/// Which stand-in went in the bag, and how many: a declared one from the list, or any variant
-/// the picker names; at most what the line still owes.
-class _SubstituteDialog extends StatefulWidget {
+/// Which stand-in went in the bag, and how many: a declared one from the list, or any product the
+/// picker finds by name or SKU; at most what the line still owes. Never a variant id.
+class _SubstituteDialog extends ConsumerStatefulWidget {
   final double outstanding;
   final List<SubstituteSuggestion> suggestions;
   const _SubstituteDialog({required this.outstanding, required this.suggestions});
 
   @override
-  State<_SubstituteDialog> createState() => _SubstituteDialogState();
+  ConsumerState<_SubstituteDialog> createState() => _SubstituteDialogState();
 }
 
-class _SubstituteDialogState extends State<_SubstituteDialog> {
-  final _variant = TextEditingController();
+class _SubstituteDialogState extends ConsumerState<_SubstituteDialog> {
+  /// What was packed, in words; [_choice] is what the request carries.
+  final _packed = TextEditingController();
   late final _qty = TextEditingController(text: qtyText(widget.outstanding));
   final _reason = TextEditingController();
-  String? _chosen;
+  VariantChoice? _choice;
   String? _error;
 
   @override
   void dispose() {
-    _variant.dispose();
+    _packed.dispose();
     _qty.dispose();
     _reason.dispose();
     super.dispose();
   }
 
+  void _pick(VariantChoice choice) => setState(() {
+        _choice = choice;
+        _packed.text = choice.label;
+        _error = null;
+      });
+
+  Future<void> _find() async {
+    final choice = await showVariantSearch(context);
+    if (choice == null || !mounted) return;
+    _pick(choice);
+  }
+
   @override
   Widget build(BuildContext context) {
     final cs = Theme.of(context).colorScheme;
+    // Order-svc names each stand-in; one it could not is looked up in the catalogue.
+    final unnamed = [
+      for (final s in widget.suggestions)
+        if (s.productName.isEmpty) s.variantId,
+    ];
+    final labels = ref.watch(variantLabelsProvider(variantIdsKey(unnamed)));
     return AlertDialog(
       title: const Text('Substitute'),
       content: SingleChildScrollView(
-        child: Column(mainAxisSize: MainAxisSize.min, children: [
-          if (widget.suggestions.isEmpty)
-            Text(
-              'No stand-ins are declared for this product. Enter the variant id of what you packed.',
-              style: TextStyle(color: cs.onSurfaceVariant),
-            ),
-          for (final s in widget.suggestions)
-            ListTile(
-              key: Key('suggestion-${s.variantId}'),
-              dense: true,
-              contentPadding: EdgeInsets.zero,
-              selected: _chosen == s.variantId,
-              leading: Icon(_chosen == s.variantId
-                  ? Icons.radio_button_checked
-                  : Icons.radio_button_off),
-              title: Text(s.productName.isEmpty ? '…${shortRef(s.variantId)}' : s.productName),
-              subtitle: Text('${s.sku.isEmpty ? '' : '${s.sku} · '}${qtyText(s.available)} available'),
-              onTap: () => setState(() {
-                _chosen = s.variantId;
-                _variant.text = s.variantId;
+        child: Column(
+          mainAxisSize: MainAxisSize.min,
+          crossAxisAlignment: CrossAxisAlignment.stretch,
+          children: [
+            if (widget.suggestions.isEmpty)
+              Text(
+                'No stand-ins are declared for this product. Find what you packed by name or SKU.',
+                style: TextStyle(color: cs.onSurfaceVariant),
+              ),
+            for (final s in widget.suggestions)
+              Builder(builder: (context) {
+                final known = labels.value?[s.variantId];
+                final name = s.productName.isNotEmpty
+                    ? s.productName
+                    : (known?.productName.isNotEmpty ?? false)
+                        ? known!.productName
+                        : '';
+                final sku = s.sku.isNotEmpty ? s.sku : known?.sku ?? '';
+                final title = name.isNotEmpty
+                    ? name
+                    : sku.isNotEmpty
+                        ? 'SKU $sku'
+                        : _nameOf(s.variantId, labels);
+                final chosen = _choice?.variantId == s.variantId;
+                return ListTile(
+                  key: Key('suggestion-${s.variantId}'),
+                  dense: true,
+                  contentPadding: EdgeInsets.zero,
+                  selected: chosen,
+                  leading: Icon(chosen ? Icons.radio_button_checked : Icons.radio_button_off),
+                  title: Text(title),
+                  subtitle: Text([
+                    if (name.isNotEmpty && sku.isNotEmpty) sku,
+                    '${qtyText(s.available)} available',
+                  ].join(' · ')),
+                  onTap: () => _pick(VariantChoice(variantId: s.variantId, productName: name, sku: sku)),
+                );
               }),
-            ),
-          TextField(
-            key: const Key('substitute-variant'),
-            controller: _variant,
-            decoration: const InputDecoration(labelText: 'Variant id of what you packed'),
-            onChanged: (_) => setState(() => _chosen = null),
-          ),
-          TextField(
-            key: const Key('substitute-qty'),
-            controller: _qty,
-            keyboardType: const TextInputType.numberWithOptions(decimal: true),
-            decoration: InputDecoration(
-                labelText: 'Quantity', helperText: '${qtyText(widget.outstanding)} outstanding'),
-          ),
-          TextField(
-            key: const Key('substitute-reason'),
-            controller: _reason,
-            decoration: const InputDecoration(labelText: 'Reason (optional)'),
-          ),
-          if (_error != null) ...[
             const SizedBox(height: AppSpacing.sm),
-            Text(_error!, key: const Key('substitute-error'), style: TextStyle(color: cs.error)),
+            VariantField(
+              key: const Key('substitute-variant'),
+              controller: _packed,
+              onTap: _find,
+              labelText: 'What you packed',
+              helperText: widget.suggestions.isEmpty
+                  ? 'Find it by name or SKU'
+                  : 'A stand-in above, or find another by name or SKU',
+            ),
+            TextField(
+              key: const Key('substitute-qty'),
+              controller: _qty,
+              keyboardType: const TextInputType.numberWithOptions(decimal: true),
+              decoration: InputDecoration(
+                  labelText: 'Quantity', helperText: '${qtyText(widget.outstanding)} outstanding'),
+            ),
+            TextField(
+              key: const Key('substitute-reason'),
+              controller: _reason,
+              decoration: const InputDecoration(labelText: 'Reason (optional)'),
+            ),
+            if (_error != null) ...[
+              const SizedBox(height: AppSpacing.sm),
+              Text(_error!, key: const Key('substitute-error'), style: TextStyle(color: cs.error)),
+            ],
           ],
-        ]),
+        ),
       ),
       actions: [
         TextButton(onPressed: () => Navigator.pop(context), child: const Text('Cancel')),
         FilledButton(
           key: const Key('substitute-save'),
           onPressed: () {
-            final variant = _variant.text.trim();
+            final choice = _choice;
             final qty = double.tryParse(_qty.text.trim());
-            if (variant.isEmpty) {
+            if (choice == null) {
               setState(() => _error = 'Say what you packed.');
               return;
             }
@@ -643,7 +743,7 @@ class _SubstituteDialogState extends State<_SubstituteDialog> {
                   'Between 0 and ${qtyText(widget.outstanding)}, what the line still owes.');
               return;
             }
-            Navigator.pop(context, _SubstituteInput(variant, qty, _reason.text.trim()));
+            Navigator.pop(context, _SubstituteInput(choice.variantId, qty, _reason.text.trim()));
           },
           child: const Text('Substituted'),
         ),
@@ -794,8 +894,7 @@ class _Stage extends StatelessWidget {
           ),
           data: (list) => list.isEmpty
               ? Text(empty, style: TextStyle(color: cs.onSurfaceVariant))
-              : Column(
-                  children: [
+              : _cardList([
                     for (final o in list)
                       Card(
                         key: Key('queued-${o.id}'),
@@ -832,8 +931,7 @@ class _Stage extends StatelessWidget {
                           );
                         }),
                       ),
-                  ],
-                ),
+                  ]),
         ),
       ],
     );

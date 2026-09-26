@@ -64,6 +64,11 @@ public class OrderResource {
    * @param store restrict to one store, or {@code null}
    * @param channel restrict to {@code ONLINE} or {@code POS}, or {@code null}
    * @param status restrict to one order status, or {@code null}
+   * @param handover {@code PENDING} or {@code DONE}, or {@code null} for either
+   * @param handedFrom inclusive ISO-8601 lower bound on when the order was handed over, or {@code
+   *     null}; implies {@code handover=DONE}
+   * @param handedTo exclusive ISO-8601 upper bound on when the order was handed over, or {@code
+   *     null}; implies {@code handover=DONE}
    * @param from inclusive ISO-8601 lower bound on creation time, or {@code null}
    * @param to exclusive ISO-8601 upper bound, or {@code null}
    * @param after cursor from the previous page's {@code meta.nextCursor}, or {@code null} to start
@@ -75,10 +80,15 @@ public class OrderResource {
       description =
           "List orders for the caller's tenant, optionally filtered by store, channel, status,"
               + " fulfilment type, whether handed over (ship-from-store: handover=PENDING is the"
-              + " picked orders awaiting the courier or the shopper, DONE those handed over), and"
-              + " creation-date range. Cursor-paginated.")
+              + " picked orders awaiting the courier or the shopper, DONE those handed over), when"
+              + " handed over (handedFrom inclusive, handedTo exclusive; either implies"
+              + " handover=DONE), and creation-date range (from/to). Cursor-paginated.")
   @APIResponse(responseCode = "200", description = "Page of order summaries")
-  @APIResponse(responseCode = "400", description = "ORDER_HANDOVER_FILTER_INVALID")
+  @APIResponse(
+      responseCode = "400",
+      description =
+          "ORDER_HANDOVER_FILTER_INVALID (handover not PENDING or DONE, or a handedFrom/handedTo"
+              + " with handover=PENDING); INVALID_DATE (a bound that is not an ISO-8601 instant)")
   @GET
   public ApiResponse<List<OrderSummaryResponse>> list(
       @QueryParam("store") String store,
@@ -86,6 +96,8 @@ public class OrderResource {
       @QueryParam("status") String status,
       @QueryParam("fulfilmentType") String fulfilmentType,
       @QueryParam("handover") String handover,
+      @QueryParam("handedFrom") String handedFrom,
+      @QueryParam("handedTo") String handedTo,
       @QueryParam("from") String from,
       @QueryParam("to") String to,
       @QueryParam("after") String after,
@@ -94,6 +106,8 @@ public class OrderResource {
     UUID storeId = store != null && !store.isBlank() ? Parsing.uuid(store, "store") : null;
     Instant fromInst = parseInstant(from, "from");
     Instant toInst = parseInstant(to, "to");
+    Instant handedFromInst = parseInstant(handedFrom, "handedFrom");
+    Instant handedToInst = parseInstant(handedTo, "handedTo");
     int clamped = Cursor.clampLimit(limit);
     Boolean handedOver = null;
     if (handover != null && !handover.isBlank()) {
@@ -115,6 +129,8 @@ public class OrderResource {
             status,
             fulfilmentType == null || fulfilmentType.isBlank() ? null : fulfilmentType,
             handedOver,
+            handedFromInst,
+            handedToInst,
             fromInst,
             toInst,
             after,

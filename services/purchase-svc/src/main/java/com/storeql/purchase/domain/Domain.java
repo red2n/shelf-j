@@ -544,6 +544,16 @@ public final class Domain {
       return PO_OWNERSHIP_CONSIGNMENT.equals(ownership);
     }
 
+    /**
+     * How a person names this order — "PO #" and the id's handle, exactly as the procurement screen
+     * shows it — for text people read: a journal's description in the accounting package and on the
+     * Integrations screen. An order has no separate number, so this is its number; like any handle
+     * it is not a key, and the posting's source reference still carries the id.
+     */
+    public String reference() {
+      return Handle.purchaseOrder(id);
+    }
+
     /** An order with no translation recorded yet. */
     public PurchaseOrder(
         UUID id,

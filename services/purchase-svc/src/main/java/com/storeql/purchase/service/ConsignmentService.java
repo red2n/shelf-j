@@ -6,6 +6,7 @@ import com.storeql.purchase.domain.Domain.ConsignmentSale;
 import com.storeql.purchase.domain.Domain.ConsignmentSettlement;
 import com.storeql.purchase.domain.Domain.NominalLedgerEntry;
 import com.storeql.purchase.domain.Domain.Supplier;
+import com.storeql.purchase.domain.Handle;
 import com.storeql.purchase.domain.LedgerPosting;
 import com.storeql.purchase.domain.Money;
 import com.storeql.purchase.dto.Dtos.CreateConsignmentSettlementRequest;
@@ -99,7 +100,7 @@ public class ConsignmentService {
             "Consignment sale of "
                 + sale.qty().toPlainString()
                 + " x variant "
-                + Ids.shortRef(sale.variantId())
+                + Handle.of(sale.variantId())
                 + " ("
                 + supplier.name()
                 + ")",

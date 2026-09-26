@@ -686,10 +686,12 @@ class _RolesTab extends ConsumerWidget {
   const _RolesTab();
 
   Future<void> _delete(BuildContext context, WidgetRef ref, TenantRole role) async {
+    // By its name, as the list names it; the code only travels in the request.
+    final name = _roleName(role.code, {role.code: role.name});
     final ok = await showDialog<bool>(
       context: context,
       builder: (ctx) => AlertDialog(
-        title: Text('Delete ${role.code}?'),
+        title: Text('Delete $name?'),
         content: const Text(
             'Refused while anyone still holds it — remove those assignments first.'),
         actions: [
@@ -711,7 +713,7 @@ class _RolesTab extends ConsumerWidget {
       ref.invalidate(rolesProvider);
       if (!context.mounted) return;
       ScaffoldMessenger.of(context)
-          .showSnackBar(SnackBar(content: Text('${role.code} deleted.')));
+          .showSnackBar(SnackBar(content: Text('$name deleted.')));
     } catch (e) {
       if (!context.mounted) return;
       ScaffoldMessenger.of(context).showSnackBar(SnackBar(

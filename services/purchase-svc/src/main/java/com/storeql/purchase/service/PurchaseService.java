@@ -12,6 +12,7 @@ import com.storeql.purchase.domain.Domain.NominalLedgerEntry;
 import com.storeql.purchase.domain.Domain.PurchaseOrder;
 import com.storeql.purchase.domain.Domain.PurchaseOrderLine;
 import com.storeql.purchase.domain.Domain.Supplier;
+import com.storeql.purchase.domain.Handle;
 import com.storeql.purchase.domain.LedgerPosting;
 import com.storeql.purchase.domain.Money;
 import com.storeql.purchase.domain.PeriodControl;
@@ -1476,7 +1477,7 @@ public class PurchaseService {
 
   private List<NominalLedgerEntry> buildArEntries(
       UUID tenantId, UUID arId, RaiseIntercompanyInvoiceRequest req, LocalDate today) {
-    String desc = "Intercompany AR invoice " + arId;
+    String desc = "Intercompany AR invoice " + Handle.of(arId);
     List<NominalLedgerEntry> entries = new ArrayList<>();
     BigDecimal gross = req.grossAmount();
     BigDecimal net = req.netAmount();
@@ -1534,7 +1535,7 @@ public class PurchaseService {
 
   private List<NominalLedgerEntry> buildApEntries(
       UUID tenantId, UUID apId, RaiseIntercompanyInvoiceRequest req, LocalDate today) {
-    String desc = "Intercompany AP invoice " + apId;
+    String desc = "Intercompany AP invoice " + Handle.of(apId);
     List<NominalLedgerEntry> entries = new ArrayList<>();
     BigDecimal gross = req.grossAmount();
     BigDecimal net = req.netAmount();
@@ -1630,7 +1631,7 @@ public class PurchaseService {
   public void settleIntercompanyInvoice(TenantContext ctx, UUID id) {
     IntercompanyInvoice inv = getIntercompanyInvoice(ctx, id);
     LocalDate today = LocalDate.now();
-    String desc = "Settlement of intercompany invoice " + id;
+    String desc = "Settlement of intercompany invoice " + Handle.of(id);
     List<NominalLedgerEntry> settlements = new ArrayList<>();
 
     if (Domain.INV_AR.equals(inv.invoiceType())) {
@@ -1830,7 +1831,7 @@ public class PurchaseService {
     return LedgerPosting.of(
             po.tenantId(),
             today(),
-            "Goods received against PO " + po.id(),
+            "Goods received against " + po.reference(),
             Domain.SOURCE_GOODS_RECEIPT,
             gr.id(),
             gr.storeId())

@@ -338,6 +338,14 @@ public class OrderRepository extends BaseOutboxRepository {
    *     filters on, and it matches orders placed before the customer link existed (SJ-D44)
    * @param channel restrict to {@code ONLINE} or {@code POS}, or {@code null}
    * @param status restrict to one status, or {@code null}
+   * @param fulfilmentType restrict to PICKUP, DELIVERY or INSTORE, or {@code null}
+   * @param handedOver {@code true} for orders with their handover row, {@code false} for those
+   *     without, or {@code null} for either
+   * @param handedFrom inclusive lower bound on when the order was handed over, or {@code null};
+   *     only with {@code handedOver} true — a window is on the handover row, which only a handed
+   *     over order has
+   * @param handedTo exclusive upper bound on when the order was handed over, or {@code null}; as
+   *     {@code handedFrom}
    * @param from inclusive lower bound on creation time, or {@code null}
    * @param to exclusive upper bound on creation time, or {@code null}
    * @param afterCreatedAt cursor timestamp, or {@code null} for the first page
@@ -354,11 +362,16 @@ public class OrderRepository extends BaseOutboxRepository {
       String status,
       String fulfilmentType,
       Boolean handedOver,
+      Instant handedFrom,
+      Instant handedTo,
       Instant from,
       Instant to,
       Instant afterCreatedAt,
       UUID afterId,
       int limit) {
+    if ((handedFrom != null || handedTo != null) && !Boolean.TRUE.equals(handedOver)) {
+      throw new IllegalArgumentException("a handover window needs handedOver = true");
+    }
     StringBuilder sql =
         new StringBuilder(
             "SELECT id, tenant_id, store_id, customer_id, login_id, channel, fulfilment_type, status,"
@@ -374,12 +387,16 @@ public class OrderRepository extends BaseOutboxRepository {
     if (channel != null) sql.append(" AND channel=?");
     if (status != null) sql.append(" AND status=?");
     if (fulfilmentType != null) sql.append(" AND fulfilment_type=?");
-    // Handed over or not (ship-from-store): whether the order has its one handover row.
+    // Handed over or not (ship-from-store): whether the order has its one handover row — and,
+    // for a window, whether that row falls in it (handed over today, whenever it was placed).
     if (handedOver != null) {
       sql.append(handedOver ? " AND EXISTS" : " AND NOT EXISTS")
           .append(
               " (SELECT 1 FROM order_handovers h WHERE h.tenant_id = o.tenant_id"
-                  + " AND h.order_id = o.id)");
+                  + " AND h.order_id = o.id");
+      if (handedFrom != null) sql.append(" AND h.handed_at >= ?");
+      if (handedTo != null) sql.append(" AND h.handed_at < ?");
+      sql.append(')');
     }
     if (from != null) sql.append(" AND created_at >= ?");
     if (to != null) sql.append(" AND created_at <= ?");
@@ -398,6 +415,8 @@ public class OrderRepository extends BaseOutboxRepository {
           if (status != null) ps.setString(i++, status.toUpperCase(java.util.Locale.ROOT));
           if (fulfilmentType != null)
             ps.setString(i++, fulfilmentType.toUpperCase(java.util.Locale.ROOT));
+          if (handedFrom != null) ps.setObject(i++, handedFrom.atOffset(java.time.ZoneOffset.UTC));
+          if (handedTo != null) ps.setObject(i++, handedTo.atOffset(java.time.ZoneOffset.UTC));
           if (from != null) ps.setObject(i++, from.atOffset(java.time.ZoneOffset.UTC));
           if (to != null) ps.setObject(i++, to.atOffset(java.time.ZoneOffset.UTC));
           if (afterCreatedAt != null && afterId != null) {
